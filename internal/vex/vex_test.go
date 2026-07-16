@@ -33,6 +33,18 @@ const (
 	testVEXContext = "https://openvex.dev/ns/v0.2.0"
 )
 
+type inTotoWrapper struct {
+	Type          string          `json:"_type"` //nolint:tagliatelle // In-toto spec field name.
+	Subject       []inTotoSubj    `json:"subject"`
+	PredicateType string          `json:"predicateType"`
+	Predicate     json.RawMessage `json:"predicate"`
+}
+
+type inTotoSubj struct {
+	Name   string            `json:"name"`
+	Digest map[string]string `json:"digest"`
+}
+
 func validVEXDoc(status openvex.Status) openvex.VEX {
 	return openvex.VEX{
 		Metadata: openvex.Metadata{
@@ -51,6 +63,26 @@ func validVEXDoc(status openvex.Status) openvex.VEX {
 			},
 		},
 	}
+}
+
+func wrapInToto(t *testing.T, doc any, digest string) []byte {
+	t.Helper()
+
+	predBytes := mustMarshal(t, doc)
+
+	wrapper := inTotoWrapper{
+		Type: "https://in-toto.io/Statement/v1",
+		Subject: []inTotoSubj{
+			{
+				Name:   "test-image",
+				Digest: map[string]string{"sha256": digest[len("sha256:"):]},
+			},
+		},
+		PredicateType: "https://openvex.dev/ns",
+		Predicate:     predBytes,
+	}
+
+	return mustMarshal(t, wrapper)
 }
 
 func mustMarshal(t *testing.T, val any) []byte {
@@ -435,6 +467,90 @@ func TestVerifyMultipleSkipsInvalid(t *testing.T) {
 
 	if !result.Passed {
 		t.Errorf("expected pass after skipping invalid, got: %s", result.Detail)
+	}
+}
+
+func TestVerifyInTotoWrapped(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		doc        openvex.VEX
+		digest     string
+		wantErr    error
+		wantPassed bool
+	}{
+		{
+			name:       "matching subject digest passes",
+			doc:        validVEXDoc(openvex.StatusNotAffected),
+			digest:     testDigest,
+			wantErr:    nil,
+			wantPassed: true,
+		},
+		{
+			name:       "mismatching subject digest fails",
+			doc:        validVEXDoc(openvex.StatusNotAffected),
+			digest:     "sha256:000000000000",
+			wantErr:    vex.ErrSubjectMismatch,
+			wantPassed: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			att := wrapInToto(t, test.doc, testDigest)
+
+			result, err := vex.Verify(
+				context.Background(), att,
+				&policy.Policy{}, testImageRef, test.digest,
+			)
+
+			if test.wantErr != nil {
+				if !errors.Is(err, test.wantErr) {
+					t.Fatalf("expected %v, got %v", test.wantErr, err)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result.Passed != test.wantPassed {
+				t.Errorf("expected passed=%v, got passed=%v", test.wantPassed, result.Passed)
+			}
+		})
+	}
+}
+
+func TestVerifyInTotoEmptySubject(t *testing.T) {
+	t.Parallel()
+
+	doc := validVEXDoc(openvex.StatusFixed)
+	predBytes := mustMarshal(t, doc)
+
+	wrapper := inTotoWrapper{
+		Type:          "https://in-toto.io/Statement/v1",
+		Subject:       []inTotoSubj{},
+		PredicateType: "https://openvex.dev/ns",
+		Predicate:     predBytes,
+	}
+
+	att := mustMarshal(t, wrapper)
+
+	result, err := vex.Verify(
+		context.Background(), att,
+		&policy.Policy{}, testImageRef, testDigest,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.Passed {
+		t.Errorf("expected pass for empty subject (no enforcement), got: %s", result.Detail)
 	}
 }
 

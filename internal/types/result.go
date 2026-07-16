@@ -45,3 +45,23 @@ type CheckResult struct {
 	// Detail provides additional information about the check result.
 	Detail string
 }
+
+// PassResult returns a passing CheckResult.
+func PassResult(checkType, detail string) *CheckResult {
+	return &CheckResult{
+		Type:   checkType,
+		Passed: true,
+		Status: StatusPass,
+		Detail: detail,
+	}
+}
+
+// FailResult returns a failing CheckResult.
+func FailResult(checkType, detail string) *CheckResult {
+	return &CheckResult{
+		Type:   checkType,
+		Passed: false,
+		Status: StatusFail,
+		Detail: detail,
+	}
+}
