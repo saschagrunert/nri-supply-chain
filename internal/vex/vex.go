@@ -17,6 +17,7 @@ package vex
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -32,15 +33,36 @@ import (
 
 const checkType = "vex"
 
-// ErrInvalidVEX indicates the VEX document could not be parsed.
-var ErrInvalidVEX = errors.New("invalid VEX document")
+const digestPartCount = 2
+
+var (
+	// ErrInvalidVEX indicates the VEX document could not be parsed.
+	ErrInvalidVEX = errors.New("invalid VEX document")
+
+	// ErrSubjectMismatch indicates the in-toto subject does not match the image.
+	ErrSubjectMismatch = errors.New("VEX subject digest mismatch")
+)
+
+type inTotoStatement struct {
+	Subject   []inTotoSubject `json:"subject"`
+	Predicate json.RawMessage `json:"predicate"`
+}
+
+type inTotoSubject struct {
+	Digest map[string]string `json:"digest"`
+}
 
 // Verify checks a VEX attestation against the given policy.
 func Verify(
 	ctx context.Context,
 	att []byte, pol *policy.Policy, imageRef, imageDigest string,
 ) (*types.CheckResult, error) {
-	doc, err := openvex.Parse(att)
+	predicate, err := verifySubjectAndExtract(att, imageDigest)
+	if err != nil {
+		return nil, err
+	}
+
+	doc, err := openvex.Parse(predicate)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidVEX, err)
 	}
@@ -133,6 +155,47 @@ func VerifyMultiple(
 	return passResult(), nil
 }
 
+func verifySubjectAndExtract(att []byte, imageDigest string) ([]byte, error) {
+	var stmt inTotoStatement
+
+	err := json.Unmarshal(att, &stmt)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidVEX, err)
+	}
+
+	if len(stmt.Subject) > 0 && imageDigest != "" {
+		if !subjectMatchesDigest(stmt.Subject, imageDigest) {
+			return nil, fmt.Errorf(
+				"%w: none of the subjects match %q",
+				ErrSubjectMismatch, imageDigest,
+			)
+		}
+	}
+
+	if len(stmt.Predicate) > 0 {
+		return stmt.Predicate, nil
+	}
+
+	return att, nil
+}
+
+func subjectMatchesDigest(subjects []inTotoSubject, imageDigest string) bool {
+	parts := strings.SplitN(imageDigest, ":", digestPartCount)
+	if len(parts) != digestPartCount {
+		return false
+	}
+
+	algo, hash := parts[0], parts[1]
+
+	for _, subject := range subjects {
+		if subject.Digest[algo] == hash {
+			return true
+		}
+	}
+
+	return false
+}
+
 func matchesImage(ctx context.Context, stmt *openvex.Statement, imageDigest, purl string) bool {
 	if len(stmt.Products) == 0 {
 		slog.WarnContext(
@@ -218,19 +281,9 @@ func handleUnderInvestigation(pol *policy.Policy) *types.CheckResult {
 }
 
 func passResult() *types.CheckResult {
-	return &types.CheckResult{
-		Type:   checkType,
-		Passed: true,
-		Status: types.StatusPass,
-		Detail: "VEX verification passed",
-	}
+	return types.PassResult(checkType, "VEX verification passed")
 }
 
 func failResult(detail string) *types.CheckResult {
-	return &types.CheckResult{
-		Type:   checkType,
-		Passed: false,
-		Status: types.StatusFail,
-		Detail: detail,
-	}
+	return types.FailResult(checkType, detail)
 }

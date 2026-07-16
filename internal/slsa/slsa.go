@@ -286,19 +286,9 @@ func verifyParameters(params map[string]any, pol *policy.Policy) error {
 }
 
 func passResult() *types.CheckResult {
-	return &types.CheckResult{
-		Type:   checkType,
-		Passed: true,
-		Status: types.StatusPass,
-		Detail: "SLSA provenance verified",
-	}
+	return types.PassResult(checkType, "SLSA provenance verified")
 }
 
 func failResult(detail string) *types.CheckResult {
-	return &types.CheckResult{
-		Type:   checkType,
-		Passed: false,
-		Status: types.StatusFail,
-		Detail: detail,
-	}
+	return types.FailResult(checkType, detail)
 }

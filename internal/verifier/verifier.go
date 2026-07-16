@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/cache"
@@ -255,11 +254,20 @@ func fetchAttestations(
 	imageRef, digest string, pol *policy.Policy,
 ) ([]attestation.VerifiedAttestation, error) {
 	opts := attestation.FetchOptions{
-		TrustedIssuers:         trustedIssuers(pol),
-		TrustedKeys:            trustedKeys(pol),
-		SANPatterns:            sanPatterns(pol),
-		RequireTransparencyLog: requireTransparencyLog(pol),
+		RequireTransparencyLog: pol.Signatures != nil && pol.Signatures.RequireTransparencyLog,
 		Timeout:                state.config.FetchTimeout.Duration,
+	}
+
+	if pol.Trust != nil {
+		opts.TrustedIssuers = pol.Trust.Issuers
+		opts.SANPatterns = pol.Trust.SANPatterns
+
+		keys := make([]string, 0, len(pol.Trust.Verifiers))
+		for idx := range pol.Trust.Verifiers {
+			keys = append(keys, pol.Trust.Verifiers[idx].Key)
+		}
+
+		opts.TrustedKeys = keys
 	}
 
 	attestations, err := state.fetcher.Fetch(ctx, imageRef, digest, opts)
@@ -345,23 +353,24 @@ func runParallelChecks(
 	var (
 		slsaResult *types.CheckResult
 		vexResult  *types.CheckResult
+		waitGroup  sync.WaitGroup
 	)
 
-	grp, ctx := errgroup.WithContext(ctx)
+	waitGroup.Add(2) //nolint:mnd // SLSA + VEX checks
 
-	grp.Go(func() error {
+	go func() {
+		defer waitGroup.Done()
+
 		slsaResult = runSLSACheck(ctx, attestations, pol, met, imageRef, digest)
+	}()
 
-		return nil
-	})
+	go func() {
+		defer waitGroup.Done()
 
-	grp.Go(func() error {
 		vexResult = runVEXCheck(ctx, attestations, pol, met, imageRef, digest)
+	}()
 
-		return nil
-	})
-
-	_ = grp.Wait()
+	waitGroup.Wait()
 
 	return combineResults(slsaResult, vexResult)
 }
@@ -379,7 +388,7 @@ func runSLSACheck(
 		)
 	}()
 
-	provenanceAtts := filterByProvenance(attestations)
+	provenanceAtts := filterByPredicate(attestations, attestation.PredicateSLSAProvenanceV1)
 	if len(provenanceAtts) == 0 {
 		return handleMissingAttestation(
 			pol.ProvenanceMissingPolicy(),
@@ -497,45 +506,6 @@ func filterByPredicate(
 	}
 
 	return filtered
-}
-
-func filterByProvenance(
-	attestations []attestation.VerifiedAttestation,
-) []attestation.VerifiedAttestation {
-	return filterByPredicate(attestations, attestation.PredicateSLSAProvenanceV1)
-}
-
-func trustedIssuers(pol *policy.Policy) []string {
-	if pol.Trust != nil {
-		return pol.Trust.Issuers
-	}
-
-	return nil
-}
-
-func trustedKeys(pol *policy.Policy) []string {
-	if pol.Trust == nil {
-		return nil
-	}
-
-	keys := make([]string, 0, len(pol.Trust.Verifiers))
-	for idx := range pol.Trust.Verifiers {
-		keys = append(keys, pol.Trust.Verifiers[idx].Key)
-	}
-
-	return keys
-}
-
-func sanPatterns(pol *policy.Policy) []string {
-	if pol.Trust != nil {
-		return pol.Trust.SANPatterns
-	}
-
-	return nil
-}
-
-func requireTransparencyLog(pol *policy.Policy) bool {
-	return pol.Signatures != nil && pol.Signatures.RequireTransparencyLog
 }
 
 func vexMissingPolicy(pol *policy.Policy) string {
