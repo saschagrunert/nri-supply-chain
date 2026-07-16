@@ -1,0 +1,22 @@
+# NRI Supply Chain Verification Plugin Configuration
+#
+# Master toggle: "disabled" (default), "warn" (log-only), "enforce" (reject on failure).
+verification = "warn"
+
+# Per-fetch timeout for retrieving attestations.
+fetch_timeout = "30s"
+
+# Behavior on network errors: "allow", "warn" (default), "deny".
+fetch_failure_policy = "warn"
+
+# How long verification results are cached per image digest + namespace.
+# Set to "0s" to disable caching.
+cache_ttl = "24h"
+
+# Directory containing per-namespace JSON policy files.
+# <dir>/default.json is the base policy.
+# <dir>/<namespace>.json overrides for that namespace.
+policy_dir = "/etc/nri-supply-chain/policies"
+
+# Listen address for the Prometheus metrics HTTP server.
+metrics_addr = ":9090"

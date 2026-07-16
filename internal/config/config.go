@@ -1,0 +1,223 @@
+// Copyright The nri-supply-chain Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Package config provides configuration types and validation for the NRI supply chain plugin.
+package config
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/BurntSushi/toml"
+)
+
+const (
+	// ModeDisabled disables supply chain verification.
+	ModeDisabled = "disabled"
+	// ModeWarn enables verification in warn (log-only) mode.
+	ModeWarn = "warn"
+	// ModeEnforce enables verification in enforce (reject on failure) mode.
+	ModeEnforce = "enforce"
+
+	// PolicyAllow permits the action.
+	PolicyAllow = "allow"
+	// PolicyWarn logs a warning but permits the action.
+	PolicyWarn = ModeWarn
+	// PolicyDeny rejects the action.
+	PolicyDeny = "deny"
+
+	defaultFetchTimeout = 30 * time.Second
+	defaultCacheTTL     = 24 * time.Hour
+)
+
+var (
+	// ErrInvalidVerificationMode indicates an unrecognized verification mode.
+	ErrInvalidVerificationMode = errors.New("invalid verification mode")
+
+	// ErrInvalidPolicyValue indicates an unrecognized policy action value.
+	ErrInvalidPolicyValue = errors.New("invalid policy value")
+
+	// ErrFetchTimeoutNotPositive indicates a non-positive fetch timeout.
+	ErrFetchTimeoutNotPositive = errors.New("fetch_timeout must be positive")
+
+	// ErrCacheTTLNegative indicates a negative cache TTL.
+	ErrCacheTTLNegative = errors.New("cache_ttl must be non-negative")
+
+	// ErrPolicyDirEmpty indicates an empty policy directory when verification is enabled.
+	ErrPolicyDirEmpty = errors.New("policy_dir must not be empty when verification is enabled")
+
+	// ErrPolicyDirNotAbsolute indicates a relative policy directory path.
+	ErrPolicyDirNotAbsolute = errors.New("policy_dir is not absolute")
+
+	// ErrPolicyDirNotDirectory indicates the policy dir path is not a directory.
+	ErrPolicyDirNotDirectory = errors.New("policy_dir is not a directory")
+)
+
+// Duration wraps time.Duration to support TOML unmarshalling from strings.
+type Duration struct {
+	time.Duration
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler for TOML string parsing.
+func (d *Duration) UnmarshalText(text []byte) error {
+	parsed, err := time.ParseDuration(string(text))
+	if err != nil {
+		return fmt.Errorf("parsing duration: %w", err)
+	}
+
+	d.Duration = parsed
+
+	return nil
+}
+
+// MarshalText implements encoding.TextMarshaler for TOML serialization.
+func (d Duration) MarshalText() ([]byte, error) {
+	return []byte(d.String()), nil
+}
+
+// Config represents the operational configuration for the NRI supply chain plugin.
+type Config struct {
+	// Verification is the master toggle for supply chain verification.
+	// Valid values: "disabled" (default), "warn" (log-only), "enforce" (reject on failure).
+	Verification string `toml:"verification"`
+	// FetchTimeout is the per-fetch timeout for retrieving attestations.
+	FetchTimeout Duration `toml:"fetch_timeout"`
+	// FetchFailurePolicy controls behavior when attestation fetch fails due to
+	// network errors. Valid values: "allow", "warn" (default), "deny".
+	FetchFailurePolicy string `toml:"fetch_failure_policy"`
+	// CacheTTL is how long verification results are cached per image digest + namespace.
+	CacheTTL Duration `toml:"cache_ttl"`
+	// PolicyDir is the path to the directory containing JSON policy files.
+	PolicyDir string `toml:"policy_dir"`
+	// MetricsAddr is the listen address for the Prometheus metrics HTTP server.
+	MetricsAddr string `toml:"metrics_addr"`
+}
+
+// DefaultConfig returns the default configuration.
+func DefaultConfig() *Config {
+	return &Config{
+		Verification:       ModeDisabled,
+		FetchTimeout:       Duration{Duration: defaultFetchTimeout},
+		FetchFailurePolicy: PolicyWarn,
+		CacheTTL:           Duration{Duration: defaultCacheTTL},
+		PolicyDir:          "/etc/nri-supply-chain/policies",
+		MetricsAddr:        ":9090",
+	}
+}
+
+// Enabled returns true if supply chain verification is not disabled.
+func (c *Config) Enabled() bool {
+	return c.Verification != ModeDisabled
+}
+
+// Validate checks the Config for invalid values.
+func (c *Config) Validate() error {
+	switch c.Verification {
+	case ModeDisabled, ModeWarn, ModeEnforce:
+	default:
+		return fmt.Errorf("%w: %q", ErrInvalidVerificationMode, c.Verification)
+	}
+
+	if !c.Enabled() {
+		return nil
+	}
+
+	err := ValidatePolicyValue("fetch_failure_policy", c.FetchFailurePolicy)
+	if err != nil {
+		return err
+	}
+
+	if c.FetchTimeout.Duration <= 0 {
+		return fmt.Errorf("%w: got %s", ErrFetchTimeoutNotPositive, c.FetchTimeout.Duration)
+	}
+
+	if c.CacheTTL.Duration < 0 {
+		return fmt.Errorf("%w: got %s", ErrCacheTTLNegative, c.CacheTTL.Duration)
+	}
+
+	if c.PolicyDir == "" {
+		return ErrPolicyDirEmpty
+	}
+
+	if !filepath.IsAbs(c.PolicyDir) {
+		return fmt.Errorf("%w: %q", ErrPolicyDirNotAbsolute, c.PolicyDir)
+	}
+
+	return nil
+}
+
+// ValidateRuntime performs runtime checks that require filesystem access.
+func (c *Config) ValidateRuntime() error {
+	if !c.Enabled() {
+		return nil
+	}
+
+	info, err := os.Stat(c.PolicyDir)
+	if err != nil {
+		return fmt.Errorf("invalid policy_dir %q: %w", c.PolicyDir, err)
+	}
+
+	if !info.IsDir() {
+		return fmt.Errorf("%w: %q", ErrPolicyDirNotDirectory, c.PolicyDir)
+	}
+
+	return nil
+}
+
+// LoadFromFile reads and parses a TOML config file.
+func LoadFromFile(path string) (*Config, error) {
+	cfg := DefaultConfig()
+
+	_, err := toml.DecodeFile(path, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("reading config file %q: %w", path, err)
+	}
+
+	err = cfg.Validate()
+	if err != nil {
+		return nil, fmt.Errorf("validating config: %w", err)
+	}
+
+	return cfg, nil
+}
+
+// LoadFromString parses a TOML config string.
+func LoadFromString(data string) (*Config, error) {
+	cfg := DefaultConfig()
+
+	_, err := toml.Decode(data, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("parsing config: %w", err)
+	}
+
+	err = cfg.Validate()
+	if err != nil {
+		return nil, fmt.Errorf("validating config: %w", err)
+	}
+
+	return cfg, nil
+}
+
+// ValidatePolicyValue validates that the given value is a valid policy action.
+func ValidatePolicyValue(name, value string) error {
+	switch value {
+	case PolicyAllow, PolicyWarn, PolicyDeny:
+		return nil
+	default:
+		return fmt.Errorf("%w: %s %q", ErrInvalidPolicyValue, name, value)
+	}
+}
