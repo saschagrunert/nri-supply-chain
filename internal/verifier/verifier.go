@@ -21,13 +21,21 @@ import (
 	"fmt"
 	"log/slog"
 	"path"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/google/go-containerregistry/pkg/name"
+	"golang.org/x/sync/errgroup"
+
+	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/cache"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
+	"github.com/saschagrunert/nri-supply-chain/internal/slsa"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
+	"github.com/saschagrunert/nri-supply-chain/internal/vex"
+	"github.com/saschagrunert/nri-supply-chain/internal/vsa"
 	"github.com/saschagrunert/nri-supply-chain/policy"
 )
 
@@ -39,6 +47,7 @@ type snapshot struct {
 	policies map[string]*policy.Policy
 	cache    *cache.Cache
 	metrics  *metrics.Metrics
+	fetcher  attestation.Fetcher
 }
 
 // Verifier performs supply chain attestation verification on container images.
@@ -48,10 +57,11 @@ type Verifier struct {
 	cache    *cache.Cache
 	policies map[string]*policy.Policy
 	metrics  *metrics.Metrics
+	fetcher  attestation.Fetcher
 }
 
-// New creates a new Verifier with the given configuration and metrics.
-func New(cfg *config.Config, met *metrics.Metrics) (*Verifier, error) {
+// New creates a new Verifier with the given configuration, metrics, and attestation fetcher.
+func New(cfg *config.Config, met *metrics.Metrics, fetcher attestation.Fetcher) (*Verifier, error) {
 	cfgCopy := *cfg
 
 	verif := &Verifier{
@@ -60,6 +70,7 @@ func New(cfg *config.Config, met *metrics.Metrics) (*Verifier, error) {
 		cache:    cache.New(cfgCopy.CacheTTL.Duration),
 		policies: nil,
 		metrics:  met,
+		fetcher:  fetcher,
 	}
 
 	if cfgCopy.Enabled() {
@@ -96,7 +107,7 @@ func (v *Verifier) Verify(
 
 	pol := policyForNamespace(state.policies, namespace)
 
-	if isExcluded(pol.Exclude, imageRef) {
+	if isExcluded(ctx, pol.Exclude, imageRef) {
 		slog.InfoContext(ctx, "Image excluded from verification", "image", imageRef)
 
 		return &types.Result{
@@ -115,17 +126,17 @@ func (v *Verifier) Verify(
 
 	state.metrics.CacheMissesTotal.Inc()
 
-	result := runChecks(ctx, state.config, pol, state.metrics, imageRef, digest)
+	result := runChecks(ctx, &state, pol, imageRef, digest)
 
 	logResult(ctx, imageRef, digest, namespace, result)
 	recordMetrics(state.metrics, result)
 
 	result, err := applyEnforcement(ctx, state.config, result, imageRef)
+	state.cache.Set(digest, namespace, result)
+
 	if err != nil {
 		return result, err
 	}
-
-	state.cache.Set(digest, namespace, result)
 
 	return result, nil
 }
@@ -178,6 +189,10 @@ func (v *Verifier) Reload(cfg *config.Config) error {
 	v.cache = cache.New(cfgCopy.CacheTTL.Duration)
 	v.policies = policies
 
+	if cfgCopy.Enabled() && v.fetcher == nil {
+		v.fetcher = attestation.NewOCIFetcher()
+	}
+
 	return nil
 }
 
@@ -190,84 +205,368 @@ func (v *Verifier) snap() snapshot {
 		policies: v.policies,
 		cache:    v.cache,
 		metrics:  v.metrics,
+		fetcher:  v.fetcher,
 	}
 }
 
 func runChecks(
-	_ context.Context, _ *config.Config,
+	ctx context.Context, state *snapshot,
+	pol *policy.Policy, imageRef, digest string,
+) *types.Result {
+	if state.fetcher == nil {
+		return runChecksWithoutFetcher(pol, state.metrics, imageRef)
+	}
+
+	attestations, fetchErr := fetchAttestations(ctx, state, imageRef, digest, pol)
+	if fetchErr != nil {
+		return handleFetchError(state.config, state.metrics, fetchErr, imageRef)
+	}
+
+	vsaResult := checkVSA(ctx, attestations, pol, imageRef, digest, state.metrics)
+	if vsaResult != nil {
+		return vsaResult
+	}
+
+	return runParallelChecks(ctx, attestations, pol, state.metrics, imageRef, digest)
+}
+
+func runChecksWithoutFetcher(
+	pol *policy.Policy, met *metrics.Metrics, imageRef string,
+) *types.Result {
+	detail := "no attestation fetcher configured for image " + imageRef
+
+	slsaResult := handleMissingAttestation(
+		pol.ProvenanceMissingPolicy(), "slsa_provenance", detail,
+	)
+
+	met.VerificationDuration.WithLabelValues("slsa_provenance").Observe(0)
+
+	vexResult := handleMissingAttestation(
+		vexMissingPolicy(pol), "vex", detail,
+	)
+
+	met.VerificationDuration.WithLabelValues("vex").Observe(0)
+
+	return combineResults(slsaResult, vexResult)
+}
+
+func fetchAttestations(
+	ctx context.Context, state *snapshot,
+	imageRef, digest string, pol *policy.Policy,
+) ([]attestation.VerifiedAttestation, error) {
+	opts := attestation.FetchOptions{
+		TrustedIssuers:         trustedIssuers(pol),
+		TrustedKeys:            trustedKeys(pol),
+		SANPatterns:            sanPatterns(pol),
+		RequireTransparencyLog: requireTransparencyLog(pol),
+		Timeout:                state.config.FetchTimeout.Duration,
+	}
+
+	attestations, err := state.fetcher.Fetch(ctx, imageRef, digest, opts)
+	if err != nil {
+		return nil, fmt.Errorf("fetching attestations: %w", err)
+	}
+
+	return attestations, nil
+}
+
+func handleFetchError(
+	cfg *config.Config, met *metrics.Metrics,
+	fetchErr error, imageRef string,
+) *types.Result {
+	met.FetchErrorsTotal.WithLabelValues("attestation").Inc()
+
+	detail := fmt.Sprintf("attestation fetch failed for %s: %s", imageRef, fetchErr)
+
+	checkResult := handleMissingAttestation(cfg.FetchFailurePolicy, "fetch", detail)
+
+	return &types.Result{
+		Allowed:      checkResult.Passed,
+		Reason:       checkResult.Detail,
+		CheckResults: []types.CheckResult{*checkResult},
+	}
+}
+
+func checkVSA(
+	ctx context.Context, attestations []attestation.VerifiedAttestation,
+	pol *policy.Policy, imageRef, digest string, met *metrics.Metrics,
+) *types.Result {
+	vsaAttestations := filterByPredicate(attestations, attestation.PredicateVSA)
+	if len(vsaAttestations) == 0 {
+		return nil
+	}
+
+	start := time.Now()
+
+	defer func() {
+		met.VerificationDuration.WithLabelValues("vsa").Observe(time.Since(start).Seconds())
+	}()
+
+	digestRef := buildDigestRef(imageRef, digest)
+
+	var passed *vsa.VerifyResult
+
+	for idx := range vsaAttestations {
+		vsaResult, err := vsa.Verify(vsaAttestations[idx].Payload, pol, digestRef)
+		if err != nil {
+			slog.WarnContext(ctx, "VSA verification error", "error", err)
+
+			continue
+		}
+
+		if vsaResult.HardReject {
+			return &types.Result{
+				Allowed:      false,
+				Reason:       vsaResult.Check.Detail,
+				CheckResults: []types.CheckResult{*vsaResult.Check},
+			}
+		}
+
+		if passed == nil && vsaResult.Check.Passed && vsaResult.Check.Status == types.StatusPass {
+			passed = vsaResult
+		}
+	}
+
+	if passed != nil {
+		return &types.Result{
+			Allowed:      true,
+			Reason:       "VSA verification passed, skipping direct verification",
+			CheckResults: []types.CheckResult{*passed.Check},
+		}
+	}
+
+	return nil
+}
+
+func runParallelChecks(
+	ctx context.Context, attestations []attestation.VerifiedAttestation,
 	pol *policy.Policy, met *metrics.Metrics, imageRef, digest string,
 ) *types.Result {
+	var (
+		slsaResult *types.CheckResult
+		vexResult  *types.CheckResult
+	)
+
+	grp, ctx := errgroup.WithContext(ctx)
+
+	grp.Go(func() error {
+		slsaResult = runSLSACheck(ctx, attestations, pol, met, imageRef, digest)
+
+		return nil
+	})
+
+	grp.Go(func() error {
+		vexResult = runVEXCheck(ctx, attestations, pol, met, imageRef, digest)
+
+		return nil
+	})
+
+	_ = grp.Wait()
+
+	return combineResults(slsaResult, vexResult)
+}
+
+func runSLSACheck(
+	ctx context.Context,
+	attestations []attestation.VerifiedAttestation,
+	pol *policy.Policy, met *metrics.Metrics, imageRef, digest string,
+) *types.CheckResult {
+	start := time.Now()
+
+	defer func() {
+		met.VerificationDuration.WithLabelValues("slsa_provenance").Observe(
+			time.Since(start).Seconds(),
+		)
+	}()
+
+	provenanceAtts := filterByProvenance(attestations)
+	if len(provenanceAtts) == 0 {
+		return handleMissingAttestation(
+			pol.ProvenanceMissingPolicy(),
+			"slsa_provenance",
+			"no provenance attestation found for image "+imageRef,
+		)
+	}
+
+	result, err := slsa.VerifyMultiple(provenanceAtts, pol, digest)
+	if err != nil {
+		slog.WarnContext(ctx, "SLSA verification error", "error", err)
+
+		return handleMissingAttestation(
+			pol.ProvenanceMissingPolicy(),
+			"slsa_provenance",
+			fmt.Sprintf("SLSA verification error for %s: %s", imageRef, err),
+		)
+	}
+
+	return result
+}
+
+func runVEXCheck(
+	ctx context.Context,
+	attestations []attestation.VerifiedAttestation,
+	pol *policy.Policy, met *metrics.Metrics, imageRef, digest string,
+) *types.CheckResult {
+	start := time.Now()
+
+	defer func() {
+		met.VerificationDuration.WithLabelValues("vex").Observe(
+			time.Since(start).Seconds(),
+		)
+	}()
+
+	vexAtts := filterByPredicate(attestations, attestation.PredicateOpenVEX)
+	if len(vexAtts) == 0 {
+		return handleMissingAttestation(
+			vexMissingPolicy(pol),
+			"vex",
+			"no VEX attestation found for image "+imageRef,
+		)
+	}
+
+	payloads := make([][]byte, 0, len(vexAtts))
+	for idx := range vexAtts {
+		payloads = append(payloads, vexAtts[idx].Payload)
+	}
+
+	result, err := vex.VerifyMultiple(ctx, payloads, pol, imageRef, digest)
+	if err != nil {
+		slog.WarnContext(ctx, "VEX verification error", "error", err)
+
+		return handleMissingAttestation(
+			vexMissingPolicy(pol),
+			"vex",
+			fmt.Sprintf("VEX verification error for %s: %s", imageRef, err),
+		)
+	}
+
+	return result
+}
+
+func combineResults(slsaResult, vexResult *types.CheckResult) *types.Result {
 	result := &types.Result{
 		Allowed:      true,
 		Reason:       "",
 		CheckResults: nil,
 	}
 
-	slsaResult := verifySLSAProvenance(pol, met, imageRef, digest)
-	result.CheckResults = append(result.CheckResults, slsaResult)
+	if slsaResult != nil {
+		result.CheckResults = append(result.CheckResults, *slsaResult)
+		applyCheckResult(result, slsaResult)
+	}
 
-	if !slsaResult.Passed {
-		result.Allowed = false
-		result.Reason = slsaResult.Detail
-	} else if slsaResult.Status == types.StatusWarn {
-		result.Reason = slsaResult.Detail
+	if vexResult != nil {
+		result.CheckResults = append(result.CheckResults, *vexResult)
+		applyCheckResult(result, vexResult)
 	}
 
 	return result
 }
 
-func verifySLSAProvenance(
-	pol *policy.Policy, met *metrics.Metrics, imageRef, _ string,
-) types.CheckResult {
-	start := time.Now()
+func applyCheckResult(result *types.Result, check *types.CheckResult) {
+	if !check.Passed {
+		result.Allowed = false
 
-	defer func() {
-		met.VerificationDuration.WithLabelValues(
-			"slsa_provenance",
-		).Observe(time.Since(start).Seconds())
-	}()
+		if result.Reason == "" {
+			result.Reason = check.Detail
+		} else {
+			result.Reason += "; " + check.Detail
+		}
 
-	if len(pol.Builders()) == 0 {
-		return types.CheckResult{
-			Type:   "slsa_provenance",
-			Passed: true,
-			Status: types.StatusPass,
-			Detail: "no trusted builders configured for image " + imageRef,
+		return
+	}
+
+	if check.Status == types.StatusWarn {
+		if result.Reason == "" {
+			result.Reason = check.Detail
+		} else {
+			result.Reason += "; " + check.Detail
+		}
+	}
+}
+
+func filterByPredicate(
+	attestations []attestation.VerifiedAttestation, predicateType string,
+) []attestation.VerifiedAttestation {
+	var filtered []attestation.VerifiedAttestation
+
+	for idx := range attestations {
+		if attestations[idx].PredicateType == predicateType {
+			filtered = append(filtered, attestations[idx])
 		}
 	}
 
-	return handleMissingAttestation(
-		pol.ProvenanceMissingPolicy(),
-		"slsa_provenance",
-		fmt.Sprintf(
-			"provenance attestation not found for image %s"+
-				" (cosign integration pending)",
-			imageRef,
-		),
-	)
+	return filtered
+}
+
+func filterByProvenance(
+	attestations []attestation.VerifiedAttestation,
+) []attestation.VerifiedAttestation {
+	return filterByPredicate(attestations, attestation.PredicateSLSAProvenanceV1)
+}
+
+func trustedIssuers(pol *policy.Policy) []string {
+	if pol.Trust != nil {
+		return pol.Trust.Issuers
+	}
+
+	return nil
+}
+
+func trustedKeys(pol *policy.Policy) []string {
+	if pol.Trust == nil {
+		return nil
+	}
+
+	keys := make([]string, 0, len(pol.Trust.Verifiers))
+	for idx := range pol.Trust.Verifiers {
+		keys = append(keys, pol.Trust.Verifiers[idx].Key)
+	}
+
+	return keys
+}
+
+func sanPatterns(pol *policy.Policy) []string {
+	if pol.Trust != nil {
+		return pol.Trust.SANPatterns
+	}
+
+	return nil
+}
+
+func requireTransparencyLog(pol *policy.Policy) bool {
+	return pol.Signatures != nil && pol.Signatures.RequireTransparencyLog
+}
+
+func vexMissingPolicy(pol *policy.Policy) string {
+	if pol.VEX != nil && pol.VEX.MissingPolicy != "" {
+		return pol.VEX.MissingPolicy
+	}
+
+	return config.PolicyAllow
 }
 
 func handleMissingAttestation(
 	pol, checkType, detail string,
-) types.CheckResult {
+) *types.CheckResult {
 	switch pol {
 	case config.PolicyDeny:
-		return types.CheckResult{
+		return &types.CheckResult{
 			Type: checkType, Passed: false,
 			Status: types.StatusFail, Detail: detail,
 		}
 	case config.PolicyWarn:
-		return types.CheckResult{
+		return &types.CheckResult{
 			Type: checkType, Passed: true,
 			Status: types.StatusWarn, Detail: detail,
 		}
 	case config.PolicyAllow:
-		return types.CheckResult{
+		return &types.CheckResult{
 			Type: checkType, Passed: true,
 			Status: types.StatusPass, Detail: detail,
 		}
 	default:
-		return types.CheckResult{
+		return &types.CheckResult{
 			Type: checkType, Passed: false,
 			Status: types.StatusFail, Detail: detail,
 		}
@@ -320,11 +619,24 @@ func policyForNamespace(
 	}
 }
 
-func isExcluded(excludedImages []string, imageRef string) bool {
+func buildDigestRef(imageRef, digest string) string {
+	if digest == "" || strings.Contains(imageRef, "@") {
+		return imageRef
+	}
+
+	ref, err := name.ParseReference(imageRef)
+	if err != nil {
+		return imageRef
+	}
+
+	return ref.Context().Digest(digest).String()
+}
+
+func isExcluded(ctx context.Context, excludedImages []string, imageRef string) bool {
 	for _, pattern := range excludedImages {
 		matched, err := path.Match(pattern, imageRef)
 		if err != nil {
-			slog.Debug("Malformed exclude pattern",
+			slog.DebugContext(ctx, "Malformed exclude pattern",
 				"pattern", pattern,
 				"image", imageRef,
 				"error", err,

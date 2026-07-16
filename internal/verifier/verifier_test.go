@@ -27,118 +27,293 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
-func TestVerifyDisabled(t *testing.T) {
+func TestVerify(t *testing.T) { //nolint:funlen // Table-driven test.
 	t.Parallel()
 
-	cfg := config.DefaultConfig()
+	tests := []struct {
+		name        string
+		imageRef    string
+		setupDir    func(t *testing.T) string
+		mode        string
+		wantAllowed bool
+		wantErr     error
+	}{
+		{
+			name:     "disabled mode allows",
+			imageRef: "",
+			setupDir: func(_ *testing.T) string {
+				return ""
+			},
+			mode:        config.ModeDisabled,
+			wantAllowed: true,
+			wantErr:     nil,
+		},
+		{
+			name:     "warn mode allows with deny policy",
+			imageRef: "",
+			setupDir: func(t *testing.T) string {
+				t.Helper()
 
-	v, err := verifier.New(cfg, metrics.New())
-	assertNoError(t, err)
+				dir := t.TempDir()
+				writePolicy(t, dir, "default.json", `{
+					"trust": {"builders": [{"id": "test", "maxLevel": 2}]},
+					"provenance": {"missingPolicy": "deny"}
+				}`)
 
-	result, err := v.Verify(context.Background(), "nginx:latest", "sha256:abc", "default")
-	assertNoError(t, err)
+				return dir
+			},
+			mode:        config.ModeWarn,
+			wantAllowed: true,
+			wantErr:     nil,
+		},
+		{
+			name:     "enforce mode rejects with deny policy",
+			imageRef: "",
+			setupDir: func(t *testing.T) string {
+				t.Helper()
 
-	if !result.Allowed {
-		t.Error("expected allowed when disabled")
+				dir := t.TempDir()
+				writePolicy(t, dir, "default.json", `{
+					"trust": {"builders": [{"id": "test", "maxLevel": 2}]},
+					"provenance": {"missingPolicy": "deny"}
+				}`)
+
+				return dir
+			},
+			mode:        config.ModeEnforce,
+			wantAllowed: false,
+			wantErr:     verifier.ErrVerificationFailed,
+		},
+		{
+			name:     "excluded image allowed",
+			imageRef: "gcr.io/internal/app",
+			setupDir: func(t *testing.T) string {
+				t.Helper()
+
+				dir := t.TempDir()
+				writePolicy(t, dir, "default.json", `{
+					"exclude": ["gcr.io/internal/*"],
+					"trust": {"builders": [{"id": "test", "maxLevel": 3}]},
+					"provenance": {"missingPolicy": "deny"}
+				}`)
+
+				return dir
+			},
+			mode:        config.ModeEnforce,
+			wantAllowed: true,
+			wantErr:     nil,
+		},
+		{
+			name:     "no builders configured allows",
+			imageRef: "",
+			setupDir: func(t *testing.T) string {
+				t.Helper()
+
+				dir := t.TempDir()
+				writePolicy(t, dir, "default.json", `{}`)
+
+				return dir
+			},
+			mode:        config.ModeEnforce,
+			wantAllowed: true,
+			wantErr:     nil,
+		},
+		{
+			name:     "allow policy allows",
+			imageRef: "",
+			setupDir: func(t *testing.T) string {
+				t.Helper()
+
+				dir := t.TempDir()
+				writePolicy(t, dir, "default.json", `{
+					"trust": {"builders": [{"id": "test", "maxLevel": 3}]},
+					"provenance": {"missingPolicy": "allow"}
+				}`)
+
+				return dir
+			},
+			mode:        config.ModeEnforce,
+			wantAllowed: true,
+			wantErr:     nil,
+		},
+		{
+			name:     "warn policy allows with reason",
+			imageRef: "",
+			setupDir: func(t *testing.T) string {
+				t.Helper()
+
+				dir := t.TempDir()
+				writePolicy(t, dir, "default.json", `{
+					"trust": {"builders": [{"id": "test", "maxLevel": 3}]},
+					"provenance": {"missingPolicy": "warn"}
+				}`)
+
+				return dir
+			},
+			mode:        config.ModeEnforce,
+			wantAllowed: true,
+			wantErr:     nil,
+		},
+		{
+			name:     "fallback empty policy allows",
+			imageRef: "",
+			setupDir: func(t *testing.T) string {
+				t.Helper()
+
+				return t.TempDir()
+			},
+			mode:        config.ModeEnforce,
+			wantAllowed: true,
+			wantErr:     nil,
+		},
+		{
+			name:     "VEX deny policy rejects",
+			imageRef: "",
+			setupDir: func(t *testing.T) string {
+				t.Helper()
+
+				dir := t.TempDir()
+				writePolicy(t, dir, "default.json", `{
+					"provenance": {"missingPolicy": "allow"},
+					"vex": {"missingPolicy": "deny"}
+				}`)
+
+				return dir
+			},
+			mode:        config.ModeEnforce,
+			wantAllowed: false,
+			wantErr:     verifier.ErrVerificationFailed,
+		},
+		{
+			name:     "disabled skips nonexistent policy dir",
+			imageRef: "",
+			setupDir: func(_ *testing.T) string {
+				return "/nonexistent/path"
+			},
+			mode:        config.ModeDisabled,
+			wantAllowed: true,
+			wantErr:     nil,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := test.setupDir(t)
+
+			cfg := config.DefaultConfig()
+			cfg.Verification = test.mode
+
+			if dir != "" {
+				cfg.PolicyDir = dir
+			}
+
+			imageRef := test.imageRef
+			if imageRef == "" {
+				imageRef = "nginx:latest"
+			}
+
+			verif, err := verifier.New(cfg, metrics.New(), nil)
+			assertNoError(t, err)
+
+			result, err := verif.Verify(
+				context.Background(), imageRef, "sha256:abc", "default",
+			)
+
+			if test.wantErr != nil {
+				if !errors.Is(err, test.wantErr) {
+					t.Errorf("expected error %v, got %v", test.wantErr, err)
+				}
+
+				return
+			}
+
+			assertNoError(t, err)
+
+			if result.Allowed != test.wantAllowed {
+				t.Errorf("expected allowed=%v, got allowed=%v (reason: %s)",
+					test.wantAllowed, result.Allowed, result.Reason)
+			}
+		})
 	}
 }
 
-func TestNewError(t *testing.T) {
+func TestVerifyCache(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	writePolicy(t, dir, "bad.json", `{invalid json}`)
+	writePolicy(t, dir, "default.json", `{}`)
 
 	cfg := config.DefaultConfig()
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = dir
+	cfg.CacheTTL = config.Duration{Duration: time.Hour}
 
-	_, err := verifier.New(cfg, metrics.New())
-	if err == nil {
-		t.Error("expected error for invalid policy")
-	}
-}
-
-func TestVerifyWarnMode(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	writePolicy(t, dir, "default.json", `{
-		"trust": {
-			"builders": [{"id": "https://example.com/builder", "maxLevel": 2}]
-		},
-		"provenance": {"missingPolicy": "deny"}
-	}`)
-
-	cfg := config.DefaultConfig()
-	cfg.Verification = config.ModeWarn
-	cfg.PolicyDir = dir
-
-	v, err := verifier.New(cfg, metrics.New())
+	verif, err := verifier.New(cfg, metrics.New(), nil)
 	assertNoError(t, err)
 
-	result, err := v.Verify(context.Background(), "nginx:latest", "sha256:abc", "default")
-	assertNoError(t, err)
-
-	if !result.Allowed {
-		t.Error("expected allowed in warn mode even with deny policy")
-	}
-}
-
-func TestVerifyEnforceMode(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	writePolicy(t, dir, "default.json", `{
-		"trust": {
-			"builders": [{"id": "https://example.com/builder", "maxLevel": 2}]
-		},
-		"provenance": {"missingPolicy": "deny"}
-	}`)
-
-	cfg := config.DefaultConfig()
-	cfg.Verification = config.ModeEnforce
-	cfg.PolicyDir = dir
-
-	v, err := verifier.New(cfg, metrics.New())
-	assertNoError(t, err)
-
-	_, err = v.Verify(context.Background(), "nginx:latest", "sha256:abc", "default")
-	if err == nil {
-		t.Fatal("expected error in enforce mode with deny policy")
-	}
-
-	if !errors.Is(err, verifier.ErrVerificationFailed) {
-		t.Errorf("expected ErrVerificationFailed, got %v", err)
-	}
-}
-
-func TestVerifyExcluded(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	writePolicy(t, dir, "default.json", `{
-		"exclude": ["gcr.io/internal/*"],
-		"trust": {
-			"builders": [{"id": "test", "maxLevel": 3}]
-		},
-		"provenance": {"missingPolicy": "deny"}
-	}`)
-
-	cfg := config.DefaultConfig()
-	cfg.Verification = config.ModeEnforce
-	cfg.PolicyDir = dir
-
-	v, err := verifier.New(cfg, metrics.New())
-	assertNoError(t, err)
-
-	result, err := v.Verify(
-		context.Background(), "gcr.io/internal/app", "sha256:abc", "default",
+	result1, err := verif.Verify(
+		context.Background(), "nginx:latest", "sha256:abc", "default",
 	)
 	assertNoError(t, err)
 
-	if !result.Allowed {
-		t.Error("expected excluded image to be allowed")
+	result2, err := verif.Verify(
+		context.Background(), "nginx:latest", "sha256:abc", "default",
+	)
+	assertNoError(t, err)
+
+	if result1.Reason != result2.Reason {
+		t.Errorf("expected cached result to match: %q vs %q",
+			result1.Reason, result2.Reason)
+	}
+}
+
+func TestVerifyCacheWarnMode(t *testing.T) {
+	t.Parallel()
+
+	// Warn mode with deny policy: the underlying check fails (no provenance),
+	// but warn mode overrides to Allowed=true. The cached result must also
+	// be Allowed=true on subsequent lookups.
+	dir := t.TempDir()
+	writePolicy(t, dir, "default.json", `{
+		"trust": {"builders": [{"id": "test", "maxLevel": 2}]},
+		"provenance": {"missingPolicy": "deny"}
+	}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+	cfg.CacheTTL = config.Duration{Duration: time.Hour}
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	assertNoError(t, err)
+
+	result1, err := verif.Verify(
+		context.Background(), "nginx:latest", "sha256:warn-cache", "default",
+	)
+	assertNoError(t, err)
+
+	if !result1.Allowed {
+		t.Fatalf("first call: expected Allowed=true in warn mode, got false (reason: %s)",
+			result1.Reason)
+	}
+
+	result2, err := verif.Verify(
+		context.Background(), "nginx:latest", "sha256:warn-cache", "default",
+	)
+	assertNoError(t, err)
+
+	if !result2.Allowed {
+		t.Fatalf(
+			"second call (cache hit): expected Allowed=true in warn mode, got false (reason: %s)",
+			result2.Reason,
+		)
+	}
+
+	if result1.Reason != result2.Reason {
+		t.Errorf("expected cached reason to match: %q vs %q",
+			result1.Reason, result2.Reason)
 	}
 }
 
@@ -147,9 +322,7 @@ func TestVerifyNamespacePolicy(t *testing.T) {
 
 	dir := t.TempDir()
 	writePolicy(t, dir, "default.json", `{
-		"trust": {
-			"builders": [{"id": "test", "maxLevel": 3}]
-		},
+		"trust": {"builders": [{"id": "test", "maxLevel": 3}]},
 		"provenance": {"missingPolicy": "deny"}
 	}`)
 	writePolicy(t, dir, "staging.json", `{
@@ -160,7 +333,7 @@ func TestVerifyNamespacePolicy(t *testing.T) {
 	cfg.Verification = config.ModeEnforce
 	cfg.PolicyDir = dir
 
-	verif, err := verifier.New(cfg, metrics.New())
+	verif, err := verifier.New(cfg, metrics.New(), nil)
 	assertNoError(t, err)
 
 	_, err = verif.Verify(
@@ -180,260 +353,156 @@ func TestVerifyNamespacePolicy(t *testing.T) {
 	}
 }
 
-func TestVerifyNoBuilders(t *testing.T) {
+func TestNew(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	writePolicy(t, dir, "default.json", `{}`)
+	tests := []struct {
+		name    string
+		setup   func(t *testing.T) *config.Config
+		wantErr bool
+	}{
+		{
+			name: "invalid policy",
+			setup: func(t *testing.T) *config.Config {
+				t.Helper()
 
-	cfg := config.DefaultConfig()
-	cfg.Verification = config.ModeEnforce
-	cfg.PolicyDir = dir
+				dir := t.TempDir()
+				writePolicy(t, dir, "bad.json", `{invalid json}`)
 
-	v, err := verifier.New(cfg, metrics.New())
-	assertNoError(t, err)
+				cfg := config.DefaultConfig()
+				cfg.Verification = config.ModeWarn
+				cfg.PolicyDir = dir
 
-	result, err := v.Verify(
-		context.Background(), "nginx:latest", "sha256:abc", "default",
-	)
-	assertNoError(t, err)
-
-	if !result.Allowed {
-		t.Error("expected allowed with no builders configured")
-	}
-}
-
-func TestVerifyCache(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	writePolicy(t, dir, "default.json", `{}`)
-
-	cfg := config.DefaultConfig()
-	cfg.Verification = config.ModeWarn
-	cfg.PolicyDir = dir
-	cfg.CacheTTL = config.Duration{Duration: time.Hour}
-
-	verif, err := verifier.New(cfg, metrics.New())
-	assertNoError(t, err)
-
-	result1, err := verif.Verify(
-		context.Background(), "nginx:latest", "sha256:abc", "default",
-	)
-	assertNoError(t, err)
-
-	result2, err := verif.Verify(
-		context.Background(), "nginx:latest", "sha256:abc", "default",
-	)
-	assertNoError(t, err)
-
-	if result1.Reason != result2.Reason {
-		t.Errorf(
-			"expected cached result to match: %q vs %q",
-			result1.Reason, result2.Reason,
-		)
-	}
-}
-
-func TestVerifyAllowPolicy(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	writePolicy(t, dir, "default.json", `{
-		"trust": {
-			"builders": [{"id": "test", "maxLevel": 3}]
+				return cfg
+			},
+			wantErr: true,
 		},
-		"provenance": {"missingPolicy": "allow"}
-	}`)
+		{
+			name: "disabled skips policy load",
+			setup: func(_ *testing.T) *config.Config {
+				cfg := config.DefaultConfig()
+				cfg.PolicyDir = "/nonexistent/path"
 
-	cfg := config.DefaultConfig()
-	cfg.Verification = config.ModeEnforce
-	cfg.PolicyDir = dir
-
-	v, err := verifier.New(cfg, metrics.New())
-	assertNoError(t, err)
-
-	result, err := v.Verify(
-		context.Background(), "nginx:latest", "sha256:abc", "default",
-	)
-	assertNoError(t, err)
-
-	if !result.Allowed {
-		t.Error("expected allowed with allow policy")
-	}
-}
-
-func TestVerifyWarnPolicy(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	writePolicy(t, dir, "default.json", `{
-		"trust": {
-			"builders": [{"id": "test", "maxLevel": 3}]
+				return cfg
+			},
+			wantErr: false,
 		},
-		"provenance": {"missingPolicy": "warn"}
-	}`)
-
-	cfg := config.DefaultConfig()
-	cfg.Verification = config.ModeEnforce
-	cfg.PolicyDir = dir
-
-	v, err := verifier.New(cfg, metrics.New())
-	assertNoError(t, err)
-
-	result, err := v.Verify(
-		context.Background(), "nginx:latest", "sha256:abc", "default",
-	)
-	assertNoError(t, err)
-
-	if !result.Allowed {
-		t.Error("expected allowed with warn policy")
 	}
 
-	if result.Reason == "" {
-		t.Error("expected non-empty reason for warn result")
-	}
-}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 
-func TestVerifyFallbackPolicy(t *testing.T) {
-	t.Parallel()
+			cfg := test.setup(t)
+			_, err := verifier.New(cfg, metrics.New(), nil)
 
-	dir := t.TempDir()
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
 
-	cfg := config.DefaultConfig()
-	cfg.Verification = config.ModeEnforce
-	cfg.PolicyDir = dir
+				return
+			}
 
-	v, err := verifier.New(cfg, metrics.New())
-	assertNoError(t, err)
-
-	result, err := v.Verify(
-		context.Background(), "nginx:latest", "sha256:abc", "unknown-ns",
-	)
-	assertNoError(t, err)
-
-	if !result.Allowed {
-		t.Error("expected allowed with empty fallback policy")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
 	}
 }
 
-func TestVerifyMalformedExcludePattern(t *testing.T) {
+func TestReload(t *testing.T) { //nolint:funlen // Table-driven test.
 	t.Parallel()
 
-	dir := t.TempDir()
-	writePolicy(t, dir, "default.json", `{
-		"exclude": ["valid-pattern*"],
-		"trust": {
-			"builders": [{"id": "test", "maxLevel": 3}]
+	tests := []struct {
+		name    string
+		newCfg  func(t *testing.T) *config.Config
+		wantErr bool
+	}{
+		{
+			name: "success",
+			newCfg: func(t *testing.T) *config.Config {
+				t.Helper()
+
+				dir := t.TempDir()
+				writePolicy(t, dir, "default.json", `{}`)
+
+				cfg := config.DefaultConfig()
+				cfg.Verification = config.ModeEnforce
+				cfg.PolicyDir = dir
+
+				return cfg
+			},
+			wantErr: false,
 		},
-		"provenance": {"missingPolicy": "allow"}
-	}`)
+		{
+			name: "invalid policy",
+			newCfg: func(t *testing.T) *config.Config {
+				t.Helper()
 
-	cfg := config.DefaultConfig()
-	cfg.Verification = config.ModeWarn
-	cfg.PolicyDir = dir
+				dir := t.TempDir()
+				writePolicy(t, dir, "bad.json", `{invalid json}`)
 
-	v, err := verifier.New(cfg, metrics.New())
-	assertNoError(t, err)
+				cfg := config.DefaultConfig()
+				cfg.Verification = config.ModeEnforce
+				cfg.PolicyDir = dir
 
-	result, err := v.Verify(
-		context.Background(), "nginx:latest", "sha256:abc", "default",
-	)
-	assertNoError(t, err)
+				return cfg
+			},
+			wantErr: true,
+		},
+		{
+			name: "reload to disabled",
+			newCfg: func(_ *testing.T) *config.Config {
+				return config.DefaultConfig()
+			},
+			wantErr: false,
+		},
+		{
+			name: "creates new fetcher",
+			newCfg: func(t *testing.T) *config.Config {
+				t.Helper()
 
-	if !result.Allowed {
-		t.Error("expected allowed")
+				dir := t.TempDir()
+				writePolicy(t, dir, "default.json", `{}`)
+
+				cfg := config.DefaultConfig()
+				cfg.Verification = config.ModeWarn
+				cfg.PolicyDir = dir
+
+				return cfg
+			},
+			wantErr: false,
+		},
 	}
-}
 
-func TestVerifyNewWithDisabledSkipsPolicyLoad(t *testing.T) {
-	t.Parallel()
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 
-	cfg := config.DefaultConfig()
-	cfg.PolicyDir = "/nonexistent/path"
+			dir := t.TempDir()
+			writePolicy(t, dir, "default.json", `{}`)
 
-	v, err := verifier.New(cfg, metrics.New())
-	assertNoError(t, err)
+			cfg := config.DefaultConfig()
+			cfg.Verification = config.ModeWarn
+			cfg.PolicyDir = dir
 
-	result, err := v.Verify(
-		context.Background(), "nginx:latest", "sha256:abc", "default",
-	)
-	assertNoError(t, err)
+			verif, err := verifier.New(cfg, metrics.New(), nil)
+			assertNoError(t, err)
 
-	if !result.Allowed {
-		t.Error("expected allowed when disabled")
-	}
-}
+			newCfg := test.newCfg(t)
+			err = verif.Reload(newCfg)
 
-func TestReload(t *testing.T) {
-	t.Parallel()
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
 
-	dir := t.TempDir()
-	writePolicy(t, dir, "default.json", `{}`)
+				return
+			}
 
-	cfg := config.DefaultConfig()
-	cfg.Verification = config.ModeWarn
-	cfg.PolicyDir = dir
-
-	verif, err := verifier.New(cfg, metrics.New())
-	assertNoError(t, err)
-
-	newCfg := config.DefaultConfig()
-	newCfg.Verification = config.ModeEnforce
-	newCfg.PolicyDir = dir
-
-	assertNoError(t, verif.Reload(newCfg))
-}
-
-func TestReloadError(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	writePolicy(t, dir, "default.json", `{}`)
-
-	cfg := config.DefaultConfig()
-	cfg.Verification = config.ModeWarn
-	cfg.PolicyDir = dir
-
-	verif, err := verifier.New(cfg, metrics.New())
-	assertNoError(t, err)
-
-	badDir := t.TempDir()
-	writePolicy(t, badDir, "bad.json", `{invalid json}`)
-
-	badCfg := config.DefaultConfig()
-	badCfg.Verification = config.ModeEnforce
-	badCfg.PolicyDir = badDir
-
-	err = verif.Reload(badCfg)
-	if err == nil {
-		t.Error("expected error reloading with invalid policy")
-	}
-}
-
-func TestReloadDisabled(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	writePolicy(t, dir, "default.json", `{}`)
-
-	cfg := config.DefaultConfig()
-	cfg.Verification = config.ModeWarn
-	cfg.PolicyDir = dir
-
-	verif, err := verifier.New(cfg, metrics.New())
-	assertNoError(t, err)
-
-	disabledCfg := config.DefaultConfig()
-	assertNoError(t, verif.Reload(disabledCfg))
-
-	result, err := verif.Verify(
-		context.Background(), "nginx:latest", "sha256:abc", "default",
-	)
-	assertNoError(t, err)
-
-	if !result.Allowed {
-		t.Error("expected allowed after reload to disabled")
+			assertNoError(t, err)
+		})
 	}
 }
 

@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
@@ -88,6 +89,9 @@ type TrustPolicy struct {
 	Verifiers []TrustedVerifier `json:"verifiers"`
 	// Issuers is the list of trusted signing identity issuers (Fulcio/OIDC).
 	Issuers []string `json:"issuers"`
+	// SANPatterns restricts accepted certificate Subject Alternative Names.
+	// When empty, any SAN from a trusted issuer is accepted.
+	SANPatterns []string `json:"sanPatterns,omitempty"`
 	// Sources is a list of allowed source repository patterns.
 	Sources []string `json:"sources"`
 	// BuildTypes is a list of accepted build type URIs.
@@ -106,7 +110,8 @@ type TrustedBuilder struct {
 type TrustedVerifier struct {
 	// ID is the verifier identity URI.
 	ID string `json:"id"`
-	// Key is the path to the verifier's public key file.
+	// Key is the absolute path to the verifier's public key file (PEM-encoded).
+	// Used both for VSA verifier identity trust and for Sigstore bundle signature verification.
 	Key string `json:"key"`
 }
 
@@ -120,7 +125,9 @@ type ProvenancePolicy struct {
 
 // VEXPolicy contains VEX verification settings.
 type VEXPolicy struct {
-	// SeverityThreshold is the minimum severity for "affected" status to trigger rejection.
+	// SeverityThreshold is reserved for future use. OpenVEX v0.2 does not carry
+	// per-statement severity, so this field is currently not evaluated. Any
+	// "affected" status triggers rejection regardless of this setting.
 	SeverityThreshold string `json:"severityThreshold,omitempty"`
 	// MissingPolicy controls behavior when no VEX attestation is found.
 	MissingPolicy string `json:"missingPolicy,omitempty"`
@@ -291,6 +298,15 @@ func (p *Policy) validateTrust() error {
 		}
 	}
 
+	err := validateGlobPatterns("trust.sources", p.Trust.Sources)
+	if err != nil {
+		return err
+	}
+
+	return p.validateVerifiers()
+}
+
+func (p *Policy) validateVerifiers() error {
 	for idx, verif := range p.Trust.Verifiers {
 		if verif.ID == "" {
 			return fmt.Errorf(
@@ -316,15 +332,21 @@ func (p *Policy) validateTrust() error {
 	return nil
 }
 
-func (p *Policy) validateExclude() error {
-	for _, pattern := range p.Exclude {
+func validateGlobPatterns(field string, patterns []string) error {
+	for idx, pattern := range patterns {
 		_, err := path.Match(pattern, "")
 		if err != nil {
-			return fmt.Errorf("invalid exclude pattern %q: %w", pattern, err)
+			return fmt.Errorf(
+				"invalid %s[%d] pattern %q: %w", field, idx, pattern, err,
+			)
 		}
 	}
 
 	return nil
+}
+
+func (p *Policy) validateExclude() error {
+	return validateGlobPatterns("exclude", p.Exclude)
 }
 
 func (p *Policy) validateProvenance() error {
@@ -357,6 +379,12 @@ func (p *Policy) validateVEX() error {
 				"%w: %q", ErrSeverityThreshold, p.VEX.SeverityThreshold,
 			)
 		}
+
+		slog.Warn(
+			"vex.severityThreshold is accepted but not yet evaluated; "+
+				"all affected statuses trigger rejection regardless of threshold",
+			"threshold", p.VEX.SeverityThreshold,
+		)
 	}
 
 	if p.VEX.MissingPolicy != "" {

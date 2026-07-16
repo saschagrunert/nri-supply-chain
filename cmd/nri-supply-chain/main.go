@@ -30,16 +30,16 @@ import (
 	"github.com/containerd/nri/pkg/stub"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/plugin"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
-const (
-	version           = "0.1.0"
-	readHeaderTimeout = 10 * time.Second
-)
+var version = "0.1.0"
+
+const readHeaderTimeout = 10 * time.Second
 
 type options struct {
 	configPath  string
@@ -74,7 +74,12 @@ func run() int {
 
 	met := metrics.New()
 
-	verif, err := verifier.New(cfg, met)
+	var fetcher attestation.Fetcher
+	if cfg.Enabled() {
+		fetcher = attestation.NewOCIFetcher()
+	}
+
+	verif, err := verifier.New(cfg, met, fetcher)
 	if err != nil {
 		slog.Error("Failed to create verifier", "error", err)
 
@@ -233,6 +238,15 @@ func setupReload(configPath string, verif *verifier.Verifier) {
 				slog.Error("Config reload failed", "error", err)
 
 				continue
+			}
+
+			if newCfg.Enabled() {
+				err = newCfg.ValidateRuntime()
+				if err != nil {
+					slog.Error("Config reload validation failed", "error", err)
+
+					continue
+				}
 			}
 
 			reloadErr := verif.Reload(newCfg)

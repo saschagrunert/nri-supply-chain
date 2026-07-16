@@ -5,60 +5,160 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/saschagrunert/nri-supply-chain.svg)](https://pkg.go.dev/github.com/saschagrunert/nri-supply-chain)
 
 An [NRI](https://github.com/containerd/nri) plugin for supply chain attestation
-verification. It intercepts container creation events on
-[CRI-O](https://cri-o.io) or [containerd](https://containerd.io) and verifies
-SLSA provenance, VEX, VSA, and signatures before a container is allowed to run.
+verification at the container runtime level. It intercepts container creation
+events on [CRI-O](https://cri-o.io) or [containerd](https://containerd.io) and
+verifies SLSA provenance, VEX, and VSA attestations before a container is
+allowed to run.
 
-## How It Works
+Runtime-level enforcement cannot be bypassed by misconfigured admission
+webhooks, disabled policy controllers, or direct kubelet API calls. The plugin
+operates below the Kubernetes API layer, so every container that runs on a node
+must pass verification.
 
-The plugin registers with the container runtime via the Node Resource Interface
-(NRI). When a new container is created, the plugin:
+## Architecture
 
-1. Extracts the image reference and digest from CRI-O container annotations
-2. Looks up the per-namespace policy (or falls back to `default.json`)
-3. Verifies attestations against the policy (SLSA provenance, VEX, VSA,
-   signatures)
-4. In `enforce` mode, rejects the container if verification fails
-5. In `warn` mode, logs the failure but allows the container
+```mermaid
+flowchart TD
+    Runtime["Container Runtime\n(CRI-O / containerd)"]
+    NRI["NRI Hook\n(CreateContainer)"]
+    Plugin["nri-supply-chain"]
+    Extract["Extract image ref + digest"]
+    Policy["Policy lookup\n(namespace or default)"]
+    Exclude{"Excluded?"}
+    Cache{"Cache hit?"}
+    Fetch["Fetch attestations\n(OCI Referrers API)"]
+    VSA{"Trusted VSA?"}
+    Parallel["SLSA + VEX\n(parallel)"]
+    Enforce{"Enforce / Warn"}
+    Allow["Allow container"]
+    Reject["Reject container"]
+    Registry["OCI Registry"]
 
-## Installation
-
-### Build from source
-
-```console
-make build
+    Runtime --> NRI --> Plugin --> Extract --> Policy --> Exclude
+    Exclude -- yes --> Allow
+    Exclude -- no --> Cache
+    Cache -- hit --> Enforce
+    Cache -- miss --> Fetch
+    Fetch <--> Registry
+    Fetch --> VSA
+    VSA -- "PASSED" --> Enforce
+    VSA -- "FAILED" --> Enforce
+    VSA -- "untrusted / stale / missing" --> Parallel
+    Parallel --> Enforce
+    Enforce -- pass --> Allow
+    Enforce -- "fail (enforce mode)" --> Reject
+    Enforce -- "fail (warn mode)" --> Allow
 ```
 
-The binary is placed at `build/nri-supply-chain`.
+The plugin runs as a long-lived process that connects to the container runtime
+via NRI. It exposes Prometheus metrics and supports live config reload via
+SIGHUP.
 
-### Pre-installed NRI plugin
+## Verification Flow
 
-Copy the binary to the NRI plugin directory:
+When a container is created, the plugin performs verification in this order:
 
-```console
-cp build/nri-supply-chain /opt/nri/plugins/10-supply-chain
-```
+1. **Image identification**: Extracts the image reference and digest from
+   container annotations.
 
-### External NRI plugin
+2. **Policy resolution**: Looks up `<namespace>.json` in the policy directory.
+   Falls back to `default.json` if no namespace-specific policy exists.
 
-Run the binary directly and it connects to the NRI socket:
+3. **Exclusion check**: If the image matches any `exclude` glob pattern in the
+   policy, verification is skipped.
 
-```console
-./nri-supply-chain --config /etc/nri-supply-chain/config.toml
-```
+4. **Cache check**: If a cached result exists for this image digest and is
+   within the configured TTL, returns it immediately.
+
+5. **Attestation fetch**: Discovers attestations via the OCI Referrers API.
+   Filters for DSSE-enveloped attestation bundles and extracts payloads.
+
+6. **VSA-first evaluation**:
+   - If a trusted PASSED VSA is found, skip SLSA and VEX checks entirely.
+   - If a trusted FAILED VSA is found, hard reject immediately (no fallback).
+   - If no VSA is found, or the VSA is from an untrusted verifier or stale,
+     fall through to direct verification.
+
+7. **Parallel SLSA + VEX verification**: When VSA does not short-circuit,
+   SLSA provenance and VEX checks run concurrently.
+
+8. **Enforcement**: In `enforce` mode, failed verification rejects the
+   container. In `warn` mode, failures are logged but allowed.
+
+9. **Caching**: The result is cached for future lookups.
+
+Latency model:
+- With trusted VSA: `fetch + VSA verify`
+- Without VSA: `fetch + max(SLSA verify, VEX verify)`
+
+## Verification Types
+
+### SLSA Provenance
+
+Verifies [SLSA](https://slsa.dev) provenance attestations (v1 and v0.2).
+
+Checks performed:
+- **Subject digest**: The provenance `subject[].digest` must match the image
+  digest.
+- **Builder trust**: `runDetails.builder.id` must appear in the policy's
+  `trust.builders` list.
+- **Build type**: If `trust.buildTypes` is configured, the
+  `buildDefinition.buildType` must match one of the allowed types.
+- **Source repository**: If `trust.sources` is configured, the `source` in
+  `externalParameters` must match an allowed glob pattern.
+- **Unknown parameters**: If `provenance.rejectUnknownParameters` is enabled,
+  unrecognized `externalParameters` fields cause rejection.
+
+When multiple provenance attestations exist, verification passes if any single
+valid attestation from a trusted builder passes (any-pass semantics).
+
+### VEX (Vulnerability Exploitability eXchange)
+
+Verifies [OpenVEX](https://openvex.dev) v0.2.0 documents.
+
+Status handling:
+- `not_affected` or `fixed`: pass
+- `affected` with severity >= `severityThreshold`: fail
+- `under_investigation`: controlled by `underInvestigationPolicy` (default:
+  allow with warning)
+
+Product matching operates at the image level using digest comparison and PURL
+(`pkg:oci/...`) matching.
+
+When multiple VEX documents exist, the most restrictive result wins: any
+`affected` status above the severity threshold causes failure.
+
+### VSA (Verification Summary Attestation)
+
+Verifies [SLSA VSA](https://slsa.dev/spec/v1.0/verification_summary) v1
+attestations.
+
+Checks performed:
+- **Verifier trust**: `verifier.id` must appear in `trust.verifiers`.
+- **Verification result**: `PASSED` is required. `FAILED` from a trusted
+  verifier is a hard reject that prevents fallback to SLSA/VEX.
+- **Build level**: `verifiedLevels` must meet the `vsa.minimumLevel` threshold.
+- **Resource URI**: `resourceUri` must match the image reference.
+- **SLSA version**: `slsaVersion` must be >= `1.0`.
+- **Policy match**: If `vsa.policy` is configured, `policy.uri` must match.
+- **Freshness**: `timeVerified` must be within the `vsa.maxAge` window.
+
+VSA-first logic:
+- Trusted PASSED: short-circuits all other checks.
+- Trusted FAILED: hard reject, no fallback allowed.
+- Untrusted, stale, or missing: falls through to direct SLSA + VEX
+  verification.
 
 ## Configuration
 
-The plugin uses two layers of configuration:
+The plugin uses two configuration layers:
 
-- **Operational config** (TOML): controls the plugin's behavior (verification
-  mode, timeouts, cache, metrics)
-- **Policy files** (JSON): define per-namespace trust and verification
-  requirements
+- **Operational config** (TOML): controls the plugin behavior (mode, timeouts,
+  cache, metrics).
+- **Policy files** (JSON): define per-namespace trust roots and verification
+  requirements.
 
 ### Operational Config
-
-See [`examples/config.toml`](examples/config.toml) for a complete example.
 
 ```toml
 verification = "warn"
@@ -71,20 +171,18 @@ metrics_addr = ":9090"
 
 | Field | Default | Description |
 |---|---|---|
-| `verification` | `disabled` | `disabled`, `warn` (log-only), `enforce` (reject) |
-| `fetch_timeout` | `30s` | Per-fetch timeout for retrieving attestations |
-| `fetch_failure_policy` | `warn` | Behavior on network errors: `allow`, `warn`, `deny` |
-| `cache_ttl` | `24h` | TTL for cached verification results (`0s` to disable) |
+| `verification` | `disabled` | Mode: `disabled`, `warn` (log-only), `enforce` (reject on failure) |
+| `fetch_timeout` | `30s` | Per-fetch timeout for retrieving attestations from the registry |
+| `fetch_failure_policy` | `warn` | Behavior when attestation fetch fails: `allow`, `warn`, `deny` |
+| `cache_ttl` | `24h` | TTL for cached verification results (`0s` disables caching) |
 | `policy_dir` | `/etc/nri-supply-chain/policies` | Directory containing JSON policy files |
 | `metrics_addr` | `:9090` | Prometheus metrics HTTP listen address |
 
 ### Policy Files
 
-Policy files are JSON documents placed in `policy_dir`. The file
-`default.json` applies to all namespaces. A file named `<namespace>.json`
-overrides the default for that namespace.
-
-See [`examples/policies/`](examples/policies/) for sample policies.
+Policy files are JSON documents in `policy_dir`. The file `default.json`
+applies to all namespaces. A file named `<namespace>.json` overrides the
+default for that namespace (full override, not merge).
 
 ```json
 {
@@ -93,15 +191,209 @@ See [`examples/policies/`](examples/policies/) for sample policies.
       {"id": "https://github.com/actions/runner", "maxLevel": 3}
     ],
     "verifiers": [
-      {"id": "sigstore", "key": "/etc/keys/cosign.pub"}
-    ]
+      {"id": "https://example.com/verifier", "key": "/etc/keys/verifier.pub"}
+    ],
+    "issuers": ["https://accounts.google.com"],
+    "sources": ["github.com/myorg/*"],
+    "buildTypes": ["https://actions.github.io/buildtypes/workflow/v1"]
   },
+  "exclude": ["test-*", "dev-*"],
   "provenance": {
-    "missingPolicy": "deny"
+    "missingPolicy": "deny",
+    "rejectUnknownParameters": true
   },
   "vex": {
     "severityThreshold": "high",
-    "missingPolicy": "warn"
+    "missingPolicy": "allow",
+    "underInvestigationPolicy": "allow"
+  },
+  "vsa": {
+    "minimumLevel": 2,
+    "maxAge": "24h",
+    "policy": "https://example.com/policy"
+  },
+  "signatures": {
+    "requireTransparencyLog": true
+  }
+}
+```
+
+#### Policy Field Reference
+
+**`trust`** (object): Trust roots for verification.
+
+| Field | Type | Description |
+|---|---|---|
+| `builders` | array | Trusted SLSA provenance builders. Each entry has `id` (URI) and `maxLevel` (0-3). |
+| `verifiers` | array | Trusted VSA verifiers. Each entry has `id` (URI) and `key` (absolute path to public key). |
+| `issuers` | array | Trusted OIDC issuers for keyless (Fulcio) verification. |
+| `sources` | array | Allowed source repository glob patterns (Go `path.Match` syntax). |
+| `sanPatterns` | array | Accepted certificate Subject Alternative Names. When empty, any SAN from a trusted issuer is accepted. |
+| `buildTypes` | array | Accepted build type URIs. |
+
+**`exclude`** (array of strings): Glob patterns for images that skip
+verification. Uses Go `path.Match` semantics.
+
+> **Note:** Go `path.Match` uses `*` which matches any sequence of non-`/`
+> characters. A pattern like `github.com/example/*` will match
+> `github.com/example/repo` but not `github.com/example/org/repo`. Use
+> multiple patterns for nested paths.
+
+**`provenance`** (object): SLSA provenance settings.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `missingPolicy` | string | `allow` | Behavior when no provenance is found: `allow`, `warn`, `deny` |
+| `rejectUnknownParameters` | bool | `false` | Reject provenance with unrecognized `externalParameters` (known keys are GitHub Actions specific: `source`, `repository`, `ref`, `workflow`, `buildType`; disable for other build systems) |
+
+**`vex`** (object): VEX settings.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `severityThreshold` | string | (none) | Minimum severity to trigger rejection: `low`, `medium`, `high`, `critical` |
+| `missingPolicy` | string | `allow` | Behavior when no VEX attestation is found: `allow`, `warn`, `deny` |
+| `underInvestigationPolicy` | string | `allow` | Behavior for `under_investigation` status: `allow`, `warn`, `deny` |
+
+**`vsa`** (object): VSA settings.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `minimumLevel` | int | `0` | Minimum SLSA build level required (0-3) |
+| `maxAge` | string | (none) | Maximum age of VSA `timeVerified` (Go duration, e.g. `24h`) |
+| `policy` | string | (none) | Expected policy URI in the VSA |
+
+**`signatures`** (object): Signature verification settings.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `requireTransparencyLog` | bool | `false` | Require Rekor transparency log inclusion for attestation signatures |
+
+## Deployment
+
+### Pre-installed NRI Plugin
+
+Copy the binary to the NRI plugin directory. The filename encodes the plugin
+index and name:
+
+```console
+cp build/nri-supply-chain /opt/nri/plugins/10-supply-chain
+```
+
+The runtime invokes the plugin automatically on container creation.
+
+### External NRI Plugin
+
+Run as a standalone process that connects to the NRI socket:
+
+```console
+./nri-supply-chain --config /etc/nri-supply-chain/config.toml
+```
+
+Example systemd unit:
+
+```ini
+[Unit]
+Description=NRI Supply Chain Verification Plugin
+After=crio.service
+
+[Service]
+ExecStart=/usr/local/bin/nri-supply-chain --config /etc/nri-supply-chain/config.toml
+Restart=always
+RestartSec=5
+ExecReload=/bin/kill -HUP $MAINPID
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Runtime Requirements
+
+- CRI-O with NRI enabled (`enable_nri = true` in CRI-O config) or containerd
+  with NRI enabled.
+- NRI socket at `/var/run/nri/nri.sock` (for external plugins).
+- Registry access from the node to fetch OCI Referrers.
+
+## Examples
+
+### Gradual Rollout
+
+Start with `warn` mode and permissive policies to observe what would be
+blocked, then switch to `enforce` once the supply chain is fully attested.
+
+```toml
+verification = "warn"
+fetch_failure_policy = "allow"
+policy_dir = "/etc/nri-supply-chain/policies"
+```
+
+```json
+{
+  "provenance": {"missingPolicy": "warn"},
+  "vex": {"missingPolicy": "allow"}
+}
+```
+
+### Strict Production
+
+Enforce all verification with trusted builders only, deny on missing
+attestations.
+
+```toml
+verification = "enforce"
+fetch_failure_policy = "deny"
+policy_dir = "/etc/nri-supply-chain/policies"
+```
+
+```json
+{
+  "trust": {
+    "builders": [
+      {"id": "https://github.com/actions/runner", "maxLevel": 3}
+    ],
+    "verifiers": [
+      {"id": "https://example.com/verifier", "key": "/etc/keys/verifier.pub"}
+    ],
+    "sources": ["github.com/myorg/*"]
+  },
+  "provenance": {
+    "missingPolicy": "deny",
+    "rejectUnknownParameters": true
+  },
+  "vex": {
+    "severityThreshold": "high",
+    "missingPolicy": "deny"
+  },
+  "vsa": {
+    "minimumLevel": 2,
+    "maxAge": "24h"
+  },
+  "signatures": {
+    "requireTransparencyLog": true
+  }
+}
+```
+
+### VSA-Accelerated Verification
+
+Use VSA from a trusted verifier to skip per-image SLSA/VEX checks. This
+reduces verification latency to a single VSA lookup when the verifier has
+already attested the image.
+
+```json
+{
+  "trust": {
+    "builders": [
+      {"id": "https://github.com/actions/runner", "maxLevel": 3}
+    ],
+    "verifiers": [
+      {"id": "https://verifier.internal/prod", "key": "/etc/keys/verifier.pub"}
+    ]
+  },
+  "provenance": {"missingPolicy": "deny"},
+  "vsa": {
+    "minimumLevel": 2,
+    "maxAge": "12h",
+    "policy": "https://example.com/strict-policy"
   }
 }
 ```
@@ -129,7 +421,9 @@ The plugin exposes Prometheus metrics at the configured address:
 | `nri_supply_chain_cache_misses_total` | Counter | | Cache misses |
 | `nri_supply_chain_fetch_errors_total` | Counter | `type` | Attestation fetch errors |
 
-## Config Reload
+## Operations
+
+### Config Reload
 
 Send `SIGHUP` to reload the config file and policies without restarting:
 
@@ -137,10 +431,27 @@ Send `SIGHUP` to reload the config file and policies without restarting:
 kill -HUP $(pidof nri-supply-chain)
 ```
 
-## Runtime Requirements
+Or with systemd:
 
-- CRI-O or containerd with NRI enabled (`enable_nri = true` in CRI-O config)
-- NRI socket at `/var/run/nri/nri.sock` (for external plugins)
+```console
+systemctl reload nri-supply-chain
+```
+
+### Logging
+
+The plugin outputs structured JSON logs to stderr. Set `--log-level debug` for
+detailed verification traces.
+
+### Troubleshooting
+
+- **Container rejected unexpectedly**: Check logs at debug level. Verify the
+  policy file for the namespace is correct. Confirm attestations exist in the
+  registry (`cosign tree <image>`).
+- **Fetch errors**: Check network connectivity from the node to the registry.
+  Set `fetch_failure_policy = "allow"` temporarily to unblock while
+  investigating.
+- **Stale cache**: Reduce `cache_ttl` or set to `0s` to disable caching during
+  debugging. Send SIGHUP to reload and clear the cache.
 
 ## Development
 
