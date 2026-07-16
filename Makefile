@@ -1,7 +1,7 @@
 GO ?= go
 
 GOLANGCI_LINT_VERSION = 2.12.2
-ZEITGEIST_VERSION = v0.7.0
+ZEITGEIST_VERSION = 0.7.0
 
 BUILD_DIR := build
 GOLANGCI_LINT := $(BUILD_DIR)/golangci-lint
@@ -83,7 +83,7 @@ verify-dependencies: $(ZEITGEIST) ## Verify external dependencies
 $(ZEITGEIST):
 	@mkdir -p $(BUILD_DIR)
 	curl -sSfL -o $(ZEITGEIST) \
-		https://github.com/kubernetes-sigs/zeitgeist/releases/download/$(ZEITGEIST_VERSION)/zeitgeist-$(ARCH)-$(OS)
+		https://github.com/kubernetes-sigs/zeitgeist/releases/download/v$(ZEITGEIST_VERSION)/zeitgeist-$(ARCH)-$(OS)
 	chmod +x $(ZEITGEIST)
 
 .PHONY: govulncheck

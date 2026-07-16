@@ -187,8 +187,6 @@ func runPlugin(
 		return fmt.Errorf("creating NRI stub: %w", err)
 	}
 
-	plug.SetStub(nriStub)
-
 	group, gctx := errgroup.WithContext(ctx)
 
 	group.Go(func() error {

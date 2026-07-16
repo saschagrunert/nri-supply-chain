@@ -37,7 +37,6 @@ const (
 // Plugin implements the NRI CreateContainer and Configure hooks
 // for supply chain attestation verification.
 type Plugin struct {
-	stub       stub.Stub
 	verifier   *verifier.Verifier
 	configPath string
 }
@@ -45,15 +44,9 @@ type Plugin struct {
 // New creates a new Plugin with the given verifier and config file path.
 func New(v *verifier.Verifier, configPath string) *Plugin {
 	return &Plugin{
-		stub:       nil,
 		verifier:   v,
 		configPath: configPath,
 	}
-}
-
-// SetStub sets the NRI stub after creation.
-func (p *Plugin) SetStub(s stub.Stub) {
-	p.stub = s
 }
 
 // Configure is called when the plugin connects to the NRI runtime.
@@ -66,6 +59,11 @@ func (p *Plugin) Configure(
 		parsed, err := config.LoadFromString(cfg)
 		if err != nil {
 			return 0, fmt.Errorf("parsing NRI config: %w", err)
+		}
+
+		err = parsed.ValidateRuntime()
+		if err != nil {
+			return 0, fmt.Errorf("validating NRI config: %w", err)
 		}
 
 		err = p.verifier.Reload(parsed)
