@@ -3,14 +3,14 @@
 BINARY="${BINARY:-build/nri-supply-chain}"
 
 setup() {
-    export TEST_DIR
-    TEST_DIR=$(mktemp -d)
+	export TEST_DIR
+	TEST_DIR=$(mktemp -d)
 }
 
 teardown() {
-    rm -rf "$TEST_DIR"
+	rm -rf "$TEST_DIR"
 }
 
 run_binary() {
-    run "$BINARY" "$@"
+	run "$BINARY" "$@"
 }

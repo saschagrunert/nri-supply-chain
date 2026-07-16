@@ -159,7 +159,7 @@ func TestConfigureWithEmptyConfig(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 
-	v, err := verifier.New(cfg, metrics.New())
+	v, err := verifier.New(cfg, metrics.New(), nil)
 	assertNoError(t, err)
 
 	plug := plugin.New(v, "")
@@ -176,7 +176,7 @@ func TestConfigureWithNRIConfig(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 
-	v, err := verifier.New(cfg, metrics.New())
+	v, err := verifier.New(cfg, metrics.New(), nil)
 	assertNoError(t, err)
 
 	plug := plugin.New(v, "")
@@ -193,7 +193,7 @@ func TestConfigureWithInvalidNRIConfig(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 
-	v, err := verifier.New(cfg, metrics.New())
+	v, err := verifier.New(cfg, metrics.New(), nil)
 	assertNoError(t, err)
 
 	plug := plugin.New(v, "")
@@ -209,7 +209,7 @@ func TestConfigureWithInvalidPolicyDir(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 
-	v, err := verifier.New(cfg, metrics.New())
+	v, err := verifier.New(cfg, metrics.New(), nil)
 	assertNoError(t, err)
 
 	plug := plugin.New(v, "")
@@ -228,7 +228,7 @@ func TestConfigureSkipsWhenConfigPathSet(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 
-	v, err := verifier.New(cfg, metrics.New())
+	v, err := verifier.New(cfg, metrics.New(), nil)
 	assertNoError(t, err)
 
 	plug := plugin.New(v, "/some/config.toml")
@@ -247,7 +247,7 @@ func newTestPlugin(t *testing.T, mode, policyDir string) *plugin.Plugin {
 		cfg.PolicyDir = policyDir
 	}
 
-	v, err := verifier.New(cfg, metrics.New())
+	v, err := verifier.New(cfg, metrics.New(), nil)
 	assertNoError(t, err)
 
 	return plugin.New(v, "")

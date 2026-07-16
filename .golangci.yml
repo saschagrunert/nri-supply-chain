@@ -125,17 +125,25 @@ linters:
             - $gostd
             - github.com/BurntSushi/toml
             - github.com/containerd/nri
+            - github.com/google/go-containerregistry
+            - github.com/openvex/go-vex
             - github.com/prometheus/client_golang
-            - github.com/prometheus/common
             - github.com/saschagrunert/nri-supply-chain
+            - github.com/sigstore/sigstore
             - golang.org/x/sync
     exhaustruct:
       exclude:
         - 'github\.com/containerd/nri/pkg/api\..*'
+        - 'github\.com/google/go-containerregistry/.*'
+        - 'github\.com/openvex/go-vex/.*'
         - 'github\.com/prometheus/client_golang/prometheus\..*'
+        - 'github\.com/prometheus/client_golang/prometheus/promhttp\..*'
+        - 'github\.com/saschagrunert/nri-supply-chain/internal/attestation\.FetchOptions'
+        - 'github\.com/saschagrunert/nri-supply-chain/policy\..*'
+        - 'github\.com/sigstore/sigstore-go/.*'
+        - 'github\.com/sigstore/sigstore/.*'
         - 'log/slog\.HandlerOptions'
         - 'net/http\.Server'
-        - 'github\.com/prometheus/client_golang/prometheus/promhttp\..*'
     gocritic:
       enable-all: true
     goheader:

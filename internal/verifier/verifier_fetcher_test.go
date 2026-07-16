@@ -1,0 +1,576 @@
+// Copyright The nri-supply-chain Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package verifier_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"testing"
+	"time"
+
+	openvex "github.com/openvex/go-vex/pkg/vex"
+
+	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
+	"github.com/saschagrunert/nri-supply-chain/internal/config"
+	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
+	"github.com/saschagrunert/nri-supply-chain/internal/slsa"
+	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
+	"github.com/saschagrunert/nri-supply-chain/internal/vsa"
+)
+
+const (
+	testFetchDigest       = "sha256:abc123"
+	policyTrustRunnerJSON = `{
+	"trust": {"builders": [{"id": "https://github.com/actions/runner", "maxLevel": 2}]}
+}`
+)
+
+var errMockFetch = errors.New("mock fetch error")
+
+type mockFetcher struct {
+	attestations []attestation.VerifiedAttestation
+	err          error
+}
+
+func (m *mockFetcher) Fetch(
+	_ context.Context,
+	_, _ string,
+	_ attestation.FetchOptions, //nolint:gocritic // hugeParam: matches Fetcher interface signature.
+) ([]attestation.VerifiedAttestation, error) {
+	return m.attestations, m.err
+}
+
+func marshalJSON(t *testing.T, val any) []byte {
+	t.Helper()
+
+	data, err := json.Marshal(val)
+	if err != nil {
+		t.Fatalf("marshalling: %v", err)
+	}
+
+	return data
+}
+
+func validSLSAPayload(t *testing.T) []byte {
+	t.Helper()
+
+	stmt := slsa.Statement{
+		Type: "https://in-toto.io/Statement/v1",
+		Subject: []slsa.Subject{
+			{
+				Name:   "nginx",
+				Digest: map[string]string{"sha256": "abc123"},
+			},
+		},
+		PredicateType: attestation.PredicateSLSAProvenanceV1,
+		Predicate: slsa.ProvenancePredicate{
+			BuildDefinition: slsa.BuildDefinition{
+				BuildType: "https://actions.github.io/buildtypes/workflow/v1",
+				ExternalParameters: map[string]any{
+					"source": "github.com/example/repo",
+				},
+				InternalParameters: map[string]any{},
+			},
+			RunDetails: slsa.RunDetails{
+				Builder: slsa.Builder{
+					ID: "https://github.com/actions/runner",
+				},
+				Metadata: slsa.Metadata{
+					InvocationID: "run-123",
+				},
+			},
+		},
+	}
+
+	return marshalJSON(t, stmt)
+}
+
+func validVSAPayload(t *testing.T, result string) []byte {
+	t.Helper()
+
+	stmt := vsa.Statement{
+		Type:          "https://in-toto.io/Statement/v1",
+		PredicateType: "https://slsa.dev/verification_summary/v1",
+		Predicate: vsa.Predicate{
+			Verifier: vsa.Verifier{
+				ID: "https://example.com/verifier",
+			},
+			TimeVerified:       time.Now().UTC().Format(time.RFC3339),
+			ResourceURI:        "index.docker.io/library/nginx@" + testFetchDigest,
+			Policy:             vsa.Policy{URI: "https://example.com/policy"},
+			VerificationResult: result,
+			VerifiedLevels:     []string{"SLSA_BUILD_LEVEL_3"},
+			SLSAVersion:        "1.0",
+		},
+	}
+
+	return marshalJSON(t, stmt)
+}
+
+func validVEXPayload(t *testing.T, status openvex.Status) []byte {
+	t.Helper()
+
+	doc := openvex.VEX{
+		Metadata: openvex.Metadata{
+			Context: "https://openvex.dev/ns/v0.2.0",
+			ID:      "https://openvex.dev/docs/example/vex-test",
+		},
+		Statements: []openvex.Statement{
+			{
+				Vulnerability: openvex.Vulnerability{Name: "CVE-2024-1234"},
+				Products: []openvex.Product{
+					{Component: openvex.Component{ID: testFetchDigest}},
+				},
+				Status: status,
+			},
+		},
+	}
+
+	return marshalJSON(t, doc)
+}
+
+func TestVerifyWithFetcher(t *testing.T) { //nolint:funlen,maintidx // Table-driven test.
+	t.Parallel()
+
+	tests := []struct {
+		name               string
+		policyJSON         string
+		mode               string
+		fetcher            *mockFetcher
+		fetchFailurePolicy string
+		setupPayloads      func(t *testing.T, fetcher *mockFetcher)
+		wantAllowed        bool
+		wantErr            error
+		wantCheckLen       int
+	}{
+		{
+			name:       "SLSA pass",
+			policyJSON: policyTrustRunnerJSON,
+			mode:       config.ModeEnforce,
+			fetcher: &mockFetcher{
+				attestations: []attestation.VerifiedAttestation{
+					{
+						PredicateType: attestation.PredicateSLSAProvenanceV1,
+						Payload:       nil,
+						Digest:        testFetchDigest,
+					},
+				},
+				err: nil,
+			},
+			fetchFailurePolicy: "",
+			setupPayloads: func(t *testing.T, fetcher *mockFetcher) {
+				t.Helper()
+
+				fetcher.attestations[0].Payload = validSLSAPayload(t)
+			},
+			wantAllowed:  true,
+			wantErr:      nil,
+			wantCheckLen: 0,
+		},
+		{
+			name: "SLSA missing deny",
+			policyJSON: `{
+				"trust": {"builders": [{"id": "https://github.com/actions/runner", "maxLevel": 2}]},
+				"provenance": {"missingPolicy": "deny"}
+			}`,
+			mode: config.ModeEnforce,
+			fetcher: &mockFetcher{
+				attestations: []attestation.VerifiedAttestation{},
+				err:          nil,
+			},
+			fetchFailurePolicy: "",
+			setupPayloads:      nil,
+			wantAllowed:        false,
+			wantErr:            verifier.ErrVerificationFailed,
+			wantCheckLen:       0,
+		},
+		{
+			name: "VSA passed skips SLSA",
+			policyJSON: `{
+				"trust": {
+					"builders": [{"id": "https://github.com/actions/runner", "maxLevel": 2}],
+					"verifiers": [{"id": "https://example.com/verifier", "key": "/etc/keys/v.pub"}]
+				},
+				"provenance": {"missingPolicy": "deny"}
+			}`,
+			mode: config.ModeEnforce,
+			fetcher: &mockFetcher{
+				attestations: []attestation.VerifiedAttestation{
+					{
+						PredicateType: attestation.PredicateVSA,
+						Payload:       nil,
+						Digest:        testFetchDigest,
+					},
+				},
+				err: nil,
+			},
+			fetchFailurePolicy: "",
+			setupPayloads: func(t *testing.T, fetcher *mockFetcher) {
+				t.Helper()
+
+				fetcher.attestations[0].Payload = validVSAPayload(t, vsa.ResultPassed)
+			},
+			wantAllowed:  true,
+			wantErr:      nil,
+			wantCheckLen: 1,
+		},
+		{
+			name: "VSA failed hard reject",
+			policyJSON: `{
+				"trust": {"verifiers": [{"id": "https://example.com/verifier", "key": "/etc/keys/v.pub"}]}
+			}`,
+			mode: config.ModeEnforce,
+			fetcher: &mockFetcher{
+				attestations: []attestation.VerifiedAttestation{
+					{
+						PredicateType: attestation.PredicateVSA,
+						Payload:       nil,
+						Digest:        testFetchDigest,
+					},
+				},
+				err: nil,
+			},
+			fetchFailurePolicy: "",
+			setupPayloads: func(t *testing.T, fetcher *mockFetcher) {
+				t.Helper()
+
+				fetcher.attestations[0].Payload = validVSAPayload(t, vsa.ResultFailed)
+			},
+			wantAllowed:  false,
+			wantErr:      verifier.ErrVerificationFailed,
+			wantCheckLen: 0,
+		},
+		{
+			name: "VSA untrusted falls through to SLSA",
+			policyJSON: `{
+				"trust": {
+					"builders": [{"id": "https://github.com/actions/runner", "maxLevel": 2}],
+					"verifiers": [{"id": "https://other-verifier.example.com", "key": "/etc/keys/v.pub"}]
+				}
+			}`,
+			mode: config.ModeEnforce,
+			fetcher: &mockFetcher{
+				attestations: []attestation.VerifiedAttestation{
+					{
+						PredicateType: attestation.PredicateVSA,
+						Payload:       nil,
+						Digest:        testFetchDigest,
+					},
+					{
+						PredicateType: attestation.PredicateSLSAProvenanceV1,
+						Payload:       nil,
+						Digest:        testFetchDigest,
+					},
+				},
+				err: nil,
+			},
+			fetchFailurePolicy: "",
+			setupPayloads: func(t *testing.T, fetcher *mockFetcher) {
+				t.Helper()
+
+				fetcher.attestations[0].Payload = validVSAPayload(t, vsa.ResultPassed)
+				fetcher.attestations[1].Payload = validSLSAPayload(t)
+			},
+			wantAllowed:  true,
+			wantErr:      nil,
+			wantCheckLen: 0,
+		},
+		{
+			name: "VSA parse error falls through",
+			policyJSON: `{
+				"trust": {
+					"builders": [{"id": "https://github.com/actions/runner", "maxLevel": 2}],
+					"verifiers": [{"id": "https://example.com/verifier", "key": "/etc/keys/v.pub"}]
+				}
+			}`,
+			mode: config.ModeEnforce,
+			fetcher: &mockFetcher{
+				attestations: []attestation.VerifiedAttestation{
+					{
+						PredicateType: attestation.PredicateVSA,
+						Payload:       []byte("invalid json"),
+						Digest:        testFetchDigest,
+					},
+					{
+						PredicateType: attestation.PredicateSLSAProvenanceV1,
+						Payload:       nil,
+						Digest:        testFetchDigest,
+					},
+				},
+				err: nil,
+			},
+			fetchFailurePolicy: "",
+			setupPayloads: func(t *testing.T, fetcher *mockFetcher) {
+				t.Helper()
+
+				fetcher.attestations[1].Payload = validSLSAPayload(t)
+			},
+			wantAllowed:  true,
+			wantErr:      nil,
+			wantCheckLen: 0,
+		},
+		{
+			name:       "fetch error allow policy",
+			policyJSON: `{}`,
+			mode:       config.ModeEnforce,
+			fetcher: &mockFetcher{
+				attestations: nil,
+				err:          errMockFetch,
+			},
+			fetchFailurePolicy: config.PolicyAllow,
+			setupPayloads:      nil,
+			wantAllowed:        true,
+			wantErr:            nil,
+			wantCheckLen:       0,
+		},
+		{
+			name:       "fetch error deny policy",
+			policyJSON: `{}`,
+			mode:       config.ModeEnforce,
+			fetcher: &mockFetcher{
+				attestations: nil,
+				err:          errMockFetch,
+			},
+			fetchFailurePolicy: config.PolicyDeny,
+			setupPayloads:      nil,
+			wantAllowed:        false,
+			wantErr:            verifier.ErrVerificationFailed,
+			wantCheckLen:       0,
+		},
+		{
+			name:       "fetch error warn policy",
+			policyJSON: `{}`,
+			mode:       config.ModeEnforce,
+			fetcher: &mockFetcher{
+				attestations: nil,
+				err:          errMockFetch,
+			},
+			fetchFailurePolicy: config.PolicyWarn,
+			setupPayloads:      nil,
+			wantAllowed:        true,
+			wantErr:            nil,
+			wantCheckLen:       0,
+		},
+		{
+			name: "empty attestations deny policies",
+			policyJSON: `{
+				"trust": {"builders": [{"id": "test", "maxLevel": 2}]},
+				"provenance": {"missingPolicy": "deny"},
+				"vex": {"missingPolicy": "deny"}
+			}`,
+			mode: config.ModeEnforce,
+			fetcher: &mockFetcher{
+				attestations: []attestation.VerifiedAttestation{},
+				err:          nil,
+			},
+			fetchFailurePolicy: "",
+			setupPayloads:      nil,
+			wantAllowed:        false,
+			wantErr:            verifier.ErrVerificationFailed,
+			wantCheckLen:       0,
+		},
+		{
+			name: "no fetcher nil fallback",
+			policyJSON: `{
+				"provenance": {"missingPolicy": "allow"}
+			}`,
+			mode:               config.ModeEnforce,
+			fetcher:            nil,
+			fetchFailurePolicy: "",
+			setupPayloads:      nil,
+			wantAllowed:        true,
+			wantErr:            nil,
+			wantCheckLen:       0,
+		},
+		{
+			name:       "parallel SLSA and VEX",
+			policyJSON: policyTrustRunnerJSON,
+			mode:       config.ModeEnforce,
+			fetcher: &mockFetcher{
+				attestations: []attestation.VerifiedAttestation{
+					{
+						PredicateType: attestation.PredicateSLSAProvenanceV1,
+						Payload:       nil,
+						Digest:        testFetchDigest,
+					},
+				},
+				err: nil,
+			},
+			fetchFailurePolicy: "",
+			setupPayloads: func(t *testing.T, fetcher *mockFetcher) {
+				t.Helper()
+
+				fetcher.attestations[0].Payload = validSLSAPayload(t)
+			},
+			wantAllowed:  true,
+			wantErr:      nil,
+			wantCheckLen: 0,
+		},
+		{
+			name: "VEX not affected passes",
+			policyJSON: `{
+				"trust": {"builders": [{"id": "https://github.com/actions/runner", "maxLevel": 2}]},
+				"vex": {"missingPolicy": "deny"}
+			}`,
+			mode: config.ModeEnforce,
+			fetcher: &mockFetcher{
+				attestations: []attestation.VerifiedAttestation{
+					{
+						PredicateType: attestation.PredicateSLSAProvenanceV1,
+						Payload:       nil,
+						Digest:        testFetchDigest,
+					},
+					{
+						PredicateType: attestation.PredicateOpenVEX,
+						Payload:       nil,
+						Digest:        testFetchDigest,
+					},
+				},
+				err: nil,
+			},
+			fetchFailurePolicy: "",
+			setupPayloads: func(t *testing.T, fetcher *mockFetcher) {
+				t.Helper()
+
+				fetcher.attestations[0].Payload = validSLSAPayload(t)
+				fetcher.attestations[1].Payload = validVEXPayload(
+					t, openvex.StatusNotAffected,
+				)
+			},
+			wantAllowed:  true,
+			wantErr:      nil,
+			wantCheckLen: 0,
+		},
+		{
+			name:       "VEX affected fails",
+			policyJSON: policyTrustRunnerJSON,
+			mode:       config.ModeEnforce,
+			fetcher: &mockFetcher{
+				attestations: []attestation.VerifiedAttestation{
+					{
+						PredicateType: attestation.PredicateSLSAProvenanceV1,
+						Payload:       nil,
+						Digest:        testFetchDigest,
+					},
+					{
+						PredicateType: attestation.PredicateOpenVEX,
+						Payload:       nil,
+						Digest:        testFetchDigest,
+					},
+				},
+				err: nil,
+			},
+			fetchFailurePolicy: "",
+			setupPayloads: func(t *testing.T, fetcher *mockFetcher) {
+				t.Helper()
+
+				fetcher.attestations[0].Payload = validSLSAPayload(t)
+				fetcher.attestations[1].Payload = validVEXPayload(
+					t, openvex.StatusAffected,
+				)
+			},
+			wantAllowed:  false,
+			wantErr:      verifier.ErrVerificationFailed,
+			wantCheckLen: 0,
+		},
+		{
+			name: "VEX parse error fails",
+			policyJSON: `{
+				"trust": {"builders": [{"id": "https://github.com/actions/runner", "maxLevel": 2}]},
+				"vex": {"missingPolicy": "allow"}
+			}`,
+			mode: config.ModeEnforce,
+			fetcher: &mockFetcher{
+				attestations: []attestation.VerifiedAttestation{
+					{
+						PredicateType: attestation.PredicateSLSAProvenanceV1,
+						Payload:       nil,
+						Digest:        testFetchDigest,
+					},
+					{
+						PredicateType: attestation.PredicateOpenVEX,
+						Payload:       []byte("invalid json"),
+						Digest:        testFetchDigest,
+					},
+				},
+				err: nil,
+			},
+			fetchFailurePolicy: "",
+			setupPayloads: func(t *testing.T, fetcher *mockFetcher) {
+				t.Helper()
+
+				fetcher.attestations[0].Payload = validSLSAPayload(t)
+			},
+			wantAllowed:  false,
+			wantErr:      verifier.ErrVerificationFailed,
+			wantCheckLen: 0,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			writePolicy(t, dir, "default.json", test.policyJSON)
+
+			cfg := config.DefaultConfig()
+			cfg.Verification = test.mode
+			cfg.PolicyDir = dir
+
+			if test.fetchFailurePolicy != "" {
+				cfg.FetchFailurePolicy = test.fetchFailurePolicy
+			}
+
+			var fetcher attestation.Fetcher
+
+			if test.fetcher != nil {
+				if test.setupPayloads != nil {
+					test.setupPayloads(t, test.fetcher)
+				}
+
+				fetcher = test.fetcher
+			}
+
+			verif, err := verifier.New(cfg, metrics.New(), fetcher)
+			assertNoError(t, err)
+
+			result, err := verif.Verify(
+				context.Background(), "nginx:latest", testFetchDigest, "default",
+			)
+
+			if test.wantErr != nil {
+				if !errors.Is(err, test.wantErr) {
+					t.Errorf("expected error %v, got %v", test.wantErr, err)
+				}
+
+				return
+			}
+
+			assertNoError(t, err)
+
+			if result.Allowed != test.wantAllowed {
+				t.Errorf("expected allowed=%v, got allowed=%v (reason: %s)",
+					test.wantAllowed, result.Allowed, result.Reason)
+			}
+
+			if test.wantCheckLen > 0 && len(result.CheckResults) != test.wantCheckLen {
+				t.Errorf("expected %d check results, got %d",
+					test.wantCheckLen, len(result.CheckResults))
+			}
+		})
+	}
+}
