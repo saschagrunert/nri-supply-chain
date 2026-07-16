@@ -32,3 +32,9 @@ dependencies:
     refPaths:
       - path: Makefile
         match: ^SHELLCHECK_VERSION
+
+  - name: kubernix
+    version: 0.3.3
+    refPaths:
+      - path: Makefile
+        match: ^KUBERNIX_VERSION
