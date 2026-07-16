@@ -4,12 +4,14 @@ GOLANGCI_LINT_VERSION = 2.12.2
 ZEITGEIST_VERSION = 0.7.0
 SHFMT_VERSION = v3.13.1
 SHELLCHECK_VERSION = v0.11.0
+KUBERNIX_VERSION = 0.3.3
 
 BUILD_DIR := build
 GOLANGCI_LINT := $(BUILD_DIR)/golangci-lint
 ZEITGEIST := $(BUILD_DIR)/zeitgeist
 SHFMT := $(BUILD_DIR)/shfmt
 SHELLCHECK := $(BUILD_DIR)/shellcheck
+KUBERNIX := $(BUILD_DIR)/kubernix
 
 ARCH ?= $(shell uname -m | \
 	sed 's/x86_64/amd64/' | \
@@ -63,7 +65,11 @@ snapshot: ## Run goreleaser snapshot build
 
 .PHONY: integration
 integration: build ## Run bats integration tests
-	bats --jobs $(shell nproc 2>/dev/null || sysctl -n hw.ncpu) test/
+	bats --jobs $(shell nproc 2>/dev/null || sysctl -n hw.ncpu) test/integration/
+
+.PHONY: e2e
+e2e: build $(KUBERNIX) ## Run bats e2e tests (requires root and Nix)
+	bats --jobs $(shell nproc 2>/dev/null || sysctl -n hw.ncpu) test/e2e/
 
 ##@ Verification
 
@@ -75,13 +81,15 @@ $(GOLANGCI_LINT):
 	@mkdir -p $(BUILD_DIR)
 	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b $(BUILD_DIR) v$(GOLANGCI_LINT_VERSION)
 
+SHELL_FILES := $(wildcard test/integration/*.bash test/integration/*.bats test/e2e/*.bash test/e2e/*.bats)
+
 .PHONY: verify-shfmt
 verify-shfmt: $(SHFMT) ## Verify shell script formatting
-	$(SHFMT) -d test/*.bash test/*.bats
+	$(SHFMT) -d $(SHELL_FILES)
 
 .PHONY: verify-shellcheck
 verify-shellcheck: $(SHELLCHECK) ## Run shellcheck on shell scripts
-	$(SHELLCHECK) test/*.bash test/*.bats
+	$(SHELLCHECK) $(SHELL_FILES)
 
 .PHONY: verify-tidy
 verify-tidy: ## Verify go.mod is tidy
@@ -109,6 +117,12 @@ $(SHELLCHECK):
 	curl -sSfL \
 		https://github.com/koalaman/shellcheck/releases/download/$(SHELLCHECK_VERSION)/shellcheck-$(SHELLCHECK_VERSION).linux.x86_64.tar.xz \
 		| tar xfJ - -C $(BUILD_DIR) --strip-components=1 shellcheck-$(SHELLCHECK_VERSION)/shellcheck
+
+$(KUBERNIX):
+	@mkdir -p $(BUILD_DIR)
+	curl -sSfL -o $(KUBERNIX) \
+		https://github.com/saschagrunert/kubernix/releases/download/v$(KUBERNIX_VERSION)/kubernix-$(shell uname -m)
+	chmod +x $(KUBERNIX)
 
 .PHONY: govulncheck
 govulncheck: ## Run govulncheck

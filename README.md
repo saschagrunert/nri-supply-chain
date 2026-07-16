@@ -461,6 +461,7 @@ make build       # Build the binary
 make test        # Run unit tests with coverage
 make lint        # Run golangci-lint
 make integration # Run bats integration tests
+make e2e         # Run bats e2e tests (requires root and Nix)
 make snapshot    # Run goreleaser snapshot build
 make govulncheck # Run vulnerability scanner
 make tidy        # Run go mod tidy
