@@ -13,7 +13,7 @@ load helpers
     [[ "$status" -ne 0 ]]
 }
 
-@test "valid disabled config starts and exits with version" {
+@test "version flag with config file prints version and exits" {
     cat >"$TEST_DIR/config.toml" <<EOF
 verification = "disabled"
 policy_dir = "/etc/nri-supply-chain/policies"

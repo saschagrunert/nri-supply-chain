@@ -154,13 +154,6 @@ func TestCreateContainerWarnAllow(t *testing.T) {
 	assertNoError(t, err)
 }
 
-func TestSetStub(t *testing.T) {
-	t.Parallel()
-
-	plug := newTestPlugin(t, config.ModeDisabled, "")
-	plug.SetStub(nil)
-}
-
 func TestConfigureWithEmptyConfig(t *testing.T) {
 	t.Parallel()
 
@@ -208,6 +201,25 @@ func TestConfigureWithInvalidNRIConfig(t *testing.T) {
 	_, err = plug.Configure(context.Background(), `[[[invalid`, "cri-o", "1.32")
 	if err == nil {
 		t.Fatal("expected error for invalid TOML")
+	}
+}
+
+func TestConfigureWithInvalidPolicyDir(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+
+	v, err := verifier.New(cfg, metrics.New())
+	assertNoError(t, err)
+
+	plug := plugin.New(v, "")
+
+	tomlConfig := "verification = \"warn\"\n" +
+		"policy_dir = \"/nonexistent/policies\"\n"
+
+	_, err = plug.Configure(context.Background(), tomlConfig, "cri-o", "1.32")
+	if err == nil {
+		t.Fatal("expected error for nonexistent policy dir")
 	}
 }
 
