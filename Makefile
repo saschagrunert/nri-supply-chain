@@ -1,0 +1,79 @@
+GO ?= go
+
+GOLANGCI_LINT_VERSION = 2.12.2
+
+BUILD_DIR := build
+GOLANGCI_LINT := $(BUILD_DIR)/golangci-lint
+
+ARCH ?= $(shell uname -m | \
+	sed 's/x86_64/amd64/' | \
+	sed 's/aarch64/arm64/')
+
+OS ?= $(shell uname -s | tr '[:upper:]' '[:lower:]')
+
+COLOR := \033[36m
+NOCOLOR := \033[0m
+
+.PHONY: all
+all: build ## Build the project
+
+.PHONY: help
+help: ## Display this help
+	@awk \
+		-v "col=$(COLOR)" -v "nocol=$(NOCOLOR)" \
+		' \
+			BEGIN { \
+				FS = ":.*##" ; \
+				printf "\nUsage:\n  make %s<target>%s\n\n", col, nocol; \
+			} \
+			/^[a-zA-Z0-9_-]+:.*?##/ { \
+				printf "  %s%-25s%s %s\n", col, $$1, nocol, $$2 \
+			} \
+			/^##@/ { \
+				printf "\n%s%s%s\n", col, substr($$0, 5), nocol \
+			} \
+		' $(MAKEFILE_LIST)
+
+##@ Build
+
+.PHONY: build
+build: ## Build the nri-supply-chain binary (static)
+	@mkdir -p $(BUILD_DIR)
+	CGO_ENABLED=0 $(GO) build -trimpath -o $(BUILD_DIR)/nri-supply-chain ./cmd/nri-supply-chain/
+
+##@ Development
+
+.PHONY: test
+test: ## Run tests with race detection and coverage report
+	@mkdir -p $(BUILD_DIR)
+	$(GO) test -v -race -count=1 -coverprofile=$(BUILD_DIR)/coverage.out -covermode=atomic -coverpkg=./... ./...
+	$(GO) tool cover -html=$(BUILD_DIR)/coverage.out -o $(BUILD_DIR)/coverage.html
+
+##@ Verification
+
+.PHONY: lint
+lint: $(GOLANGCI_LINT) ## Run golangci-lint
+	$(GOLANGCI_LINT) run
+
+$(GOLANGCI_LINT):
+	@mkdir -p $(BUILD_DIR)
+	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b $(BUILD_DIR) v$(GOLANGCI_LINT_VERSION)
+
+.PHONY: verify-tidy
+verify-tidy: ## Verify go.mod is tidy
+	$(GO) mod tidy
+	git diff --exit-code go.mod go.sum
+
+.PHONY: govulncheck
+govulncheck: ## Run govulncheck
+	$(GO) run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+##@ Maintenance
+
+.PHONY: tidy
+tidy: ## Run go mod tidy
+	$(GO) mod tidy
+
+.PHONY: clean
+clean: ## Remove build artifacts
+	rm -rf $(BUILD_DIR)
