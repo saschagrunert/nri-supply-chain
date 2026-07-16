@@ -1,9 +1,11 @@
 GO ?= go
 
 GOLANGCI_LINT_VERSION = 2.12.2
+ZEITGEIST_VERSION = v0.7.0
 
 BUILD_DIR := build
 GOLANGCI_LINT := $(BUILD_DIR)/golangci-lint
+ZEITGEIST := $(BUILD_DIR)/zeitgeist
 
 ARCH ?= $(shell uname -m | \
 	sed 's/x86_64/amd64/' | \
@@ -49,6 +51,16 @@ test: ## Run tests with race detection and coverage report
 	$(GO) test -v -race -count=1 -coverprofile=$(BUILD_DIR)/coverage.out -covermode=atomic -coverpkg=./... ./...
 	$(GO) tool cover -html=$(BUILD_DIR)/coverage.out -o $(BUILD_DIR)/coverage.html
 
+##@ Release
+
+.PHONY: snapshot
+snapshot: ## Run goreleaser snapshot build
+	goreleaser release --snapshot --skip=sign --clean
+
+.PHONY: integration
+integration: build ## Run bats integration tests
+	bats --jobs $(shell nproc 2>/dev/null || sysctl -n hw.ncpu) test/
+
 ##@ Verification
 
 .PHONY: lint
@@ -63,6 +75,16 @@ $(GOLANGCI_LINT):
 verify-tidy: ## Verify go.mod is tidy
 	$(GO) mod tidy
 	git diff --exit-code go.mod go.sum
+
+.PHONY: verify-dependencies
+verify-dependencies: $(ZEITGEIST) ## Verify external dependencies
+	$(ZEITGEIST) validate --local-only --base-path . --config dependencies.yaml
+
+$(ZEITGEIST):
+	@mkdir -p $(BUILD_DIR)
+	curl -sSfL -o $(ZEITGEIST) \
+		https://github.com/kubernetes-sigs/zeitgeist/releases/download/$(ZEITGEIST_VERSION)/zeitgeist-$(ARCH)-$(OS)
+	chmod +x $(ZEITGEIST)
 
 .PHONY: govulncheck
 govulncheck: ## Run govulncheck

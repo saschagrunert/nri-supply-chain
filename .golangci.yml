@@ -5,11 +5,13 @@ run:
 linters:
   default: none
   enable:
+    - arangolint
     - asasalint
     - asciicheck
     - bidichk
     - bodyclose
     - canonicalheader
+    - clickhouselint
     - containedctx
     - contextcheck
     - copyloopvar
@@ -20,6 +22,7 @@ linters:
     - dupl
     - dupword
     - durationcheck
+    - embeddedstructfieldcheck
     - err113
     - errcheck
     - errchkjson
@@ -27,11 +30,13 @@ linters:
     - errorlint
     - exhaustive
     - exhaustruct
+    - exptostd
     - fatcontext
     - forbidigo
     - forcetypeassert
     - funcorder
     - funlen
+    - ginkgolinter
     - gocheckcompilerdirectives
     - gochecknoglobals
     - gochecknoinits
@@ -40,9 +45,12 @@ linters:
     - goconst
     - gocritic
     - gocyclo
+    - godoclint
     - godot
+    - godox
     - goheader
     - gomoddirectives
+    - gomodguard_v2
     - goprintffuncname
     - gosec
     - gosmopolitan
@@ -54,6 +62,7 @@ linters:
     - ineffassign
     - interfacebloat
     - intrange
+    - iotamixing
     - ireturn
     - lll
     - loggercheck
@@ -62,13 +71,16 @@ linters:
     - mirror
     - misspell
     - mnd
+    - modernize
     - musttag
     - nakedret
     - nestif
     - nilerr
+    - nilnesserr
     - nilnil
     - nlreturn
     - noctx
+    - noinlineerr
     - nolintlint
     - nonamedreturns
     - nosprintfhostport
@@ -81,10 +93,12 @@ linters:
     - reassign
     - recvcheck
     - revive
+    - rowserrcheck
     - sloglint
     - spancheck
     - sqlclosecheck
     - staticcheck
+    - tagalign
     - tagliatelle
     - testableexamples
     - testifylint
@@ -93,6 +107,7 @@ linters:
     - tparallel
     - unconvert
     - unparam
+    - unqueryvet
     - unused
     - usestdlibvars
     - usetesting
@@ -118,7 +133,9 @@ linters:
       exclude:
         - 'github\.com/containerd/nri/pkg/api\..*'
         - 'github\.com/prometheus/client_golang/prometheus\..*'
+        - 'log/slog\.HandlerOptions'
         - 'net/http\.Server'
+        - 'github\.com/prometheus/client_golang/prometheus/promhttp\..*'
     gocritic:
       enable-all: true
     goheader:
@@ -148,6 +165,7 @@ formatters:
     - gofumpt
     - goimports
     - golines
+    - swaggo
   settings:
     gci:
       sections:

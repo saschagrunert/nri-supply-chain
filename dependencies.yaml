@@ -1,0 +1,22 @@
+dependencies:
+  - name: golangci-lint
+    version: 2.12.2
+    refPaths:
+      - path: Makefile
+        match: ^GOLANGCI_LINT_VERSION
+      - path: .github/workflows/ci.yml
+        match: "version: v"
+
+  - name: syft
+    version: 1.45.1
+    refPaths:
+      - path: .github/workflows/ci.yml
+        match: "syft/"
+      - path: .github/workflows/release.yml
+        match: "syft/"
+
+  - name: zeitgeist
+    version: 0.7.0
+    refPaths:
+      - path: Makefile
+        match: ^ZEITGEIST_VERSION
