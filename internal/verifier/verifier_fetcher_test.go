@@ -29,6 +29,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/slsa"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 	"github.com/saschagrunert/nri-supply-chain/internal/vsa"
+	"github.com/saschagrunert/nri-supply-chain/policy"
 )
 
 const (
@@ -330,7 +331,7 @@ func TestVerifyWithFetcher(t *testing.T) { //nolint:funlen,maintidx // Table-dri
 				attestations: nil,
 				err:          errMockFetch,
 			},
-			fetchFailurePolicy: config.PolicyAllow,
+			fetchFailurePolicy: policy.ActionAllow,
 			setupPayloads:      nil,
 			wantAllowed:        true,
 			wantErr:            nil,
@@ -344,7 +345,7 @@ func TestVerifyWithFetcher(t *testing.T) { //nolint:funlen,maintidx // Table-dri
 				attestations: nil,
 				err:          errMockFetch,
 			},
-			fetchFailurePolicy: config.PolicyDeny,
+			fetchFailurePolicy: policy.ActionDeny,
 			setupPayloads:      nil,
 			wantAllowed:        false,
 			wantErr:            verifier.ErrVerificationFailed,
@@ -358,7 +359,7 @@ func TestVerifyWithFetcher(t *testing.T) { //nolint:funlen,maintidx // Table-dri
 				attestations: nil,
 				err:          errMockFetch,
 			},
-			fetchFailurePolicy: config.PolicyWarn,
+			fetchFailurePolicy: policy.ActionWarn,
 			setupPayloads:      nil,
 			wantAllowed:        true,
 			wantErr:            nil,

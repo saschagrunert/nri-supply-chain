@@ -68,10 +68,30 @@ func TestCreateContainerDisabled(t *testing.T) {
 	}
 }
 
-func TestCreateContainerMissingAnnotations(t *testing.T) {
+func TestCreateContainerMissingAnnotationsEnforce(t *testing.T) {
 	t.Parallel()
 
 	plug := newTestPlugin(t, config.ModeEnforce, "")
+
+	pod := &api.PodSandbox{
+		Namespace: testNamespace,
+		Name:      testPodName,
+	}
+	ctr := &api.Container{
+		Name:        testCtrName,
+		Annotations: map[string]string{},
+	}
+
+	_, _, err := plug.CreateContainer(context.Background(), pod, ctr)
+	if err == nil {
+		t.Fatal("expected error for missing annotations in enforce mode")
+	}
+}
+
+func TestCreateContainerMissingAnnotationsWarn(t *testing.T) {
+	t.Parallel()
+
+	plug := newTestPlugin(t, config.ModeWarn, "")
 
 	pod := &api.PodSandbox{
 		Namespace: testNamespace,

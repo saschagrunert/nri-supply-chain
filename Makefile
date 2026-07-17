@@ -7,6 +7,7 @@ SHELLCHECK_VERSION = v0.11.0
 KUBERNIX_VERSION = 0.3.3
 MDTOC_VERSION = v1.4.0
 
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.1.0)
 BUILD_DIR := build
 GOLANGCI_LINT := $(BUILD_DIR)/golangci-lint
 ZEITGEIST := $(BUILD_DIR)/zeitgeist
@@ -51,7 +52,7 @@ help: ## Display this help
 .PHONY: build
 build: ## Build the nri-supply-chain binary (static)
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=0 $(GO) build -trimpath -o $(BUILD_DIR)/nri-supply-chain ./cmd/nri-supply-chain/
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-X main.version=$(VERSION)" -o $(BUILD_DIR)/nri-supply-chain ./cmd/nri-supply-chain/
 
 ##@ Development
 
@@ -83,7 +84,7 @@ lint: $(GOLANGCI_LINT) ## Run golangci-lint
 
 $(GOLANGCI_LINT):
 	@mkdir -p $(BUILD_DIR)
-	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b $(BUILD_DIR) v$(GOLANGCI_LINT_VERSION)
+	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/v$(GOLANGCI_LINT_VERSION)/install.sh | sh -s -- -b $(BUILD_DIR) v$(GOLANGCI_LINT_VERSION)
 
 SHELL_FILES := $(wildcard test/integration/*.bash test/integration/*.bats test/e2e/*.bash test/e2e/*.bats)
 

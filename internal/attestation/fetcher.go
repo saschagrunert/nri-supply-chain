@@ -36,42 +36,63 @@ import (
 )
 
 const (
-	maxAttestationSize  = 10 << 20 // 10 MiB
-	maxReferrers        = 100
-	trustedRootCacheTTL = 1 * time.Hour
+	maxAttestationSize      = 10 << 20 // 10 MiB
+	maxReferrers            = 100
+	trustedRootCacheTTL     = 1 * time.Hour
+	trustedRootMaxStaleness = 24 * time.Hour
 )
 
+type trustedRootFetchFunc func() (*root.TrustedRoot, error)
+
 type trustedRootCache struct {
-	mu        sync.Mutex
+	mu        sync.RWMutex
 	root      *root.TrustedRoot
 	fetchedAt time.Time
+	fetchRoot trustedRootFetchFunc
 }
 
 func (c *trustedRootCache) get(ctx context.Context) (*root.TrustedRoot, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
 
 	if c.root != nil && time.Since(c.fetchedAt) < trustedRootCacheTTL {
-		return c.root, nil
+		cachedRoot := c.root
+
+		c.mu.RUnlock()
+
+		return cachedRoot, nil
 	}
+
+	c.mu.RUnlock()
 
 	err := ctx.Err()
 	if err != nil {
 		return nil, fmt.Errorf("context canceled before fetching trusted root: %w", err)
 	}
 
-	trustedRoot, err := root.FetchTrustedRoot()
-	if err != nil {
+	trustedRoot, fetchErr := c.fetchRoot()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if fetchErr != nil {
 		if c.root != nil {
+			age := time.Since(c.fetchedAt)
+			if age > trustedRootMaxStaleness {
+				return nil, fmt.Errorf(
+					"trusted root is stale (%s old, max %s) and refresh failed: %w",
+					age.Truncate(time.Second), trustedRootMaxStaleness, fetchErr,
+				)
+			}
+
 			slog.Warn("Failed to refresh trusted root, using stale cache",
-				"error", err,
-				"age", time.Since(c.fetchedAt),
+				"error", fetchErr,
+				"age", age,
 			)
 
 			return c.root, nil
 		}
 
-		return nil, fmt.Errorf("fetching sigstore trusted root: %w", err)
+		return nil, fmt.Errorf("fetching sigstore trusted root: %w", fetchErr)
 	}
 
 	c.root = trustedRoot
@@ -94,9 +115,10 @@ type OCIFetcher struct {
 // NewOCIFetcher creates a new OCI-based attestation fetcher.
 func NewOCIFetcher() *OCIFetcher {
 	cachedRoot := &trustedRootCache{
-		mu:        sync.Mutex{},
+		mu:        sync.RWMutex{},
 		root:      nil,
 		fetchedAt: time.Time{},
+		fetchRoot: root.FetchTrustedRoot,
 	}
 
 	return &OCIFetcher{
@@ -159,6 +181,12 @@ func (f *OCIFetcher) Fetch(
 		remoteOpts,
 		opts,
 	)
+
+	ctxErr := ctx.Err()
+	if ctxErr != nil {
+		return nil, fmt.Errorf("attestation fetch interrupted: %w", ctxErr)
+	}
+
 	if hadBundles && len(attestations) == 0 {
 		return nil, fmt.Errorf("%w: all referrer bundles failed verification", errAllBundlesFailed)
 	}
@@ -376,12 +404,11 @@ func buildVerificationConfig(
 		}
 
 		materials = append(materials, keyMaterial)
-		// WithNoObserverTimestamps applies to the whole verifier. When both
-		// keys and issuers are configured, the keyless path intentionally
-		// skips its own timestamp options (see buildKeylessConfig). This is
-		// safe because the key path provides authentication without needing
-		// timestamp verification.
-		verifierOpts = append(verifierOpts, verify.WithNoObserverTimestamps())
+
+		if len(opts.TrustedIssuers) == 0 {
+			verifierOpts = append(verifierOpts, verify.WithNoObserverTimestamps())
+		}
+
 		policyOpts = append(policyOpts, verify.WithKey())
 	}
 
@@ -449,16 +476,13 @@ func buildKeylessConfig(
 		return nil, nil, nil, fmt.Errorf("fetching sigstore trusted root: %w", err)
 	}
 
-	var verifierOpts []verify.VerifierOption
+	verifierOpts := []verify.VerifierOption{
+		verify.WithSignedCertificateTimestamps(1),
+		verify.WithObserverTimestamps(1),
+	}
 
-	if len(opts.TrustedKeys) == 0 {
-		verifierOpts = append(verifierOpts, verify.WithSignedCertificateTimestamps(1))
-
-		if opts.RequireTransparencyLog {
-			verifierOpts = append(verifierOpts, verify.WithTransparencyLog(1))
-		}
-
-		verifierOpts = append(verifierOpts, verify.WithObserverTimestamps(1))
+	if opts.RequireTransparencyLog {
+		verifierOpts = append(verifierOpts, verify.WithTransparencyLog(1))
 	}
 
 	certID, err := buildCertificateIdentity(opts.TrustedIssuers, opts.SANPatterns)

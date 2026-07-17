@@ -26,10 +26,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	ociV1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/sigstore/sigstore-go/pkg/root"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 )
@@ -384,6 +386,118 @@ func TestBuildVerificationConfig(t *testing.T) {
 
 			if tt.wantInErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantInErr) {
+					t.Errorf("expected error containing %q, got: %v", tt.wantInErr, err)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+//nolint:funlen,varnamelen // table-driven test
+func TestBuildVerificationConfigWithCache(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		opts      func(t *testing.T) attestation.FetchOptions
+		wantErr   bool
+		wantInErr string
+	}{
+		{
+			name: "issuers only with cache",
+			opts: func(_ *testing.T) attestation.FetchOptions {
+				return attestation.FetchOptions{
+					TrustedIssuers: []string{testIssuerGoogle},
+				}
+			},
+			wantErr:   false,
+			wantInErr: "",
+		},
+		{
+			name: "issuers and keys with cache",
+			opts: func(t *testing.T) attestation.FetchOptions {
+				t.Helper()
+
+				return attestation.FetchOptions{
+					TrustedKeys:    []string{writeTestKey(t)},
+					TrustedIssuers: []string{testIssuerGoogle},
+				}
+			},
+			wantErr:   false,
+			wantInErr: "",
+		},
+		{
+			name: "issuers with transparency log",
+			opts: func(_ *testing.T) attestation.FetchOptions {
+				return attestation.FetchOptions{
+					TrustedIssuers:         []string{testIssuerGoogle},
+					RequireTransparencyLog: true,
+				}
+			},
+			wantErr:   false,
+			wantInErr: "",
+		},
+		{
+			name: "issuers with SAN patterns",
+			opts: func(_ *testing.T) attestation.FetchOptions {
+				return attestation.FetchOptions{
+					TrustedIssuers: []string{testIssuerGoogle},
+					SANPatterns:    []string{testSANUser},
+				}
+			},
+			wantErr:   false,
+			wantInErr: "",
+		},
+		{
+			name: "cache fetch error",
+			opts: func(_ *testing.T) attestation.FetchOptions {
+				return attestation.FetchOptions{
+					TrustedIssuers: []string{testIssuerGoogle},
+				}
+			},
+			wantErr:   true,
+			wantInErr: "root fetch failed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			opts := tt.opts(t)
+
+			var cache *attestation.TrustedRootCacheForTest
+
+			if tt.wantErr {
+				cache = attestation.NewTestTrustedRootCache(func() (*root.TrustedRoot, error) {
+					return nil, errRootFetchFailed
+				})
+			} else {
+				cache = attestation.NewTestTrustedRootCacheWithRoot(
+					func() (*root.TrustedRoot, error) {
+						return fakeTrustedRoot(), nil
+					},
+					fakeTrustedRoot(),
+					time.Now(),
+				)
+			}
+
+			err := attestation.ExportBuildVerificationCfgWithCache(
+				context.Background(), opts, cache,
+			)
+
+			if tt.wantErr || tt.wantInErr != "" {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+
+				if tt.wantInErr != "" && !strings.Contains(err.Error(), tt.wantInErr) {
 					t.Errorf("expected error containing %q, got: %v", tt.wantInErr, err)
 				}
 

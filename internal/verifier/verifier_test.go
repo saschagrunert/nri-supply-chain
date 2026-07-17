@@ -542,6 +542,85 @@ func TestReload(t *testing.T) { //nolint:funlen // Table-driven test.
 	}
 }
 
+const testDockerNginx = "docker.io/library/nginx:latest"
+
+func TestBuildDigestRef(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		imageRef string
+		digest   string
+		expected string
+	}{
+		{
+			name:     "empty digest returns imageRef",
+			imageRef: testDockerNginx,
+			digest:   "",
+			expected: testDockerNginx,
+		},
+		{
+			name:     "imageRef already has digest",
+			imageRef: "docker.io/library/nginx@sha256:abc123",
+			digest:   "sha256:def456",
+			expected: "docker.io/library/nginx@sha256:abc123",
+		},
+		{
+			name:     "appends digest to tag ref",
+			imageRef: testDockerNginx,
+			digest:   "sha256:abc123",
+			expected: "index.docker.io/library/nginx@sha256:abc123",
+		},
+		{
+			name:     "invalid imageRef returns original",
+			imageRef: ":::invalid",
+			digest:   "sha256:abc123",
+			expected: ":::invalid",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := verifier.ExportBuildDigestRef(test.imageRef, test.digest)
+			if got != test.expected {
+				t.Errorf("expected %q, got %q", test.expected, got)
+			}
+		})
+	}
+}
+
+func TestEnforcing(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		mode     string
+		expected bool
+	}{
+		{name: "disabled", mode: config.ModeDisabled, expected: false},
+		{name: "warn", mode: config.ModeWarn, expected: false},
+		{name: "enforce", mode: config.ModeEnforce, expected: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := config.DefaultConfig()
+			cfg.Verification = test.mode
+
+			verif, err := verifier.New(cfg, metrics.New(), nil)
+			assertNoError(t, err)
+
+			if got := verif.Enforcing(); got != test.expected {
+				t.Errorf("expected %v, got %v", test.expected, got)
+			}
+		})
+	}
+}
+
 func writePolicy(t *testing.T, dir, name, content string) {
 	t.Helper()
 

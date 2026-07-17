@@ -283,7 +283,7 @@ func versionToNumber(ver string) int {
 
 	var major int
 
-	_, _ = fmt.Sscanf(parts[0], "%d", &major)
+	_, _ = fmt.Sscanf(strings.TrimPrefix(parts[0], "v"), "%d", &major)
 
 	result := major * versionScale
 

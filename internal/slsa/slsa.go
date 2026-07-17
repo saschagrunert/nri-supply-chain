@@ -275,21 +275,22 @@ func verifyParameters(params map[string]any, pol *policy.Policy) error {
 		return nil
 	}
 
-	knownKeys := map[string]bool{
-		"source":     true,
-		"repository": true,
-		"ref":        true,
-		"workflow":   true,
-		"buildType":  true,
-	}
-
-	for key := range params {
-		if !knownKeys[key] {
-			return fmt.Errorf("%w: %q", ErrUnknownParameters, key)
+	for paramKey := range params {
+		if !isKnownExternalParameter(paramKey) {
+			return fmt.Errorf("%w: %q", ErrUnknownParameters, paramKey)
 		}
 	}
 
 	return nil
+}
+
+func isKnownExternalParameter(paramKey string) bool {
+	switch paramKey {
+	case "source", "repository", "ref", "workflow", "buildType":
+		return true
+	default:
+		return false
+	}
 }
 
 func passResult() *types.CheckResult {
