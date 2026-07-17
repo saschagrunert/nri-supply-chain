@@ -104,10 +104,14 @@ func (c *trustedRootCache) get(ctx context.Context) (*root.TrustedRoot, error) {
 // ImageFetchFunc fetches an OCI image by reference.
 type ImageFetchFunc func(ref name.Reference, options ...remote.Option) (ociV1.Image, error)
 
+// ReferrersFunc lists OCI referrers for a digest.
+type ReferrersFunc func(d name.Digest, options ...remote.Option) (ociV1.ImageIndex, error)
+
 // OCIFetcher discovers attestations via the OCI Referrers API.
 type OCIFetcher struct {
 	verifyBundle BundleVerifyFunc
 	fetchImage   ImageFetchFunc
+	referrers    ReferrersFunc
 	// rootCache is captured by the verifyBundle closure; stored for exhaustruct compliance.
 	rootCache *trustedRootCache
 }
@@ -128,6 +132,7 @@ func NewOCIFetcher() *OCIFetcher {
 			return verifyBundleWithCache(ctx, bundleBytes, opts, cachedRoot)
 		},
 		fetchImage: remote.Image,
+		referrers:  remote.Referrers,
 		rootCache:  cachedRoot,
 	}
 }
@@ -137,6 +142,7 @@ func NewOCIFetcherWithVerifier(verifier BundleVerifyFunc) *OCIFetcher {
 	return &OCIFetcher{
 		verifyBundle: verifier,
 		fetchImage:   remote.Image,
+		referrers:    remote.Referrers,
 		rootCache:    nil,
 	}
 }
@@ -163,7 +169,7 @@ func (f *OCIFetcher) Fetch(
 		remote.WithContext(ctx),
 	}
 
-	idx, err := remote.Referrers(ref, remoteOpts...)
+	idx, err := f.referrers(ref, remoteOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("listing referrers: %w", err)
 	}

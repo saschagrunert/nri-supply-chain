@@ -35,7 +35,6 @@ EOF
         "rejectUnknownParameters": true
     },
     "vex": {
-        "severityThreshold": "high",
         "missingPolicy": "allow",
         "underInvestigationPolicy": "allow"
     },
@@ -98,12 +97,11 @@ EOF
 	[[ "$status" -eq 0 ]]
 }
 
-@test "policy with VEX severity thresholds" {
+@test "policy with VEX policies" {
 	mkdir -p "$TEST_DIR/policies"
 	cat >"$TEST_DIR/policies/default.json" <<EOF
 {
     "vex": {
-        "severityThreshold": "critical",
         "missingPolicy": "allow",
         "underInvestigationPolicy": "deny"
     }
@@ -235,24 +233,6 @@ EOF
 	run_binary --config "$TEST_DIR/config.toml"
 	[[ "$status" -ne 0 ]]
 	[[ "$output" == *"absolute path"* ]]
-}
-
-@test "policy with invalid VEX severity threshold rejected" {
-	mkdir -p "$TEST_DIR/policies"
-	cat >"$TEST_DIR/policies/default.json" <<EOF
-{
-    "vex": {
-        "severityThreshold": "extreme"
-    }
-}
-EOF
-	cat >"$TEST_DIR/config.toml" <<EOF
-verification = "enforce"
-policy_dir = "$TEST_DIR/policies"
-EOF
-	run_binary --config "$TEST_DIR/config.toml"
-	[[ "$status" -ne 0 ]]
-	[[ "$output" == *"severity threshold"* ]]
 }
 
 @test "policy with invalid VSA minimum level rejected" {

@@ -20,6 +20,7 @@ import (
 	"slices"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -45,7 +46,9 @@ type Metrics struct {
 	CacheEntriesTotal prometheus.Gauge
 	// FetchErrorsTotal counts attestation fetch errors by type.
 	FetchErrorsTotal *prometheus.CounterVec
-	registry         *prometheus.Registry
+	// InflightDedupTotal counts deduplicated inflight verifications.
+	InflightDedupTotal prometheus.Counter
+	registry           *prometheus.Registry
 }
 
 // New creates and registers all supply chain verification metrics.
@@ -94,6 +97,11 @@ func New() *Metrics {
 			},
 			[]string{labelType},
 		),
+		InflightDedupTotal: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "inflight_dedup_total",
+			Help:      "Total number of deduplicated inflight verifications.",
+		}),
 		registry: prometheus.NewRegistry(),
 	}
 
@@ -122,5 +130,12 @@ func (m *Metrics) register() {
 		m.CacheMissesTotal,
 		m.CacheEntriesTotal,
 		m.FetchErrorsTotal,
+		m.InflightDedupTotal,
+		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{
+			PidFn:        nil,
+			Namespace:    "",
+			ReportErrors: false,
+		}),
+		collectors.NewGoCollector(),
 	)
 }

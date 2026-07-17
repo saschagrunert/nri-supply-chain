@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -190,8 +191,11 @@ func (v *Verifier) Reload(cfg *config.Config) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
+	if cacheAffectingFieldsChanged(v.config, &cfgCopy) || !reflect.DeepEqual(v.policies, policies) {
+		v.cache = cache.NewWithGauge(cfgCopy.CacheTTL.Duration, v.metrics.CacheEntriesTotal)
+	}
+
 	v.config = &cfgCopy
-	v.cache = cache.NewWithGauge(cfgCopy.CacheTTL.Duration, v.metrics.CacheEntriesTotal)
 	v.policies = policies
 
 	if cfgCopy.Enabled() && v.fetcher == nil {
@@ -201,13 +205,21 @@ func (v *Verifier) Reload(cfg *config.Config) error {
 	return nil
 }
 
+func cacheAffectingFieldsChanged(prev, next *config.Config) bool {
+	return prev.Verification != next.Verification ||
+		prev.PolicyDir != next.PolicyDir ||
+		prev.CacheTTL.Duration != next.CacheTTL.Duration ||
+		prev.FetchFailurePolicy != next.FetchFailurePolicy ||
+		prev.FetchTimeout.Duration != next.FetchTimeout.Duration
+}
+
 func (v *Verifier) verifyOnce(
 	ctx context.Context, state *snapshot, pol *policy.Policy,
 	imageRef, digest, namespace string,
 ) (*types.Result, error) {
 	flightKey := digest + "\x00" + namespace
 
-	resultIface, err, _ := v.inflight.Do(flightKey, func() (any, error) {
+	resultIface, err, deduped := v.inflight.Do(flightKey, func() (any, error) {
 		if cached := state.cache.Get(digest, namespace); cached != nil {
 			return cached, nil
 		}
@@ -223,6 +235,10 @@ func (v *Verifier) verifyOnce(
 	})
 	if err != nil {
 		return nil, fmt.Errorf("inflight verification: %w", err)
+	}
+
+	if deduped {
+		state.metrics.InflightDedupTotal.Inc()
 	}
 
 	shared := resultIface.(*types.Result) //nolint:forcetypeassert // type guaranteed by Do closure

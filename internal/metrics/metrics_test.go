@@ -53,6 +53,10 @@ func TestNewMetrics(t *testing.T) {
 	if met.FetchErrorsTotal == nil {
 		t.Error("expected FetchErrorsTotal to be set")
 	}
+
+	if met.InflightDedupTotal == nil {
+		t.Error("expected InflightDedupTotal to be set")
+	}
 }
 
 func TestMetricsHandler(t *testing.T) {
@@ -100,6 +104,9 @@ func TestMetricsHandler(t *testing.T) {
 		"nri_supply_chain_cache_misses_total",
 		"nri_supply_chain_cache_entries",
 		"nri_supply_chain_verification_total",
+		"nri_supply_chain_inflight_dedup_total",
+		"process_cpu_seconds_total",
+		"go_goroutines",
 	} {
 		if !strings.Contains(bodyStr, expected) {
 			t.Errorf("expected %q in metrics output", expected)

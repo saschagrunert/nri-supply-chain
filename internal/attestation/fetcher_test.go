@@ -36,13 +36,52 @@ const (
 	testHashHex       = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
 	testIssuerGoogle  = "https://accounts.google.com"
 	testSANUser       = "user@example.com"
+	testFetchImageRef = "docker.io/library/nginx:latest"
+	testFetchDigest   = "sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abcd"
 )
 
 var (
 	errImageFetch        = errors.New("image fetch failed")
 	errLayers            = errors.New("layers error")
 	errSignatureMismatch = errors.New("signature mismatch")
+	errReferrers         = errors.New("referrers failed")
+	errIndexManifest     = errors.New("index manifest error")
 )
+
+type fakeImageIndex struct {
+	manifests []ociV1.Descriptor
+	err       error
+}
+
+func (f *fakeImageIndex) MediaType() (types.MediaType, error) {
+	return types.OCIImageIndex, nil
+}
+
+func (f *fakeImageIndex) Digest() (ociV1.Hash, error) {
+	return ociV1.Hash{Algorithm: "", Hex: ""}, nil
+}
+
+func (f *fakeImageIndex) Size() (int64, error) { return 0, nil }
+
+func (f *fakeImageIndex) RawManifest() ([]byte, error) { return nil, nil }
+
+//nolint:ireturn // v1.ImageIndex requires this signature
+func (f *fakeImageIndex) Image(_ ociV1.Hash) (ociV1.Image, error) {
+	return nil, nil //nolint:nilnil // stub
+}
+
+//nolint:ireturn // v1.ImageIndex requires this signature
+func (f *fakeImageIndex) ImageIndex(_ ociV1.Hash) (ociV1.ImageIndex, error) {
+	return nil, nil //nolint:nilnil // stub
+}
+
+func (f *fakeImageIndex) IndexManifest() (*ociV1.IndexManifest, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+
+	return &ociV1.IndexManifest{Manifests: f.manifests}, nil
+}
 
 type brokenLayersImage struct {
 	ociV1.Image
@@ -541,6 +580,188 @@ func TestBuildCertificateIdentitySANPatterns(t *testing.T) {
 			sanRegex := certID.SubjectAlternativeName.Regexp.String()
 			if sanRegex != tt.wantSANRegex {
 				t.Errorf("expected SAN regex %q, got %q", tt.wantSANRegex, sanRegex)
+			}
+		})
+	}
+}
+
+func bundleDescriptor(predicateType string) ociV1.Descriptor {
+	return ociV1.Descriptor{
+		ArtifactType: attestation.BundleMediaType,
+		Digest: ociV1.Hash{
+			Algorithm: testHashAlgorithm,
+			Hex:       testHashHex,
+		},
+		Annotations: map[string]string{
+			attestation.AnnotationPredicateType: predicateType,
+		},
+	}
+}
+
+//nolint:funlen,varnamelen // table-driven test
+func TestFetch(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		referrers  attestation.ReferrersFunc
+		imageFetch attestation.ImageFetchFunc
+		verifyFunc attestation.BundleVerifyFunc
+		cancelCtx  bool
+		wantCount  int
+		wantErr    bool
+		wantErrMsg string
+	}{
+		{
+			name: "valid referrers",
+			referrers: func(_ name.Digest, _ ...remote.Option) (ociV1.ImageIndex, error) {
+				return &fakeImageIndex{
+					manifests: []ociV1.Descriptor{
+						bundleDescriptor(attestation.PredicateSLSAProvenanceV1),
+					},
+					err: nil,
+				}, nil
+			},
+			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+				return fakeImageWithPayload([]byte(`{"bundle": "ok"}`)), nil
+			},
+			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+				return []byte(`{"verified": true}`), nil
+			},
+			cancelCtx:  false,
+			wantCount:  1,
+			wantErr:    false,
+			wantErrMsg: "",
+		},
+		{
+			name: "no referrers",
+			referrers: func(_ name.Digest, _ ...remote.Option) (ociV1.ImageIndex, error) {
+				return &fakeImageIndex{manifests: nil, err: nil}, nil
+			},
+			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+				return nil, errImageFetch
+			},
+			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+				return nil, nil
+			},
+			cancelCtx:  false,
+			wantCount:  0,
+			wantErr:    false,
+			wantErrMsg: "",
+		},
+		{
+			name: "referrers error",
+			referrers: func(_ name.Digest, _ ...remote.Option) (ociV1.ImageIndex, error) {
+				return nil, errReferrers
+			},
+			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+				return nil, errImageFetch
+			},
+			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+				return nil, errSignatureMismatch
+			},
+			cancelCtx:  false,
+			wantCount:  0,
+			wantErr:    true,
+			wantErrMsg: "listing referrers",
+		},
+		{
+			name: "index manifest error",
+			referrers: func(_ name.Digest, _ ...remote.Option) (ociV1.ImageIndex, error) {
+				return &fakeImageIndex{manifests: nil, err: errIndexManifest}, nil
+			},
+			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+				return nil, errImageFetch
+			},
+			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+				return nil, errSignatureMismatch
+			},
+			cancelCtx:  false,
+			wantCount:  0,
+			wantErr:    true,
+			wantErrMsg: "reading referrers index",
+		},
+		{
+			name: "context cancellation",
+			referrers: func(_ name.Digest, _ ...remote.Option) (ociV1.ImageIndex, error) {
+				return &fakeImageIndex{
+					manifests: []ociV1.Descriptor{
+						bundleDescriptor(attestation.PredicateSLSAProvenanceV1),
+					},
+					err: nil,
+				}, nil
+			},
+			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+				return fakeImageWithPayload([]byte(`{"bundle": "ok"}`)), nil
+			},
+			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+				return []byte(`{"ok": true}`), nil
+			},
+			cancelCtx:  true,
+			wantCount:  0,
+			wantErr:    true,
+			wantErrMsg: "interrupted",
+		},
+		{
+			name: "all bundles fail verification",
+			referrers: func(_ name.Digest, _ ...remote.Option) (ociV1.ImageIndex, error) {
+				return &fakeImageIndex{
+					manifests: []ociV1.Descriptor{
+						bundleDescriptor(attestation.PredicateSLSAProvenanceV1),
+					},
+					err: nil,
+				}, nil
+			},
+			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+				return nil, errImageFetch
+			},
+			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+				return nil, nil
+			},
+			cancelCtx:  false,
+			wantCount:  0,
+			wantErr:    true,
+			wantErrMsg: "all referrer bundles failed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx := context.Background()
+
+			if tt.cancelCtx {
+				var cancel context.CancelFunc
+
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			}
+
+			fetcher := attestation.NewTestOCIFetcherFull(tt.verifyFunc, tt.imageFetch, tt.referrers)
+
+			result, err := fetcher.Fetch(
+				ctx, testFetchImageRef, testFetchDigest, attestation.FetchOptions{},
+			)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+
+				if tt.wantErrMsg != "" && !strings.Contains(err.Error(), tt.wantErrMsg) {
+					t.Errorf("expected error containing %q, got: %v", tt.wantErrMsg, err)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if len(result) != tt.wantCount {
+				t.Errorf("expected %d attestations, got %d", tt.wantCount, len(result))
 			}
 		})
 	}

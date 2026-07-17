@@ -542,6 +542,83 @@ func TestReload(t *testing.T) { //nolint:funlen // Table-driven test.
 	}
 }
 
+func TestReloadPreservesCacheWhenConfigUnchanged(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writePolicy(t, dir, "default.json", `{}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+	cfg.CacheTTL = config.Duration{Duration: time.Hour}
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	assertNoError(t, err)
+
+	result1, err := verif.Verify(
+		context.Background(), "nginx:latest", "sha256:preserve", "default",
+	)
+	assertNoError(t, err)
+
+	reloadCfg := config.DefaultConfig()
+	reloadCfg.Verification = config.ModeWarn
+	reloadCfg.PolicyDir = dir
+	reloadCfg.CacheTTL = config.Duration{Duration: time.Hour}
+
+	err = verif.Reload(reloadCfg)
+	assertNoError(t, err)
+
+	result2, err := verif.Verify(
+		context.Background(), "nginx:latest", "sha256:preserve", "default",
+	)
+	assertNoError(t, err)
+
+	if result1.Reason != result2.Reason {
+		t.Errorf("expected cached result to survive reload: %q vs %q",
+			result1.Reason, result2.Reason)
+	}
+}
+
+func TestReloadClearsCacheWhenPolicyChanges(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writePolicy(t, dir, "default.json", `{}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+	cfg.CacheTTL = config.Duration{Duration: time.Hour}
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	assertNoError(t, err)
+
+	result1, err := verif.Verify(
+		context.Background(), "nginx:latest", "sha256:polchange", "default",
+	)
+	assertNoError(t, err)
+
+	writePolicy(t, dir, "default.json", `{"provenance":{"missingPolicy":"deny"}}`)
+
+	reloadCfg := config.DefaultConfig()
+	reloadCfg.Verification = config.ModeWarn
+	reloadCfg.PolicyDir = dir
+	reloadCfg.CacheTTL = config.Duration{Duration: time.Hour}
+
+	err = verif.Reload(reloadCfg)
+	assertNoError(t, err)
+
+	result2, err := verif.Verify(
+		context.Background(), "nginx:latest", "sha256:polchange", "default",
+	)
+	assertNoError(t, err)
+
+	if result1.Reason == result2.Reason {
+		t.Error("expected cache to be cleared after policy change")
+	}
+}
+
 const testDockerNginx = "docker.io/library/nginx:latest"
 
 func TestBuildDigestRef(t *testing.T) {
