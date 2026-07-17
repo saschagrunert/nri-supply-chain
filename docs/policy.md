@@ -41,9 +41,9 @@ operational config (default: `/etc/nri-supply-chain/policies`). They define
 per-namespace trust roots and verification requirements.
 
 - **`default.json`** applies to all namespaces unless overridden.
-- **`<namespace>.json`** overrides the default for that namespace. This is a
-  full replacement, not a merge. A namespace-specific policy must be
-  self-contained.
+- **`<namespace>.json`** overrides the default for that namespace. By default,
+  this is a full replacement. Set `"inherits": true` to inherit unset fields
+  from the default policy (see [Namespace Overrides](#namespace-overrides)).
 - Files are parsed with strict mode (`DisallowUnknownFields`). Any
   unrecognized field causes a parse error.
 - An empty policy `{}` allows all containers without verification.
@@ -338,15 +338,21 @@ a more specific pattern like
 
 ## Namespace Overrides
 
-A file named `<namespace>.json` in the policy directory fully overrides
-`default.json` for pods in that namespace. There is no merging. The
-namespace-specific policy must include all trust roots and settings it needs.
+A file named `<namespace>.json` in the policy directory overrides
+`default.json` for pods in that namespace.
+
+By default, the override is a full replacement. If a namespace policy sets
+`"inherits": true`, unset top-level fields (`trust`, `exclude`, `provenance`,
+`vex`, `vsa`, `signatures`) are inherited from the default policy. Each
+top-level section that is set in the namespace policy replaces the default's
+section entirely. The default policy itself cannot set `inherits`.
 
 This is useful for:
 
 - Relaxing verification in development namespaces
 - Applying stricter policies to production namespaces
 - Using different trust roots per team
+- Overriding a single section while inheriting the rest
 
 Example: `default.json` requires provenance, but `dev.json` allows everything:
 
@@ -380,6 +386,21 @@ Example: `default.json` requires provenance, but `dev.json` allows everything:
   }
 }
 ```
+
+**`staging.json`** (inherits trust roots from default, overrides VEX only):
+
+```json
+{
+  "inherits": true,
+  "vex": {
+    "missingPolicy": "warn",
+    "underInvestigationPolicy": "allow"
+  }
+}
+```
+
+In this example, `staging.json` inherits `trust`, `exclude`, `provenance`,
+`vsa`, and `signatures` from `default.json` but replaces the `vex` section.
 
 ## Deployment Patterns
 

@@ -12,6 +12,7 @@ require (
 	github.com/sigstore/sigstore v1.10.8
 	github.com/sigstore/sigstore-go v1.2.2
 	golang.org/x/sync v0.22.0
+	golang.org/x/time v0.15.0
 )
 
 require (

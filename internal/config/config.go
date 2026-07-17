@@ -35,8 +35,10 @@ const (
 	// ModeEnforce enables verification in enforce (reject on failure) mode.
 	ModeEnforce = "enforce"
 
-	defaultFetchTimeout = 30 * time.Second
-	defaultCacheTTL     = 24 * time.Hour
+	defaultFetchTimeout            = 30 * time.Second
+	defaultCacheTTL                = 24 * time.Hour
+	defaultCircuitBreakerThreshold = 5
+	defaultCircuitBreakerCooldown  = 30 * time.Second
 )
 
 var (
@@ -57,6 +59,15 @@ var (
 
 	// ErrPolicyDirNotDirectory indicates the policy dir path is not a directory.
 	ErrPolicyDirNotDirectory = errors.New("policy_dir is not a directory")
+
+	// ErrCircuitBreakerThreshold indicates the circuit breaker threshold is invalid.
+	ErrCircuitBreakerThreshold = errors.New("circuit_breaker_threshold must be positive")
+
+	// ErrCircuitBreakerCooldown indicates the circuit breaker cooldown is invalid.
+	ErrCircuitBreakerCooldown = errors.New("circuit_breaker_cooldown must be positive")
+
+	// ErrFetchRateLimitNegative indicates a negative fetch rate limit.
+	ErrFetchRateLimitNegative = errors.New("fetch_rate_limit must be non-negative")
 )
 
 // Duration wraps time.Duration to support TOML unmarshalling from strings.
@@ -97,17 +108,29 @@ type Config struct {
 	PolicyDir string `toml:"policy_dir"`
 	// MetricsAddr is the listen address for the Prometheus metrics HTTP server.
 	MetricsAddr string `toml:"metrics_addr"`
+	// CircuitBreakerThreshold is the number of consecutive fetch failures
+	// before the circuit breaker opens.
+	CircuitBreakerThreshold int `toml:"circuit_breaker_threshold"`
+	// CircuitBreakerCooldown is how long the circuit breaker stays open
+	// before allowing a probe request.
+	CircuitBreakerCooldown Duration `toml:"circuit_breaker_cooldown"`
+	// FetchRateLimit is the maximum number of registry fetch requests per
+	// second. 0 means unlimited.
+	FetchRateLimit float64 `toml:"fetch_rate_limit"`
 }
 
 // DefaultConfig returns the default configuration.
 func DefaultConfig() *Config {
 	return &Config{
-		Verification:       ModeDisabled,
-		FetchTimeout:       Duration{Duration: defaultFetchTimeout},
-		FetchFailurePolicy: policy.ActionWarn,
-		CacheTTL:           Duration{Duration: defaultCacheTTL},
-		PolicyDir:          "/etc/nri-supply-chain/policies",
-		MetricsAddr:        "127.0.0.1:9090",
+		Verification:            ModeDisabled,
+		FetchTimeout:            Duration{Duration: defaultFetchTimeout},
+		FetchFailurePolicy:      policy.ActionWarn,
+		CacheTTL:                Duration{Duration: defaultCacheTTL},
+		PolicyDir:               "/etc/nri-supply-chain/policies",
+		MetricsAddr:             "127.0.0.1:9090",
+		CircuitBreakerThreshold: defaultCircuitBreakerThreshold,
+		CircuitBreakerCooldown:  Duration{Duration: defaultCircuitBreakerCooldown},
+		FetchRateLimit:          0,
 	}
 }
 
@@ -128,6 +151,33 @@ func (c *Config) Validate() error {
 		return nil
 	}
 
+	err := c.validateFetchAndCache()
+	if err != nil {
+		return err
+	}
+
+	return c.validateResilienceFields()
+}
+
+// ValidateRuntime performs runtime checks that require filesystem access.
+func (c *Config) ValidateRuntime() error {
+	if !c.Enabled() {
+		return nil
+	}
+
+	info, err := os.Stat(c.PolicyDir)
+	if err != nil {
+		return fmt.Errorf("invalid policy_dir %q: %w", c.PolicyDir, err)
+	}
+
+	if !info.IsDir() {
+		return fmt.Errorf("%w: %q", ErrPolicyDirNotDirectory, c.PolicyDir)
+	}
+
+	return nil
+}
+
+func (c *Config) validateFetchAndCache() error {
 	err := policy.ValidateAction("fetch_failure_policy", c.FetchFailurePolicy)
 	if err != nil {
 		return fmt.Errorf("validating config: %w", err)
@@ -152,19 +202,23 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// ValidateRuntime performs runtime checks that require filesystem access.
-func (c *Config) ValidateRuntime() error {
-	if !c.Enabled() {
-		return nil
+func (c *Config) validateResilienceFields() error {
+	if c.CircuitBreakerThreshold <= 0 {
+		return fmt.Errorf(
+			"%w: got %d", ErrCircuitBreakerThreshold, c.CircuitBreakerThreshold,
+		)
 	}
 
-	info, err := os.Stat(c.PolicyDir)
-	if err != nil {
-		return fmt.Errorf("invalid policy_dir %q: %w", c.PolicyDir, err)
+	if c.CircuitBreakerCooldown.Duration <= 0 {
+		return fmt.Errorf(
+			"%w: got %s", ErrCircuitBreakerCooldown, c.CircuitBreakerCooldown.Duration,
+		)
 	}
 
-	if !info.IsDir() {
-		return fmt.Errorf("%w: %q", ErrPolicyDirNotDirectory, c.PolicyDir)
+	if c.FetchRateLimit < 0 {
+		return fmt.Errorf(
+			"%w: got %g", ErrFetchRateLimitNegative, c.FetchRateLimit,
+		)
 	}
 
 	return nil

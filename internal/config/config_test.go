@@ -376,6 +376,104 @@ func TestLoadFromStringErrors(t *testing.T) {
 	})
 }
 
+func TestConfigValidateCircuitBreakerThreshold(t *testing.T) {
+	t.Parallel()
+
+	t.Run("negative", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.CircuitBreakerThreshold = -1
+
+		err := cfg.Validate()
+		if !errors.Is(err, config.ErrCircuitBreakerThreshold) {
+			t.Errorf("expected ErrCircuitBreakerThreshold, got %v", err)
+		}
+	})
+
+	t.Run("zero", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.CircuitBreakerThreshold = 0
+
+		err := cfg.Validate()
+		if !errors.Is(err, config.ErrCircuitBreakerThreshold) {
+			t.Errorf("expected ErrCircuitBreakerThreshold, got %v", err)
+		}
+	})
+}
+
+func TestConfigValidateCircuitBreakerCooldown(t *testing.T) {
+	t.Parallel()
+
+	t.Run("zero", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.CircuitBreakerCooldown = config.Duration{Duration: 0}
+
+		err := cfg.Validate()
+		if !errors.Is(err, config.ErrCircuitBreakerCooldown) {
+			t.Errorf("expected ErrCircuitBreakerCooldown, got %v", err)
+		}
+	})
+
+	t.Run("negative", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.CircuitBreakerCooldown = config.Duration{
+			Duration: -1 * time.Second,
+		}
+
+		err := cfg.Validate()
+		if !errors.Is(err, config.ErrCircuitBreakerCooldown) {
+			t.Errorf("expected ErrCircuitBreakerCooldown, got %v", err)
+		}
+	})
+}
+
+func TestConfigValidateFetchRateLimit(t *testing.T) {
+	t.Parallel()
+
+	t.Run("negative rate limit rejected", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.FetchRateLimit = -1.0
+
+		err := cfg.Validate()
+		if !errors.Is(err, config.ErrFetchRateLimitNegative) {
+			t.Errorf("expected ErrFetchRateLimitNegative, got %v", err)
+		}
+	})
+
+	t.Run("zero rate limit is valid (unlimited)", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+
+		assertNoError(t, cfg.Validate())
+	})
+
+	t.Run("positive rate limit is valid", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.FetchRateLimit = 50.0
+
+		assertNoError(t, cfg.Validate())
+	})
+}
+
 func TestLoadFromFileValidationError(t *testing.T) {
 	t.Parallel()
 

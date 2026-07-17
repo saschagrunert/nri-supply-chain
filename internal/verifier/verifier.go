@@ -39,27 +39,34 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/vsa"
 )
 
-// ErrVerificationFailed is returned when supply chain verification fails in enforce mode.
-var ErrVerificationFailed = errors.New("supply chain verification failed")
+var (
+	// ErrVerificationFailed is returned when supply chain verification fails in enforce mode.
+	ErrVerificationFailed = errors.New("supply chain verification failed")
+
+	// ErrCircuitBreakerOpen is returned when the circuit breaker is open.
+	ErrCircuitBreakerOpen = errors.New("circuit breaker open for image")
+)
 
 type snapshot struct {
-	config   *config.Config
-	policies map[string]*policy.Policy
-	cache    *cache.Cache
-	metrics  *metrics.Metrics
-	fetcher  attestation.Fetcher
+	config         *config.Config
+	policies       map[string]*policy.Policy
+	cache          *cache.Cache
+	metrics        *metrics.Metrics
+	fetcher        attestation.Fetcher
+	circuitBreaker *attestation.CircuitBreaker
 }
 
 // Verifier performs supply chain attestation verification on container images.
 type Verifier struct {
-	mu           sync.RWMutex
-	config       *config.Config
-	cache        *cache.Cache
-	policies     map[string]*policy.Policy
-	policyHashes map[string]string
-	metrics      *metrics.Metrics
-	fetcher      attestation.Fetcher
-	inflight     singleflight.Group
+	mu             sync.RWMutex
+	config         *config.Config
+	cache          *cache.Cache
+	policies       map[string]*policy.Policy
+	policyHashes   map[string]string
+	metrics        *metrics.Metrics
+	fetcher        attestation.Fetcher
+	inflight       singleflight.Group
+	circuitBreaker *attestation.CircuitBreaker
 }
 
 // New creates a new Verifier with the given configuration, metrics, and attestation fetcher.
@@ -75,6 +82,10 @@ func New(cfg *config.Config, met *metrics.Metrics, fetcher attestation.Fetcher) 
 		metrics:      met,
 		fetcher:      fetcher,
 		inflight:     singleflight.Group{},
+		circuitBreaker: attestation.NewCircuitBreaker(
+			cfgCopy.CircuitBreakerThreshold,
+			cfgCopy.CircuitBreakerCooldown.Duration,
+		),
 	}
 
 	if cfgCopy.Enabled() {
@@ -106,6 +117,29 @@ func (v *Verifier) Enforcing() bool {
 	defer v.mu.RUnlock()
 
 	return v.config.Verification == config.ModeEnforce
+}
+
+// Ready returns true if the verifier is ready to serve requests.
+// When not ready, the second return value describes the reason.
+//
+//nolint:nonamedreturns // gocritic requires names
+func (v *Verifier) Ready() (ready bool, reason string) {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+
+	if v.config == nil {
+		return false, "no config loaded"
+	}
+
+	if !v.config.Enabled() {
+		return true, ""
+	}
+
+	if len(v.policies) == 0 {
+		return false, "no policies loaded"
+	}
+
+	return true, ""
 }
 
 // Verify performs supply chain verification for the given image.
@@ -195,23 +229,7 @@ func applyEnforcement(
 func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 	cfgCopy := *cfg
 
-	var policies map[string]*policy.Policy
-
-	if cfgCopy.Enabled() {
-		var err error
-
-		policies, err = policy.LoadAll(cfgCopy.PolicyDir)
-		if err != nil {
-			return fmt.Errorf("reloading policies: %w", err)
-		}
-
-		err = validatePoliciesRuntime(policies)
-		if err != nil {
-			return err
-		}
-	}
-
-	newHashes, err := hashPolicies(policies)
+	policies, newHashes, err := loadAndHashPolicies(&cfgCopy)
 	if err != nil {
 		return err
 	}
@@ -228,21 +246,66 @@ func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 	v.policies = policies
 	v.policyHashes = newHashes
 
-	if cfgCopy.Enabled() && v.fetcher == nil {
-		ociFetcher := attestation.NewOCIFetcher()
+	if v.circuitBreaker == nil ||
+		v.circuitBreaker.Threshold() != cfgCopy.CircuitBreakerThreshold ||
+		v.circuitBreaker.Cooldown() != cfgCopy.CircuitBreakerCooldown.Duration {
+		v.circuitBreaker = attestation.NewCircuitBreaker(
+			cfgCopy.CircuitBreakerThreshold,
+			cfgCopy.CircuitBreakerCooldown.Duration,
+		)
+	}
 
-		warmErr := ociFetcher.Warm(ctx)
-		if warmErr != nil {
-			slog.Warn(
-				"Failed to pre-warm Sigstore trusted root",
-				"error", warmErr,
-			)
+	if cfgCopy.Enabled() {
+		if v.fetcher == nil {
+			v.fetcher = createAndWarmFetcher(ctx, &cfgCopy)
+		} else if ociFetcher, ok := v.fetcher.(*attestation.OCIFetcher); ok {
+			ociFetcher.SetRateLimit(cfgCopy.FetchRateLimit)
 		}
-
-		v.fetcher = ociFetcher
 	}
 
 	return nil
+}
+
+//nolint:nonamedreturns // gocritic requires names for multi-value returns
+func loadAndHashPolicies(
+	cfg *config.Config,
+) (policies map[string]*policy.Policy, hashes map[string]string, err error) {
+	if cfg.Enabled() {
+		policies, err = policy.LoadAll(cfg.PolicyDir)
+		if err != nil {
+			return nil, nil, fmt.Errorf("reloading policies: %w", err)
+		}
+
+		err = validatePoliciesRuntime(policies)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	hashes, err = hashPolicies(policies)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return policies, hashes, nil
+}
+
+func createAndWarmFetcher(ctx context.Context, cfg *config.Config) *attestation.OCIFetcher {
+	ociFetcher := attestation.NewOCIFetcher()
+
+	if cfg.FetchRateLimit > 0 {
+		ociFetcher.SetRateLimit(cfg.FetchRateLimit)
+	}
+
+	warmErr := ociFetcher.Warm(ctx)
+	if warmErr != nil {
+		slog.Warn(
+			"Failed to pre-warm Sigstore trusted root",
+			"error", warmErr,
+		)
+	}
+
+	return ociFetcher
 }
 
 func cacheAffectingFieldsChanged(prev, next *config.Config) bool {
@@ -303,11 +366,12 @@ func (v *Verifier) snap() snapshot {
 	defer v.mu.RUnlock()
 
 	return snapshot{
-		config:   v.config,
-		policies: v.policies,
-		cache:    v.cache,
-		metrics:  v.metrics,
-		fetcher:  v.fetcher,
+		config:         v.config,
+		policies:       v.policies,
+		cache:          v.cache,
+		metrics:        v.metrics,
+		fetcher:        v.fetcher,
+		circuitBreaker: v.circuitBreaker,
 	}
 }
 
@@ -319,9 +383,28 @@ func runChecks(
 		return runChecksWithoutFetcher(pol, state.metrics, imageRef)
 	}
 
+	if state.circuitBreaker != nil && !state.circuitBreaker.Allow() {
+		return handleFetchError(
+			state.config, state.metrics,
+			fmt.Errorf("%w: %s", ErrCircuitBreakerOpen, imageRef),
+			imageRef,
+		)
+	}
+
 	attestations, fetchErr := fetchAttestations(ctx, state, imageRef, digest, pol)
 	if fetchErr != nil {
+		if state.circuitBreaker != nil {
+			if tripped := state.circuitBreaker.RecordFailure(); tripped {
+				state.metrics.CircuitBreakerTripsTotal.Inc()
+				slog.WarnContext(ctx, "Circuit breaker opened after repeated fetch failures")
+			}
+		}
+
 		return handleFetchError(state.config, state.metrics, fetchErr, imageRef)
+	}
+
+	if state.circuitBreaker != nil {
+		state.circuitBreaker.RecordSuccess()
 	}
 
 	vsaResult := checkVSA(ctx, attestations, pol, imageRef, digest, state.metrics)

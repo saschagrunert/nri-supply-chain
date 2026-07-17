@@ -28,10 +28,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
-const (
-	checkType       = "slsa_provenance"
-	digestPartCount = 2
-)
+const checkType = "slsa_provenance"
 
 var (
 	// ErrSubjectDigestMismatch indicates the provenance subject does not match the image digest.
@@ -186,13 +183,10 @@ func isSLSAPredicate(predicateType string) bool {
 }
 
 func verifySubjectDigest(subjects []Subject, imageDigest string) error {
-	digestParts := strings.SplitN(imageDigest, ":", digestPartCount)
-	if len(digestParts) != digestPartCount {
+	algo, hash := types.ParseDigest(imageDigest)
+	if algo == "" {
 		return fmt.Errorf("%w: invalid digest format %q", ErrSubjectDigestMismatch, imageDigest)
 	}
-
-	algo := digestParts[0]
-	hash := digestParts[1]
 
 	for _, subject := range subjects {
 		if subject.Digest[algo] == hash {

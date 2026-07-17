@@ -262,6 +262,114 @@ func TestConfigureSkipsWhenConfigPathSet(t *testing.T) {
 	assertNoError(t, err)
 }
 
+const (
+	testCrioImage          = "crio-image"
+	testContainerdDigest   = "sha256:containerd"
+	testContainerdImageRef = "containerd-image"
+)
+
+func TestResolveImageCRIO(t *testing.T) {
+	t.Parallel()
+
+	imageRef, digest := plugin.ExportResolveImage(map[string]string{
+		plugin.AnnotationImage:    testImage,
+		plugin.AnnotationImageRef: testDigest,
+	})
+
+	if imageRef != testImage {
+		t.Errorf("imageRef = %q, want %q", imageRef, testImage)
+	}
+
+	if digest != testDigest {
+		t.Errorf("digest = %q, want %q", digest, testDigest)
+	}
+}
+
+func TestResolveImageContainerd(t *testing.T) {
+	t.Parallel()
+
+	imageRef, digest := plugin.ExportResolveImage(map[string]string{
+		plugin.AnnotationContainerdImage:    testImage,
+		plugin.AnnotationContainerdImageRef: testContainerdDigest,
+	})
+
+	if imageRef != testImage {
+		t.Errorf("imageRef = %q, want %q", imageRef, testImage)
+	}
+
+	if digest != testContainerdDigest {
+		t.Errorf("digest = %q, want %q", digest, testContainerdDigest)
+	}
+}
+
+func TestResolveImageCRIOPrecedence(t *testing.T) {
+	t.Parallel()
+
+	imageRef, digest := plugin.ExportResolveImage(map[string]string{
+		plugin.AnnotationImage:              testCrioImage,
+		plugin.AnnotationImageRef:           testDigest,
+		plugin.AnnotationContainerdImage:    testContainerdImageRef,
+		plugin.AnnotationContainerdImageRef: testContainerdDigest,
+	})
+
+	if imageRef != testCrioImage {
+		t.Errorf("imageRef = %q, want %q", imageRef, testCrioImage)
+	}
+
+	if digest != testDigest {
+		t.Errorf("digest = %q, want %q", digest, testDigest)
+	}
+}
+
+func TestResolveImageEmpty(t *testing.T) {
+	t.Parallel()
+
+	imageRef, digest := plugin.ExportResolveImage(map[string]string{})
+
+	if imageRef != "" {
+		t.Errorf("imageRef = %q, want empty", imageRef)
+	}
+
+	if digest != "" {
+		t.Errorf("digest = %q, want empty", digest)
+	}
+}
+
+func TestResolveImagePartialFallback(t *testing.T) {
+	t.Parallel()
+
+	imageRef, digest := plugin.ExportResolveImage(map[string]string{
+		plugin.AnnotationImage:              testCrioImage,
+		plugin.AnnotationContainerdImageRef: testContainerdDigest,
+	})
+
+	if imageRef != testCrioImage {
+		t.Errorf("imageRef = %q, want %q", imageRef, testCrioImage)
+	}
+
+	if digest != testContainerdDigest {
+		t.Errorf("digest = %q, want %q", digest, testContainerdDigest)
+	}
+}
+
+func TestResolveImageContainerdPairOverPartialCRIO(t *testing.T) {
+	t.Parallel()
+
+	imageRef, digest := plugin.ExportResolveImage(map[string]string{
+		plugin.AnnotationImage:              testCrioImage,
+		plugin.AnnotationContainerdImage:    testContainerdImageRef,
+		plugin.AnnotationContainerdImageRef: testContainerdDigest,
+	})
+
+	if imageRef != testContainerdImageRef {
+		t.Errorf("imageRef = %q, want %q", imageRef, testContainerdImageRef)
+	}
+
+	if digest != testContainerdDigest {
+		t.Errorf("digest = %q, want %q", digest, testContainerdDigest)
+	}
+}
+
 func newTestPlugin(t *testing.T, mode, policyDir string) *plugin.Plugin {
 	t.Helper()
 

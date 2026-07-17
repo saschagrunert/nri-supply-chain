@@ -95,7 +95,12 @@ SIGHUP.
 When a container is created, the plugin performs verification in this order:
 
 1. **Image identification**: Extracts the image reference and digest from
-   container annotations.
+   container annotations. A complete CRI-O annotation pair
+   (`io.kubernetes.cri-o.Image` + `io.kubernetes.cri-o.ImageRef`) takes
+   precedence. If CRI-O does not provide both, a complete containerd pair
+   (`io.kubernetes.cri.image-name` + `io.kubernetes.cri.image-ref`) is used.
+   If neither runtime provides a complete pair, available annotations from
+   either source are combined.
 
 2. **Policy resolution**: Looks up `<namespace>.json` in the policy directory.
    Falls back to `default.json` if no namespace-specific policy exists.
@@ -208,22 +213,30 @@ fetch_failure_policy = "warn"
 cache_ttl = "24h"
 policy_dir = "/etc/nri-supply-chain/policies"
 metrics_addr = "127.0.0.1:9090"
+circuit_breaker_threshold = 5
+circuit_breaker_cooldown = "30s"
+# fetch_rate_limit = 50
 ```
 
-| Field                  | Default                          | Description                                                        |
-| ---------------------- | -------------------------------- | ------------------------------------------------------------------ |
-| `verification`         | `disabled`                       | Mode: `disabled`, `warn` (log-only), `enforce` (reject on failure) |
-| `fetch_timeout`        | `30s`                            | Per-fetch timeout for retrieving attestations from the registry    |
-| `fetch_failure_policy` | `warn`                           | Behavior when attestation fetch fails: `allow`, `warn`, `deny`     |
-| `cache_ttl`            | `24h`                            | TTL for cached verification results (`0s` disables caching)        |
-| `policy_dir`           | `/etc/nri-supply-chain/policies` | Directory containing JSON policy files                             |
-| `metrics_addr`         | `127.0.0.1:9090`                 | Prometheus metrics HTTP listen address                             |
+| Field                       | Default                          | Description                                                        |
+| --------------------------- | -------------------------------- | ------------------------------------------------------------------ |
+| `verification`              | `disabled`                       | Mode: `disabled`, `warn` (log-only), `enforce` (reject on failure) |
+| `fetch_timeout`             | `30s`                            | Per-fetch timeout for retrieving attestations from the registry    |
+| `fetch_failure_policy`      | `warn`                           | Behavior when attestation fetch fails: `allow`, `warn`, `deny`     |
+| `cache_ttl`                 | `24h`                            | TTL for cached verification results (`0s` disables caching)        |
+| `policy_dir`                | `/etc/nri-supply-chain/policies` | Directory containing JSON policy files                             |
+| `metrics_addr`              | `127.0.0.1:9090`                 | Prometheus metrics HTTP listen address                             |
+| `circuit_breaker_threshold` | `5`                              | Consecutive fetch failures before the global circuit breaker opens |
+| `circuit_breaker_cooldown`  | `30s`                            | Duration the circuit breaker stays open before allowing a probe    |
+| `fetch_rate_limit`          | `0` (unlimited)                  | Maximum registry fetch requests per second                         |
 
 ### Policy Files
 
 Policy files are JSON documents in `policy_dir`. The file `default.json`
 applies to all namespaces. A file named `<namespace>.json` overrides the
-default for that namespace (full override, not merge).
+default for that namespace. By default this is a full replacement; set
+`"inherits": true` to inherit unset fields from the default policy (see
+[docs/policy.md](docs/policy.md) for details).
 
 ```json
 {
@@ -399,20 +412,24 @@ already attested the image.
 --plugin-idx     NRI plugin index (default: 10)
 --log-level      Log level: debug, info, warn, error (default: info)
 --version        Print version and exit
+--validate       Validate config and policies, then exit
 ```
 
 ## Metrics
 
 The plugin exposes Prometheus metrics at the configured address:
 
-| Metric                                           | Type      | Labels           | Description                      |
-| ------------------------------------------------ | --------- | ---------------- | -------------------------------- |
-| `nri_supply_chain_verification_total`            | Counter   | `type`, `result` | Total verification attempts      |
-| `nri_supply_chain_verification_duration_seconds` | Histogram | `type`           | Verification latency             |
-| `nri_supply_chain_cache_hits_total`              | Counter   |                  | Cache hits                       |
-| `nri_supply_chain_cache_misses_total`            | Counter   |                  | Cache misses                     |
-| `nri_supply_chain_cache_entries`                 | Gauge     |                  | Current number of cached entries |
-| `nri_supply_chain_fetch_errors_total`            | Counter   | `type`           | Attestation fetch errors         |
+| Metric                                           | Type      | Labels           | Description                             |
+| ------------------------------------------------ | --------- | ---------------- | --------------------------------------- |
+| `nri_supply_chain_verification_total`            | Counter   | `type`, `result` | Total verification attempts             |
+| `nri_supply_chain_verification_duration_seconds` | Histogram | `type`           | Verification latency                    |
+| `nri_supply_chain_cache_hits_total`              | Counter   |                  | Cache hits                              |
+| `nri_supply_chain_cache_misses_total`            | Counter   |                  | Cache misses                            |
+| `nri_supply_chain_cache_entries`                 | Gauge     |                  | Current number of cached entries        |
+| `nri_supply_chain_verification_skipped_total`    | Counter   | `reason`         | Containers allowed without verification |
+| `nri_supply_chain_fetch_errors_total`            | Counter   | `type`           | Attestation fetch errors                |
+| `nri_supply_chain_inflight_dedup_total`          | Counter   |                  | Deduplicated inflight verifications     |
+| `nri_supply_chain_circuit_breaker_trips_total`   | Counter   |                  | Circuit breaker open events             |
 
 The metrics server also exposes `/healthz` and `/readyz` endpoints for
 Kubernetes liveness and readiness probes.

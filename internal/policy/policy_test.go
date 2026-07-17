@@ -595,6 +595,331 @@ func TestLoadAllEmpty(t *testing.T) {
 	})
 }
 
+func defaultTestPolicy() *policy.Policy {
+	return &policy.Policy{
+		Inherits: nil,
+		Trust: &policy.TrustPolicy{
+			Builders: []policy.TrustedBuilder{
+				{ID: "default-builder", MaxLevel: 3},
+			},
+			Verifiers:   nil,
+			Issuers:     []string{"default-issuer"},
+			SANPatterns: nil,
+			Sources:     nil,
+			BuildTypes:  nil,
+		},
+		Exclude: []string{"gcr.io/default/*"},
+		Provenance: &policy.ProvenancePolicy{
+			MissingPolicy:           policy.ActionDeny,
+			RejectUnknownParameters: false,
+			KnownParameters:         nil,
+		},
+		VEX: &policy.VEXPolicy{
+			MissingPolicy:            policy.ActionWarn,
+			UnderInvestigationPolicy: "",
+		},
+		VSA: &policy.VSAPolicy{
+			MinimumLevel:   2,
+			MaxAge:         "",
+			MaxAgeDuration: 0,
+			Policy:         "",
+		},
+		Signatures: &policy.SignaturesPolicy{
+			RequireTransparencyLog: true,
+		},
+	}
+}
+
+func mergedEmptyNamespace() *policy.Policy {
+	nsPol := &policy.Policy{
+		Inherits: nil, Trust: nil, Exclude: nil, Provenance: nil,
+		VEX: nil, VSA: nil, Signatures: nil,
+	}
+
+	return policy.MergeWithDefault(nsPol, defaultTestPolicy())
+}
+
+func TestMergeWithDefaultInheritsCleared(t *testing.T) {
+	t.Parallel()
+
+	if mergedEmptyNamespace().Inherits != nil {
+		t.Error("expected Inherits to be nil")
+	}
+}
+
+func TestMergeWithDefaultInheritsTrust(t *testing.T) {
+	t.Parallel()
+
+	merged := mergedEmptyNamespace()
+	if merged.Trust == nil ||
+		merged.Trust.Builders[0].ID != "default-builder" {
+		t.Error("expected default Trust to be inherited")
+	}
+}
+
+func TestMergeWithDefaultInheritsExclude(t *testing.T) {
+	t.Parallel()
+
+	merged := mergedEmptyNamespace()
+	if len(merged.Exclude) != 1 ||
+		merged.Exclude[0] != "gcr.io/default/*" {
+		t.Error("expected default Exclude to be inherited")
+	}
+}
+
+func TestMergeWithDefaultInheritsProvenance(t *testing.T) {
+	t.Parallel()
+
+	merged := mergedEmptyNamespace()
+	if merged.Provenance == nil ||
+		merged.Provenance.MissingPolicy != policy.ActionDeny {
+		t.Error("expected default Provenance to be inherited")
+	}
+}
+
+func TestMergeWithDefaultInheritsVEX(t *testing.T) {
+	t.Parallel()
+
+	merged := mergedEmptyNamespace()
+	if merged.VEX == nil ||
+		merged.VEX.MissingPolicy != policy.ActionWarn {
+		t.Error("expected default VEX to be inherited")
+	}
+}
+
+func TestMergeWithDefaultInheritsVSA(t *testing.T) {
+	t.Parallel()
+
+	merged := mergedEmptyNamespace()
+	if merged.VSA == nil || merged.VSA.MinimumLevel != 2 {
+		t.Error("expected default VSA to be inherited")
+	}
+}
+
+func TestMergeWithDefaultInheritsSignatures(t *testing.T) {
+	t.Parallel()
+
+	merged := mergedEmptyNamespace()
+	if merged.Signatures == nil ||
+		!merged.Signatures.RequireTransparencyLog {
+		t.Error("expected default Signatures to be inherited")
+	}
+}
+
+func TestMergeWithDefaultTrustOverride(t *testing.T) {
+	t.Parallel()
+
+	nsTrust := &policy.TrustPolicy{
+		Builders: []policy.TrustedBuilder{
+			{ID: "ns-builder", MaxLevel: 1},
+		},
+		Verifiers:   nil,
+		Issuers:     nil,
+		SANPatterns: nil,
+		Sources:     nil,
+		BuildTypes:  nil,
+	}
+	nsPol := &policy.Policy{
+		Inherits: nil, Trust: nsTrust, Exclude: nil,
+		Provenance: nil, VEX: nil, VSA: nil, Signatures: nil,
+	}
+
+	merged := policy.MergeWithDefault(nsPol, defaultTestPolicy())
+
+	if merged.Trust.Builders[0].ID != "ns-builder" {
+		t.Errorf("expected ns-builder, got %s",
+			merged.Trust.Builders[0].ID)
+	}
+
+	if merged.Provenance.MissingPolicy != policy.ActionDeny {
+		t.Error("expected default Provenance to be preserved")
+	}
+}
+
+func TestMergeWithDefaultExcludeOverride(t *testing.T) {
+	t.Parallel()
+
+	nsPol := &policy.Policy{
+		Inherits: nil, Trust: nil,
+		Exclude:    []string{"ns-exclude/*"},
+		Provenance: nil, VEX: nil, VSA: nil, Signatures: nil,
+	}
+
+	merged := policy.MergeWithDefault(nsPol, defaultTestPolicy())
+
+	if len(merged.Exclude) != 1 ||
+		merged.Exclude[0] != "ns-exclude/*" {
+		t.Error("expected namespace Exclude to override default")
+	}
+}
+
+func TestMergeWithDefaultProvenanceOverride(t *testing.T) {
+	t.Parallel()
+
+	nsPol := &policy.Policy{
+		Inherits: nil, Trust: nil, Exclude: nil,
+		Provenance: &policy.ProvenancePolicy{
+			MissingPolicy:           policy.ActionAllow,
+			RejectUnknownParameters: false,
+			KnownParameters:         nil,
+		},
+		VEX: nil, VSA: nil, Signatures: nil,
+	}
+
+	merged := policy.MergeWithDefault(nsPol, defaultTestPolicy())
+
+	if merged.Provenance.MissingPolicy != policy.ActionAllow {
+		t.Error("expected namespace Provenance to override default")
+	}
+}
+
+func TestMergeWithDefaultVEXOverride(t *testing.T) {
+	t.Parallel()
+
+	nsPol := &policy.Policy{
+		Inherits: nil, Trust: nil, Exclude: nil, Provenance: nil,
+		VEX: &policy.VEXPolicy{
+			MissingPolicy:            policy.ActionDeny,
+			UnderInvestigationPolicy: "",
+		},
+		VSA: nil, Signatures: nil,
+	}
+
+	merged := policy.MergeWithDefault(nsPol, defaultTestPolicy())
+
+	if merged.VEX.MissingPolicy != policy.ActionDeny {
+		t.Error("expected namespace VEX to override default")
+	}
+}
+
+func TestMergeWithDefaultVSAOverride(t *testing.T) {
+	t.Parallel()
+
+	nsPol := &policy.Policy{
+		Inherits: nil, Trust: nil, Exclude: nil, Provenance: nil,
+		VEX: nil,
+		VSA: &policy.VSAPolicy{
+			MinimumLevel:   1,
+			MaxAge:         "",
+			MaxAgeDuration: 0,
+			Policy:         "",
+		},
+		Signatures: nil,
+	}
+
+	merged := policy.MergeWithDefault(nsPol, defaultTestPolicy())
+
+	if merged.VSA.MinimumLevel != 1 {
+		t.Errorf("expected MinimumLevel 1, got %d",
+			merged.VSA.MinimumLevel)
+	}
+}
+
+func TestMergeWithDefaultSignaturesOverride(t *testing.T) {
+	t.Parallel()
+
+	nsPol := &policy.Policy{
+		Inherits: nil, Trust: nil, Exclude: nil, Provenance: nil,
+		VEX:        nil,
+		VSA:        nil,
+		Signatures: &policy.SignaturesPolicy{RequireTransparencyLog: false},
+	}
+
+	merged := policy.MergeWithDefault(nsPol, defaultTestPolicy())
+
+	if merged.Signatures.RequireTransparencyLog {
+		t.Error("expected namespace Signatures to override default")
+	}
+}
+
+func TestLoadAllInheritsMergesWithDefault(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	writeFile(t, filepath.Join(dir, "default.json"), `{
+		"provenance": {"missingPolicy": "deny"},
+		"exclude": ["default-exclude/*"]
+	}`)
+	writeFile(t, filepath.Join(dir, "staging.json"), `{
+		"inherits": true,
+		"provenance": {"missingPolicy": "allow"}
+	}`)
+
+	policies, err := policy.LoadAll(dir)
+	assertNoError(t, err)
+
+	staging := policies["staging"]
+	if staging.ProvenanceMissingPolicy() != policy.ActionAllow {
+		t.Errorf("expected allow (overridden), got %s",
+			staging.ProvenanceMissingPolicy())
+	}
+
+	if len(staging.Exclude) != 1 ||
+		staging.Exclude[0] != "default-exclude/*" {
+		t.Error("expected Exclude to be inherited from default")
+	}
+}
+
+func TestLoadAllInheritsFalseNoMerge(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	writeFile(t, filepath.Join(dir, "default.json"), `{
+		"exclude": ["default-exclude/*"]
+	}`)
+	writeFile(t, filepath.Join(dir, "staging.json"), `{
+		"inherits": false
+	}`)
+
+	policies, err := policy.LoadAll(dir)
+	assertNoError(t, err)
+
+	staging := policies["staging"]
+	if staging.Exclude != nil {
+		t.Error("expected nil Exclude when inherits=false")
+	}
+}
+
+func TestLoadAllInheritsNilNoMerge(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	writeFile(t, filepath.Join(dir, "default.json"), `{
+		"exclude": ["default-exclude/*"]
+	}`)
+	writeFile(t, filepath.Join(dir, "staging.json"), `{}`)
+
+	policies, err := policy.LoadAll(dir)
+	assertNoError(t, err)
+
+	staging := policies["staging"]
+	if staging.Exclude != nil {
+		t.Error("expected nil Exclude when inherits not set")
+	}
+}
+
+func TestLoadAllDefaultCannotInherit(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	writeFile(t, filepath.Join(dir, "default.json"), `{
+		"inherits": true
+	}`)
+
+	_, err := policy.LoadAll(dir)
+	if err == nil {
+		t.Fatal("expected error when default has inherits=true")
+	}
+
+	if !errors.Is(err, policy.ErrDefaultCannotInherit) {
+		t.Errorf("expected ErrDefaultCannotInherit, got %v", err)
+	}
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 

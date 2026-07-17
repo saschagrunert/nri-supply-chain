@@ -40,6 +40,7 @@ const (
 	testPlaceholder    = "test"
 	testCustomParamKey = "custom-param"
 	testValue          = "value"
+	testSubjectName    = "nginx"
 )
 
 func validStatement() slsa.Statement {
@@ -47,7 +48,7 @@ func validStatement() slsa.Statement {
 		Type: "https://in-toto.io/Statement/v1",
 		Subject: []slsa.Subject{
 			{
-				Name:   "nginx",
+				Name:   testSubjectName,
 				Digest: map[string]string{testDigestAlgo: testDigestHash},
 			},
 		},
@@ -529,11 +530,11 @@ func TestVerify(t *testing.T) { //nolint:funlen,maintidx // Table-driven test.
 				stmt.Subject = []slsa.Subject{
 					{
 						Name:   "other-image",
-						Digest: map[string]string{"sha256": "other"},
+						Digest: map[string]string{testDigestAlgo: "other"},
 					},
 					{
-						Name:   "nginx",
-						Digest: map[string]string{"sha256": "abc123def456"},
+						Name:   testSubjectName,
+						Digest: map[string]string{testDigestAlgo: testDigestHash},
 					},
 				}
 

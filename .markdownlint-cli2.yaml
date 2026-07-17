@@ -5,3 +5,6 @@ config:
       - code
       - details
       - summary
+
+ignores:
+  - ".github/PULL_REQUEST_TEMPLATE.md"
