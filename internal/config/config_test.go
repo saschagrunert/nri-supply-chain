@@ -15,6 +15,7 @@
 package config_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -34,7 +35,7 @@ func TestDefaultConfig(t *testing.T) {
 	assertEqual(t, policy.ActionWarn, cfg.FetchFailurePolicy)
 	assertEqual(t, 24*time.Hour, cfg.CacheTTL.Duration)
 	assertEqual(t, "/etc/nri-supply-chain/policies", cfg.PolicyDir)
-	assertEqual(t, ":9090", cfg.MetricsAddr)
+	assertEqual(t, "127.0.0.1:9090", cfg.MetricsAddr)
 }
 
 func TestConfigEnabled(t *testing.T) {
@@ -66,19 +67,22 @@ func TestConfigValidateDefaults(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		modify  func(*config.Config)
-		wantErr bool
+		name        string
+		modify      func(*config.Config)
+		wantErr     bool
+		expectedErr error
 	}{
 		{
-			name:    "default is valid",
-			modify:  func(_ *config.Config) {},
-			wantErr: false,
+			name:        "default is valid",
+			modify:      func(_ *config.Config) {},
+			wantErr:     false,
+			expectedErr: nil,
 		},
 		{
-			name:    "invalid verification mode",
-			modify:  func(c *config.Config) { c.Verification = "invalid" },
-			wantErr: true,
+			name:        "invalid verification mode",
+			modify:      func(c *config.Config) { c.Verification = "invalid" },
+			wantErr:     true,
+			expectedErr: config.ErrInvalidVerificationMode,
 		},
 		{
 			name: "warn mode valid",
@@ -86,7 +90,8 @@ func TestConfigValidateDefaults(t *testing.T) {
 				c.Verification = config.ModeWarn
 				c.PolicyDir = "/tmp/policies"
 			},
-			wantErr: false,
+			wantErr:     false,
+			expectedErr: nil,
 		},
 	}
 
@@ -104,6 +109,10 @@ func TestConfigValidateDefaults(t *testing.T) {
 
 			if !test.wantErr && err != nil {
 				t.Errorf("unexpected error: %v", err)
+			}
+
+			if test.expectedErr != nil && !errors.Is(err, test.expectedErr) {
+				t.Errorf("expected error %v, got %v", test.expectedErr, err)
 			}
 		})
 	}
@@ -113,9 +122,10 @@ func TestConfigValidateEnabledPolicies(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		modify  func(*config.Config)
-		wantErr bool
+		name        string
+		modify      func(*config.Config)
+		wantErr     bool
+		expectedErr error
 	}{
 		{
 			name: "invalid fetch failure policy",
@@ -123,7 +133,8 @@ func TestConfigValidateEnabledPolicies(t *testing.T) {
 				c.Verification = config.ModeWarn
 				c.FetchFailurePolicy = "invalid"
 			},
-			wantErr: true,
+			wantErr:     true,
+			expectedErr: policy.ErrInvalidAction,
 		},
 		{
 			name: "zero fetch timeout",
@@ -131,7 +142,8 @@ func TestConfigValidateEnabledPolicies(t *testing.T) {
 				c.Verification = config.ModeWarn
 				c.FetchTimeout = config.Duration{Duration: 0}
 			},
-			wantErr: true,
+			wantErr:     true,
+			expectedErr: config.ErrFetchTimeoutNotPositive,
 		},
 		{
 			name: "negative cache TTL",
@@ -139,7 +151,8 @@ func TestConfigValidateEnabledPolicies(t *testing.T) {
 				c.Verification = config.ModeWarn
 				c.CacheTTL = config.Duration{Duration: -1 * time.Second}
 			},
-			wantErr: true,
+			wantErr:     true,
+			expectedErr: config.ErrCacheTTLNegative,
 		},
 	}
 
@@ -157,6 +170,10 @@ func TestConfigValidateEnabledPolicies(t *testing.T) {
 
 			if !test.wantErr && err != nil {
 				t.Errorf("unexpected error: %v", err)
+			}
+
+			if test.expectedErr != nil && !errors.Is(err, test.expectedErr) {
+				t.Errorf("expected error %v, got %v", test.expectedErr, err)
 			}
 		})
 	}
@@ -166,9 +183,10 @@ func TestConfigValidateEnabledPaths(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		modify  func(*config.Config)
-		wantErr bool
+		name        string
+		modify      func(*config.Config)
+		wantErr     bool
+		expectedErr error
 	}{
 		{
 			name: "empty policy dir when enabled",
@@ -176,7 +194,8 @@ func TestConfigValidateEnabledPaths(t *testing.T) {
 				c.Verification = config.ModeWarn
 				c.PolicyDir = ""
 			},
-			wantErr: true,
+			wantErr:     true,
+			expectedErr: config.ErrPolicyDirEmpty,
 		},
 		{
 			name: "relative policy dir",
@@ -184,7 +203,8 @@ func TestConfigValidateEnabledPaths(t *testing.T) {
 				c.Verification = config.ModeWarn
 				c.PolicyDir = "relative/path"
 			},
-			wantErr: true,
+			wantErr:     true,
+			expectedErr: config.ErrPolicyDirNotAbsolute,
 		},
 	}
 
@@ -202,6 +222,10 @@ func TestConfigValidateEnabledPaths(t *testing.T) {
 
 			if !test.wantErr && err != nil {
 				t.Errorf("unexpected error: %v", err)
+			}
+
+			if test.expectedErr != nil && !errors.Is(err, test.expectedErr) {
+				t.Errorf("expected error %v, got %v", test.expectedErr, err)
 			}
 		})
 	}
@@ -250,7 +274,12 @@ func TestConfigValidateRuntime(t *testing.T) {
 		cfg.Verification = config.ModeWarn
 		cfg.PolicyDir = filePath
 
-		assertError(t, cfg.ValidateRuntime())
+		err := cfg.ValidateRuntime()
+		assertError(t, err)
+
+		if !errors.Is(err, config.ErrPolicyDirNotDirectory) {
+			t.Errorf("expected error %v, got %v", config.ErrPolicyDirNotDirectory, err)
+		}
 	})
 }
 
@@ -340,6 +369,10 @@ func TestLoadFromStringErrors(t *testing.T) {
 
 		_, err := config.LoadFromString(`verification = "invalid"`)
 		assertError(t, err)
+
+		if !errors.Is(err, config.ErrInvalidVerificationMode) {
+			t.Errorf("expected error %v, got %v", config.ErrInvalidVerificationMode, err)
+		}
 	})
 }
 
@@ -356,6 +389,10 @@ policy_dir = "relative/path"
 
 	_, err := config.LoadFromFile(cfgPath)
 	assertError(t, err)
+
+	if !errors.Is(err, config.ErrPolicyDirNotAbsolute) {
+		t.Errorf("expected error %v, got %v", config.ErrPolicyDirNotAbsolute, err)
+	}
 }
 
 func assertEqual[T comparable](t *testing.T, expected, actual T) {

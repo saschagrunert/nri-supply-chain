@@ -13,7 +13,7 @@
       }
     ],
     "issuers": ["https://token.actions.githubusercontent.com"],
-    "sources": ["https://github.com/myorg/production-*"]
+    "sources": ["github.com/myorg/production-*"]
   },
   "provenance": {
     "missingPolicy": "deny",

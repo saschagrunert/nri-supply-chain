@@ -353,60 +353,35 @@ func verifyFreshness(timeVerified string, pol *policy.Policy) error {
 
 func passResult() *VerifyResult {
 	return &VerifyResult{
-		Check: &types.CheckResult{
-			Type:   checkType,
-			Passed: true,
-			Status: types.StatusPass,
-			Detail: "VSA verification passed",
-		},
+		Check:      types.PassResult(checkType, "VSA verification passed"),
 		HardReject: false,
 	}
 }
 
 func failResult(detail string) *VerifyResult {
 	return &VerifyResult{
-		Check: &types.CheckResult{
-			Type:   checkType,
-			Passed: false,
-			Status: types.StatusFail,
-			Detail: detail,
-		},
+		Check:      types.FailResult(checkType, detail),
 		HardReject: false,
 	}
 }
 
 func hardRejectResult() *VerifyResult {
 	return &VerifyResult{
-		Check: &types.CheckResult{
-			Type:   checkType,
-			Passed: false,
-			Status: types.StatusFail,
-			Detail: "trusted verifier reported FAILED verification",
-		},
+		Check:      types.FailResult(checkType, "trusted verifier reported FAILED verification"),
 		HardReject: true,
 	}
 }
 
 func untrustedResult(detail string) *VerifyResult {
 	return &VerifyResult{
-		Check: &types.CheckResult{
-			Type:   checkType,
-			Passed: false,
-			Status: types.StatusWarn,
-			Detail: detail,
-		},
+		Check:      types.SoftFailResult(checkType, detail),
 		HardReject: false,
 	}
 }
 
 func staleResult(detail string) *VerifyResult {
 	return &VerifyResult{
-		Check: &types.CheckResult{
-			Type:   checkType,
-			Passed: false,
-			Status: types.StatusWarn,
-			Detail: detail,
-		},
+		Check:      types.SoftFailResult(checkType, detail),
 		HardReject: false,
 	}
 }

@@ -91,18 +91,6 @@ EOF
 	[[ "$status" -eq 0 ]]
 }
 
-@test "invalid verification mode rejected" {
-	mkdir -p "$TEST_DIR/policies"
-	echo '{}' >"$TEST_DIR/policies/default.json"
-	cat >"$TEST_DIR/config.toml" <<EOF
-verification = "invalid"
-policy_dir = "$TEST_DIR/policies"
-EOF
-	run_binary --config "$TEST_DIR/config.toml"
-	[[ "$status" -ne 0 ]]
-	[[ "$output" == *"invalid"* ]]
-}
-
 @test "negative cache_ttl rejected" {
 	mkdir -p "$TEST_DIR/policies"
 	echo '{}' >"$TEST_DIR/policies/default.json"

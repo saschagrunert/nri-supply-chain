@@ -15,6 +15,7 @@
 package policy_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -28,9 +29,10 @@ const (
 )
 
 type validateTest struct {
-	name    string
-	policy  policy.Policy
-	wantErr bool
+	name        string
+	policy      policy.Policy
+	wantErr     bool
+	expectedErr error
 }
 
 func runValidateTests(t *testing.T, tests []validateTest) {
@@ -48,6 +50,10 @@ func runValidateTests(t *testing.T, tests []validateTest) {
 			if !test.wantErr && err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
+
+			if test.expectedErr != nil && !errors.Is(err, test.expectedErr) {
+				t.Errorf("expected error %v, got %v", test.expectedErr, err)
+			}
 		})
 	}
 }
@@ -64,9 +70,10 @@ func TestPolicyValidateEmpty(t *testing.T) {
 
 	runValidateTests(t, []validateTest{
 		{
-			name:    "empty policy is valid",
-			policy:  emptyPolicy(),
-			wantErr: false,
+			name:        "empty policy is valid",
+			policy:      emptyPolicy(),
+			wantErr:     false,
+			expectedErr: nil,
 		},
 	})
 }
@@ -86,7 +93,8 @@ func TestPolicyValidateBuilders(t *testing.T) {
 				},
 				Exclude: nil, Provenance: nil, VEX: nil, VSA: nil, Signatures: nil,
 			},
-			wantErr: false,
+			wantErr:     false,
+			expectedErr: nil,
 		},
 		{
 			name: "builder without ID",
@@ -97,7 +105,8 @@ func TestPolicyValidateBuilders(t *testing.T) {
 				},
 				Exclude: nil, Provenance: nil, VEX: nil, VSA: nil, Signatures: nil,
 			},
-			wantErr: true,
+			wantErr:     true,
+			expectedErr: policy.ErrBuilderIDRequired,
 		},
 		{
 			name: "builder with invalid max level",
@@ -110,7 +119,8 @@ func TestPolicyValidateBuilders(t *testing.T) {
 				},
 				Exclude: nil, Provenance: nil, VEX: nil, VSA: nil, Signatures: nil,
 			},
-			wantErr: true,
+			wantErr:     true,
+			expectedErr: policy.ErrBuilderMaxLevel,
 		},
 	})
 }
@@ -131,7 +141,8 @@ func TestPolicyValidateVerifiers(t *testing.T) {
 				},
 				Exclude: nil, Provenance: nil, VEX: nil, VSA: nil, Signatures: nil,
 			},
-			wantErr: true,
+			wantErr:     true,
+			expectedErr: policy.ErrVerifierKeyRequired,
 		},
 		{
 			name: "verifier with relative key path",
@@ -145,7 +156,8 @@ func TestPolicyValidateVerifiers(t *testing.T) {
 				},
 				Exclude: nil, Provenance: nil, VEX: nil, VSA: nil, Signatures: nil,
 			},
-			wantErr: true,
+			wantErr:     true,
+			expectedErr: policy.ErrVerifierKeyNotAbsolute,
 		},
 		{
 			name: "valid verifier",
@@ -159,7 +171,8 @@ func TestPolicyValidateVerifiers(t *testing.T) {
 				},
 				Exclude: nil, Provenance: nil, VEX: nil, VSA: nil, Signatures: nil,
 			},
-			wantErr: false,
+			wantErr:     false,
+			expectedErr: nil,
 		},
 	})
 }
@@ -174,7 +187,8 @@ func TestPolicyValidateExclude(t *testing.T) {
 				Trust: nil, Exclude: []string{"[invalid"}, Provenance: nil,
 				VEX: nil, VSA: nil, Signatures: nil,
 			},
-			wantErr: true,
+			wantErr:     true,
+			expectedErr: nil,
 		},
 		{
 			name: "valid exclude pattern",
@@ -182,7 +196,8 @@ func TestPolicyValidateExclude(t *testing.T) {
 				Trust: nil, Exclude: []string{"gcr.io/org/*"}, Provenance: nil,
 				VEX: nil, VSA: nil, Signatures: nil,
 			},
-			wantErr: false,
+			wantErr:     false,
+			expectedErr: nil,
 		},
 	})
 }
@@ -200,7 +215,8 @@ func TestPolicyValidateProvenance(t *testing.T) {
 				},
 				VEX: nil, VSA: nil, Signatures: nil,
 			},
-			wantErr: true,
+			wantErr:     true,
+			expectedErr: policy.ErrInvalidAction,
 		},
 	})
 }
@@ -219,7 +235,8 @@ func TestPolicyValidateVEX(t *testing.T) {
 				},
 				VSA: nil, Signatures: nil,
 			},
-			wantErr: true,
+			wantErr:     true,
+			expectedErr: policy.ErrSeverityThreshold,
 		},
 		{
 			name: "valid VEX config",
@@ -232,7 +249,8 @@ func TestPolicyValidateVEX(t *testing.T) {
 				},
 				VSA: nil, Signatures: nil,
 			},
-			wantErr: false,
+			wantErr:     false,
+			expectedErr: nil,
 		},
 	})
 }
@@ -248,7 +266,8 @@ func TestPolicyValidateVSA(t *testing.T) {
 				VSA:        &policy.VSAPolicy{MinimumLevel: 5, MaxAge: "", Policy: ""},
 				Signatures: nil,
 			},
-			wantErr: true,
+			wantErr:     true,
+			expectedErr: policy.ErrVSAMinimumLevel,
 		},
 		{
 			name: "invalid VSA max age",
@@ -259,7 +278,8 @@ func TestPolicyValidateVSA(t *testing.T) {
 				},
 				Signatures: nil,
 			},
-			wantErr: true,
+			wantErr:     true,
+			expectedErr: nil,
 		},
 	})
 }
@@ -367,6 +387,10 @@ func TestLoadPolicyErrors(t *testing.T) {
 
 		_, err := policy.Load(policyPath)
 		assertError(t, err)
+
+		if !errors.Is(err, policy.ErrTrailingContent) {
+			t.Errorf("expected error %v, got %v", policy.ErrTrailingContent, err)
+		}
 	})
 
 	t.Run("missing file", func(t *testing.T) {
@@ -443,7 +467,8 @@ func TestPolicyValidateVerifierWithoutID(t *testing.T) {
 				},
 				Exclude: nil, Provenance: nil, VEX: nil, VSA: nil, Signatures: nil,
 			},
-			wantErr: true,
+			wantErr:     true,
+			expectedErr: policy.ErrVerifierIDRequired,
 		},
 	})
 }
@@ -462,7 +487,8 @@ func TestPolicyValidateVEXPolicies(t *testing.T) {
 				},
 				VSA: nil, Signatures: nil,
 			},
-			wantErr: true,
+			wantErr:     true,
+			expectedErr: policy.ErrInvalidAction,
 		},
 		{
 			name: "invalid VEX under investigation policy",
@@ -474,7 +500,8 @@ func TestPolicyValidateVEXPolicies(t *testing.T) {
 				},
 				VSA: nil, Signatures: nil,
 			},
-			wantErr: true,
+			wantErr:     true,
+			expectedErr: policy.ErrInvalidAction,
 		},
 	})
 }
@@ -492,7 +519,8 @@ func TestPolicyValidateVSAValid(t *testing.T) {
 				},
 				Signatures: nil,
 			},
-			wantErr: false,
+			wantErr:     false,
+			expectedErr: nil,
 		},
 	})
 }
@@ -536,6 +564,10 @@ func TestLoadPolicyValidationError(t *testing.T) {
 
 	_, err := policy.Load(policyPath)
 	assertError(t, err)
+
+	if !errors.Is(err, policy.ErrBuilderIDRequired) {
+		t.Errorf("expected error %v, got %v", policy.ErrBuilderIDRequired, err)
+	}
 }
 
 func TestLoadAllEmpty(t *testing.T) {

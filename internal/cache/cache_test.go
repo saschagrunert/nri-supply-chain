@@ -219,7 +219,7 @@ func TestCacheCapacityEviction(t *testing.T) {
 
 	got := testCache.Get("sha256:10000", "default")
 	if got == nil {
-		t.Error("expected new entry to be stored after random eviction")
+		t.Error("expected new entry to be stored after oldest eviction")
 	}
 }
 

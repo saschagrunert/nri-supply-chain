@@ -85,3 +85,25 @@ func TestFailResult(t *testing.T) {
 		t.Errorf("expected detail %q, got %q", "untrusted verifier", result.Detail)
 	}
 }
+
+func TestSoftFailResult(t *testing.T) {
+	t.Parallel()
+
+	result := types.SoftFailResult("vsa", "stale verifier")
+
+	if result.Type != "vsa" {
+		t.Errorf("expected type vsa, got %q", result.Type)
+	}
+
+	if result.Passed {
+		t.Error("expected Passed to be false")
+	}
+
+	if result.Status != types.StatusWarn {
+		t.Errorf("expected status %q, got %q", types.StatusWarn, result.Status)
+	}
+
+	if result.Detail != "stale verifier" {
+		t.Errorf("expected detail %q, got %q", "stale verifier", result.Detail)
+	}
+}

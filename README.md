@@ -41,6 +41,7 @@ must pass verification.
   - [Config Reload](#config-reload)
   - [Logging](#logging)
   - [Troubleshooting](#troubleshooting)
+- [Verifying Releases](#verifying-releases)
 - [Development](#development)
 - [License](#license)
 
@@ -207,7 +208,7 @@ fetch_timeout = "30s"
 fetch_failure_policy = "warn"
 cache_ttl = "24h"
 policy_dir = "/etc/nri-supply-chain/policies"
-metrics_addr = ":9090"
+metrics_addr = "127.0.0.1:9090"
 ```
 
 | Field                  | Default                          | Description                                                        |
@@ -217,7 +218,7 @@ metrics_addr = ":9090"
 | `fetch_failure_policy` | `warn`                           | Behavior when attestation fetch fails: `allow`, `warn`, `deny`     |
 | `cache_ttl`            | `24h`                            | TTL for cached verification results (`0s` disables caching)        |
 | `policy_dir`           | `/etc/nri-supply-chain/policies` | Directory containing JSON policy files                             |
-| `metrics_addr`         | `:9090`                          | Prometheus metrics HTTP listen address                             |
+| `metrics_addr`         | `127.0.0.1:9090`                 | Prometheus metrics HTTP listen address                             |
 
 ### Policy Files
 
@@ -273,10 +274,12 @@ default for that namespace (full override, not merge).
 **`exclude`** (array of strings): Glob patterns for images that skip
 verification. Uses Go `path.Match` semantics.
 
-> **Note:** Go `path.Match` uses `*` which matches any sequence of non-`/`
-> characters. A pattern like `github.com/example/*` will match
-> `github.com/example/repo` but not `github.com/example/org/repo`. Use
-> multiple patterns for nested paths.
+> **Note:** Both `exclude` and `trust.sources` patterns use Go `path.Match`
+> semantics. `*` matches any sequence of non-`/` characters only. `**`
+> (globstar) is **not** supported. Patterns must account for the full
+> registry/namespace/image depth. For example, `registry.io/org/*` matches
+> `registry.io/org/repo` but not `registry.io/org/team/repo`. Use multiple
+> patterns for nested paths.
 
 **`provenance`** (object): SLSA provenance settings.
 
@@ -460,6 +463,9 @@ The plugin exposes Prometheus metrics at the configured address:
 | `nri_supply_chain_cache_entries`                 | Gauge     |                  | Current number of cached entries |
 | `nri_supply_chain_fetch_errors_total`            | Counter   | `type`           | Attestation fetch errors         |
 
+The metrics server also exposes `/healthz` and `/readyz` endpoints for
+Kubernetes liveness and readiness probes.
+
 ## Operations
 
 ### Config Reload
@@ -491,6 +497,28 @@ detailed verification traces.
   investigating.
 - **Stale cache**: Reduce `cache_ttl` or set to `0s` to disable caching during
   debugging. Send SIGHUP to reload and clear the cache.
+
+## Verifying Releases
+
+Release binaries are published with a SHA-256 checksum file that is signed
+using [cosign](https://github.com/sigstore/cosign). An SBOM (Software Bill of
+Materials) is generated with [syft](https://github.com/anchore/syft) for each
+release. Build provenance attestations are generated via GitHub's
+`actions/attest-build-provenance` action.
+
+To verify a release:
+
+1. Verify the checksum file signature with cosign:
+
+   ```console
+   cosign verify-blob --signature checksums.txt.sig --certificate checksums.txt.cert checksums.txt
+   ```
+
+2. Verify the binary against the checksum file:
+
+   ```console
+   sha256sum --check checksums.txt
+   ```
 
 ## Development
 

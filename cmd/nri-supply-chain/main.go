@@ -99,8 +99,8 @@ func run() int {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	setupReload(opts.configPath, verif)
-	handleShutdown(cancel)
+	setupReload(ctx, opts.configPath, verif)
+	handleShutdown(ctx, cancel)
 
 	err = runPlugin(ctx, plug, met, cfg.MetricsAddr, &opts, cancel)
 	if err != nil {
@@ -239,12 +239,20 @@ func runPlugin(
 	return nil
 }
 
-func setupReload(configPath string, verif *verifier.Verifier) {
+func setupReload(ctx context.Context, configPath string, verif *verifier.Verifier) {
 	sighup := make(chan os.Signal, 1)
 	signal.Notify(sighup, syscall.SIGHUP)
 
 	go func() {
-		for range sighup {
+		defer signal.Stop(sighup)
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-sighup:
+			}
+
 			slog.Info("Received SIGHUP, reloading config")
 
 			if configPath == "" {
@@ -279,24 +287,53 @@ func setupReload(configPath string, verif *verifier.Verifier) {
 	}()
 }
 
-func handleShutdown(cancel context.CancelFunc) {
+func handleShutdown(ctx context.Context, cancel context.CancelFunc) {
 	sigterm := make(chan os.Signal, 1)
 	signal.Notify(sigterm, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		<-sigterm
+		defer signal.Stop(sigterm)
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-sigterm:
+		}
+
 		slog.Info("Shutting down")
 		cancel()
 
-		<-sigterm
+		select {
+		case <-ctx.Done():
+			return
+		case <-sigterm:
+		}
+
 		slog.Warn("Received second signal, forcing exit")
 		os.Exit(1)
 	}()
 }
 
 func serveMetrics(ctx context.Context, met *metrics.Metrics, addr string) error {
+	if addr == "" {
+		slog.Info("Metrics server disabled (no address configured)")
+		<-ctx.Done()
+
+		return nil
+	}
+
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", met.Handler())
+
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
 
 	srv := &http.Server{
 		Addr:              addr,
@@ -319,7 +356,7 @@ func serveMetrics(ctx context.Context, met *metrics.Metrics, addr string) error 
 		}
 	}()
 
-	slog.Info("Starting metrics server", "addr", addr)
+	slog.Info("Starting metrics and health server", "addr", addr)
 
 	err := srv.ListenAndServe()
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {

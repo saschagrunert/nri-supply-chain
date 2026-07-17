@@ -30,12 +30,12 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/verify"
 )
 
-// ExportDefaultVerifyBundle exposes defaultVerifyBundle for external tests.
+// ExportDefaultVerifyBundle exposes verifyBundleWithCache (nil cache) for external tests.
 func ExportDefaultVerifyBundle(
 	ctx context.Context, data []byte,
 	opts FetchOptions, //nolint:gocritic // matches BundleVerifyFunc signature
 ) ([]byte, error) {
-	return defaultVerifyBundle(ctx, data, opts)
+	return verifyBundleWithCache(ctx, data, opts, nil)
 }
 
 // ExportBuildCertificateID exposes buildCertificateIdentity for external tests.
