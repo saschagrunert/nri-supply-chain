@@ -289,6 +289,46 @@ func TestVerify(t *testing.T) { //nolint:funlen,maintidx // test table
 			wantErr:    nil,
 		},
 		{
+			name: "minor clock skew tolerated",
+			modify: func(s *vsa.Statement) {
+				s.Predicate.TimeVerified = time.Now().
+					Add(30 * time.Second).
+					UTC().
+					Format(time.RFC3339)
+			},
+			pol:        trustedPolicy(),
+			wantPassed: true,
+			wantReject: false,
+			wantStatus: types.StatusPass,
+			wantErr:    nil,
+		},
+		{
+			name: "future timestamp within tolerance treated as fresh",
+			modify: func(s *vsa.Statement) {
+				s.Predicate.TimeVerified = time.Now().
+					Add(30 * time.Second).
+					UTC().
+					Format(time.RFC3339)
+			},
+			pol: &policy.Policy{
+				Trust: &policy.TrustPolicy{
+					Verifiers: []policy.TrustedVerifier{
+						{ID: testVerifierID, Key: testVerifierKey},
+					},
+				},
+				VSA: &policy.VSAPolicy{
+					MinimumLevel:   2,
+					MaxAge:         "1s",
+					MaxAgeDuration: 1 * time.Second,
+					Policy:         testPolicyURI,
+				},
+			},
+			wantPassed: true,
+			wantReject: false,
+			wantStatus: types.StatusPass,
+			wantErr:    nil,
+		},
+		{
 			name: "no max age configured",
 			modify: func(s *vsa.Statement) {
 				s.Predicate.TimeVerified = time.Now().

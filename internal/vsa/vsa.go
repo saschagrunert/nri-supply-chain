@@ -40,6 +40,8 @@ const (
 	ResultFailed = "FAILED"
 
 	minSLSAVersion = "1.0"
+
+	clockSkewTolerance = 60 * time.Second
 )
 
 var (
@@ -324,8 +326,12 @@ func verifyFreshness(timeVerified string, pol *policy.Policy) error {
 
 	age := time.Since(verified)
 
-	if age < 0 {
+	if age < -clockSkewTolerance {
 		return fmt.Errorf("%w: %s", ErrFutureTimestamp, timeVerified)
+	}
+
+	if age < 0 {
+		age = 0
 	}
 
 	if pol.VSA == nil || pol.VSA.MaxAge == "" {

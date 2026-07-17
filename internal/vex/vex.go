@@ -182,7 +182,7 @@ func verifySubjectAndExtract(att []byte, imageDigest string) ([]byte, error) {
 			)
 		}
 	} else {
-		slog.Debug("VEX subject verification skipped",
+		slog.Warn("VEX subject verification skipped",
 			"subjectCount", len(stmt.Subject),
 			"hasDigest", imageDigest != "",
 		)
