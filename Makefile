@@ -5,6 +5,7 @@ ZEITGEIST_VERSION = 0.7.0
 SHFMT_VERSION = v3.13.1
 SHELLCHECK_VERSION = v0.11.0
 KUBERNIX_VERSION = 0.3.3
+MDTOC_VERSION = v1.4.0
 
 BUILD_DIR := build
 GOLANGCI_LINT := $(BUILD_DIR)/golangci-lint
@@ -12,6 +13,7 @@ ZEITGEIST := $(BUILD_DIR)/zeitgeist
 SHFMT := $(BUILD_DIR)/shfmt
 SHELLCHECK := $(BUILD_DIR)/shellcheck
 KUBERNIX := $(BUILD_DIR)/kubernix
+MDTOC := $(BUILD_DIR)/mdtoc
 
 ARCH ?= $(shell uname -m | \
 	sed 's/x86_64/amd64/' | \
@@ -91,6 +93,10 @@ verify-shfmt: $(SHFMT) ## Verify shell script formatting
 verify-shellcheck: $(SHELLCHECK) ## Run shellcheck on shell scripts
 	$(SHELLCHECK) $(SHELL_FILES)
 
+.PHONY: verify-mdtoc
+verify-mdtoc: $(MDTOC) ## Verify table of contents in docs
+	$(MDTOC) --inplace --dryrun README.md
+
 .PHONY: verify-tidy
 verify-tidy: ## Verify go.mod is tidy
 	$(GO) mod tidy
@@ -117,6 +123,10 @@ $(SHELLCHECK):
 	curl -sSfL \
 		https://github.com/koalaman/shellcheck/releases/download/$(SHELLCHECK_VERSION)/shellcheck-$(SHELLCHECK_VERSION).linux.x86_64.tar.xz \
 		| tar xfJ - -C $(BUILD_DIR) --strip-components=1 shellcheck-$(SHELLCHECK_VERSION)/shellcheck
+
+$(MDTOC):
+	@mkdir -p $(BUILD_DIR)
+	GOBIN=$(abspath $(BUILD_DIR)) $(GO) install sigs.k8s.io/mdtoc@$(MDTOC_VERSION)
 
 $(KUBERNIX):
 	@mkdir -p $(BUILD_DIR)

@@ -39,7 +39,15 @@ import (
 
 var version = "0.1.0"
 
-const readHeaderTimeout = 10 * time.Second
+const (
+	readHeaderTimeout   = 10 * time.Second
+	shutdownGracePeriod = 5 * time.Second
+
+	logLevelDebug = "debug"
+	logLevelInfo  = "info"
+	logLevelWarn  = "warn"
+	logLevelError = "error"
+)
 
 type options struct {
 	configPath  string
@@ -109,7 +117,7 @@ func parseFlags() options {
 	metricsAddr := flag.String("metrics-addr", "", "metrics HTTP listen address (overrides config)")
 	pluginName := flag.String("plugin-name", "supply-chain", "NRI plugin name")
 	pluginIdx := flag.String("plugin-idx", "10", "NRI plugin index")
-	logLevel := flag.String("log-level", "info", "log level (debug, info, warn, error)")
+	logLevel := flag.String("log-level", logLevelInfo, "log level (debug, info, warn, error)")
 	showVersion := flag.Bool("version", false, "print version and exit")
 
 	flag.Parse()
@@ -161,14 +169,26 @@ func initLogging(level string) {
 	var logLevel slog.Level
 
 	switch level {
-	case "debug":
+	case logLevelDebug:
 		logLevel = slog.LevelDebug
-	case "warn":
+	case logLevelInfo:
+		logLevel = slog.LevelInfo
+	case logLevelWarn:
 		logLevel = slog.LevelWarn
-	case "error":
+	case logLevelError:
 		logLevel = slog.LevelError
 	default:
 		logLevel = slog.LevelInfo
+
+		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+			Level: logLevel,
+		})))
+
+		slog.Warn("Unrecognized log level, defaulting to info",
+			"level", level,
+		)
+
+		return
 	}
 
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
@@ -280,12 +300,18 @@ func serveMetrics(ctx context.Context, met *metrics.Metrics, addr string) error 
 		ReadHeaderTimeout: readHeaderTimeout,
 	}
 
-	go func() {
+	go func() { //nolint:gosec // ctx is cancelled at this point; fresh context is intentional
 		<-ctx.Done()
 
-		closeErr := srv.Close()
-		if closeErr != nil {
-			slog.Error("Failed to close metrics server", "error", closeErr)
+		shutdownCtx, shutdownCancel := context.WithTimeout(
+			context.Background(), shutdownGracePeriod,
+		)
+		defer shutdownCancel()
+
+		//nolint:contextcheck // ctx is already cancelled here
+		shutdownErr := srv.Shutdown(shutdownCtx)
+		if shutdownErr != nil {
+			slog.Error("Failed to shutdown metrics server", "error", shutdownErr)
 		}
 	}()
 

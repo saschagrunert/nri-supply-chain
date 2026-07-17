@@ -56,6 +56,16 @@ func PassResult(checkType, detail string) *CheckResult {
 	}
 }
 
+// WarnResult returns a warning CheckResult that allows with a warning.
+func WarnResult(checkType, detail string) *CheckResult {
+	return &CheckResult{
+		Type:   checkType,
+		Passed: true,
+		Status: StatusWarn,
+		Detail: detail,
+	}
+}
+
 // FailResult returns a failing CheckResult.
 func FailResult(checkType, detail string) *CheckResult {
 	return &CheckResult{

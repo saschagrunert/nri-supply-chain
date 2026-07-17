@@ -1,4 +1,4 @@
-# nri-supply-chain
+# Supply Chain NRI Plugin
 
 [![ci](https://github.com/saschagrunert/nri-supply-chain/actions/workflows/ci.yml/badge.svg)](https://github.com/saschagrunert/nri-supply-chain/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/saschagrunert/nri-supply-chain/graph/badge.svg)](https://codecov.io/gh/saschagrunert/nri-supply-chain)
@@ -15,7 +15,39 @@ webhooks, disabled policy controllers, or direct kubelet API calls. The plugin
 operates below the Kubernetes API layer, so every container that runs on a node
 must pass verification.
 
+<!-- toc -->
+- [Architecture](#architecture)
+- [Verification Flow](#verification-flow)
+- [Verification Types](#verification-types)
+  - [SLSA Provenance](#slsa-provenance)
+  - [VEX (Vulnerability Exploitability eXchange)](#vex-vulnerability-exploitability-exchange)
+  - [VSA (Verification Summary Attestation)](#vsa-verification-summary-attestation)
+- [Configuration](#configuration)
+  - [Operational Config](#operational-config)
+  - [Policy Files](#policy-files)
+    - [Policy Field Reference](#policy-field-reference)
+- [Deployment](#deployment)
+  - [Pre-installed NRI Plugin](#pre-installed-nri-plugin)
+  - [External NRI Plugin](#external-nri-plugin)
+  - [Runtime Requirements](#runtime-requirements)
+- [Examples](#examples)
+  - [Gradual Rollout](#gradual-rollout)
+  - [Strict Production](#strict-production)
+  - [VSA-Accelerated Verification](#vsa-accelerated-verification)
+- [CLI Flags](#cli-flags)
+- [Metrics](#metrics)
+- [Operations](#operations)
+  - [Config Reload](#config-reload)
+  - [Logging](#logging)
+  - [Troubleshooting](#troubleshooting)
+- [Development](#development)
+- [License](#license)
+<!-- /toc -->
+
 ## Architecture
+
+<details>
+<summary>Verification flow diagram</summary>
 
 ```mermaid
 flowchart TD
@@ -49,6 +81,8 @@ flowchart TD
     Enforce -- "fail (enforce mode)" --> Reject
     Enforce -- "fail (warn mode)" --> Allow
 ```
+
+</details>
 
 The plugin runs as a long-lived process that connects to the container runtime
 via NRI. It exposes Prometheus metrics and supports live config reload via
@@ -88,6 +122,7 @@ When a container is created, the plugin performs verification in this order:
 9. **Caching**: The result is cached for future lookups.
 
 Latency model:
+
 - With trusted VSA: `fetch + VSA verify`
 - Without VSA: `fetch + max(SLSA verify, VEX verify)`
 
@@ -95,9 +130,10 @@ Latency model:
 
 ### SLSA Provenance
 
-Verifies [SLSA](https://slsa.dev) provenance attestations (v1 and v0.2).
+Verifies [SLSA](https://slsa.dev) provenance v1 attestations.
 
 Checks performed:
+
 - **Subject digest**: The provenance `subject[].digest` must match the image
   digest.
 - **Builder trust**: `runDetails.builder.id` must appear in the policy's
@@ -117,6 +153,7 @@ valid attestation from a trusted builder passes (any-pass semantics).
 Verifies [OpenVEX](https://openvex.dev) v0.2.0 documents.
 
 Status handling:
+
 - `not_affected` or `fixed`: pass
 - `affected` with severity >= `severityThreshold`: fail
 - `under_investigation`: controlled by `underInvestigationPolicy` (default:
@@ -134,6 +171,7 @@ Verifies [SLSA VSA](https://slsa.dev/spec/v1.0/verification_summary) v1
 attestations.
 
 Checks performed:
+
 - **Verifier trust**: `verifier.id` must appear in `trust.verifiers`.
 - **Verification result**: `PASSED` is required. `FAILED` from a trusted
   verifier is a hard reject that prevents fallback to SLSA/VEX.
@@ -144,6 +182,7 @@ Checks performed:
 - **Freshness**: `timeVerified` must be within the `vsa.maxAge` window.
 
 VSA-first logic:
+
 - Trusted PASSED: short-circuits all other checks.
 - Trusted FAILED: hard reject, no fallback allowed.
 - Untrusted, stale, or missing: falls through to direct SLSA + VEX
@@ -170,7 +209,7 @@ metrics_addr = ":9090"
 ```
 
 | Field | Default | Description |
-|---|---|---|
+| --- | --- | --- |
 | `verification` | `disabled` | Mode: `disabled`, `warn` (log-only), `enforce` (reject on failure) |
 | `fetch_timeout` | `30s` | Per-fetch timeout for retrieving attestations from the registry |
 | `fetch_failure_policy` | `warn` | Behavior when attestation fetch fails: `allow`, `warn`, `deny` |
@@ -223,7 +262,7 @@ default for that namespace (full override, not merge).
 **`trust`** (object): Trust roots for verification.
 
 | Field | Type | Description |
-|---|---|---|
+| --- | --- | --- |
 | `builders` | array | Trusted SLSA provenance builders. Each entry has `id` (URI) and `maxLevel` (0-3). |
 | `verifiers` | array | Trusted VSA verifiers. Each entry has `id` (URI) and `key` (absolute path to public key). |
 | `issuers` | array | Trusted OIDC issuers for keyless (Fulcio) verification. |
@@ -242,14 +281,14 @@ verification. Uses Go `path.Match` semantics.
 **`provenance`** (object): SLSA provenance settings.
 
 | Field | Type | Default | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `missingPolicy` | string | `allow` | Behavior when no provenance is found: `allow`, `warn`, `deny` |
 | `rejectUnknownParameters` | bool | `false` | Reject provenance with unrecognized `externalParameters` (known keys are GitHub Actions specific: `source`, `repository`, `ref`, `workflow`, `buildType`; disable for other build systems) |
 
 **`vex`** (object): VEX settings.
 
 | Field | Type | Default | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `severityThreshold` | string | (none) | Minimum severity to trigger rejection: `low`, `medium`, `high`, `critical` |
 | `missingPolicy` | string | `allow` | Behavior when no VEX attestation is found: `allow`, `warn`, `deny` |
 | `underInvestigationPolicy` | string | `allow` | Behavior for `under_investigation` status: `allow`, `warn`, `deny` |
@@ -257,7 +296,7 @@ verification. Uses Go `path.Match` semantics.
 **`vsa`** (object): VSA settings.
 
 | Field | Type | Default | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `minimumLevel` | int | `0` | Minimum SLSA build level required (0-3) |
 | `maxAge` | string | (none) | Maximum age of VSA `timeVerified` (Go duration, e.g. `24h`) |
 | `policy` | string | (none) | Expected policy URI in the VSA |
@@ -265,7 +304,7 @@ verification. Uses Go `path.Match` semantics.
 **`signatures`** (object): Signature verification settings.
 
 | Field | Type | Default | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `requireTransparencyLog` | bool | `false` | Require Rekor transparency log inclusion for attestation signatures |
 
 ## Deployment
@@ -400,7 +439,7 @@ already attested the image.
 
 ## CLI Flags
 
-```
+```text
 --config         Path to TOML config file
 --metrics-addr   Metrics HTTP listen address (overrides config)
 --plugin-name    NRI plugin name (default: supply-chain)
@@ -414,11 +453,12 @@ already attested the image.
 The plugin exposes Prometheus metrics at the configured address:
 
 | Metric | Type | Labels | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `nri_supply_chain_verification_total` | Counter | `type`, `result` | Total verification attempts |
 | `nri_supply_chain_verification_duration_seconds` | Histogram | `type` | Verification latency |
 | `nri_supply_chain_cache_hits_total` | Counter | | Cache hits |
 | `nri_supply_chain_cache_misses_total` | Counter | | Cache misses |
+| `nri_supply_chain_cache_entries` | Gauge | | Current number of cached entries |
 | `nri_supply_chain_fetch_errors_total` | Counter | `type` | Attestation fetch errors |
 
 ## Operations

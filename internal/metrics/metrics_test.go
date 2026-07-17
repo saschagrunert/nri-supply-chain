@@ -46,6 +46,10 @@ func TestNewMetrics(t *testing.T) {
 		t.Error("expected CacheMissesTotal to be set")
 	}
 
+	if met.CacheEntriesTotal == nil {
+		t.Error("expected CacheEntriesTotal to be set")
+	}
+
 	if met.FetchErrorsTotal == nil {
 		t.Error("expected FetchErrorsTotal to be set")
 	}
@@ -94,6 +98,7 @@ func TestMetricsHandler(t *testing.T) {
 	for _, expected := range []string{
 		"nri_supply_chain_cache_hits_total",
 		"nri_supply_chain_cache_misses_total",
+		"nri_supply_chain_cache_entries",
 		"nri_supply_chain_verification_total",
 	} {
 		if !strings.Contains(bodyStr, expected) {

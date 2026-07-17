@@ -1,0 +1,6 @@
+config:
+  line-length: false
+  no-inline-html:
+    allowed_elements:
+      - details
+      - summary

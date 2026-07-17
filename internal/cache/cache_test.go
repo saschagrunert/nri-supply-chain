@@ -115,13 +115,26 @@ func TestCacheCapacityEviction(t *testing.T) {
 	}
 
 	got := testCache.Get("sha256:10000", "default")
-	if got != nil {
-		t.Error("expected entry to be dropped at capacity")
+	if got == nil {
+		t.Error("expected new entry to be stored after random eviction")
+	}
+}
+
+func TestCacheLen(t *testing.T) {
+	t.Parallel()
+
+	testCache := cache.New(time.Hour)
+
+	if testCache.Len() != 0 {
+		t.Errorf("expected empty cache, got %d", testCache.Len())
 	}
 
-	got = testCache.Get("sha256:0", "default")
-	if got == nil {
-		t.Error("expected earlier entries to still be cached")
+	testCache.Set("sha256:abc", "default", &types.Result{
+		Allowed: true, Reason: "", CheckResults: nil,
+	})
+
+	if testCache.Len() != 1 {
+		t.Errorf("expected 1 entry, got %d", testCache.Len())
 	}
 }
 

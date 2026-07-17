@@ -16,7 +16,6 @@
 package cache
 
 import (
-	"log/slog"
 	"sync"
 	"time"
 
@@ -88,13 +87,7 @@ func (c *Cache) Set(digest, namespace string, result *types.Result) {
 	}
 
 	if len(c.entries) >= maxSize {
-		slog.Warn("Verification cache at capacity, dropping entry",
-			"capacity", maxSize,
-			"namespace", namespace,
-			"digest", digest,
-		)
-
-		return
+		c.evictRandomLocked()
 	}
 
 	cacheKey := key{digest: digest, namespace: namespace}
@@ -110,6 +103,22 @@ func (c *Cache) Clear() {
 	defer c.mu.Unlock()
 
 	c.entries = make(map[key]entry)
+}
+
+// Len returns the current number of entries in the cache.
+func (c *Cache) Len() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return len(c.entries)
+}
+
+func (c *Cache) evictRandomLocked() {
+	for k := range c.entries {
+		delete(c.entries, k)
+
+		break
+	}
 }
 
 func (c *Cache) evictExpiredLocked() {

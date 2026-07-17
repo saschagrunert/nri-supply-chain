@@ -120,7 +120,9 @@ func (v *Verifier) Verify(
 		state.metrics.CacheHitsTotal.Inc()
 		logResult(ctx, imageRef, digest, namespace, cached)
 
-		return cached, nil
+		_, err := applyEnforcement(ctx, state.config, cached, imageRef)
+
+		return cached, err
 	}
 
 	state.metrics.CacheMissesTotal.Inc()
@@ -132,6 +134,7 @@ func (v *Verifier) Verify(
 
 	result, err := applyEnforcement(ctx, state.config, result, imageRef)
 	state.cache.Set(digest, namespace, result)
+	state.metrics.CacheEntriesTotal.Set(float64(state.cache.Len()))
 
 	if err != nil {
 		return result, err
@@ -186,6 +189,7 @@ func (v *Verifier) Reload(cfg *config.Config) error {
 
 	v.config = &cfgCopy
 	v.cache = cache.New(cfgCopy.CacheTTL.Duration)
+	v.metrics.CacheEntriesTotal.Set(0)
 	v.policies = policies
 
 	if cfgCopy.Enabled() && v.fetcher == nil {
@@ -526,16 +530,18 @@ func handleMissingAttestation(
 			Status: types.StatusFail, Detail: detail,
 		}
 	case config.PolicyWarn:
-		return &types.CheckResult{
-			Type: checkType, Passed: true,
-			Status: types.StatusWarn, Detail: detail,
-		}
+		return types.WarnResult(checkType, detail)
 	case config.PolicyAllow:
 		return &types.CheckResult{
 			Type: checkType, Passed: true,
 			Status: types.StatusPass, Detail: detail,
 		}
 	default:
+		slog.Warn("Unrecognized missing attestation policy, defaulting to deny",
+			"policy", pol,
+			"check", checkType,
+		)
+
 		return &types.CheckResult{
 			Type: checkType, Passed: false,
 			Status: types.StatusFail, Detail: detail,
@@ -596,6 +602,11 @@ func buildDigestRef(imageRef, digest string) string {
 
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
+		slog.Debug("Failed to parse image reference for digest ref",
+			"image", imageRef,
+			"error", err,
+		)
+
 		return imageRef
 	}
 

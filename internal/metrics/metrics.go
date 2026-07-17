@@ -17,6 +17,7 @@ package metrics
 
 import (
 	"net/http"
+	"slices"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -25,6 +26,9 @@ import (
 const (
 	namespace = "nri_supply_chain"
 	labelType = "type"
+
+	bucketFetchMid     = 15
+	bucketFetchTimeout = 30
 )
 
 // Metrics holds Prometheus metrics for supply chain verification.
@@ -37,6 +41,8 @@ type Metrics struct {
 	CacheHitsTotal prometheus.Counter
 	// CacheMissesTotal counts cache misses for verification results.
 	CacheMissesTotal prometheus.Counter
+	// CacheEntriesTotal reports the current number of cached entries.
+	CacheEntriesTotal prometheus.Gauge
 	// FetchErrorsTotal counts attestation fetch errors by type.
 	FetchErrorsTotal *prometheus.CounterVec
 	registry         *prometheus.Registry
@@ -58,7 +64,10 @@ func New() *Metrics {
 				Namespace: namespace,
 				Name:      "verification_duration_seconds",
 				Help:      "Duration of supply chain verification in seconds.",
-				Buckets:   prometheus.DefBuckets,
+				Buckets: append(
+					slices.Clone(prometheus.DefBuckets),
+					bucketFetchMid, bucketFetchTimeout,
+				),
 			},
 			[]string{labelType},
 		),
@@ -71,6 +80,11 @@ func New() *Metrics {
 			Namespace: namespace,
 			Name:      "cache_misses_total",
 			Help:      "Total number of verification cache misses.",
+		}),
+		CacheEntriesTotal: prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "cache_entries",
+			Help:      "Current number of entries in the verification cache.",
 		}),
 		FetchErrorsTotal: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
@@ -99,6 +113,7 @@ func (m *Metrics) register() {
 		m.VerificationDuration,
 		m.CacheHitsTotal,
 		m.CacheMissesTotal,
+		m.CacheEntriesTotal,
 		m.FetchErrorsTotal,
 	)
 }
