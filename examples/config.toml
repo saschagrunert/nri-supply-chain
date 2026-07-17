@@ -20,3 +20,13 @@ policy_dir = "/etc/nri-supply-chain/policies"
 
 # Listen address for the Prometheus metrics HTTP server.
 metrics_addr = "127.0.0.1:9090"
+
+# Number of consecutive fetch failures before the circuit breaker opens.
+# While open, requests short-circuit to fetch_failure_policy.
+circuit_breaker_threshold = 5
+
+# Duration the circuit breaker stays open before allowing a probe request.
+circuit_breaker_cooldown = "30s"
+
+# Maximum registry fetch requests per second (0 = unlimited).
+# fetch_rate_limit = 50

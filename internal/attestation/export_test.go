@@ -17,6 +17,7 @@ package attestation
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
@@ -29,6 +30,7 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/verify"
 	"golang.org/x/sync/singleflight"
+	"golang.org/x/time/rate"
 )
 
 // ExportDefaultVerifyBundle exposes verifyBundleWithCache (nil cache) for external tests.
@@ -190,6 +192,7 @@ func NewTestOCIFetcher(verifier BundleVerifyFunc, imageFetcher ImageFetchFunc) *
 		fetchImage:   imageFetcher,
 		referrers:    nil,
 		rootCache:    nil,
+		limiter:      atomic.Pointer[rate.Limiter]{},
 	}
 }
 
@@ -202,6 +205,7 @@ func NewTestOCIFetcherFull(
 		fetchImage:   imageFetcher,
 		referrers:    referrersFn,
 		rootCache:    nil,
+		limiter:      atomic.Pointer[rate.Limiter]{},
 	}
 }
 

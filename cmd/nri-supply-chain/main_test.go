@@ -76,6 +76,7 @@ func TestSetupConfig(t *testing.T) {
 			pluginIdx:   "",
 			logLevel:    "",
 			showVersion: false,
+			validate:    false,
 		}
 
 		cfg, err := setupConfig(opts)
@@ -109,6 +110,7 @@ func TestSetupConfig(t *testing.T) {
 			pluginIdx:   "",
 			logLevel:    "",
 			showVersion: false,
+			validate:    false,
 		}
 
 		_, err = setupConfig(opts)
@@ -393,4 +395,90 @@ func TestLoadConfig(t *testing.T) {
 			t.Fatal("expected error for nonexistent file")
 		}
 	})
+}
+
+func TestRunValidationDisabled(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+
+	if code := runValidation(cfg); code != 0 {
+		t.Errorf("expected exit code 0, got %d", code)
+	}
+}
+
+func TestRunValidationValid(t *testing.T) {
+	t.Parallel()
+
+	policyDir := filepath.Join(t.TempDir(), "policies")
+
+	err := os.MkdirAll(policyDir, 0o750)
+	if err != nil {
+		t.Fatalf("creating policy dir: %v", err)
+	}
+
+	writeValidationPolicy(t, policyDir, "default.json",
+		`{"provenance": {"missingPolicy": "warn"}}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = policyDir
+
+	if code := runValidation(cfg); code != 0 {
+		t.Errorf("expected exit code 0, got %d", code)
+	}
+}
+
+func TestRunValidationInvalidPolicy(t *testing.T) {
+	t.Parallel()
+
+	policyDir := filepath.Join(t.TempDir(), "policies")
+
+	err := os.MkdirAll(policyDir, 0o750)
+	if err != nil {
+		t.Fatalf("creating policy dir: %v", err)
+	}
+
+	writeValidationPolicy(t, policyDir, "bad.json", `{invalid json}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = policyDir
+
+	if code := runValidation(cfg); code != 1 {
+		t.Errorf("expected exit code 1, got %d", code)
+	}
+}
+
+func TestRunValidationRuntimeFailure(t *testing.T) {
+	t.Parallel()
+
+	policyDir := filepath.Join(t.TempDir(), "policies")
+
+	err := os.MkdirAll(policyDir, 0o750)
+	if err != nil {
+		t.Fatalf("creating policy dir: %v", err)
+	}
+
+	writeValidationPolicy(t, policyDir, "default.json",
+		`{"trust":{"verifiers":[{"id":"test","key":"/nonexistent/key.pub"}]}}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+	cfg.PolicyDir = policyDir
+
+	if code := runValidation(cfg); code != 1 {
+		t.Errorf("expected exit code 1, got %d", code)
+	}
+}
+
+func writeValidationPolicy(t *testing.T, dir, name, content string) {
+	t.Helper()
+
+	err := os.WriteFile(
+		filepath.Join(dir, name), []byte(content), 0o600,
+	)
+	if err != nil {
+		t.Fatalf("writing policy: %v", err)
+	}
 }

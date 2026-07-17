@@ -680,6 +680,65 @@ func TestBuildDigestRef(t *testing.T) {
 	}
 }
 
+func TestReady(t *testing.T) {
+	t.Parallel()
+
+	t.Run("disabled mode is ready", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+
+		verif, err := verifier.New(cfg, metrics.New(), nil)
+		assertNoError(t, err)
+
+		ready, reason := verif.Ready()
+		if !ready {
+			t.Errorf("expected ready=true for disabled mode, got reason=%q", reason)
+		}
+	})
+
+	t.Run("enabled with policies is ready", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		writePolicy(t, dir, "default.json", `{}`)
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.PolicyDir = dir
+
+		verif, err := verifier.New(cfg, metrics.New(), nil)
+		assertNoError(t, err)
+
+		ready, reason := verif.Ready()
+		if !ready {
+			t.Errorf("expected ready=true, got reason=%q", reason)
+		}
+	})
+
+	t.Run("enabled with no policies is not ready", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.PolicyDir = dir
+
+		verif, err := verifier.New(cfg, metrics.New(), nil)
+		assertNoError(t, err)
+
+		ready, reason := verif.Ready()
+		if ready {
+			t.Error("expected ready=false when enabled with no policies")
+		}
+
+		if reason != "no policies loaded" {
+			t.Errorf("expected reason %q, got %q", "no policies loaded", reason)
+		}
+	})
+}
+
 func TestEnforcing(t *testing.T) {
 	t.Parallel()
 

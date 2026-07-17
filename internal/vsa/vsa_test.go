@@ -30,6 +30,7 @@ const (
 	testImageRef    = "docker.io/library/nginx@sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abc1"
 	testVerifierID  = "https://example.com/verifier"
 	testVerifierKey = "/etc/keys/verifier.pub"
+	testPolicyURI   = "https://example.com/policy"
 )
 
 func validVSAStatement() vsa.Statement {
@@ -42,7 +43,7 @@ func validVSAStatement() vsa.Statement {
 			},
 			TimeVerified:       time.Now().UTC().Format(time.RFC3339),
 			ResourceURI:        testImageRef,
-			Policy:             vsa.Policy{URI: "https://example.com/policy"},
+			Policy:             vsa.Policy{URI: testPolicyURI},
 			VerificationResult: vsa.ResultPassed,
 			VerifiedLevels:     []string{"SLSA_BUILD_LEVEL_3"},
 			SLSAVersion:        "1.0",
@@ -69,9 +70,10 @@ func trustedPolicy() *policy.Policy {
 			},
 		},
 		VSA: &policy.VSAPolicy{
-			MinimumLevel: 2,
-			MaxAge:       "24h",
-			Policy:       "https://example.com/policy",
+			MinimumLevel:   2,
+			MaxAge:         "24h",
+			MaxAgeDuration: 24 * time.Hour,
+			Policy:         testPolicyURI,
 		},
 	}
 }

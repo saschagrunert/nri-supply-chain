@@ -33,8 +33,6 @@ import (
 
 const checkType = "vex"
 
-const digestPartCount = 2
-
 var (
 	// ErrInvalidVEX indicates the VEX document could not be parsed.
 	ErrInvalidVEX = errors.New("invalid VEX document")
@@ -198,12 +196,10 @@ func verifySubjectAndExtract(att []byte, imageDigest string) ([]byte, error) {
 }
 
 func subjectMatchesDigest(subjects []inTotoSubject, imageDigest string) bool {
-	parts := strings.SplitN(imageDigest, ":", digestPartCount)
-	if len(parts) != digestPartCount {
+	algo, hash := types.ParseDigest(imageDigest)
+	if algo == "" {
 		return false
 	}
-
-	algo, hash := parts[0], parts[1]
 
 	for _, subject := range subjects {
 		if subject.Digest[algo] == hash {

@@ -26,6 +26,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -42,6 +43,11 @@ const (
 )
 
 var (
+	// ErrDefaultCannotInherit indicates the default policy has inherits=true.
+	ErrDefaultCannotInherit = errors.New(
+		"default policy cannot set inherits=true",
+	)
+
 	// ErrBuilderIDRequired indicates a trusted builder is missing its ID.
 	ErrBuilderIDRequired = errors.New("builder id is required")
 
@@ -81,6 +87,9 @@ var (
 
 // Policy defines the trust roots and per-namespace verification settings.
 type Policy struct {
+	// Inherits, when true, causes this namespace policy to inherit unset
+	// fields from the default policy. Only valid on namespace policies.
+	Inherits *bool `json:"inherits,omitempty"`
 	// Trust contains trust roots for verification (builders, verifiers, issuers, etc.).
 	Trust *TrustPolicy `json:"trust,omitempty"`
 	// Exclude is a list of glob patterns for images that skip verification.
@@ -155,6 +164,8 @@ type VSAPolicy struct {
 	MinimumLevel int `json:"minimumLevel,omitempty"`
 	// MaxAge is the maximum age of a VSA's timeVerified before it's considered stale.
 	MaxAge string `json:"maxAge,omitempty"`
+	// MaxAgeDuration is the parsed form of MaxAge, set during validation.
+	MaxAgeDuration time.Duration `json:"-"`
 	// Policy is the expected policy URI in the VSA.
 	Policy string `json:"policy,omitempty"`
 }
@@ -193,6 +204,89 @@ func (p *Policy) Hash() (string, error) {
 	sum := sha256.Sum256(data)
 
 	return hex.EncodeToString(sum[:]), nil
+}
+
+// MergeWithDefault creates a new policy by starting from a copy of the default
+// policy and overriding fields that are set in the namespace policy. Each
+// top-level section (Trust, Exclude, Provenance, VEX, VSA, Signatures) is
+// replaced entirely if set in the namespace policy. The Inherits field is
+// cleared on the result. Inherited structs are shallow-copied to prevent
+// mutations (e.g. Validate writing MaxAgeDuration) from affecting the default.
+func MergeWithDefault(namespace, defaultPol *Policy) *Policy {
+	merged := clonePolicy(defaultPol)
+
+	if namespace.Trust != nil {
+		merged.Trust = namespace.Trust
+	}
+
+	if namespace.Exclude != nil {
+		merged.Exclude = namespace.Exclude
+	}
+
+	if namespace.Provenance != nil {
+		merged.Provenance = namespace.Provenance
+	}
+
+	if namespace.VEX != nil {
+		merged.VEX = namespace.VEX
+	}
+
+	if namespace.VSA != nil {
+		merged.VSA = namespace.VSA
+	}
+
+	if namespace.Signatures != nil {
+		merged.Signatures = namespace.Signatures
+	}
+
+	merged.initDerived()
+
+	return merged
+}
+
+func clonePolicy(pol *Policy) *Policy {
+	clone := &Policy{
+		Exclude: slices.Clone(pol.Exclude),
+	}
+
+	if pol.Trust != nil {
+		clone.Trust = cloneTrust(pol.Trust)
+	}
+
+	if pol.Provenance != nil {
+		prov := *pol.Provenance
+		prov.KnownParameters = slices.Clone(prov.KnownParameters)
+		clone.Provenance = &prov
+	}
+
+	if pol.VEX != nil {
+		v := *pol.VEX
+		clone.VEX = &v
+	}
+
+	if pol.VSA != nil {
+		v := *pol.VSA
+		clone.VSA = &v
+	}
+
+	if pol.Signatures != nil {
+		s := *pol.Signatures
+		clone.Signatures = &s
+	}
+
+	return clone
+}
+
+func cloneTrust(tp *TrustPolicy) *TrustPolicy {
+	trust := *tp
+	trust.Builders = slices.Clone(trust.Builders)
+	trust.Verifiers = slices.Clone(trust.Verifiers)
+	trust.Issuers = slices.Clone(trust.Issuers)
+	trust.SANPatterns = slices.Clone(trust.SANPatterns)
+	trust.Sources = slices.Clone(trust.Sources)
+	trust.BuildTypes = slices.Clone(trust.BuildTypes)
+
+	return &trust
 }
 
 // Validate checks the policy for invalid values.
@@ -285,12 +379,28 @@ func Load(policyPath string) (*Policy, error) {
 		)
 	}
 
+	pol.initDerived()
+
 	return &pol, nil
 }
 
 // LoadAll loads all policy files from the given directory.
 // Returns a map keyed by namespace (empty string for default.json).
 func LoadAll(policyDir string) (map[string]*Policy, error) {
+	policies, err := loadPolicyFiles(policyDir)
+	if err != nil {
+		return nil, err
+	}
+
+	err = applyInheritance(policies)
+	if err != nil {
+		return nil, err
+	}
+
+	return policies, nil
+}
+
+func loadPolicyFiles(policyDir string) (map[string]*Policy, error) {
 	policies := make(map[string]*Policy)
 
 	if policyDir == "" {
@@ -329,6 +439,28 @@ func LoadAll(policyDir string) (map[string]*Policy, error) {
 	}
 
 	return policies, nil
+}
+
+func applyInheritance(policies map[string]*Policy) error {
+	defaultPol := policies[""]
+
+	if defaultPol != nil && defaultPol.Inherits != nil && *defaultPol.Inherits {
+		return ErrDefaultCannotInherit
+	}
+
+	if defaultPol == nil {
+		return nil
+	}
+
+	for ns, pol := range policies {
+		if ns == "" || pol.Inherits == nil || !*pol.Inherits {
+			continue
+		}
+
+		policies[ns] = MergeWithDefault(pol, defaultPol)
+	}
+
+	return nil
 }
 
 func (p *Policy) validateTrust() error {
@@ -493,6 +625,12 @@ func (p *Policy) validateVSA() error {
 	}
 
 	return nil
+}
+
+func (p *Policy) initDerived() {
+	if p.VSA != nil && p.VSA.MaxAge != "" {
+		p.VSA.MaxAgeDuration, _ = time.ParseDuration(p.VSA.MaxAge)
+	}
 }
 
 // ValidateAction validates that the given value is a valid policy action.

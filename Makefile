@@ -62,6 +62,17 @@ test: ## Run tests with race detection and coverage report
 	$(GO) test -v -race -count=1 -coverprofile=$(BUILD_DIR)/coverage.out -covermode=atomic -coverpkg=./... ./...
 	$(GO) tool cover -html=$(BUILD_DIR)/coverage.out -o $(BUILD_DIR)/coverage.html
 
+FUZZTIME ?= 30s
+
+.PHONY: fuzz
+fuzz: ## Run all fuzz tests (use FUZZTIME to adjust, default 30s)
+	@for pkg in $$($(GO) list ./...); do \
+		for target in $$($(GO) test -list 'Fuzz.*' $$pkg 2>/dev/null | grep '^Fuzz'); do \
+			echo "fuzzing $$pkg $$target"; \
+			$(GO) test -fuzz=$$target -fuzztime=$(FUZZTIME) $$pkg || exit 1; \
+		done; \
+	done
+
 ##@ Release
 
 .PHONY: snapshot

@@ -34,6 +34,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/plugin"
+	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
@@ -56,6 +57,7 @@ type options struct {
 	pluginIdx   string
 	logLevel    string
 	showVersion bool
+	validate    bool
 }
 
 func main() {
@@ -80,11 +82,15 @@ func run() int {
 		return 1
 	}
 
+	if opts.validate {
+		return runValidation(cfg)
+	}
+
 	met := metrics.New()
 
 	var fetcher attestation.Fetcher
 	if cfg.Enabled() {
-		fetcher = createFetcher()
+		fetcher = createFetcher(cfg)
 	}
 
 	verif, err := verifier.New(cfg, met, fetcher)
@@ -95,22 +101,12 @@ func run() int {
 	}
 
 	plug := plugin.New(verif, met, opts.configPath)
-
 	ctx, cancel := context.WithCancel(context.Background())
+
 	defer cancel()
 
-	sighup := make(chan os.Signal, 1)
-	signal.Notify(sighup, syscall.SIGHUP)
-
-	defer signal.Stop(sighup)
-
-	sigterm := make(chan os.Signal, 1)
-	signal.Notify(sigterm, syscall.SIGINT, syscall.SIGTERM)
-
-	defer signal.Stop(sigterm)
-
-	setupReload(ctx, opts.configPath, verif, sighup)
-	handleShutdown(ctx, cancel, sigterm)
+	cleanupSignals := setupSignals(ctx, cancel, opts.configPath, verif)
+	defer cleanupSignals()
 
 	err = runPlugin(ctx, plug, met, cfg.MetricsAddr, &opts, cancel)
 	if err != nil {
@@ -122,6 +118,25 @@ func run() int {
 	return 0
 }
 
+func setupSignals(
+	ctx context.Context, cancel context.CancelFunc,
+	configPath string, verif *verifier.Verifier,
+) func() {
+	sighup := make(chan os.Signal, 1)
+	signal.Notify(sighup, syscall.SIGHUP)
+
+	sigterm := make(chan os.Signal, 1)
+	signal.Notify(sigterm, syscall.SIGINT, syscall.SIGTERM)
+
+	setupReload(ctx, configPath, verif, sighup)
+	handleShutdown(ctx, cancel, sigterm)
+
+	return func() {
+		signal.Stop(sighup)
+		signal.Stop(sigterm)
+	}
+}
+
 func parseFlags() options {
 	configPath := flag.String("config", "", "path to TOML config file")
 	metricsAddr := flag.String("metrics-addr", "", "metrics HTTP listen address (overrides config)")
@@ -129,6 +144,7 @@ func parseFlags() options {
 	pluginIdx := flag.String("plugin-idx", "10", "NRI plugin index")
 	logLevel := flag.String("log-level", logLevelInfo, "log level (debug, info, warn, error)")
 	showVersion := flag.Bool("version", false, "print version and exit")
+	validate := flag.Bool("validate", false, "validate config and policies, then exit")
 
 	flag.Parse()
 
@@ -139,6 +155,7 @@ func parseFlags() options {
 		pluginIdx:   *pluginIdx,
 		logLevel:    *logLevel,
 		showVersion: *showVersion,
+		validate:    *validate,
 	}
 }
 
@@ -162,8 +179,51 @@ func setupConfig(opts *options) (*config.Config, error) {
 	return cfg, nil
 }
 
-func createFetcher() *attestation.OCIFetcher {
+func runValidation(cfg *config.Config) int {
+	if !cfg.Enabled() {
+		slog.Info("Validation passed (verification disabled)")
+
+		return 0
+	}
+
+	policies, err := policy.LoadAll(cfg.PolicyDir)
+	if err != nil {
+		slog.Error("Policy validation failed", "error", err)
+
+		return 1
+	}
+
+	for ns, pol := range policies {
+		label := ns
+		if label == "" {
+			label = "default"
+		}
+
+		err = pol.ValidateRuntime()
+		if err != nil {
+			slog.Error("Policy runtime validation failed",
+				"policy", label,
+				"error", err,
+			)
+
+			return 1
+		}
+	}
+
+	slog.Info("Validation passed",
+		"mode", cfg.Verification,
+		"policies", len(policies),
+	)
+
+	return 0
+}
+
+func createFetcher(cfg *config.Config) *attestation.OCIFetcher {
 	ociFetcher := attestation.NewOCIFetcher()
+
+	if cfg.FetchRateLimit > 0 {
+		ociFetcher.SetRateLimit(cfg.FetchRateLimit)
+	}
 
 	warmErr := ociFetcher.Warm(context.Background())
 	if warmErr != nil {
@@ -333,23 +393,7 @@ func serveMetrics(
 
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", met.Handler())
-
-	mux.HandleFunc("/healthz", func(writer http.ResponseWriter, _ *http.Request) {
-		writer.WriteHeader(http.StatusOK)
-		_, _ = writer.Write([]byte("ok"))
-	})
-
-	mux.HandleFunc("/readyz", func(writer http.ResponseWriter, _ *http.Request) {
-		if !plug.Connected() {
-			writer.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = writer.Write([]byte("not ready"))
-
-			return
-		}
-
-		writer.WriteHeader(http.StatusOK)
-		_, _ = writer.Write([]byte("ok"))
-	})
+	registerHealthProbes(mux, plug)
 
 	srv := &http.Server{
 		Addr:              addr,
@@ -380,4 +424,30 @@ func serveMetrics(
 	}
 
 	return nil
+}
+
+func registerHealthProbes(mux *http.ServeMux, plug *plugin.Plugin) {
+	mux.HandleFunc("/healthz", func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write([]byte("ok"))
+	})
+
+	mux.HandleFunc("/readyz", func(writer http.ResponseWriter, _ *http.Request) {
+		if !plug.Connected() {
+			writer.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = writer.Write([]byte("not ready: NRI not connected"))
+
+			return
+		}
+
+		if ready, reason := plug.VerifierReady(); !ready {
+			writer.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = writer.Write([]byte("not ready: " + reason))
+
+			return
+		}
+
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write([]byte("ok"))
+	})
 }

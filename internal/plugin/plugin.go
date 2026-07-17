@@ -38,6 +38,11 @@ const (
 	AnnotationImage = "io.kubernetes.cri-o.Image"
 	// AnnotationImageRef is the CRI-O annotation for the resolved image digest.
 	AnnotationImageRef = "io.kubernetes.cri-o.ImageRef"
+
+	// AnnotationContainerdImage is the containerd annotation for the image name.
+	AnnotationContainerdImage = "io.kubernetes.cri.image-name"
+	// AnnotationContainerdImageRef is the containerd annotation for the image digest.
+	AnnotationContainerdImageRef = "io.kubernetes.cri.image-ref"
 )
 
 // Plugin implements the NRI CreateContainer and Configure hooks
@@ -62,6 +67,13 @@ func New(v *verifier.Verifier, met *metrics.Metrics, configPath string) *Plugin 
 // Connected returns true if the plugin has successfully connected to the NRI runtime.
 func (p *Plugin) Connected() bool {
 	return p.connected.Load()
+}
+
+// VerifierReady returns true if the verifier is ready to serve requests.
+//
+//nolint:nonamedreturns // gocritic requires names
+func (p *Plugin) VerifierReady() (ready bool, reason string) {
+	return p.verifier.Ready()
 }
 
 // SetDisconnected marks the plugin as disconnected from the NRI runtime.
@@ -103,8 +115,7 @@ func (p *Plugin) CreateContainer(
 	ctx context.Context, pod *api.PodSandbox, ctr *api.Container,
 ) (*api.ContainerAdjustment, []*api.ContainerUpdate, error) {
 	annotations := ctr.GetAnnotations()
-	imageRef := annotations[AnnotationImage]
-	digest := annotations[AnnotationImageRef]
+	imageRef, digest := resolveImage(annotations)
 	namespace := pod.GetNamespace()
 
 	if imageRef == "" || digest == "" {
@@ -149,4 +160,31 @@ func (p *Plugin) CreateContainer(
 	)
 
 	return nil, nil, nil
+}
+
+//nolint:nonamedreturns // gocritic requires names
+func resolveImage(annotations map[string]string) (imageRef, digest string) {
+	imageRef = annotations[AnnotationImage]
+	digest = annotations[AnnotationImageRef]
+
+	if imageRef != "" && digest != "" {
+		return imageRef, digest
+	}
+
+	cImg := annotations[AnnotationContainerdImage]
+	cRef := annotations[AnnotationContainerdImageRef]
+
+	if cImg != "" && cRef != "" {
+		return cImg, cRef
+	}
+
+	if imageRef == "" {
+		imageRef = cImg
+	}
+
+	if digest == "" {
+		digest = cRef
+	}
+
+	return imageRef, digest
 }

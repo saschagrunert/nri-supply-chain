@@ -131,6 +131,7 @@ linters:
             - github.com/saschagrunert/nri-supply-chain
             - github.com/sigstore/sigstore
             - golang.org/x/sync
+            - golang.org/x/time
     exhaustruct:
       exclude:
         - 'github\.com/containerd/nri/pkg/api\..*'

@@ -17,6 +17,7 @@ package cache
 
 import (
 	"container/heap"
+	"math/rand/v2"
 	"sync"
 	"time"
 
@@ -24,6 +25,8 @@ import (
 
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
+
+const jitterDivisor = 10
 
 // maxSize is the maximum number of entries allowed in the cache.
 const maxSize = 10000
@@ -177,7 +180,7 @@ func (c *Cache) Set(digest, namespace string, result *types.Result) {
 	}
 
 	cacheKey := key{digest: digest, namespace: namespace}
-	expiresAt := time.Now().Add(c.ttl)
+	expiresAt := time.Now().Add(c.ttl + jitter(c.ttl))
 
 	c.entries[cacheKey] = entry{
 		result:    result,
@@ -240,4 +243,14 @@ func (c *Cache) evictExpiredLocked() {
 		delete(c.entries, he.cacheKey)
 		delete(c.heapIndex, he.cacheKey)
 	}
+}
+
+func jitter(ttl time.Duration) time.Duration {
+	maxJitter := int64(ttl / jitterDivisor)
+	if maxJitter <= 0 {
+		return 0
+	}
+
+	//nolint:gosec // jitter does not need crypto randomness
+	return time.Duration(rand.Int64N(maxJitter))
 }

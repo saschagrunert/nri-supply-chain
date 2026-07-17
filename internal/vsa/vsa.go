@@ -321,9 +321,14 @@ func verifyFreshness(timeVerified string, pol *policy.Policy) error {
 		return nil
 	}
 
-	maxAge, err := time.ParseDuration(pol.VSA.MaxAge)
-	if err != nil {
-		return fmt.Errorf("parsing max_age %q: %w", pol.VSA.MaxAge, err)
+	maxAge := pol.VSA.MaxAgeDuration
+	if maxAge == 0 {
+		var err error
+
+		maxAge, err = time.ParseDuration(pol.VSA.MaxAge)
+		if err != nil {
+			return fmt.Errorf("parsing max_age %q: %w", pol.VSA.MaxAge, err)
+		}
 	}
 
 	verified, err := time.Parse(time.RFC3339Nano, timeVerified)

@@ -25,6 +25,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -37,6 +38,7 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/verify"
 	"github.com/sigstore/sigstore/pkg/signature"
 	"golang.org/x/sync/singleflight"
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -146,6 +148,7 @@ type OCIFetcher struct {
 	referrers    ReferrersFunc
 	// rootCache is captured by the verifyBundle closure; stored for exhaustruct compliance.
 	rootCache *trustedRootCache
+	limiter   atomic.Pointer[rate.Limiter]
 }
 
 // NewOCIFetcher creates a new OCI-based attestation fetcher.
@@ -167,6 +170,7 @@ func NewOCIFetcher() *OCIFetcher {
 		fetchImage: remote.Image,
 		referrers:  remote.Referrers,
 		rootCache:  cachedRoot,
+		limiter:    atomic.Pointer[rate.Limiter]{},
 	}
 }
 
@@ -177,7 +181,23 @@ func NewOCIFetcherWithVerifier(verifier BundleVerifyFunc) *OCIFetcher {
 		fetchImage:   remote.Image,
 		referrers:    remote.Referrers,
 		rootCache:    nil,
+		limiter:      atomic.Pointer[rate.Limiter]{},
 	}
+}
+
+// SetRateLimit configures a rate limiter for outbound registry calls.
+// A rate of 0 disables rate limiting. Safe for concurrent use with Fetch.
+func (f *OCIFetcher) SetRateLimit(requestsPerSecond float64) {
+	if requestsPerSecond <= 0 {
+		f.limiter.Store(nil)
+
+		return
+	}
+
+	lim := rate.NewLimiter(
+		rate.Limit(requestsPerSecond), int(requestsPerSecond)+1,
+	)
+	f.limiter.Store(lim)
 }
 
 // Warm pre-fetches the Sigstore trusted root so that the first verification
@@ -252,6 +272,13 @@ func (f *OCIFetcher) fetchWithRetry(
 
 				return nil, fmt.Errorf("attestation fetch interrupted: %w", ctx.Err())
 			case <-timer.C:
+			}
+		}
+
+		if lim := f.limiter.Load(); lim != nil {
+			waitErr := lim.Wait(ctx)
+			if waitErr != nil {
+				return nil, fmt.Errorf("rate limit wait: %w", waitErr)
 			}
 		}
 
@@ -363,7 +390,8 @@ func (f *OCIFetcher) collectAttestations(
 		if processed > maxReferrers {
 			slog.WarnContext(ctx, "Referrer count exceeds limit, skipping remaining",
 				"limit", maxReferrers,
-				"total", len(manifests),
+				"bundleReferrers", processed,
+				"totalManifests", len(manifests),
 			)
 
 			break
