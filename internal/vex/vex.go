@@ -264,12 +264,7 @@ func handleUnderInvestigation(pol *policy.Policy) *types.CheckResult {
 	case "deny":
 		return failResult(detail)
 	case "warn":
-		return &types.CheckResult{
-			Type:   checkType,
-			Passed: true,
-			Status: types.StatusWarn,
-			Detail: detail,
-		}
+		return types.WarnResult(checkType, detail)
 	default:
 		return &types.CheckResult{
 			Type:   checkType,

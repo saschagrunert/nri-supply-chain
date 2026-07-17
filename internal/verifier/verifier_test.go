@@ -317,6 +317,42 @@ func TestVerifyCacheWarnMode(t *testing.T) {
 	}
 }
 
+func TestVerifyCacheEnforceMode(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writePolicy(t, dir, "default.json", `{
+		"trust": {"builders": [{"id": "test", "maxLevel": 2}]},
+		"provenance": {"missingPolicy": "deny"}
+	}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+	cfg.PolicyDir = dir
+	cfg.CacheTTL = config.Duration{Duration: time.Hour}
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	assertNoError(t, err)
+
+	_, err = verif.Verify(
+		context.Background(), "nginx:latest", "sha256:enforce-cache", "default",
+	)
+
+	if !errors.Is(err, verifier.ErrVerificationFailed) {
+		t.Fatalf("first call: expected ErrVerificationFailed, got %v", err)
+	}
+
+	_, err = verif.Verify(
+		context.Background(), "nginx:latest", "sha256:enforce-cache", "default",
+	)
+
+	if !errors.Is(err, verifier.ErrVerificationFailed) {
+		t.Fatalf(
+			"second call (cache hit): expected ErrVerificationFailed, got %v", err,
+		)
+	}
+}
+
 func TestVerifyNamespacePolicy(t *testing.T) {
 	t.Parallel()
 
