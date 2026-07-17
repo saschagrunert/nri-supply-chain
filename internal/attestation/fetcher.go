@@ -991,6 +991,13 @@ func globToRegex(pattern string) string {
 
 	for idx := 0; idx < len(runes); idx++ {
 		switch runes[idx] {
+		case '\\':
+			if idx+1 < len(runes) {
+				idx++
+				builder.WriteString(regexp.QuoteMeta(string(runes[idx])))
+			} else {
+				builder.WriteString(regexp.QuoteMeta(`\`))
+			}
 		case '*':
 			builder.WriteString("[^/]*")
 		case '?':

@@ -857,6 +857,24 @@ func TestGlobToRegex(t *testing.T) { //nolint:funlen // Table-driven test.
 			match:   `].example.com`,
 			noMatch: "q.example.com",
 		},
+		{
+			name:    "escaped star is literal",
+			pattern: `\*.example.com`,
+			match:   `*.example.com`,
+			noMatch: "foo.example.com",
+		},
+		{
+			name:    "escaped question mark is literal",
+			pattern: `\?.example.com`,
+			match:   `?.example.com`,
+			noMatch: "z.example.com",
+		},
+		{
+			name:    "escaped backslash outside class",
+			pattern: `\\foo`,
+			match:   `\foo`,
+			noMatch: "foo",
+		},
 	}
 
 	for _, test := range tests {
