@@ -60,7 +60,7 @@ flowchart TD
     Policy["Policy lookup\n(namespace or default)"]
     Exclude{"Excluded?"}
     Cache{"Cache hit?"}
-    Fetch["Fetch attestations\n(OCI Referrers API)"]
+    Fetch["Fetch attestations\n(OCI Referrers API +\ncosign tag fallback)"]
     VSA{"Trusted VSA?"}
     Parallel["SLSA + VEX\n(parallel)"]
     Enforce{"Enforce / Warn"}
@@ -112,7 +112,10 @@ When a container is created, the plugin performs verification in this order:
    within the configured TTL, returns it immediately.
 
 5. **Attestation fetch**: Discovers attestations via the OCI Referrers API.
-   Filters for DSSE-enveloped attestation bundles and extracts payloads.
+   Filters for DSSE-enveloped attestation bundles and extracts payloads. If
+   the Referrers API returns no attestations, the plugin falls back to
+   cosign's tag-based discovery scheme, looking for an image tagged
+   `sha256-<digest>.att` in the same repository.
 
 6. **VSA-first evaluation**:
    - If a trusted PASSED VSA is found, skip SLSA and VEX checks entirely.
@@ -459,7 +462,9 @@ detailed verification traces.
 
 - **Container rejected unexpectedly**: Check logs at debug level. Verify the
   policy file for the namespace is correct. Confirm attestations exist in the
-  registry (`cosign tree <image>`).
+  registry (`cosign tree <image>`). The plugin tries the OCI Referrers API
+  first, then falls back to cosign tag-based discovery
+  (`sha256-<digest>.att`). Debug logs show which path was used.
 - **Fetch errors**: Check network connectivity from the node to the registry.
   Set `fetch_failure_policy = "allow"` temporarily to unblock while
   investigating.
