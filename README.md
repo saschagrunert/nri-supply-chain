@@ -26,7 +26,6 @@ must pass verification.
 - [Configuration](#configuration)
   - [Operational Config](#operational-config)
   - [Policy Files](#policy-files)
-    - [Policy Field Reference](#policy-field-reference)
 - [Deployment](#deployment)
   - [Pre-installed NRI Plugin](#pre-installed-nri-plugin)
   - [External NRI Plugin](#external-nri-plugin)
@@ -158,15 +157,15 @@ Verifies [OpenVEX](https://openvex.dev) v0.2.0 documents.
 Status handling:
 
 - `not_affected` or `fixed`: pass
-- `affected` with severity >= `severityThreshold`: fail
+- `affected`: fail
 - `under_investigation`: controlled by `underInvestigationPolicy` (default:
-  allow with warning)
+  allow)
 
 Product matching operates at the image level using digest comparison and PURL
 (`pkg:oci/...`) matching.
 
 When multiple VEX documents exist, the most restrictive result wins: any
-`affected` status above the severity threshold causes failure.
+`affected` status causes failure.
 
 ### VSA (Verification Summary Attestation)
 
@@ -243,7 +242,6 @@ default for that namespace (full override, not merge).
     "rejectUnknownParameters": true
   },
   "vex": {
-    "severityThreshold": "high",
     "missingPolicy": "allow",
     "underInvestigationPolicy": "allow"
   },
@@ -258,57 +256,8 @@ default for that namespace (full override, not merge).
 }
 ```
 
-#### Policy Field Reference
-
-**`trust`** (object): Trust roots for verification.
-
-| Field         | Type  | Description                                                                                            |
-| ------------- | ----- | ------------------------------------------------------------------------------------------------------ |
-| `builders`    | array | Trusted SLSA provenance builders. Each entry has `id` (URI) and `maxLevel` (0-3).                      |
-| `verifiers`   | array | Trusted VSA verifiers. Each entry has `id` (URI) and `key` (absolute path to public key).              |
-| `issuers`     | array | Trusted OIDC issuers for keyless (Fulcio) verification.                                                |
-| `sources`     | array | Allowed source repository glob patterns (Go `path.Match` syntax).                                      |
-| `sanPatterns` | array | Accepted certificate Subject Alternative Names. When empty, any SAN from a trusted issuer is accepted. |
-| `buildTypes`  | array | Accepted build type URIs.                                                                              |
-
-**`exclude`** (array of strings): Glob patterns for images that skip
-verification. Uses Go `path.Match` semantics.
-
-> **Note:** Both `exclude` and `trust.sources` patterns use Go `path.Match`
-> semantics. `*` matches any sequence of non-`/` characters only. `**`
-> (globstar) is **not** supported. Patterns must account for the full
-> registry/namespace/image depth. For example, `registry.io/org/*` matches
-> `registry.io/org/repo` but not `registry.io/org/team/repo`. Use multiple
-> patterns for nested paths.
-
-**`provenance`** (object): SLSA provenance settings.
-
-| Field                     | Type   | Default | Description                                                                                                                                                                                |
-| ------------------------- | ------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `missingPolicy`           | string | `allow` | Behavior when no provenance is found: `allow`, `warn`, `deny`                                                                                                                              |
-| `rejectUnknownParameters` | bool   | `false` | Reject provenance with unrecognized `externalParameters` (known keys are GitHub Actions specific: `source`, `repository`, `ref`, `workflow`, `buildType`; disable for other build systems) |
-
-**`vex`** (object): VEX settings.
-
-| Field                      | Type   | Default | Description                                                                |
-| -------------------------- | ------ | ------- | -------------------------------------------------------------------------- |
-| `severityThreshold`        | string | (none)  | Minimum severity to trigger rejection: `low`, `medium`, `high`, `critical` |
-| `missingPolicy`            | string | `allow` | Behavior when no VEX attestation is found: `allow`, `warn`, `deny`         |
-| `underInvestigationPolicy` | string | `allow` | Behavior for `under_investigation` status: `allow`, `warn`, `deny`         |
-
-**`vsa`** (object): VSA settings.
-
-| Field          | Type   | Default | Description                                                 |
-| -------------- | ------ | ------- | ----------------------------------------------------------- |
-| `minimumLevel` | int    | `0`     | Minimum SLSA build level required (0-3)                     |
-| `maxAge`       | string | (none)  | Maximum age of VSA `timeVerified` (Go duration, e.g. `24h`) |
-| `policy`       | string | (none)  | Expected policy URI in the VSA                              |
-
-**`signatures`** (object): Signature verification settings.
-
-| Field                    | Type | Default | Description                                                         |
-| ------------------------ | ---- | ------- | ------------------------------------------------------------------- |
-| `requireTransparencyLog` | bool | `false` | Require Rekor transparency log inclusion for attestation signatures |
+For the complete field reference, pattern matching semantics, and scenario-based
+examples, see [docs/policy.md](docs/policy.md).
 
 ## Deployment
 
@@ -357,6 +306,9 @@ WantedBy=multi-user.target
 
 ## Examples
 
+See [`examples/policies/`](examples/policies/) for ready-to-use policy files
+covering keyless, key-based, VEX-strict, VSA-accelerated, and other scenarios.
+
 ### Gradual Rollout
 
 Start with `warn` mode and permissive policies to observe what would be
@@ -400,7 +352,6 @@ policy_dir = "/etc/nri-supply-chain/policies"
     "rejectUnknownParameters": true
   },
   "vex": {
-    "severityThreshold": "high",
     "missingPolicy": "deny"
   },
   "vsa": {

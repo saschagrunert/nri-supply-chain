@@ -1,0 +1,8 @@
+{
+  "provenance": {
+    "missingPolicy": "warn"
+  },
+  "vex": {
+    "missingPolicy": "allow"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "trust": {
+    "builders": [
+      {
+        "id": "https://github.com/actions/runner",
+        "maxLevel": 3
+      }
+    ],
+    "issuers": ["https://token.actions.githubusercontent.com"],
+    "sanPatterns": ["https://github.com/myorg/*"],
+    "sources": ["github.com/myorg/*"]
+  },
+  "provenance": {
+    "missingPolicy": "deny",
+    "rejectUnknownParameters": true
+  },
+  "vex": {
+    "missingPolicy": "allow"
+  },
+  "signatures": {
+    "requireTransparencyLog": true
+  }
+}
