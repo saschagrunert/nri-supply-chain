@@ -116,31 +116,20 @@ func fakeImageWithAnnotations(payload []byte, annotations map[string]string) oci
 }
 
 //nolint:funlen,varnamelen // table-driven test
-func TestExtractPayload(t *testing.T) {
+func TestExtractPayloadFromImage(t *testing.T) {
 	t.Parallel()
-
-	baseRef, err := name.NewDigest(
-		"docker.io/library/nginx@sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abcd",
-	)
-	if err != nil {
-		t.Fatalf("creating test digest ref: %v", err)
-	}
-
-	descDigest := "sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
 
 	tests := []struct {
 		name        string
-		imageFetch  attestation.ImageFetchFunc
+		image       ociV1.Image
 		verifyFunc  attestation.BundleVerifyFunc
 		wantErr     bool
 		wantErrMsg  string
 		wantPayload string
 	}{
 		{
-			name: "successful extraction",
-			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
-				return fakeImageWithPayload([]byte(`{"bundle": "data"}`)), nil
-			},
+			name:  "successful extraction",
+			image: fakeImageWithPayload([]byte(`{"bundle": "data"}`)),
 			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
 				return []byte(`{"verified": true}`), nil
 			},
@@ -149,22 +138,8 @@ func TestExtractPayload(t *testing.T) {
 			wantPayload: `{"verified": true}`,
 		},
 		{
-			name: "image fetch error",
-			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
-				return nil, errImageFetch
-			},
-			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
-				return nil, nil
-			},
-			wantErr:     true,
-			wantErrMsg:  "fetching attestation image",
-			wantPayload: "",
-		},
-		{
-			name: "empty image with no layers",
-			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
-				return empty.Image, nil
-			},
+			name:  "empty image with no layers",
+			image: empty.Image,
 			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
 				return nil, nil
 			},
@@ -174,11 +149,11 @@ func TestExtractPayload(t *testing.T) {
 		},
 		{
 			name: "attestation exceeds size limit",
-			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+			image: func() ociV1.Image {
 				oversized := make([]byte, 11<<20)
 
-				return fakeImageWithPayload(oversized), nil
-			},
+				return fakeImageWithPayload(oversized)
+			}(),
 			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
 				return nil, nil
 			},
@@ -187,10 +162,8 @@ func TestExtractPayload(t *testing.T) {
 			wantPayload: "",
 		},
 		{
-			name: "layers error",
-			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
-				return &brokenLayersImage{Image: empty.Image}, nil
-			},
+			name:  "layers error",
+			image: &brokenLayersImage{Image: empty.Image},
 			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
 				return nil, nil
 			},
@@ -199,10 +172,8 @@ func TestExtractPayload(t *testing.T) {
 			wantPayload: "",
 		},
 		{
-			name: "bundle verification fails",
-			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
-				return fakeImageWithPayload([]byte(`{"bundle": "bad"}`)), nil
-			},
+			name:  "bundle verification fails",
+			image: fakeImageWithPayload([]byte(`{"bundle": "bad"}`)),
 			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
 				return nil, errSignatureMismatch
 			},
@@ -216,10 +187,10 @@ func TestExtractPayload(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			fetcher := attestation.NewTestOCIFetcher(tt.verifyFunc, tt.imageFetch)
+			fetcher := attestation.NewTestOCIFetcher(tt.verifyFunc, nil)
 
-			result, err := fetcher.ExtractPayload(
-				context.Background(), baseRef, descDigest, nil, attestation.FetchOptions{},
+			result, err := fetcher.ExtractPayloadFromImage(
+				context.Background(), tt.image, attestation.FetchOptions{},
 			)
 
 			if tt.wantErr {
@@ -861,6 +832,30 @@ func TestGlobToRegex(t *testing.T) { //nolint:funlen // Table-driven test.
 			pattern: "*@*.example.com",
 			match:   "user@host.example.com",
 			noMatch: "user@a/b.example.com",
+		},
+		{
+			name:    "backslash in character class escapes next char",
+			pattern: `[\d].example.com`,
+			match:   `d.example.com`,
+			noMatch: "5.example.com",
+		},
+		{
+			name:    "escaped backslash in character class",
+			pattern: `[\\].example.com`,
+			match:   `\.example.com`,
+			noMatch: "x.example.com",
+		},
+		{
+			name:    "escaped hyphen in character class is literal",
+			pattern: `[a\-z].example.com`,
+			match:   `-.example.com`,
+			noMatch: "m.example.com",
+		},
+		{
+			name:    "escaped bracket in character class",
+			pattern: `[\]].example.com`,
+			match:   `].example.com`,
+			noMatch: "q.example.com",
 		},
 	}
 

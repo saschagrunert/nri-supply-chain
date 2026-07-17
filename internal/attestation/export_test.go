@@ -228,14 +228,13 @@ func (f *OCIFetcher) FetchCosignTagAttestations(
 	return f.fetchCosignTagAttestations(ctx, ref, digest, remoteOpts, fetchOpts)
 }
 
-// ExtractPayload exposes extractPayload for external tests.
+// ExtractPayloadFromImage exposes extractPayloadFromImage for external tests.
 //
 //nolint:gocritic // hugeParam: test export layer passes FetchOptions by value
-func (f *OCIFetcher) ExtractPayload(
-	ctx context.Context, baseRef name.Digest, descDigest string,
-	remoteOpts []remote.Option, fetchOpts FetchOptions,
+func (f *OCIFetcher) ExtractPayloadFromImage(
+	ctx context.Context, img v1.Image, fetchOpts FetchOptions,
 ) ([]byte, error) {
-	return f.extractPayload(ctx, baseRef, descDigest, remoteOpts, fetchOpts)
+	return f.extractPayloadFromImage(ctx, img, fetchOpts)
 }
 
 // NewTestBundle creates a bundle with a DSSE envelope for testing.

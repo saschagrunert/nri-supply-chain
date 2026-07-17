@@ -825,14 +825,22 @@ func TestNewTestOCIFetcherInjectsBoth(t *testing.T) {
 		t.Fatalf("creating test digest ref: %v", err)
 	}
 
-	_, err = fetcher.ExtractPayload(
-		context.Background(), baseRef,
-		"sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
-		nil, attestation.FetchOptions{},
-	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	manifests := []ociV1.Descriptor{
+		{
+			ArtifactType: attestation.BundleMediaType,
+			Digest: ociV1.Hash{
+				Algorithm: "sha256",
+				Hex:       "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+			},
+			Annotations: map[string]string{
+				attestation.AnnotationPredicateType: attestation.PredicateSLSAProvenanceV1,
+			},
+		},
 	}
+
+	result, _ := fetcher.CollectAttestations(
+		context.Background(), manifests, baseRef, "sha256:test", nil, attestation.FetchOptions{},
+	)
 
 	if !fetchCalled {
 		t.Error("image fetch function was not called")
@@ -840,5 +848,9 @@ func TestNewTestOCIFetcherInjectsBoth(t *testing.T) {
 
 	if !verifyCalled {
 		t.Error("verify function was not called")
+	}
+
+	if len(result) != 1 {
+		t.Errorf("expected 1 attestation, got %d", len(result))
 	}
 }

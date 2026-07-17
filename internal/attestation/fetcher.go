@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"regexp"
@@ -53,6 +54,7 @@ const (
 	trustedRootMaxStaleness = 24 * time.Hour
 	fetchMaxRetries         = 2
 	fetchRetryBaseDelay     = 500 * time.Millisecond
+	fetchRetryJitterDivisor = 2
 )
 
 type trustedRootFetchFunc func() (*root.TrustedRoot, error)
@@ -262,7 +264,11 @@ func (f *OCIFetcher) fetchWithRetry(
 
 	for attempt := range fetchMaxRetries + 1 {
 		if attempt > 0 {
-			delay := fetchRetryBaseDelay * time.Duration(1<<(attempt-1))
+			base := fetchRetryBaseDelay * time.Duration(1<<(attempt-1))
+			maxJitter := max(int64(base)/fetchRetryJitterDivisor, 1)
+			//nolint:gosec // jitter does not need crypto rand
+			jitter := time.Duration(rand.Int64N(maxJitter))
+			delay := base + jitter
 
 			slog.Debug("Retrying attestation fetch",
 				"attempt", attempt+1,
@@ -664,23 +670,6 @@ func parseDigestRef(imageRef, digest string) (name.Digest, error) {
 	return digestRef, nil
 }
 
-func (f *OCIFetcher) extractPayload(
-	ctx context.Context,
-	baseRef name.Digest,
-	descDigest string,
-	remoteOpts []remote.Option,
-	fetchOpts FetchOptions, //nolint:gocritic // passed through to verifyBundle
-) ([]byte, error) {
-	attestRef := baseRef.Context().Digest(descDigest)
-
-	img, err := f.fetchImage(attestRef, remoteOpts...)
-	if err != nil {
-		return nil, fmt.Errorf("fetching attestation image: %w", err)
-	}
-
-	return f.extractPayloadFromImage(ctx, img, fetchOpts)
-}
-
 func (f *OCIFetcher) extractPayloadFromImage(
 	ctx context.Context,
 	img ociV1.Image,
@@ -920,8 +909,7 @@ func buildCertificateIdentity(issuers, sanPatterns []string) (verify.Certificate
 	sanRegex := ".*"
 
 	if len(sanPatterns) == 0 {
-		slog.Debug("No SAN patterns configured for keyless verification; " +
-			"any certificate identity from a trusted issuer will be accepted")
+		warnNoSANPatterns()
 	}
 
 	if len(sanPatterns) > 0 {
@@ -960,6 +948,15 @@ func buildCertificateIdentity(issuers, sanPatterns []string) (verify.Certificate
 	return certID, nil
 }
 
+var warnNoSANPatternsOnce sync.Once //nolint:gochecknoglobals // once guard for startup warning
+
+func warnNoSANPatterns() {
+	warnNoSANPatternsOnce.Do(func() {
+		slog.Warn("No SAN patterns configured for keyless verification; " +
+			"any certificate identity from a trusted issuer will be accepted")
+	})
+}
+
 func extractVerifiedPayload(bndl *bundle.Bundle) ([]byte, error) {
 	envelope, err := bndl.Envelope()
 	if err != nil {
@@ -984,7 +981,9 @@ func extractVerifiedPayload(bndl *bundle.Bundle) ([]byte, error) {
 
 // globToRegex converts a glob pattern to a regex string, consistent with
 // path.Match semantics: '*' matches non-'/' characters, '?' matches a single
-// non-'/' character, and '[...]' character classes are passed through verbatim.
+// non-'/' character, and '[...]' character classes have backslash escapes
+// consumed to prevent glob/regex semantic divergence (e.g. [\d] in glob
+// matches only 'd', not the regex digit class).
 func globToRegex(pattern string) string {
 	var builder strings.Builder
 
@@ -1001,13 +1000,38 @@ func globToRegex(pattern string) string {
 			if end < 0 {
 				builder.WriteString(regexp.QuoteMeta("["))
 			} else {
-				builder.WriteString(string(runes[idx : end+1]))
+				builder.WriteString(escapeCharClass(runes[idx : end+1]))
 				idx = end
 			}
 		default:
 			builder.WriteString(regexp.QuoteMeta(string(runes[idx])))
 		}
 	}
+
+	return builder.String()
+}
+
+func escapeCharClass(runes []rune) string {
+	var builder strings.Builder
+
+	builder.WriteRune(runes[0])
+
+	for idx := 1; idx < len(runes)-1; idx++ {
+		if runes[idx] == '\\' && idx+1 < len(runes)-1 {
+			idx++
+
+			ch := runes[idx]
+			if ch == '\\' || ch == ']' || ch == '-' || ch == '^' {
+				builder.WriteRune('\\')
+			}
+
+			builder.WriteRune(ch)
+		} else {
+			builder.WriteRune(runes[idx])
+		}
+	}
+
+	builder.WriteRune(runes[len(runes)-1])
 
 	return builder.String()
 }
@@ -1023,6 +1047,12 @@ func findBracketEnd(runes []rune, start int) int {
 	}
 
 	for idx < len(runes) {
+		if runes[idx] == '\\' && idx+1 < len(runes) {
+			idx += 2
+
+			continue
+		}
+
 		if runes[idx] == ']' {
 			return idx
 		}
