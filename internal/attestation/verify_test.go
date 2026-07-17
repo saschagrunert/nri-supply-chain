@@ -626,6 +626,63 @@ func TestExtractVerifiedPayload(t *testing.T) {
 	}
 }
 
+func TestVerifyBundleWithCacheNilCanceledCtx(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := attestation.ExportVerifyBundleWithCacheNil(
+		ctx,
+		[]byte(`{}`),
+		attestation.FetchOptions{},
+	)
+	if err == nil {
+		t.Fatal("expected error for canceled context")
+	}
+
+	if !strings.Contains(err.Error(), "context canceled") {
+		t.Errorf("expected context canceled error, got: %v", err)
+	}
+}
+
+func TestNewOCIFetcherWithCacheVerifyBundleCanceledCtx(t *testing.T) {
+	t.Parallel()
+
+	fetcher := attestation.NewOCIFetcherWithCache()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := fetcher.VerifyBundle(ctx, []byte(`{}`), attestation.FetchOptions{})
+	if err == nil {
+		t.Fatal("expected error for canceled context")
+	}
+
+	if !strings.Contains(err.Error(), "context canceled") {
+		t.Errorf("expected context canceled error, got: %v", err)
+	}
+}
+
+func TestNewOCIFetcherWithCacheInvalidBundle(t *testing.T) {
+	t.Parallel()
+
+	fetcher := attestation.NewOCIFetcherWithCache()
+
+	_, err := fetcher.VerifyBundle(
+		context.Background(),
+		[]byte(`not json`),
+		attestation.FetchOptions{},
+	)
+	if err == nil {
+		t.Fatal("expected error for invalid bundle")
+	}
+
+	if !strings.Contains(err.Error(), "parsing sigstore bundle") {
+		t.Errorf("expected parsing error, got: %v", err)
+	}
+}
+
 func TestNewTestOCIFetcherInjectsBoth(t *testing.T) {
 	t.Parallel()
 

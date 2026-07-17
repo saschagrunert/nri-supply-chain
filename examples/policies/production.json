@@ -12,12 +12,8 @@
         "key": "/etc/nri-supply-chain/keys/verifier.pub"
       }
     ],
-    "issuers": [
-      "https://token.actions.githubusercontent.com"
-    ],
-    "sources": [
-      "https://github.com/myorg/production-*"
-    ]
+    "issuers": ["https://token.actions.githubusercontent.com"],
+    "sources": ["https://github.com/myorg/production-*"]
   },
   "provenance": {
     "missingPolicy": "deny",

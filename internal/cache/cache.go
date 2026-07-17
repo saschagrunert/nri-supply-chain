@@ -19,6 +19,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
@@ -40,6 +42,7 @@ type Cache struct {
 	mu      sync.Mutex
 	entries map[key]entry
 	ttl     time.Duration
+	gauge   prometheus.Gauge
 }
 
 // New creates a new verification result cache with the given TTL.
@@ -48,6 +51,22 @@ func New(ttl time.Duration) *Cache {
 		mu:      sync.Mutex{},
 		entries: make(map[key]entry),
 		ttl:     ttl,
+		gauge:   nil,
+	}
+}
+
+// NewWithGauge creates a cache that updates the given Prometheus gauge
+// on entry count changes.
+func NewWithGauge(ttl time.Duration, gauge prometheus.Gauge) *Cache {
+	if gauge != nil {
+		gauge.Set(0)
+	}
+
+	return &Cache{
+		mu:      sync.Mutex{},
+		entries: make(map[key]entry),
+		ttl:     ttl,
+		gauge:   gauge,
 	}
 }
 
@@ -66,6 +85,7 @@ func (c *Cache) Get(digest, namespace string) *types.Result {
 
 	if time.Now().After(cacheEntry.expiresAt) {
 		delete(c.entries, cacheKey)
+		c.updateGaugeLocked()
 
 		return nil
 	}
@@ -95,6 +115,8 @@ func (c *Cache) Set(digest, namespace string, result *types.Result) {
 		result:    result,
 		expiresAt: time.Now().Add(c.ttl),
 	}
+
+	c.updateGaugeLocked()
 }
 
 // Clear removes all cached entries.
@@ -103,6 +125,8 @@ func (c *Cache) Clear() {
 	defer c.mu.Unlock()
 
 	c.entries = make(map[key]entry)
+
+	c.updateGaugeLocked()
 }
 
 // Len returns the current number of entries in the cache.
@@ -111,6 +135,12 @@ func (c *Cache) Len() int {
 	defer c.mu.Unlock()
 
 	return len(c.entries)
+}
+
+func (c *Cache) updateGaugeLocked() {
+	if c.gauge != nil {
+		c.gauge.Set(float64(len(c.entries)))
+	}
 }
 
 func (c *Cache) evictRandomLocked() {

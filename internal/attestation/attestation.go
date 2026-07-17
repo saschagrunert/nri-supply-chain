@@ -35,9 +35,6 @@ const (
 	// PredicateSLSAProvenanceV1 is the in-toto predicate type for SLSA provenance v1.
 	PredicateSLSAProvenanceV1 = "https://slsa.dev/provenance/v1"
 
-	// PredicateSLSAProvenanceV02 is the in-toto predicate type for SLSA provenance v0.2.
-	PredicateSLSAProvenanceV02 = "https://slsa.dev/provenance/v0.2"
-
 	// PredicateVSA is the in-toto predicate type for SLSA Verification Summary Attestations.
 	PredicateVSA = "https://slsa.dev/verification_summary/v1"
 

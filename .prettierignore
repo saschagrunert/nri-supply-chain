@@ -1,0 +1,12 @@
+build/
+dist/
+*.go
+go.mod
+go.sum
+Makefile
+*.bats
+*.bash
+*.toml
+LICENSE
+OWNERS
+SECURITY_CONTACTS

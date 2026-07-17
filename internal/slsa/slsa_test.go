@@ -129,7 +129,7 @@ func TestVerify(t *testing.T) { //nolint:funlen,maintidx // Table-driven test.
 				t.Helper()
 
 				stmt := validStatement()
-				stmt.PredicateType = attestation.PredicateSLSAProvenanceV02
+				stmt.PredicateType = "https://slsa.dev/provenance/v0.2"
 
 				return mustMarshal(t, stmt)
 			},

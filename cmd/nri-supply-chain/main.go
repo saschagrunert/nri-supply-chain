@@ -287,6 +287,10 @@ func handleShutdown(cancel context.CancelFunc) {
 		<-sigterm
 		slog.Info("Shutting down")
 		cancel()
+
+		<-sigterm
+		slog.Warn("Received second signal, forcing exit")
+		os.Exit(1)
 	}()
 }
 

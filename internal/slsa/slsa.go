@@ -164,7 +164,12 @@ func VerifyMultiple(
 	}
 
 	if len(failReasons) > 0 {
-		return failResult(strings.Join(failReasons, "; ")), nil
+		detail := strings.Join(failReasons, "; ")
+		if len(parseErrors) > 0 {
+			detail += " (also failed to parse: " + strings.Join(parseErrors, "; ") + ")"
+		}
+
+		return failResult(detail), nil
 	}
 
 	if len(parseErrors) > 0 {
@@ -229,6 +234,8 @@ func verifyBuildType(buildType string, pol *policy.Policy) error {
 	return fmt.Errorf("%w: %q", ErrUntrustedBuildType, buildType)
 }
 
+// verifySources uses path.Match: '*' matches non-'/' characters only, so
+// "github.com/org/*" matches "github.com/org/repo" but not deeper paths.
 func verifySources(params map[string]any, pol *policy.Policy) error {
 	if pol.Trust == nil || len(pol.Trust.Sources) == 0 {
 		return nil

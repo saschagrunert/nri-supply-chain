@@ -15,15 +15,14 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
-func TestInitLogging(t *testing.T) {
-	t.Parallel()
-
+func TestInitLogging(t *testing.T) { //nolint:paralleltest // modifies global slog default
 	tests := []struct {
 		name  string
 		level string
@@ -36,11 +35,21 @@ func TestInitLogging(t *testing.T) {
 		{name: "unrecognized defaults to info", level: "bogus", want: slog.LevelInfo},
 	}
 
-	for _, test := range tests {
+	for _, test := range tests { //nolint:paralleltest // modifies global slog default
 		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
 			initLogging(test.level)
+
+			handler := slog.Default().Handler()
+			if !handler.Enabled(context.Background(), test.want) {
+				t.Errorf("expected level %v to be enabled", test.want)
+			}
+
+			if test.want > slog.LevelDebug {
+				belowLevel := test.want - 4
+				if handler.Enabled(context.Background(), belowLevel) {
+					t.Errorf("expected level %v to be disabled", belowLevel)
+				}
+			}
 		})
 	}
 }

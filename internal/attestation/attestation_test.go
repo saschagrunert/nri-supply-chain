@@ -147,11 +147,6 @@ func TestPredicateTypeConstants(t *testing.T) {
 			want: "https://slsa.dev/provenance/v1",
 		},
 		{
-			name: "SLSA provenance v0.2",
-			got:  attestation.PredicateSLSAProvenanceV02,
-			want: "https://slsa.dev/provenance/v0.2",
-		},
-		{
 			name: "VSA",
 			got:  attestation.PredicateVSA,
 			want: "https://slsa.dev/verification_summary/v1",

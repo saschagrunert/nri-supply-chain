@@ -21,6 +21,8 @@ ARCH ?= $(shell uname -m | \
 
 OS ?= $(shell uname -s | tr '[:upper:]' '[:lower:]')
 
+SHELLCHECK_ARCH ?= $(shell uname -m)
+
 COLOR := \033[36m
 NOCOLOR := \033[0m
 
@@ -115,13 +117,13 @@ $(ZEITGEIST):
 $(SHFMT):
 	@mkdir -p $(BUILD_DIR)
 	curl -sSfL -o $(SHFMT) \
-		https://github.com/mvdan/sh/releases/download/$(SHFMT_VERSION)/shfmt_$(SHFMT_VERSION)_linux_amd64
+		https://github.com/mvdan/sh/releases/download/$(SHFMT_VERSION)/shfmt_$(SHFMT_VERSION)_$(OS)_$(ARCH)
 	chmod +x $(SHFMT)
 
 $(SHELLCHECK):
 	@mkdir -p $(BUILD_DIR)
 	curl -sSfL \
-		https://github.com/koalaman/shellcheck/releases/download/$(SHELLCHECK_VERSION)/shellcheck-$(SHELLCHECK_VERSION).linux.x86_64.tar.xz \
+		https://github.com/koalaman/shellcheck/releases/download/$(SHELLCHECK_VERSION)/shellcheck-$(SHELLCHECK_VERSION).$(OS).$(SHELLCHECK_ARCH).tar.xz \
 		| tar xfJ - -C $(BUILD_DIR) --strip-components=1 shellcheck-$(SHELLCHECK_VERSION)/shellcheck
 
 $(MDTOC):
