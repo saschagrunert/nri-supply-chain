@@ -17,6 +17,9 @@ package attestation
 import (
 	"context"
 	"crypto"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -318,6 +321,21 @@ func (f *OCIFetcher) fetchOnce(
 		return nil, fmt.Errorf("reading referrers index: %w", err)
 	}
 
+	slog.DebugContext(ctx, "Referrers lookup result",
+		"ref", ref.String(),
+		"digest", digest,
+		"manifests_count", len(manifest.Manifests),
+	)
+
+	for i := range manifest.Manifests {
+		slog.DebugContext(ctx, "Referrer manifest",
+			"index", i,
+			"artifact_type", manifest.Manifests[i].ArtifactType,
+			"digest", manifest.Manifests[i].Digest.String(),
+			"annotations", manifest.Manifests[i].Annotations,
+		)
+	}
+
 	attestations, hadBundles := f.collectAttestations(
 		ctx,
 		manifest.Manifests,
@@ -375,15 +393,6 @@ func (f *OCIFetcher) collectAttestations(
 			continue
 		}
 
-		predicateType := desc.Annotations[AnnotationPredicateType]
-		if predicateType == "" {
-			slog.DebugContext(ctx, "Skipping referrer without predicate type annotation",
-				"digest", desc.Digest.String(),
-			)
-
-			continue
-		}
-
 		hadBundles = true
 		processed++
 
@@ -397,6 +406,8 @@ func (f *OCIFetcher) collectAttestations(
 			break
 		}
 
+		predicateType := desc.Annotations[AnnotationPredicateType]
+
 		att, ok := f.processDescriptor(ctx, desc, ref, digest, predicateType, remoteOpts, fetchOpts)
 		if ok {
 			attestations = append(attestations, att)
@@ -409,9 +420,33 @@ func (f *OCIFetcher) collectAttestations(
 func (f *OCIFetcher) processDescriptor(
 	ctx context.Context, desc *ociV1.Descriptor,
 	ref name.Digest, digest, predicateType string, remoteOpts []remote.Option,
-	fetchOpts FetchOptions, //nolint:gocritic // passed through to extractPayload
+	fetchOpts FetchOptions, //nolint:gocritic // passed through to extractPayloadFromImage
 ) (VerifiedAttestation, bool) {
-	payload, extractErr := f.extractPayload(ctx, ref, desc.Digest.String(), remoteOpts, fetchOpts)
+	attestRef := ref.Context().Digest(desc.Digest.String())
+
+	img, err := f.fetchImage(attestRef, remoteOpts...)
+	if err != nil {
+		slog.WarnContext(ctx, "Failed to fetch attestation image",
+			"digest", desc.Digest.String(),
+			"error", err,
+		)
+
+		return VerifiedAttestation{PredicateType: "", Payload: nil, Digest: ""}, false
+	}
+
+	if predicateType == "" {
+		predicateType = resolvePredicateFromManifest(ctx, img, desc.Digest.String())
+	}
+
+	if predicateType == "" {
+		slog.DebugContext(ctx, "Skipping referrer without predicate type",
+			"digest", desc.Digest.String(),
+		)
+
+		return VerifiedAttestation{PredicateType: "", Payload: nil, Digest: ""}, false
+	}
+
+	payload, extractErr := f.extractPayloadFromImage(ctx, img, fetchOpts)
 	if extractErr != nil {
 		slog.WarnContext(ctx, "Failed to extract attestation payload",
 			"digest", desc.Digest.String(),
@@ -426,6 +461,24 @@ func (f *OCIFetcher) processDescriptor(
 		Payload:       payload,
 		Digest:        digest,
 	}, true
+}
+
+func resolvePredicateFromManifest(ctx context.Context, img ociV1.Image, descDigest string) string {
+	manifest, err := img.Manifest()
+	if err != nil {
+		slog.DebugContext(ctx, "Failed to read manifest for predicate type resolution",
+			"digest", descDigest,
+			"error", err,
+		)
+
+		return ""
+	}
+
+	if manifest == nil {
+		return ""
+	}
+
+	return manifest.Annotations[AnnotationPredicateType]
 }
 
 func parseDigestRef(imageRef, digest string) (name.Digest, error) {
@@ -453,6 +506,14 @@ func (f *OCIFetcher) extractPayload(
 		return nil, fmt.Errorf("fetching attestation image: %w", err)
 	}
 
+	return f.extractPayloadFromImage(ctx, img, fetchOpts)
+}
+
+func (f *OCIFetcher) extractPayloadFromImage(
+	ctx context.Context,
+	img ociV1.Image,
+	fetchOpts FetchOptions, //nolint:gocritic // passed through to verifyBundle
+) ([]byte, error) {
 	layers, err := img.Layers()
 	if err != nil {
 		return nil, fmt.Errorf("reading attestation layers: %w", err)
@@ -556,11 +617,10 @@ func buildVerificationConfig(
 		}
 
 		materials = append(materials, keyMaterial)
-
-		if len(opts.TrustedIssuers) == 0 {
-			verifierOpts = append(verifierOpts, verify.WithNoObserverTimestamps())
-		}
-
+		verifierOpts = append(
+			verifierOpts,
+			keyOnlyVerifierOpts(len(opts.TrustedIssuers) > 0, opts.RequireTransparencyLog)...,
+		)
 		policyOpts = append(policyOpts, verify.WithKey())
 	}
 
@@ -586,19 +646,52 @@ func buildVerificationConfig(
 	return materials, verifierOpts, policyOpts, nil
 }
 
+func keyOnlyVerifierOpts(hasIssuers, requireTLog bool) []verify.VerifierOption {
+	if hasIssuers {
+		return nil
+	}
+
+	if requireTLog {
+		return []verify.VerifierOption{verify.WithTransparencyLog(1)}
+	}
+
+	return []verify.VerifierOption{verify.WithNoObserverTimestamps()}
+}
+
 func buildKeyMaterial(keyPaths []string) (*root.TrustedPublicKeyMaterial, error) {
 	verifiers := make(map[string]*root.ExpiringKey, len(keyPaths))
 
 	for _, keyPath := range keyPaths {
-		verifier, err := signature.LoadVerifierFromPEMFile(keyPath, crypto.SHA256)
+		keyVerifier, err := signature.LoadVerifierFromPEMFile(keyPath, crypto.SHA256)
 		if err != nil {
 			return nil, fmt.Errorf("loading public key %q: %w", keyPath, err)
 		}
 
-		verifiers[keyPath] = root.NewExpiringKey(verifier, time.Time{}, time.Time{})
+		hint, err := computeKeyHint(keyVerifier)
+		if err != nil {
+			return nil, fmt.Errorf("computing key hint for %q: %w", keyPath, err)
+		}
+
+		verifiers[hint] = root.NewExpiringKey(keyVerifier, time.Time{}, time.Time{})
 	}
 
 	return root.NewTrustedPublicKeyMaterialFromMapping(verifiers), nil
+}
+
+func computeKeyHint(v signature.Verifier) (string, error) {
+	pub, err := v.PublicKey()
+	if err != nil {
+		return "", fmt.Errorf("extracting public key: %w", err)
+	}
+
+	der, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		return "", fmt.Errorf("encoding public key to DER: %w", err)
+	}
+
+	sum := sha256.Sum256(der)
+
+	return base64.StdEncoding.EncodeToString(sum[:]), nil
 }
 
 func buildKeylessConfig(

@@ -317,6 +317,17 @@ func verifyPolicyURI(vsaPolicy Policy, pol *policy.Policy) error {
 }
 
 func verifyFreshness(timeVerified string, pol *policy.Policy) error {
+	verified, err := time.Parse(time.RFC3339Nano, timeVerified)
+	if err != nil {
+		return fmt.Errorf("parsing time_verified %q: %w", timeVerified, err)
+	}
+
+	age := time.Since(verified)
+
+	if age < 0 {
+		return fmt.Errorf("%w: %s", ErrFutureTimestamp, timeVerified)
+	}
+
 	if pol.VSA == nil || pol.VSA.MaxAge == "" {
 		return nil
 	}
@@ -329,20 +340,6 @@ func verifyFreshness(timeVerified string, pol *policy.Policy) error {
 		if err != nil {
 			return fmt.Errorf("parsing max_age %q: %w", pol.VSA.MaxAge, err)
 		}
-	}
-
-	verified, err := time.Parse(time.RFC3339Nano, timeVerified)
-	if err != nil {
-		return fmt.Errorf("parsing time_verified %q: %w", timeVerified, err)
-	}
-
-	age := time.Since(verified)
-	if age < 0 {
-		return fmt.Errorf(
-			"%w: %s",
-			ErrFutureTimestamp,
-			timeVerified,
-		)
 	}
 
 	if age > maxAge {

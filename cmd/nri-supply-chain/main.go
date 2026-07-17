@@ -43,6 +43,7 @@ var version = "0.1.0"
 const (
 	readHeaderTimeout   = 10 * time.Second
 	shutdownGracePeriod = 5 * time.Second
+	warmTimeout         = 30 * time.Second
 
 	logLevelDebug = "debug"
 	logLevelInfo  = "info"
@@ -225,7 +226,10 @@ func createFetcher(cfg *config.Config) *attestation.OCIFetcher {
 		ociFetcher.SetRateLimit(cfg.FetchRateLimit)
 	}
 
-	warmErr := ociFetcher.Warm(context.Background())
+	warmCtx, warmCancel := context.WithTimeout(context.Background(), warmTimeout)
+	defer warmCancel()
+
+	warmErr := ociFetcher.Warm(warmCtx)
 	if warmErr != nil {
 		slog.Warn(
 			"Failed to pre-warm Sigstore trusted root",
@@ -377,6 +381,13 @@ func handleShutdown(ctx context.Context, cancel context.CancelFunc, sigCh <-chan
 
 		slog.Info("Shutting down")
 		cancel()
+
+		select {
+		case <-ctx.Done():
+		case <-sigCh:
+			slog.Warn("Received second signal, forcing exit")
+			os.Exit(1)
+		}
 	}()
 }
 

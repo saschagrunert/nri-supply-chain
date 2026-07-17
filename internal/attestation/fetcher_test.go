@@ -104,6 +104,15 @@ func fakeImageWithPayload(payload []byte) ociV1.Image {
 	return img
 }
 
+//nolint:ireturn // test helper returning interface for test table usage
+func fakeImageWithAnnotations(payload []byte, annotations map[string]string) ociV1.Image {
+	img := fakeImageWithPayload(payload)
+
+	img = mutate.Annotations(img, annotations).(ociV1.Image) //nolint:forcetypeassert // test helper
+
+	return img
+}
+
 //nolint:funlen,varnamelen // table-driven test
 func TestExtractPayload(t *testing.T) {
 	t.Parallel()
@@ -331,7 +340,32 @@ func TestCollectAttestations(t *testing.T) {
 			},
 			cancelCtx:      false,
 			wantCount:      0,
-			wantHadBundles: false,
+			wantHadBundles: true,
+		},
+		{
+			name: "predicate type resolved from manifest annotations",
+			manifests: []ociV1.Descriptor{
+				{
+					ArtifactType: attestation.BundleMediaType,
+					Digest: ociV1.Hash{
+						Algorithm: testHashAlgorithm,
+						Hex:       testHashHex,
+					},
+				},
+			},
+			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+				annot := map[string]string{
+					attestation.AnnotationPredicateType: attestation.PredicateSLSAProvenanceV1,
+				}
+
+				return fakeImageWithAnnotations([]byte(`{"bundle": "ok"}`), annot), nil
+			},
+			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+				return []byte(`{"slsa": true}`), nil
+			},
+			cancelCtx:      false,
+			wantCount:      1,
+			wantHadBundles: true,
 		},
 		{
 			name: "successful extraction",

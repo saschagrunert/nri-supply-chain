@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 
 	"github.com/containerd/nri/pkg/api"
@@ -34,10 +35,14 @@ import (
 var ErrMissingAnnotations = errors.New("missing image annotations")
 
 const (
-	// AnnotationImage is the CRI-O annotation for the user-specified image reference.
+	// AnnotationImageName is the CRI-O annotation for the user-specified image reference.
+	AnnotationImageName = "io.kubernetes.cri-o.ImageName"
+	// AnnotationImage is the CRI-O annotation containing the image ID.
 	AnnotationImage = "io.kubernetes.cri-o.Image"
 	// AnnotationImageRef is the CRI-O annotation for the resolved image digest.
 	AnnotationImageRef = "io.kubernetes.cri-o.ImageRef"
+	// AnnotationImageRepoDigests contains the comma-separated digest references.
+	AnnotationImageRepoDigests = "io.kubernetes.cri-o.ImageRepoDigests"
 
 	// AnnotationContainerdImage is the containerd annotation for the image name.
 	AnnotationContainerdImage = "io.kubernetes.cri.image-name"
@@ -118,6 +123,13 @@ func (p *Plugin) CreateContainer(
 	imageRef, digest := resolveImage(annotations)
 	namespace := pod.GetNamespace()
 
+	slog.DebugContext(ctx, "NRI container info",
+		"container_id", ctr.GetId(),
+		"container_name", ctr.GetName(),
+		"annotations", annotations,
+		"labels", ctr.GetLabels(),
+	)
+
 	if imageRef == "" || digest == "" {
 		if p.verifier.Enforcing() {
 			slog.ErrorContext(ctx, "Missing image annotations in enforce mode",
@@ -164,8 +176,7 @@ func (p *Plugin) CreateContainer(
 
 //nolint:nonamedreturns // gocritic requires names
 func resolveImage(annotations map[string]string) (imageRef, digest string) {
-	imageRef = annotations[AnnotationImage]
-	digest = annotations[AnnotationImageRef]
+	imageRef, digest = resolveCRIOImage(annotations)
 
 	if imageRef != "" && digest != "" {
 		return imageRef, digest
@@ -184,6 +195,27 @@ func resolveImage(annotations map[string]string) (imageRef, digest string) {
 
 	if digest == "" {
 		digest = cRef
+	}
+
+	return imageRef, digest
+}
+
+//nolint:nonamedreturns // gocritic requires names
+func resolveCRIOImage(annotations map[string]string) (imageRef, digest string) {
+	imageRef = annotations[AnnotationImageName]
+	if imageRef == "" {
+		imageRef = annotations[AnnotationImage]
+	}
+
+	if repoDigests := annotations[AnnotationImageRepoDigests]; repoDigests != "" {
+		first, _, _ := strings.Cut(repoDigests, ",")
+		if _, d, ok := strings.Cut(first, "@"); ok {
+			digest = d
+		}
+	}
+
+	if digest == "" {
+		digest = annotations[AnnotationImageRef]
 	}
 
 	return imageRef, digest
