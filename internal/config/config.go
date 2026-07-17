@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/saschagrunert/nri-supply-chain/policy"
 )
 
 const (
@@ -33,13 +35,6 @@ const (
 	// ModeEnforce enables verification in enforce (reject on failure) mode.
 	ModeEnforce = "enforce"
 
-	// PolicyAllow permits the action.
-	PolicyAllow = "allow"
-	// PolicyWarn logs a warning but permits the action.
-	PolicyWarn = ModeWarn
-	// PolicyDeny rejects the action.
-	PolicyDeny = "deny"
-
 	defaultFetchTimeout = 30 * time.Second
 	defaultCacheTTL     = 24 * time.Hour
 )
@@ -47,9 +42,6 @@ const (
 var (
 	// ErrInvalidVerificationMode indicates an unrecognized verification mode.
 	ErrInvalidVerificationMode = errors.New("invalid verification mode")
-
-	// ErrInvalidPolicyValue indicates an unrecognized policy action value.
-	ErrInvalidPolicyValue = errors.New("invalid policy value")
 
 	// ErrFetchTimeoutNotPositive indicates a non-positive fetch timeout.
 	ErrFetchTimeoutNotPositive = errors.New("fetch_timeout must be positive")
@@ -112,7 +104,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		Verification:       ModeDisabled,
 		FetchTimeout:       Duration{Duration: defaultFetchTimeout},
-		FetchFailurePolicy: PolicyWarn,
+		FetchFailurePolicy: policy.ActionWarn,
 		CacheTTL:           Duration{Duration: defaultCacheTTL},
 		PolicyDir:          "/etc/nri-supply-chain/policies",
 		MetricsAddr:        ":9090",
@@ -136,9 +128,9 @@ func (c *Config) Validate() error {
 		return nil
 	}
 
-	err := ValidatePolicyValue("fetch_failure_policy", c.FetchFailurePolicy)
+	err := policy.ValidateAction("fetch_failure_policy", c.FetchFailurePolicy)
 	if err != nil {
-		return err
+		return fmt.Errorf("validating config: %w", err)
 	}
 
 	if c.FetchTimeout.Duration <= 0 {
@@ -210,14 +202,4 @@ func LoadFromString(data string) (*Config, error) {
 	}
 
 	return cfg, nil
-}
-
-// ValidatePolicyValue validates that the given value is a valid policy action.
-func ValidatePolicyValue(name, value string) error {
-	switch value {
-	case PolicyAllow, PolicyWarn, PolicyDeny:
-		return nil
-	default:
-		return fmt.Errorf("%w: %s %q", ErrInvalidPolicyValue, name, value)
-	}
 }

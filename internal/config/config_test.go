@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
+	"github.com/saschagrunert/nri-supply-chain/policy"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -30,7 +31,7 @@ func TestDefaultConfig(t *testing.T) {
 
 	assertEqual(t, config.ModeDisabled, cfg.Verification)
 	assertEqual(t, 30*time.Second, cfg.FetchTimeout.Duration)
-	assertEqual(t, config.PolicyWarn, cfg.FetchFailurePolicy)
+	assertEqual(t, policy.ActionWarn, cfg.FetchFailurePolicy)
 	assertEqual(t, 24*time.Hour, cfg.CacheTTL.Duration)
 	assertEqual(t, "/etc/nri-supply-chain/policies", cfg.PolicyDir)
 	assertEqual(t, ":9090", cfg.MetricsAddr)
@@ -279,7 +280,7 @@ metrics_addr = ":8080"
 
 		assertEqual(t, config.ModeWarn, cfg.Verification)
 		assertEqual(t, 10*time.Second, cfg.FetchTimeout.Duration)
-		assertEqual(t, config.PolicyDeny, cfg.FetchFailurePolicy)
+		assertEqual(t, policy.ActionDeny, cfg.FetchFailurePolicy)
 		assertEqual(t, time.Hour, cfg.CacheTTL.Duration)
 		assertEqual(t, policyDir, cfg.PolicyDir)
 		assertEqual(t, ":8080", cfg.MetricsAddr)

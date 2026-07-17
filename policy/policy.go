@@ -27,11 +27,18 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/saschagrunert/nri-supply-chain/internal/config"
 )
 
-const maxSLSALevel = 3
+const (
+	maxSLSALevel = 3
+
+	// ActionAllow permits the action.
+	ActionAllow = "allow"
+	// ActionWarn logs a warning but permits the action.
+	ActionWarn = "warn"
+	// ActionDeny rejects the action.
+	ActionDeny = "deny"
+)
 
 var (
 	// ErrBuilderIDRequired indicates a trusted builder is missing its ID.
@@ -63,6 +70,9 @@ var (
 	ErrTrailingContent = errors.New(
 		"unexpected trailing content in policy file",
 	)
+
+	// ErrInvalidAction indicates an unrecognized policy action value.
+	ErrInvalidAction = errors.New("invalid policy action value")
 )
 
 // Policy defines the trust roots and per-namespace verification settings.
@@ -158,7 +168,7 @@ func (p *Policy) ProvenanceMissingPolicy() string {
 		return p.Provenance.MissingPolicy
 	}
 
-	return config.PolicyAllow
+	return ActionAllow
 }
 
 // Builders returns the trusted builders list, or nil if trust is not configured.
@@ -356,7 +366,7 @@ func (p *Policy) validateProvenance() error {
 	}
 
 	if p.Provenance.MissingPolicy != "" {
-		err := config.ValidatePolicyValue(
+		err := ValidateAction(
 			"provenance.missingPolicy", p.Provenance.MissingPolicy,
 		)
 		if err != nil {
@@ -389,7 +399,7 @@ func (p *Policy) validateVEX() error {
 	}
 
 	if p.VEX.MissingPolicy != "" {
-		err := config.ValidatePolicyValue(
+		err := ValidateAction(
 			"vex.missingPolicy", p.VEX.MissingPolicy,
 		)
 		if err != nil {
@@ -398,7 +408,7 @@ func (p *Policy) validateVEX() error {
 	}
 
 	if p.VEX.UnderInvestigationPolicy != "" {
-		err := config.ValidatePolicyValue(
+		err := ValidateAction(
 			"vex.underInvestigationPolicy", p.VEX.UnderInvestigationPolicy,
 		)
 		if err != nil {
@@ -430,4 +440,14 @@ func (p *Policy) validateVSA() error {
 	}
 
 	return nil
+}
+
+// ValidateAction validates that the given value is a valid policy action.
+func ValidateAction(name, value string) error {
+	switch value {
+	case ActionAllow, ActionWarn, ActionDeny:
+		return nil
+	default:
+		return fmt.Errorf("%w: %s %q", ErrInvalidAction, name, value)
+	}
 }

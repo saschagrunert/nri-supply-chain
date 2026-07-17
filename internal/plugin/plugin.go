@@ -17,6 +17,7 @@ package plugin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -26,6 +27,9 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
+
+// ErrMissingAnnotations indicates that required CRI-O image annotations are absent.
+var ErrMissingAnnotations = errors.New("missing image annotations")
 
 const (
 	// AnnotationImage is the CRI-O annotation for the user-specified image reference.
@@ -86,6 +90,17 @@ func (p *Plugin) CreateContainer(
 	namespace := pod.GetNamespace()
 
 	if imageRef == "" || digest == "" {
+		if p.verifier.Enforcing() {
+			slog.ErrorContext(ctx, "Missing image annotations in enforce mode",
+				"pod", namespace+"/"+pod.GetName(),
+				"container", ctr.GetName(),
+			)
+
+			return nil, nil, fmt.Errorf(
+				"%w for container %s", ErrMissingAnnotations, ctr.GetName(),
+			)
+		}
+
 		slog.WarnContext(ctx, "Missing image annotations, skipping verification",
 			"pod", namespace+"/"+pod.GetName(),
 			"container", ctr.GetName(),

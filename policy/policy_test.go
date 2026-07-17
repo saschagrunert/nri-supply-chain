@@ -19,7 +19,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/policy"
 )
 
@@ -228,8 +227,8 @@ func TestPolicyValidateVEX(t *testing.T) {
 				Trust: nil, Exclude: nil, Provenance: nil,
 				VEX: &policy.VEXPolicy{
 					SeverityThreshold:        "high",
-					MissingPolicy:            config.ModeWarn,
-					UnderInvestigationPolicy: config.PolicyAllow,
+					MissingPolicy:            policy.ActionWarn,
+					UnderInvestigationPolicy: policy.ActionAllow,
 				},
 				VSA: nil, Signatures: nil,
 			},
@@ -276,7 +275,7 @@ func TestProvenanceMissingPolicy(t *testing.T) {
 		{
 			name:     "nil provenance defaults to allow",
 			policy:   emptyPolicy(),
-			expected: config.PolicyAllow,
+			expected: policy.ActionAllow,
 		},
 		{
 			name: "empty missing policy defaults to allow",
@@ -287,18 +286,18 @@ func TestProvenanceMissingPolicy(t *testing.T) {
 				},
 				VEX: nil, VSA: nil, Signatures: nil,
 			},
-			expected: config.PolicyAllow,
+			expected: policy.ActionAllow,
 		},
 		{
 			name: "explicit deny",
 			policy: policy.Policy{
 				Trust: nil, Exclude: nil,
 				Provenance: &policy.ProvenancePolicy{
-					MissingPolicy: config.PolicyDeny, RejectUnknownParameters: false,
+					MissingPolicy: policy.ActionDeny, RejectUnknownParameters: false,
 				},
 				VEX: nil, VSA: nil, Signatures: nil,
 			},
-			expected: config.PolicyDeny,
+			expected: policy.ActionDeny,
 		},
 	}
 
@@ -338,7 +337,7 @@ func TestLoadPolicyValid(t *testing.T) {
 		t.Errorf("unexpected builder ID: %s", pol.Builders()[0].ID)
 	}
 
-	if pol.ProvenanceMissingPolicy() != config.ModeWarn {
+	if pol.ProvenanceMissingPolicy() != policy.ActionWarn {
 		t.Errorf("expected warn, got %s", pol.ProvenanceMissingPolicy())
 	}
 }
@@ -400,7 +399,7 @@ func TestLoadAllNamespaces(t *testing.T) {
 		t.Fatal("expected default policy")
 	}
 
-	if defaultPolicy.ProvenanceMissingPolicy() != config.PolicyAllow {
+	if defaultPolicy.ProvenanceMissingPolicy() != policy.ActionAllow {
 		t.Errorf(
 			"expected allow, got %s", defaultPolicy.ProvenanceMissingPolicy(),
 		)
@@ -411,7 +410,7 @@ func TestLoadAllNamespaces(t *testing.T) {
 		t.Fatal("expected production policy")
 	}
 
-	if prodPolicy.ProvenanceMissingPolicy() != config.PolicyDeny {
+	if prodPolicy.ProvenanceMissingPolicy() != policy.ActionDeny {
 		t.Errorf(
 			"expected deny, got %s", prodPolicy.ProvenanceMissingPolicy(),
 		)

@@ -16,6 +16,8 @@ package attestation
 
 import (
 	"context"
+	"sync"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
@@ -54,6 +56,19 @@ func ExportBuildVerificationCfgErr(
 ) error {
 	//nolint:dogsled // wraps 4-return function
 	_, _, _, err := buildVerificationConfig(ctx, opts, nil)
+
+	return err
+}
+
+// ExportBuildVerificationCfgWithCache exposes buildVerificationConfig with a cache
+// for external tests.
+func ExportBuildVerificationCfgWithCache(
+	ctx context.Context,
+	opts FetchOptions, //nolint:gocritic // wraps buildVerificationConfig
+	cache *trustedRootCache,
+) error {
+	//nolint:dogsled // wraps 4-return function
+	_, _, _, err := buildVerificationConfig(ctx, opts, cache)
 
 	return err
 }
@@ -111,6 +126,45 @@ func (f *OCIFetcher) CollectAttestations(
 func NewOCIFetcherWithCache() *OCIFetcher {
 	return NewOCIFetcher()
 }
+
+// TrustedRootFetchFunc is the type alias for trustedRootFetchFunc.
+type TrustedRootFetchFunc = trustedRootFetchFunc
+
+// TrustedRootCacheForTest is the exported type alias for trustedRootCache.
+type TrustedRootCacheForTest = trustedRootCache
+
+// NewTestTrustedRootCache creates a trustedRootCache with an injectable fetch function for testing.
+func NewTestTrustedRootCache(fetchFn TrustedRootFetchFunc) *trustedRootCache {
+	return &trustedRootCache{
+		mu:        sync.RWMutex{},
+		root:      nil,
+		fetchedAt: time.Time{},
+		fetchRoot: fetchFn,
+	}
+}
+
+// NewTestTrustedRootCacheWithRoot creates a cache pre-seeded with a root for testing.
+func NewTestTrustedRootCacheWithRoot(
+	fetchFn TrustedRootFetchFunc, cachedRoot *root.TrustedRoot, fetchedAt time.Time,
+) *trustedRootCache {
+	return &trustedRootCache{
+		mu:        sync.RWMutex{},
+		root:      cachedRoot,
+		fetchedAt: fetchedAt,
+		fetchRoot: fetchFn,
+	}
+}
+
+// GetTrustedRoot exposes the cache's get method for testing.
+func (c *trustedRootCache) GetTrustedRoot(ctx context.Context) (*root.TrustedRoot, error) {
+	return c.get(ctx)
+}
+
+// ExportTrustedRootCacheTTL returns the cache TTL for testing.
+func ExportTrustedRootCacheTTL() time.Duration { return trustedRootCacheTTL }
+
+// ExportTrustedRootMaxStaleness returns the max staleness for testing.
+func ExportTrustedRootMaxStaleness() time.Duration { return trustedRootMaxStaleness }
 
 // ExportVerifyBundleWithCacheNil exposes verifyBundleWithCache with a nil cache
 // for testing the uncached keyless path.

@@ -84,6 +84,14 @@ func New(cfg *config.Config, met *metrics.Metrics, fetcher attestation.Fetcher) 
 	return verif, nil
 }
 
+// Enforcing returns true if the verifier is in enforce mode.
+func (v *Verifier) Enforcing() bool {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+
+	return v.config.Verification == config.ModeEnforce
+}
+
 // Verify performs supply chain verification for the given image.
 func (v *Verifier) Verify(
 	ctx context.Context, imageRef, digest, namespace string,
@@ -132,9 +140,9 @@ func (v *Verifier) Verify(
 	logResult(ctx, imageRef, digest, namespace, result)
 	recordMetrics(state.metrics, result)
 
-	result, err := applyEnforcement(ctx, state.config, result, imageRef)
 	state.cache.Set(digest, namespace, result)
 
+	result, err := applyEnforcement(ctx, state.config, result, imageRef)
 	if err != nil {
 		return result, err
 	}
@@ -515,21 +523,21 @@ func vexMissingPolicy(pol *policy.Policy) string {
 		return pol.VEX.MissingPolicy
 	}
 
-	return config.PolicyAllow
+	return policy.ActionAllow
 }
 
 func handleMissingAttestation(
 	pol, checkType, detail string,
 ) *types.CheckResult {
 	switch pol {
-	case config.PolicyDeny:
+	case policy.ActionDeny:
 		return &types.CheckResult{
 			Type: checkType, Passed: false,
 			Status: types.StatusFail, Detail: detail,
 		}
-	case config.PolicyWarn:
+	case policy.ActionWarn:
 		return types.WarnResult(checkType, detail)
-	case config.PolicyAllow:
+	case policy.ActionAllow:
 		return &types.CheckResult{
 			Type: checkType, Passed: true,
 			Status: types.StatusPass, Detail: detail,
