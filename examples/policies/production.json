@@ -20,7 +20,6 @@
     "rejectUnknownParameters": true
   },
   "vex": {
-    "severityThreshold": "medium",
     "missingPolicy": "deny",
     "underInvestigationPolicy": "warn"
   },

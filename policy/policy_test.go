@@ -226,24 +226,10 @@ func TestPolicyValidateVEX(t *testing.T) {
 
 	runValidateTests(t, []validateTest{
 		{
-			name: "invalid VEX severity threshold",
-			policy: policy.Policy{
-				Trust: nil, Exclude: nil, Provenance: nil,
-				VEX: &policy.VEXPolicy{
-					SeverityThreshold: testInvalidValue, MissingPolicy: "",
-					UnderInvestigationPolicy: "",
-				},
-				VSA: nil, Signatures: nil,
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrSeverityThreshold,
-		},
-		{
 			name: "valid VEX config",
 			policy: policy.Policy{
 				Trust: nil, Exclude: nil, Provenance: nil,
 				VEX: &policy.VEXPolicy{
-					SeverityThreshold:        "high",
 					MissingPolicy:            policy.ActionWarn,
 					UnderInvestigationPolicy: policy.ActionAllow,
 				},
@@ -482,7 +468,7 @@ func TestPolicyValidateVEXPolicies(t *testing.T) {
 			policy: policy.Policy{
 				Trust: nil, Exclude: nil, Provenance: nil,
 				VEX: &policy.VEXPolicy{
-					SeverityThreshold: "", MissingPolicy: testInvalidValue,
+					MissingPolicy:            testInvalidValue,
 					UnderInvestigationPolicy: "",
 				},
 				VSA: nil, Signatures: nil,
@@ -495,7 +481,7 @@ func TestPolicyValidateVEXPolicies(t *testing.T) {
 			policy: policy.Policy{
 				Trust: nil, Exclude: nil, Provenance: nil,
 				VEX: &policy.VEXPolicy{
-					SeverityThreshold: "", MissingPolicy: "",
+					MissingPolicy:            "",
 					UnderInvestigationPolicy: testInvalidValue,
 				},
 				VSA: nil, Signatures: nil,

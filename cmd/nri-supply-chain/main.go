@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -95,14 +96,25 @@ func run() int {
 	}
 
 	plug := plugin.New(verif, opts.configPath)
+	ready := &atomic.Bool{}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	setupReload(ctx, opts.configPath, verif)
-	handleShutdown(ctx, cancel)
+	sighup := make(chan os.Signal, 1)
+	signal.Notify(sighup, syscall.SIGHUP)
 
-	err = runPlugin(ctx, plug, met, cfg.MetricsAddr, &opts, cancel)
+	defer signal.Stop(sighup)
+
+	sigterm := make(chan os.Signal, 1)
+	signal.Notify(sigterm, syscall.SIGINT, syscall.SIGTERM)
+
+	defer signal.Stop(sigterm)
+
+	setupReload(ctx, opts.configPath, verif, sighup)
+	handleShutdown(ctx, cancel, sigterm)
+
+	err = runPlugin(ctx, plug, met, cfg.MetricsAddr, &opts, cancel, ready)
 	if err != nil {
 		slog.Error("Plugin exited with error", "error", err)
 
@@ -168,6 +180,8 @@ func loadConfig(path string) (*config.Config, error) {
 func initLogging(level string) {
 	var logLevel slog.Level
 
+	var warnInvalid bool
+
 	switch level {
 	case logLevelDebug:
 		logLevel = slog.LevelDebug
@@ -179,26 +193,22 @@ func initLogging(level string) {
 		logLevel = slog.LevelError
 	default:
 		logLevel = slog.LevelInfo
-
-		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
-			Level: logLevel,
-		})))
-
-		slog.Warn("Unrecognized log level, defaulting to info",
-			"level", level,
-		)
-
-		return
+		warnInvalid = true
 	}
 
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
 		Level: logLevel,
 	})))
+
+	if warnInvalid {
+		slog.Warn("Unrecognized log level, defaulting to info", "level", level)
+	}
 }
 
 func runPlugin(
 	ctx context.Context, plug *plugin.Plugin, met *metrics.Metrics,
 	metricsAddr string, opts *options, cancel context.CancelFunc,
+	ready *atomic.Bool,
 ) error {
 	nriStub, err := stub.New(plug,
 		stub.WithPluginName(opts.pluginName),
@@ -211,6 +221,8 @@ func runPlugin(
 	if err != nil {
 		return fmt.Errorf("creating NRI stub: %w", err)
 	}
+
+	ready.Store(true)
 
 	group, gctx := errgroup.WithContext(ctx)
 
@@ -228,7 +240,7 @@ func runPlugin(
 	})
 
 	group.Go(func() error {
-		return serveMetrics(gctx, met, metricsAddr)
+		return serveMetrics(gctx, met, metricsAddr, ready)
 	})
 
 	err = group.Wait()
@@ -239,18 +251,16 @@ func runPlugin(
 	return nil
 }
 
-func setupReload(ctx context.Context, configPath string, verif *verifier.Verifier) {
-	sighup := make(chan os.Signal, 1)
-	signal.Notify(sighup, syscall.SIGHUP)
-
+func setupReload(
+	ctx context.Context, configPath string, verif *verifier.Verifier,
+	sigCh <-chan os.Signal,
+) {
 	go func() {
-		defer signal.Stop(sighup)
-
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-sighup:
+			case <-sigCh:
 			}
 
 			slog.Info("Received SIGHUP, reloading config")
@@ -287,34 +297,23 @@ func setupReload(ctx context.Context, configPath string, verif *verifier.Verifie
 	}()
 }
 
-func handleShutdown(ctx context.Context, cancel context.CancelFunc) {
-	sigterm := make(chan os.Signal, 1)
-	signal.Notify(sigterm, syscall.SIGINT, syscall.SIGTERM)
-
+func handleShutdown(ctx context.Context, cancel context.CancelFunc, sigCh <-chan os.Signal) {
 	go func() {
-		defer signal.Stop(sigterm)
-
 		select {
 		case <-ctx.Done():
 			return
-		case <-sigterm:
+		case <-sigCh:
 		}
 
 		slog.Info("Shutting down")
 		cancel()
-
-		select {
-		case <-ctx.Done():
-			return
-		case <-sigterm:
-		}
-
-		slog.Warn("Received second signal, forcing exit")
-		os.Exit(1)
 	}()
 }
 
-func serveMetrics(ctx context.Context, met *metrics.Metrics, addr string) error {
+func serveMetrics(
+	ctx context.Context, met *metrics.Metrics, addr string,
+	ready *atomic.Bool,
+) error {
 	if addr == "" {
 		slog.Info("Metrics server disabled (no address configured)")
 		<-ctx.Done()
@@ -330,9 +329,16 @@ func serveMetrics(ctx context.Context, met *metrics.Metrics, addr string) error 
 		_, _ = w.Write([]byte("ok"))
 	})
 
-	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
+	mux.HandleFunc("/readyz", func(writer http.ResponseWriter, _ *http.Request) {
+		if !ready.Load() {
+			writer.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = writer.Write([]byte("not ready"))
+
+			return
+		}
+
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write([]byte("ok"))
 	})
 
 	srv := &http.Server{

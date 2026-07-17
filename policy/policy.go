@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
@@ -57,9 +56,6 @@ var (
 	ErrVerifierKeyNotAbsolute = errors.New(
 		"verifier key must be an absolute path",
 	)
-
-	// ErrSeverityThreshold indicates an invalid VEX severity threshold.
-	ErrSeverityThreshold = errors.New("invalid vex severity threshold")
 
 	// ErrVSAMinimumLevel indicates an invalid VSA minimum level.
 	ErrVSAMinimumLevel = errors.New(
@@ -135,11 +131,6 @@ type ProvenancePolicy struct {
 
 // VEXPolicy contains VEX verification settings.
 type VEXPolicy struct {
-	// SeverityThreshold is reserved for future use. OpenVEX v0.2 does not
-	// carry per-statement severity, so this field is accepted but NOT
-	// evaluated during verification. All "affected" statuses trigger
-	// rejection regardless of threshold.
-	SeverityThreshold string `json:"severityThreshold,omitempty"`
 	// MissingPolicy controls behavior when no VEX attestation is found.
 	MissingPolicy string `json:"missingPolicy,omitempty"`
 	// UnderInvestigationPolicy controls behavior for "under_investigation" status.
@@ -380,22 +371,6 @@ func (p *Policy) validateProvenance() error {
 func (p *Policy) validateVEX() error {
 	if p.VEX == nil {
 		return nil
-	}
-
-	if p.VEX.SeverityThreshold != "" {
-		switch p.VEX.SeverityThreshold {
-		case "low", "medium", "high", "critical":
-		default:
-			return fmt.Errorf(
-				"%w: %q", ErrSeverityThreshold, p.VEX.SeverityThreshold,
-			)
-		}
-
-		slog.Warn(
-			"vex.severityThreshold is accepted but not yet evaluated; "+
-				"all affected statuses trigger rejection regardless of threshold",
-			"threshold", p.VEX.SeverityThreshold,
-		)
 	}
 
 	if p.VEX.MissingPolicy != "" {

@@ -16,6 +16,7 @@
 package cache
 
 import (
+	"container/heap"
 	"sync"
 	"time"
 
@@ -37,21 +38,59 @@ type entry struct {
 	expiresAt time.Time
 }
 
+type heapEntry struct {
+	cacheKey  key
+	expiresAt time.Time
+	index     int
+}
+
+type expiryHeap []*heapEntry
+
+func (h *expiryHeap) Len() int           { return len(*h) }
+func (h *expiryHeap) Less(i, j int) bool { return (*h)[i].expiresAt.Before((*h)[j].expiresAt) }
+
+func (h *expiryHeap) Swap(i, j int) {
+	(*h)[i], (*h)[j] = (*h)[j], (*h)[i]
+	(*h)[i].index = i
+	(*h)[j].index = j
+}
+
+func (h *expiryHeap) Push(x any) {
+	entry := x.(*heapEntry) //nolint:forcetypeassert // heap.Interface contract
+	entry.index = len(*h)
+	*h = append(*h, entry)
+}
+
+func (h *expiryHeap) Pop() any {
+	old := *h
+	length := len(old)
+	entry := old[length-1]
+	old[length-1] = nil
+	entry.index = -1
+	*h = old[:length-1]
+
+	return entry
+}
+
 // Cache stores supply chain verification results with TTL-based expiry.
 type Cache struct {
-	mu      sync.Mutex
-	entries map[key]entry
-	ttl     time.Duration
-	gauge   prometheus.Gauge
+	mu        sync.Mutex
+	entries   map[key]entry
+	ttl       time.Duration
+	gauge     prometheus.Gauge
+	expHeap   expiryHeap
+	heapIndex map[key]*heapEntry
 }
 
 // New creates a new verification result cache with the given TTL.
 func New(ttl time.Duration) *Cache {
 	return &Cache{
-		mu:      sync.Mutex{},
-		entries: make(map[key]entry),
-		ttl:     ttl,
-		gauge:   nil,
+		mu:        sync.Mutex{},
+		entries:   make(map[key]entry),
+		ttl:       ttl,
+		gauge:     nil,
+		expHeap:   nil,
+		heapIndex: make(map[key]*heapEntry),
 	}
 }
 
@@ -63,10 +102,12 @@ func NewWithGauge(ttl time.Duration, gauge prometheus.Gauge) *Cache {
 	}
 
 	return &Cache{
-		mu:      sync.Mutex{},
-		entries: make(map[key]entry),
-		ttl:     ttl,
-		gauge:   gauge,
+		mu:        sync.Mutex{},
+		entries:   make(map[key]entry),
+		ttl:       ttl,
+		gauge:     gauge,
+		expHeap:   nil,
+		heapIndex: make(map[key]*heapEntry),
 	}
 }
 
@@ -85,6 +126,12 @@ func (c *Cache) Get(digest, namespace string) *types.Result {
 
 	if time.Now().After(cacheEntry.expiresAt) {
 		delete(c.entries, cacheKey)
+
+		if heapEnt, ok := c.heapIndex[cacheKey]; ok {
+			heap.Remove(&c.expHeap, heapEnt.index)
+			delete(c.heapIndex, cacheKey)
+		}
+
 		c.updateGaugeLocked()
 
 		return nil
@@ -111,9 +158,20 @@ func (c *Cache) Set(digest, namespace string, result *types.Result) {
 	}
 
 	cacheKey := key{digest: digest, namespace: namespace}
+	expiresAt := time.Now().Add(c.ttl)
+
 	c.entries[cacheKey] = entry{
 		result:    result,
-		expiresAt: time.Now().Add(c.ttl),
+		expiresAt: expiresAt,
+	}
+
+	if heapEnt, ok := c.heapIndex[cacheKey]; ok {
+		heapEnt.expiresAt = expiresAt
+		heap.Fix(&c.expHeap, heapEnt.index)
+	} else {
+		heapEnt = &heapEntry{cacheKey: cacheKey, expiresAt: expiresAt, index: 0}
+		heap.Push(&c.expHeap, heapEnt)
+		c.heapIndex[cacheKey] = heapEnt
 	}
 
 	c.updateGaugeLocked()
@@ -125,6 +183,8 @@ func (c *Cache) Clear() {
 	defer c.mu.Unlock()
 
 	c.entries = make(map[key]entry)
+	c.expHeap = nil
+	c.heapIndex = make(map[key]*heapEntry)
 
 	c.updateGaugeLocked()
 }
@@ -144,31 +204,21 @@ func (c *Cache) updateGaugeLocked() {
 }
 
 func (c *Cache) evictOldestLocked() {
-	var (
-		oldestKey      key
-		oldestExpiry   time.Time
-		foundCandidate bool
-	)
-
-	for k, e := range c.entries {
-		if !foundCandidate || e.expiresAt.Before(oldestExpiry) {
-			oldestKey = k
-			oldestExpiry = e.expiresAt
-			foundCandidate = true
-		}
+	if c.expHeap.Len() == 0 {
+		return
 	}
 
-	if foundCandidate {
-		delete(c.entries, oldestKey)
-	}
+	he := heap.Pop(&c.expHeap).(*heapEntry) //nolint:forcetypeassert // heap contains only *heapEntry
+	delete(c.entries, he.cacheKey)
+	delete(c.heapIndex, he.cacheKey)
 }
 
 func (c *Cache) evictExpiredLocked() {
 	now := time.Now()
 
-	for cacheKey, cacheEntry := range c.entries {
-		if now.After(cacheEntry.expiresAt) {
-			delete(c.entries, cacheKey)
-		}
+	for c.expHeap.Len() > 0 && now.After(c.expHeap[0].expiresAt) {
+		he := heap.Pop(&c.expHeap).(*heapEntry) //nolint:forcetypeassert // heap contains only *heapEntry
+		delete(c.entries, he.cacheKey)
+		delete(c.heapIndex, he.cacheKey)
 	}
 }

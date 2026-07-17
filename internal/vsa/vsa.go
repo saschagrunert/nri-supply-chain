@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -201,9 +202,7 @@ func extractLevelNumber(level string) int {
 		return 0
 	}
 
-	var num int
-
-	_, err := fmt.Sscanf(level[len(slsaBuildLevelPrefix):], "%d", &num)
+	num, err := strconv.Atoi(level[len(slsaBuildLevelPrefix):])
 	if err != nil {
 		return 0
 	}
@@ -281,16 +280,18 @@ const versionScale = 1000
 func versionToNumber(ver string) int {
 	parts := strings.SplitN(ver, ".", 2) //nolint:mnd // major.minor split
 
-	var major int
-
-	_, _ = fmt.Sscanf(strings.TrimPrefix(parts[0], "v"), "%d", &major)
+	major, err := strconv.Atoi(strings.TrimPrefix(parts[0], "v"))
+	if err != nil {
+		return 0
+	}
 
 	result := major * versionScale
 
 	if len(parts) > 1 {
-		var minor int
-
-		_, _ = fmt.Sscanf(parts[1], "%d", &minor)
+		minor, minorErr := strconv.Atoi(parts[1])
+		if minorErr != nil {
+			return result
+		}
 
 		result += minor
 	}

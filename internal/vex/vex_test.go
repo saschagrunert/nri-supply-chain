@@ -128,28 +128,10 @@ func TestVerify(t *testing.T) { //nolint:funlen // test table
 			wantStatus: types.StatusFail,
 		},
 		{
-			name: "affected fails with critical threshold (fail-closed)",
+			name: "affected fails with VEX policy",
 			doc:  validVEXDoc(openvex.StatusAffected),
 			pol: &policy.Policy{
-				VEX: &policy.VEXPolicy{SeverityThreshold: "critical"},
-			},
-			wantPassed: false,
-			wantStatus: types.StatusFail,
-		},
-		{
-			name: "affected fails with low threshold",
-			doc:  validVEXDoc(openvex.StatusAffected),
-			pol: &policy.Policy{
-				VEX: &policy.VEXPolicy{SeverityThreshold: "low"},
-			},
-			wantPassed: false,
-			wantStatus: types.StatusFail,
-		},
-		{
-			name: "affected fails with invalid threshold (treated as no threshold)",
-			doc:  validVEXDoc(openvex.StatusAffected),
-			pol: &policy.Policy{
-				VEX: &policy.VEXPolicy{SeverityThreshold: "unknown-level"},
+				VEX: &policy.VEXPolicy{},
 			},
 			wantPassed: false,
 			wantStatus: types.StatusFail,

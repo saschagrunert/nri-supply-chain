@@ -17,7 +17,6 @@
     "missingPolicy": "warn"
   },
   "vex": {
-    "severityThreshold": "high",
     "missingPolicy": "allow"
   },
   "signatures": {

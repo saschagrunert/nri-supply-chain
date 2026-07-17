@@ -269,6 +269,28 @@ func TestCacheCapacityEvictsExpired(t *testing.T) {
 	}
 }
 
+func TestCacheOverwriteUpdatesExpiry(t *testing.T) {
+	t.Parallel()
+
+	testCache := cache.New(time.Hour)
+
+	testCache.Set("sha256:abc", "default", &types.Result{
+		Allowed: true, Reason: "old", CheckResults: nil,
+	})
+	testCache.Set("sha256:abc", "default", &types.Result{
+		Allowed: true, Reason: "new", CheckResults: nil,
+	})
+
+	if testCache.Len() != 1 {
+		t.Errorf("expected 1 entry after overwrite, got %d", testCache.Len())
+	}
+
+	got := testCache.Get("sha256:abc", "default")
+	if got == nil || got.Reason != "new" {
+		t.Errorf("expected reason 'new', got %v", got)
+	}
+}
+
 func TestCacheClear(t *testing.T) {
 	t.Parallel()
 

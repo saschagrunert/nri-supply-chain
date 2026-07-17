@@ -180,6 +180,19 @@ func NewTestOCIFetcher(verifier BundleVerifyFunc, imageFetcher ImageFetchFunc) *
 	return &OCIFetcher{
 		verifyBundle: verifier,
 		fetchImage:   imageFetcher,
+		referrers:    nil,
+		rootCache:    nil,
+	}
+}
+
+// NewTestOCIFetcherFull creates a fetcher with all injectable dependencies for testing.
+func NewTestOCIFetcherFull(
+	verifier BundleVerifyFunc, imageFetcher ImageFetchFunc, referrersFn ReferrersFunc,
+) *OCIFetcher {
+	return &OCIFetcher{
+		verifyBundle: verifier,
+		fetchImage:   imageFetcher,
+		referrers:    referrersFn,
 		rootCache:    nil,
 	}
 }
