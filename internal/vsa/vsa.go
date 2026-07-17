@@ -26,8 +26,8 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/name"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
-	"github.com/saschagrunert/nri-supply-chain/policy"
 )
 
 const (

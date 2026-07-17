@@ -26,7 +26,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
+	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
 func TestInitLogging(t *testing.T) { //nolint:paralleltest // modifies global slog default
@@ -131,6 +133,90 @@ func TestHandleShutdown(t *testing.T) {
 	case <-ctx.Done():
 	case <-time.After(time.Second):
 		t.Fatal("expected context to be cancelled after signal")
+	}
+}
+
+func TestSetupReload(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	policyDir := filepath.Join(dir, "policies")
+
+	err := os.Mkdir(policyDir, 0o750)
+	if err != nil {
+		t.Fatalf("creating policy dir: %v", err)
+	}
+
+	writeTestConfig(t, configPath, policyDir, "warn")
+
+	cfg, err := config.LoadFromFile(configPath)
+	if err != nil {
+		t.Fatalf("loading config: %v", err)
+	}
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	if err != nil {
+		t.Fatalf("creating verifier: %v", err)
+	}
+
+	if verif.Enforcing() {
+		t.Fatal("expected warn mode initially")
+	}
+
+	ctx := t.Context()
+
+	sigCh := make(chan os.Signal, 1)
+	setupReload(ctx, configPath, verif, sigCh)
+
+	writeTestConfig(t, configPath, policyDir, "enforce")
+
+	sigCh <- syscall.SIGHUP
+
+	deadline := time.After(2 * time.Second)
+
+	for !verif.Enforcing() {
+		select {
+		case <-deadline:
+			t.Fatal("verifier did not switch to enforce mode after SIGHUP")
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+func TestSetupReloadNoConfig(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	if err != nil {
+		t.Fatalf("creating verifier: %v", err)
+	}
+
+	ctx := t.Context()
+
+	sigCh := make(chan os.Signal, 1)
+	setupReload(ctx, "", verif, sigCh)
+
+	sigCh <- syscall.SIGHUP
+
+	time.Sleep(50 * time.Millisecond)
+
+	if verif.Enforcing() {
+		t.Fatal("expected warn mode to remain unchanged after no-op reload")
+	}
+}
+
+func writeTestConfig(t *testing.T, path, policyDir, mode string) {
+	t.Helper()
+
+	data := "verification = \"" + mode + "\"\npolicy_dir = \"" + policyDir + "\"\n"
+
+	err := os.WriteFile(path, []byte(data), 0o600)
+	if err != nil {
+		t.Fatalf("writing config: %v", err)
 	}
 }
 

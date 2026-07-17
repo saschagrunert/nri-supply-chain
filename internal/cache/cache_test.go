@@ -16,6 +16,7 @@ package cache_test
 
 import (
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -289,6 +290,43 @@ func TestCacheOverwriteUpdatesExpiry(t *testing.T) {
 	if got == nil || got.Reason != "new" {
 		t.Errorf("expected reason 'new', got %v", got)
 	}
+}
+
+func TestCacheConcurrent(t *testing.T) {
+	t.Parallel()
+
+	testCache := cache.New(50 * time.Millisecond)
+
+	const goroutines = 10
+
+	const iterations = 200
+
+	var waitGroup sync.WaitGroup
+
+	waitGroup.Add(goroutines)
+
+	for goroutine := range goroutines {
+		go func() {
+			defer waitGroup.Done()
+
+			for iter := range iterations {
+				digest := fmt.Sprintf("sha256:%d-%d", goroutine, iter)
+
+				testCache.Set(digest, "default", &types.Result{
+					Allowed: true, Reason: digest, CheckResults: nil,
+				})
+
+				testCache.Get(digest, "default")
+				testCache.Len()
+
+				if iter%50 == 0 {
+					testCache.Clear()
+				}
+			}
+		}()
+	}
+
+	waitGroup.Wait()
 }
 
 func TestCacheClear(t *testing.T) {

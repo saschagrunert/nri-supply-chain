@@ -24,8 +24,8 @@ import (
 	"strings"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
+	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
-	"github.com/saschagrunert/nri-supply-chain/policy"
 )
 
 const (
@@ -266,17 +266,20 @@ func verifySources(params map[string]any, pol *policy.Policy) error {
 }
 
 // verifyParameters rejects provenance with unrecognized externalParameters
-// when rejectUnknownParameters is enabled. The known keys list covers GitHub
-// Actions SLSA provenance. Other build systems (Cloud Build, Tekton, etc.)
-// use different parameter names and will be rejected. Disable
-// rejectUnknownParameters in the policy for non-GitHub-Actions builders.
+// when rejectUnknownParameters is enabled. Uses the policy's KnownParameters
+// list if configured, otherwise falls back to the GitHub Actions parameter set.
 func verifyParameters(params map[string]any, pol *policy.Policy) error {
 	if pol.Provenance == nil || !pol.Provenance.RejectUnknownParameters {
 		return nil
 	}
 
+	known := pol.Provenance.KnownParameters
+	if len(known) == 0 {
+		known = defaultKnownParameters()
+	}
+
 	for paramKey := range params {
-		if !isKnownExternalParameter(paramKey) {
+		if !slices.Contains(known, paramKey) {
 			return fmt.Errorf("%w: %q", ErrUnknownParameters, paramKey)
 		}
 	}
@@ -284,13 +287,8 @@ func verifyParameters(params map[string]any, pol *policy.Policy) error {
 	return nil
 }
 
-func isKnownExternalParameter(paramKey string) bool {
-	switch paramKey {
-	case "source", "repository", "ref", "workflow", "buildType":
-		return true
-	default:
-		return false
-	}
+func defaultKnownParameters() []string {
+	return []string{"source", "repository", "ref", "workflow", "buildType"}
 }
 
 func passResult() *types.CheckResult {

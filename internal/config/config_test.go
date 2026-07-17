@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
-	"github.com/saschagrunert/nri-supply-chain/policy"
+	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 )
 
 func TestDefaultConfig(t *testing.T) {

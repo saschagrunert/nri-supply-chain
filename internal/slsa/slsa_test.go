@@ -21,23 +21,25 @@ import (
 	"testing"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
+	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/slsa"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
-	"github.com/saschagrunert/nri-supply-chain/policy"
 )
 
 const (
-	testDigest      = "sha256:abc123def456"
-	testDigestHash  = "abc123def456"
-	testDigestAlgo  = "sha256"
-	testBuilderID   = "https://github.com/actions/runner"
-	testBuildType   = "https://actions.github.io/buildtypes/workflow/v1"
-	testSource      = "github.com/example/repo"
-	testWorkflow    = ".github/workflows/release.yml"
-	testSourceGlob  = "github.com/example/*"
-	testKeySource   = "source"
-	testKeyWorkflow = "workflow"
-	testPlaceholder = "test"
+	testDigest         = "sha256:abc123def456"
+	testDigestHash     = "abc123def456"
+	testDigestAlgo     = "sha256"
+	testBuilderID      = "https://github.com/actions/runner"
+	testBuildType      = "https://actions.github.io/buildtypes/workflow/v1"
+	testSource         = "github.com/example/repo"
+	testWorkflow       = ".github/workflows/release.yml"
+	testSourceGlob     = "github.com/example/*"
+	testKeySource      = "source"
+	testKeyWorkflow    = "workflow"
+	testPlaceholder    = "test"
+	testCustomParamKey = "custom-param"
+	testValue          = "value"
 )
 
 func validStatement() slsa.Statement {
@@ -381,7 +383,7 @@ func TestVerify(t *testing.T) { //nolint:funlen,maintidx // Table-driven test.
 				t.Helper()
 
 				stmt := validStatement()
-				stmt.Predicate.BuildDefinition.ExternalParameters["customKey"] = "value"
+				stmt.Predicate.BuildDefinition.ExternalParameters["customKey"] = testValue
 
 				return mustMarshal(t, stmt)
 			},
@@ -407,7 +409,7 @@ func TestVerify(t *testing.T) { //nolint:funlen,maintidx // Table-driven test.
 				t.Helper()
 
 				stmt := validStatement()
-				stmt.Predicate.BuildDefinition.ExternalParameters["customKey"] = "value"
+				stmt.Predicate.BuildDefinition.ExternalParameters["customKey"] = testValue
 
 				return mustMarshal(t, stmt)
 			},
@@ -458,6 +460,65 @@ func TestVerify(t *testing.T) { //nolint:funlen,maintidx // Table-driven test.
 			wantPass:   true,
 			wantType:   "",
 			wantStatus: types.StatusPass,
+		},
+		{
+			name: "custom known parameters accepted",
+			data: func(t *testing.T) []byte {
+				t.Helper()
+
+				stmt := validStatement()
+				stmt.Predicate.BuildDefinition.ExternalParameters = map[string]any{
+					testCustomParamKey: testValue,
+				}
+
+				return mustMarshal(t, stmt)
+			},
+			policy: &policy.Policy{
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: testBuilderID, MaxLevel: 2},
+					},
+				},
+				Provenance: &policy.ProvenancePolicy{
+					RejectUnknownParameters: true,
+					KnownParameters:         []string{testCustomParamKey},
+				},
+			},
+			digest:     testDigest,
+			wantErr:    nil,
+			wantPass:   true,
+			wantType:   "",
+			wantStatus: types.StatusPass,
+		},
+		{
+			name: "custom known parameters rejected",
+			data: func(t *testing.T) []byte {
+				t.Helper()
+
+				stmt := validStatement()
+				stmt.Predicate.BuildDefinition.ExternalParameters = map[string]any{
+					testCustomParamKey: testValue,
+					"unknown":          "bad",
+				}
+
+				return mustMarshal(t, stmt)
+			},
+			policy: &policy.Policy{
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: testBuilderID, MaxLevel: 2},
+					},
+				},
+				Provenance: &policy.ProvenancePolicy{
+					RejectUnknownParameters: true,
+					KnownParameters:         []string{testCustomParamKey},
+				},
+			},
+			digest:     testDigest,
+			wantErr:    nil,
+			wantPass:   false,
+			wantType:   "",
+			wantStatus: types.StatusFail,
 		},
 		{
 			name: "multiple subjects with match",
