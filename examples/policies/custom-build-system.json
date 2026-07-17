@@ -1,0 +1,28 @@
+{
+  "trust": {
+    "builders": [
+      {
+        "id": "https://builder.example.com/tekton",
+        "maxLevel": 2
+      }
+    ],
+    "verifiers": [
+      {
+        "id": "tekton-signer",
+        "key": "/etc/nri-supply-chain/keys/tekton.pub"
+      }
+    ],
+    "buildTypes": ["https://tekton.dev/chains/v2"]
+  },
+  "provenance": {
+    "missingPolicy": "deny",
+    "rejectUnknownParameters": true,
+    "knownParameters": ["git-url", "git-commit", "pipeline-name"]
+  },
+  "vex": {
+    "missingPolicy": "allow"
+  },
+  "signatures": {
+    "requireTransparencyLog": false
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "trust": {
+    "builders": [
+      {
+        "id": "https://github.com/actions/runner",
+        "maxLevel": 3
+      }
+    ],
+    "verifiers": [
+      {
+        "id": "https://verifier.internal/prod",
+        "key": "/etc/nri-supply-chain/keys/verifier.pub"
+      }
+    ],
+    "issuers": ["https://token.actions.githubusercontent.com"]
+  },
+  "provenance": {
+    "missingPolicy": "deny"
+  },
+  "vex": {
+    "missingPolicy": "allow"
+  },
+  "vsa": {
+    "minimumLevel": 2,
+    "maxAge": "24h",
+    "policy": "https://example.com/production-policy"
+  },
+  "signatures": {
+    "requireTransparencyLog": false
+  }
+}

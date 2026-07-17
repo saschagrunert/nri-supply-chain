@@ -1,0 +1,20 @@
+{
+  "trust": {
+    "verifiers": [
+      {
+        "id": "build-signer",
+        "key": "/etc/nri-supply-chain/keys/cosign.pub"
+      }
+    ]
+  },
+  "provenance": {
+    "missingPolicy": "deny"
+  },
+  "vex": {
+    "missingPolicy": "deny",
+    "underInvestigationPolicy": "deny"
+  },
+  "signatures": {
+    "requireTransparencyLog": false
+  }
+}
