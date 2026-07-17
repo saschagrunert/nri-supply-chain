@@ -318,6 +318,17 @@ func TestVerify(t *testing.T) { //nolint:funlen,maintidx // test table
 			wantErr:    nil,
 		},
 		{
+			name: "sub-second timestamp accepted",
+			modify: func(s *vsa.Statement) {
+				s.Predicate.TimeVerified = time.Now().UTC().Format(time.RFC3339Nano)
+			},
+			pol:        trustedPolicy(),
+			wantPassed: true,
+			wantReject: false,
+			wantStatus: types.StatusPass,
+			wantErr:    nil,
+		},
+		{
 			name: "invalid timestamp format",
 			modify: func(s *vsa.Statement) {
 				s.Predicate.TimeVerified = "not-a-timestamp"

@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -35,9 +36,49 @@ import (
 )
 
 const (
-	maxAttestationSize = 10 << 20 // 10 MiB
-	maxReferrers       = 100
+	maxAttestationSize  = 10 << 20 // 10 MiB
+	maxReferrers        = 100
+	trustedRootCacheTTL = 1 * time.Hour
 )
+
+type trustedRootCache struct {
+	mu        sync.Mutex
+	root      *root.TrustedRoot
+	fetchedAt time.Time
+}
+
+func (c *trustedRootCache) get(ctx context.Context) (*root.TrustedRoot, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.root != nil && time.Since(c.fetchedAt) < trustedRootCacheTTL {
+		return c.root, nil
+	}
+
+	err := ctx.Err()
+	if err != nil {
+		return nil, fmt.Errorf("context canceled before fetching trusted root: %w", err)
+	}
+
+	trustedRoot, err := root.FetchTrustedRoot()
+	if err != nil {
+		if c.root != nil {
+			slog.Warn("Failed to refresh trusted root, using stale cache",
+				"error", err,
+				"age", time.Since(c.fetchedAt),
+			)
+
+			return c.root, nil
+		}
+
+		return nil, fmt.Errorf("fetching sigstore trusted root: %w", err)
+	}
+
+	c.root = trustedRoot
+	c.fetchedAt = time.Now()
+
+	return trustedRoot, nil
+}
 
 // ImageFetchFunc fetches an OCI image by reference.
 type ImageFetchFunc func(ref name.Reference, options ...remote.Option) (ociV1.Image, error)
@@ -46,13 +87,26 @@ type ImageFetchFunc func(ref name.Reference, options ...remote.Option) (ociV1.Im
 type OCIFetcher struct {
 	verifyBundle BundleVerifyFunc
 	fetchImage   ImageFetchFunc
+	// rootCache is captured by the verifyBundle closure; stored for exhaustruct compliance.
+	rootCache *trustedRootCache
 }
 
 // NewOCIFetcher creates a new OCI-based attestation fetcher.
 func NewOCIFetcher() *OCIFetcher {
+	cachedRoot := &trustedRootCache{
+		mu:        sync.Mutex{},
+		root:      nil,
+		fetchedAt: time.Time{},
+	}
+
 	return &OCIFetcher{
-		verifyBundle: defaultVerifyBundle,
-		fetchImage:   remote.Image,
+		verifyBundle: func(
+			ctx context.Context, bundleBytes []byte, opts FetchOptions,
+		) ([]byte, error) {
+			return verifyBundleWithCache(ctx, bundleBytes, opts, cachedRoot)
+		},
+		fetchImage: remote.Image,
+		rootCache:  cachedRoot,
 	}
 }
 
@@ -61,6 +115,7 @@ func NewOCIFetcherWithVerifier(verifier BundleVerifyFunc) *OCIFetcher {
 	return &OCIFetcher{
 		verifyBundle: verifier,
 		fetchImage:   remote.Image,
+		rootCache:    nil,
 	}
 }
 
@@ -255,6 +310,15 @@ func defaultVerifyBundle(
 	bundleBytes []byte,
 	opts FetchOptions, //nolint:gocritic // matches BundleVerifyFunc signature
 ) ([]byte, error) {
+	return verifyBundleWithCache(ctx, bundleBytes, opts, nil)
+}
+
+func verifyBundleWithCache(
+	ctx context.Context,
+	bundleBytes []byte,
+	opts FetchOptions, //nolint:gocritic // matches BundleVerifyFunc signature
+	cachedRoot *trustedRootCache,
+) ([]byte, error) {
 	err := ctx.Err()
 	if err != nil {
 		return nil, fmt.Errorf("context canceled before bundle verification: %w", err)
@@ -267,7 +331,7 @@ func defaultVerifyBundle(
 		return nil, fmt.Errorf("parsing sigstore bundle: %w", err)
 	}
 
-	trustedMaterial, verifierOpts, policyOpts, err := buildVerificationConfig(ctx, opts)
+	trustedMaterial, verifierOpts, policyOpts, err := buildVerificationConfig(ctx, opts, cachedRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -296,7 +360,8 @@ func defaultVerifyBundle(
 
 func buildVerificationConfig(
 	ctx context.Context,
-	opts FetchOptions, //nolint:gocritic // passed through from defaultVerifyBundle
+	opts FetchOptions, //nolint:gocritic // passed through from verifyBundleWithCache
+	cachedRoot *trustedRootCache,
 ) (root.TrustedMaterialCollection, []verify.VerifierOption, []verify.PolicyOption, error) {
 	var (
 		materials    root.TrustedMaterialCollection
@@ -321,7 +386,9 @@ func buildVerificationConfig(
 	}
 
 	if len(opts.TrustedIssuers) > 0 {
-		issuerMaterial, issuerVerifierOpts, issuerPolicyOpts, err := buildKeylessConfig(ctx, opts)
+		issuerMaterial, issuerVerifierOpts, issuerPolicyOpts, err := buildKeylessConfig(
+			ctx, opts, cachedRoot,
+		)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -358,13 +425,26 @@ func buildKeyMaterial(keyPaths []string) (*root.TrustedPublicKeyMaterial, error)
 func buildKeylessConfig(
 	ctx context.Context,
 	opts FetchOptions, //nolint:gocritic // passed through from buildVerificationConfig
+	cachedRoot *trustedRootCache,
 ) (*root.TrustedRoot, []verify.VerifierOption, []verify.PolicyOption, error) {
-	err := ctx.Err()
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("context canceled before fetching trusted root: %w", err)
+	var (
+		trustedRoot *root.TrustedRoot
+		err         error
+	)
+
+	if cachedRoot != nil {
+		trustedRoot, err = cachedRoot.get(ctx)
+	} else {
+		ctxErr := ctx.Err()
+		if ctxErr != nil {
+			return nil, nil, nil, fmt.Errorf(
+				"context canceled before fetching trusted root: %w", ctxErr,
+			)
+		}
+
+		trustedRoot, err = root.FetchTrustedRoot()
 	}
 
-	trustedRoot, err := root.FetchTrustedRoot()
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("fetching sigstore trusted root: %w", err)
 	}
@@ -397,6 +477,11 @@ func buildCertificateIdentity(issuers, sanPatterns []string) (verify.Certificate
 	}
 
 	sanRegex := ".*"
+
+	if len(sanPatterns) == 0 {
+		slog.Debug("No SAN patterns configured for keyless verification; " +
+			"any certificate identity from a trusted issuer will be accepted")
+	}
 
 	if len(sanPatterns) > 0 {
 		escaped := make([]string, len(sanPatterns))

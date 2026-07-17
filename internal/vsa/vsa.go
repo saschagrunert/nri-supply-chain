@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -219,6 +220,14 @@ func verifyResourceURI(resourceURI, imageRef string) error {
 		return nil
 	}
 
+	if !strings.Contains(resourceURI, "@") {
+		slog.Warn("VSA resource URI is tag-based, not digest-pinned; "+
+			"the VSA applies to the entire repository",
+			"resourceURI", resourceURI,
+			"imageRef", imageRef,
+		)
+	}
+
 	normalizedResource, err := normalizeRef(resourceURI)
 	if err != nil {
 		return fmt.Errorf("%w: invalid resource URI %q: %w", ErrResourceMismatch, resourceURI, err)
@@ -316,7 +325,7 @@ func verifyFreshness(timeVerified string, pol *policy.Policy) error {
 		return fmt.Errorf("parsing max_age %q: %w", pol.VSA.MaxAge, err)
 	}
 
-	verified, err := time.Parse(time.RFC3339, timeVerified)
+	verified, err := time.Parse(time.RFC3339Nano, timeVerified)
 	if err != nil {
 		return fmt.Errorf("parsing time_verified %q: %w", timeVerified, err)
 	}

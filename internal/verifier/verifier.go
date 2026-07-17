@@ -66,7 +66,7 @@ func New(cfg *config.Config, met *metrics.Metrics, fetcher attestation.Fetcher) 
 	verif := &Verifier{
 		mu:       sync.RWMutex{},
 		config:   &cfgCopy,
-		cache:    cache.New(cfgCopy.CacheTTL.Duration),
+		cache:    cache.NewWithGauge(cfgCopy.CacheTTL.Duration, met.CacheEntriesTotal),
 		policies: nil,
 		metrics:  met,
 		fetcher:  fetcher,
@@ -120,9 +120,9 @@ func (v *Verifier) Verify(
 		state.metrics.CacheHitsTotal.Inc()
 		logResult(ctx, imageRef, digest, namespace, cached)
 
-		_, err := applyEnforcement(ctx, state.config, cached, imageRef)
+		enforced, err := applyEnforcement(ctx, state.config, cached, imageRef)
 
-		return cached, err
+		return enforced, err
 	}
 
 	state.metrics.CacheMissesTotal.Inc()
@@ -134,7 +134,6 @@ func (v *Verifier) Verify(
 
 	result, err := applyEnforcement(ctx, state.config, result, imageRef)
 	state.cache.Set(digest, namespace, result)
-	state.metrics.CacheEntriesTotal.Set(float64(state.cache.Len()))
 
 	if err != nil {
 		return result, err
@@ -188,8 +187,7 @@ func (v *Verifier) Reload(cfg *config.Config) error {
 	defer v.mu.Unlock()
 
 	v.config = &cfgCopy
-	v.cache = cache.New(cfgCopy.CacheTTL.Duration)
-	v.metrics.CacheEntriesTotal.Set(0)
+	v.cache = cache.NewWithGauge(cfgCopy.CacheTTL.Duration, v.metrics.CacheEntriesTotal)
 	v.policies = policies
 
 	if cfgCopy.Enabled() && v.fetcher == nil {
@@ -613,6 +611,8 @@ func buildDigestRef(imageRef, digest string) string {
 	return ref.Context().Digest(digest).String()
 }
 
+// isExcluded uses path.Match: '*' matches non-'/' characters only, so patterns
+// must account for the full registry/namespace/image depth.
 func isExcluded(ctx context.Context, excludedImages []string, imageRef string) bool {
 	for _, pattern := range excludedImages {
 		matched, err := path.Match(pattern, imageRef)

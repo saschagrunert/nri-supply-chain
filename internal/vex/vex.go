@@ -119,6 +119,7 @@ func VerifyMultiple(
 ) (*types.CheckResult, error) {
 	var (
 		failDetails           []string
+		parseErrors           []string
 		anyUnderInvestigation bool
 		anyValid              bool
 	)
@@ -126,6 +127,8 @@ func VerifyMultiple(
 	for _, att := range attestations {
 		result, err := Verify(ctx, att, pol, imageRef, imageDigest)
 		if err != nil {
+			parseErrors = append(parseErrors, err.Error())
+
 			continue
 		}
 
@@ -149,7 +152,9 @@ func VerifyMultiple(
 	}
 
 	if len(attestations) > 0 && !anyValid {
-		return failResult("all VEX documents failed to parse"), nil
+		return failResult(
+			"all VEX documents failed to parse: " + strings.Join(parseErrors, "; "),
+		), nil
 	}
 
 	return passResult(), nil
@@ -170,6 +175,11 @@ func verifySubjectAndExtract(att []byte, imageDigest string) ([]byte, error) {
 				ErrSubjectMismatch, imageDigest,
 			)
 		}
+	} else {
+		slog.Debug("VEX subject verification skipped",
+			"subjectCount", len(stmt.Subject),
+			"hasDigest", imageDigest != "",
+		)
 	}
 
 	if len(stmt.Predicate) > 0 {

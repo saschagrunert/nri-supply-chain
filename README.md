@@ -16,6 +16,7 @@ operates below the Kubernetes API layer, so every container that runs on a node
 must pass verification.
 
 <!-- toc -->
+
 - [Architecture](#architecture)
 - [Verification Flow](#verification-flow)
 - [Verification Types](#verification-types)
@@ -42,6 +43,7 @@ must pass verification.
   - [Troubleshooting](#troubleshooting)
 - [Development](#development)
 - [License](#license)
+
 <!-- /toc -->
 
 ## Architecture
@@ -208,14 +210,14 @@ policy_dir = "/etc/nri-supply-chain/policies"
 metrics_addr = ":9090"
 ```
 
-| Field | Default | Description |
-| --- | --- | --- |
-| `verification` | `disabled` | Mode: `disabled`, `warn` (log-only), `enforce` (reject on failure) |
-| `fetch_timeout` | `30s` | Per-fetch timeout for retrieving attestations from the registry |
-| `fetch_failure_policy` | `warn` | Behavior when attestation fetch fails: `allow`, `warn`, `deny` |
-| `cache_ttl` | `24h` | TTL for cached verification results (`0s` disables caching) |
-| `policy_dir` | `/etc/nri-supply-chain/policies` | Directory containing JSON policy files |
-| `metrics_addr` | `:9090` | Prometheus metrics HTTP listen address |
+| Field                  | Default                          | Description                                                        |
+| ---------------------- | -------------------------------- | ------------------------------------------------------------------ |
+| `verification`         | `disabled`                       | Mode: `disabled`, `warn` (log-only), `enforce` (reject on failure) |
+| `fetch_timeout`        | `30s`                            | Per-fetch timeout for retrieving attestations from the registry    |
+| `fetch_failure_policy` | `warn`                           | Behavior when attestation fetch fails: `allow`, `warn`, `deny`     |
+| `cache_ttl`            | `24h`                            | TTL for cached verification results (`0s` disables caching)        |
+| `policy_dir`           | `/etc/nri-supply-chain/policies` | Directory containing JSON policy files                             |
+| `metrics_addr`         | `:9090`                          | Prometheus metrics HTTP listen address                             |
 
 ### Policy Files
 
@@ -226,11 +228,9 @@ default for that namespace (full override, not merge).
 ```json
 {
   "trust": {
-    "builders": [
-      {"id": "https://github.com/actions/runner", "maxLevel": 3}
-    ],
+    "builders": [{ "id": "https://github.com/actions/runner", "maxLevel": 3 }],
     "verifiers": [
-      {"id": "https://example.com/verifier", "key": "/etc/keys/verifier.pub"}
+      { "id": "https://example.com/verifier", "key": "/etc/keys/verifier.pub" }
     ],
     "issuers": ["https://accounts.google.com"],
     "sources": ["github.com/myorg/*"],
@@ -261,14 +261,14 @@ default for that namespace (full override, not merge).
 
 **`trust`** (object): Trust roots for verification.
 
-| Field | Type | Description |
-| --- | --- | --- |
-| `builders` | array | Trusted SLSA provenance builders. Each entry has `id` (URI) and `maxLevel` (0-3). |
-| `verifiers` | array | Trusted VSA verifiers. Each entry has `id` (URI) and `key` (absolute path to public key). |
-| `issuers` | array | Trusted OIDC issuers for keyless (Fulcio) verification. |
-| `sources` | array | Allowed source repository glob patterns (Go `path.Match` syntax). |
+| Field         | Type  | Description                                                                                            |
+| ------------- | ----- | ------------------------------------------------------------------------------------------------------ |
+| `builders`    | array | Trusted SLSA provenance builders. Each entry has `id` (URI) and `maxLevel` (0-3).                      |
+| `verifiers`   | array | Trusted VSA verifiers. Each entry has `id` (URI) and `key` (absolute path to public key).              |
+| `issuers`     | array | Trusted OIDC issuers for keyless (Fulcio) verification.                                                |
+| `sources`     | array | Allowed source repository glob patterns (Go `path.Match` syntax).                                      |
 | `sanPatterns` | array | Accepted certificate Subject Alternative Names. When empty, any SAN from a trusted issuer is accepted. |
-| `buildTypes` | array | Accepted build type URIs. |
+| `buildTypes`  | array | Accepted build type URIs.                                                                              |
 
 **`exclude`** (array of strings): Glob patterns for images that skip
 verification. Uses Go `path.Match` semantics.
@@ -280,31 +280,31 @@ verification. Uses Go `path.Match` semantics.
 
 **`provenance`** (object): SLSA provenance settings.
 
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `missingPolicy` | string | `allow` | Behavior when no provenance is found: `allow`, `warn`, `deny` |
-| `rejectUnknownParameters` | bool | `false` | Reject provenance with unrecognized `externalParameters` (known keys are GitHub Actions specific: `source`, `repository`, `ref`, `workflow`, `buildType`; disable for other build systems) |
+| Field                     | Type   | Default | Description                                                                                                                                                                                |
+| ------------------------- | ------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `missingPolicy`           | string | `allow` | Behavior when no provenance is found: `allow`, `warn`, `deny`                                                                                                                              |
+| `rejectUnknownParameters` | bool   | `false` | Reject provenance with unrecognized `externalParameters` (known keys are GitHub Actions specific: `source`, `repository`, `ref`, `workflow`, `buildType`; disable for other build systems) |
 
 **`vex`** (object): VEX settings.
 
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `severityThreshold` | string | (none) | Minimum severity to trigger rejection: `low`, `medium`, `high`, `critical` |
-| `missingPolicy` | string | `allow` | Behavior when no VEX attestation is found: `allow`, `warn`, `deny` |
-| `underInvestigationPolicy` | string | `allow` | Behavior for `under_investigation` status: `allow`, `warn`, `deny` |
+| Field                      | Type   | Default | Description                                                                |
+| -------------------------- | ------ | ------- | -------------------------------------------------------------------------- |
+| `severityThreshold`        | string | (none)  | Minimum severity to trigger rejection: `low`, `medium`, `high`, `critical` |
+| `missingPolicy`            | string | `allow` | Behavior when no VEX attestation is found: `allow`, `warn`, `deny`         |
+| `underInvestigationPolicy` | string | `allow` | Behavior for `under_investigation` status: `allow`, `warn`, `deny`         |
 
 **`vsa`** (object): VSA settings.
 
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `minimumLevel` | int | `0` | Minimum SLSA build level required (0-3) |
-| `maxAge` | string | (none) | Maximum age of VSA `timeVerified` (Go duration, e.g. `24h`) |
-| `policy` | string | (none) | Expected policy URI in the VSA |
+| Field          | Type   | Default | Description                                                 |
+| -------------- | ------ | ------- | ----------------------------------------------------------- |
+| `minimumLevel` | int    | `0`     | Minimum SLSA build level required (0-3)                     |
+| `maxAge`       | string | (none)  | Maximum age of VSA `timeVerified` (Go duration, e.g. `24h`) |
+| `policy`       | string | (none)  | Expected policy URI in the VSA                              |
 
 **`signatures`** (object): Signature verification settings.
 
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
+| Field                    | Type | Default | Description                                                         |
+| ------------------------ | ---- | ------- | ------------------------------------------------------------------- |
 | `requireTransparencyLog` | bool | `false` | Require Rekor transparency log inclusion for attestation signatures |
 
 ## Deployment
@@ -367,8 +367,8 @@ policy_dir = "/etc/nri-supply-chain/policies"
 
 ```json
 {
-  "provenance": {"missingPolicy": "warn"},
-  "vex": {"missingPolicy": "allow"}
+  "provenance": { "missingPolicy": "warn" },
+  "vex": { "missingPolicy": "allow" }
 }
 ```
 
@@ -386,11 +386,9 @@ policy_dir = "/etc/nri-supply-chain/policies"
 ```json
 {
   "trust": {
-    "builders": [
-      {"id": "https://github.com/actions/runner", "maxLevel": 3}
-    ],
+    "builders": [{ "id": "https://github.com/actions/runner", "maxLevel": 3 }],
     "verifiers": [
-      {"id": "https://example.com/verifier", "key": "/etc/keys/verifier.pub"}
+      { "id": "https://example.com/verifier", "key": "/etc/keys/verifier.pub" }
     ],
     "sources": ["github.com/myorg/*"]
   },
@@ -421,14 +419,15 @@ already attested the image.
 ```json
 {
   "trust": {
-    "builders": [
-      {"id": "https://github.com/actions/runner", "maxLevel": 3}
-    ],
+    "builders": [{ "id": "https://github.com/actions/runner", "maxLevel": 3 }],
     "verifiers": [
-      {"id": "https://verifier.internal/prod", "key": "/etc/keys/verifier.pub"}
+      {
+        "id": "https://verifier.internal/prod",
+        "key": "/etc/keys/verifier.pub"
+      }
     ]
   },
-  "provenance": {"missingPolicy": "deny"},
+  "provenance": { "missingPolicy": "deny" },
   "vsa": {
     "minimumLevel": 2,
     "maxAge": "12h",
@@ -452,14 +451,14 @@ already attested the image.
 
 The plugin exposes Prometheus metrics at the configured address:
 
-| Metric | Type | Labels | Description |
-| --- | --- | --- | --- |
-| `nri_supply_chain_verification_total` | Counter | `type`, `result` | Total verification attempts |
-| `nri_supply_chain_verification_duration_seconds` | Histogram | `type` | Verification latency |
-| `nri_supply_chain_cache_hits_total` | Counter | | Cache hits |
-| `nri_supply_chain_cache_misses_total` | Counter | | Cache misses |
-| `nri_supply_chain_cache_entries` | Gauge | | Current number of cached entries |
-| `nri_supply_chain_fetch_errors_total` | Counter | `type` | Attestation fetch errors |
+| Metric                                           | Type      | Labels           | Description                      |
+| ------------------------------------------------ | --------- | ---------------- | -------------------------------- |
+| `nri_supply_chain_verification_total`            | Counter   | `type`, `result` | Total verification attempts      |
+| `nri_supply_chain_verification_duration_seconds` | Histogram | `type`           | Verification latency             |
+| `nri_supply_chain_cache_hits_total`              | Counter   |                  | Cache hits                       |
+| `nri_supply_chain_cache_misses_total`            | Counter   |                  | Cache misses                     |
+| `nri_supply_chain_cache_entries`                 | Gauge     |                  | Current number of cached entries |
+| `nri_supply_chain_fetch_errors_total`            | Counter   | `type`           | Attestation fetch errors         |
 
 ## Operations
 

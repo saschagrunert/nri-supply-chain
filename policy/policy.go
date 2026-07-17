@@ -125,9 +125,10 @@ type ProvenancePolicy struct {
 
 // VEXPolicy contains VEX verification settings.
 type VEXPolicy struct {
-	// SeverityThreshold is reserved for future use. OpenVEX v0.2 does not carry
-	// per-statement severity, so this field is currently not evaluated. Any
-	// "affected" status triggers rejection regardless of this setting.
+	// SeverityThreshold is reserved for future use. OpenVEX v0.2 does not
+	// carry per-statement severity, so this field is accepted but NOT
+	// evaluated during verification. All "affected" statuses trigger
+	// rejection regardless of threshold.
 	SeverityThreshold string `json:"severityThreshold,omitempty"`
 	// MissingPolicy controls behavior when no VEX attestation is found.
 	MissingPolicy string `json:"missingPolicy,omitempty"`
