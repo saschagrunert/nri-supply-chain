@@ -483,7 +483,31 @@ func (p *Policy) validateTrust() error {
 		}
 	}
 
-	err := validateGlobPatterns("trust.sources", p.Trust.Sources)
+	err := p.validateTrustStringFields()
+	if err != nil {
+		return err
+	}
+
+	return p.validateVerifiers()
+}
+
+func (p *Policy) validateTrustStringFields() error {
+	err := validateNonEmpty("trust.issuers", p.Trust.Issuers)
+	if err != nil {
+		return err
+	}
+
+	err = validateNonEmpty("trust.sources", p.Trust.Sources)
+	if err != nil {
+		return err
+	}
+
+	err = validateGlobPatterns("trust.sources", p.Trust.Sources)
+	if err != nil {
+		return err
+	}
+
+	err = validateNonEmpty("trust.buildTypes", p.Trust.BuildTypes)
 	if err != nil {
 		return err
 	}
@@ -493,12 +517,7 @@ func (p *Policy) validateTrust() error {
 		return err
 	}
 
-	err = validateGlobPatterns("trust.sanPatterns", p.Trust.SANPatterns)
-	if err != nil {
-		return err
-	}
-
-	return p.validateVerifiers()
+	return validateGlobPatterns("trust.sanPatterns", p.Trust.SANPatterns)
 }
 
 func (p *Policy) validateVerifiers() error {
