@@ -24,7 +24,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -95,8 +94,7 @@ func run() int {
 		return 1
 	}
 
-	plug := plugin.New(verif, opts.configPath)
-	ready := &atomic.Bool{}
+	plug := plugin.New(verif, met, opts.configPath)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -114,7 +112,7 @@ func run() int {
 	setupReload(ctx, opts.configPath, verif, sighup)
 	handleShutdown(ctx, cancel, sigterm)
 
-	err = runPlugin(ctx, plug, met, cfg.MetricsAddr, &opts, cancel, ready)
+	err = runPlugin(ctx, plug, met, cfg.MetricsAddr, &opts, cancel)
 	if err != nil {
 		slog.Error("Plugin exited with error", "error", err)
 
@@ -222,21 +220,19 @@ func initLogging(level string) {
 func runPlugin(
 	ctx context.Context, plug *plugin.Plugin, met *metrics.Metrics,
 	metricsAddr string, opts *options, cancel context.CancelFunc,
-	ready *atomic.Bool,
 ) error {
 	nriStub, err := stub.New(plug,
 		stub.WithPluginName(opts.pluginName),
 		stub.WithPluginIdx(opts.pluginIdx),
 		stub.WithOnClose(func() {
 			slog.Error("NRI connection lost")
+			plug.SetDisconnected()
 			cancel()
 		}),
 	)
 	if err != nil {
 		return fmt.Errorf("creating NRI stub: %w", err)
 	}
-
-	ready.Store(true)
 
 	group, gctx := errgroup.WithContext(ctx)
 
@@ -254,7 +250,7 @@ func runPlugin(
 	})
 
 	group.Go(func() error {
-		return serveMetrics(gctx, met, metricsAddr, ready)
+		return serveMetrics(gctx, met, metricsAddr, plug)
 	})
 
 	err = group.Wait()
@@ -326,7 +322,7 @@ func handleShutdown(ctx context.Context, cancel context.CancelFunc, sigCh <-chan
 
 func serveMetrics(
 	ctx context.Context, met *metrics.Metrics, addr string,
-	ready *atomic.Bool,
+	plug *plugin.Plugin,
 ) error {
 	if addr == "" {
 		slog.Info("Metrics server disabled (no address configured)")
@@ -338,13 +334,13 @@ func serveMetrics(
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", met.Handler())
 
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
+	mux.HandleFunc("/healthz", func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write([]byte("ok"))
 	})
 
 	mux.HandleFunc("/readyz", func(writer http.ResponseWriter, _ *http.Request) {
-		if !ready.Load() {
+		if !plug.Connected() {
 			writer.WriteHeader(http.StatusServiceUnavailable)
 			_, _ = writer.Write([]byte("not ready"))
 

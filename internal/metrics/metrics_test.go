@@ -57,6 +57,10 @@ func TestNewMetrics(t *testing.T) {
 	if met.InflightDedupTotal == nil {
 		t.Error("expected InflightDedupTotal to be set")
 	}
+
+	if met.VerificationSkippedTotal == nil {
+		t.Error("expected VerificationSkippedTotal to be set")
+	}
 }
 
 func TestMetricsHandler(t *testing.T) {

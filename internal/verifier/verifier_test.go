@@ -155,7 +155,7 @@ func TestVerify(t *testing.T) { //nolint:funlen // Table-driven test.
 			wantErr:     nil,
 		},
 		{
-			name:     "fallback empty policy allows",
+			name:     "fallback empty policy denies in enforce",
 			imageRef: "",
 			setupDir: func(t *testing.T) string {
 				t.Helper()
@@ -163,6 +163,18 @@ func TestVerify(t *testing.T) { //nolint:funlen // Table-driven test.
 				return t.TempDir()
 			},
 			mode:        config.ModeEnforce,
+			wantAllowed: false,
+			wantErr:     verifier.ErrVerificationFailed,
+		},
+		{
+			name:     "fallback empty policy allows in warn",
+			imageRef: "",
+			setupDir: func(t *testing.T) string {
+				t.Helper()
+
+				return t.TempDir()
+			},
+			mode:        config.ModeWarn,
 			wantAllowed: true,
 			wantErr:     nil,
 		},

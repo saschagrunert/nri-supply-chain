@@ -115,6 +115,8 @@ func (v *Verifier) Verify(
 	state := v.snap()
 
 	if !state.config.Enabled() {
+		logAuditDecision(ctx, imageRef, digest, namespace, "allowed", "verification disabled")
+
 		return &types.Result{
 			Allowed:      true,
 			Reason:       "verification disabled",
@@ -130,8 +132,12 @@ func (v *Verifier) Verify(
 
 	pol := policyForNamespace(state.policies, namespace)
 
+	if pol == nil {
+		return handleMissingPolicy(ctx, state.config, imageRef, digest, namespace)
+	}
+
 	if isExcluded(ctx, pol.Exclude, imageRef) {
-		slog.InfoContext(ctx, "Image excluded from verification", "image", imageRef)
+		logAuditDecision(ctx, imageRef, digest, namespace, "allowed", "image is excluded")
 
 		return &types.Result{
 			Allowed:      true,
@@ -253,32 +259,43 @@ func (v *Verifier) verifyOnce(
 ) (*types.Result, error) {
 	flightKey := digest + "\x00" + namespace
 
-	resultIface, err, deduped := v.inflight.Do(flightKey, func() (any, error) {
+	flightCh := v.inflight.DoChan(flightKey, func() (any, error) {
 		if cached := state.cache.Get(digest, namespace); cached != nil {
 			return cached, nil
 		}
 
-		result := runChecks(ctx, state, pol, imageRef, digest)
+		// Use context.WithoutCancel so the verification completes even if
+		// the triggering request is cancelled. Other waiters on DoChan
+		// should not inherit this caller's cancellation.
+		checkCtx := context.WithoutCancel(ctx)
 
-		logResult(ctx, imageRef, digest, namespace, result)
+		result := runChecks(checkCtx, state, pol, imageRef, digest)
+
+		logResult(checkCtx, imageRef, digest, namespace, result)
 		recordMetrics(state.metrics, result)
 
 		state.cache.Set(digest, namespace, result)
 
 		return result, nil
 	})
-	if err != nil {
-		return nil, fmt.Errorf("inflight verification: %w", err)
+
+	select {
+	case <-ctx.Done():
+		return nil, fmt.Errorf("verification interrupted: %w", ctx.Err())
+	case res := <-flightCh:
+		if res.Shared {
+			state.metrics.InflightDedupTotal.Inc()
+		}
+
+		if res.Err != nil {
+			return nil, fmt.Errorf("inflight verification: %w", res.Err)
+		}
+
+		shared := res.Val.(*types.Result) //nolint:forcetypeassert // type guaranteed by DoChan closure
+		result := *shared
+
+		return &result, nil
 	}
-
-	if deduped {
-		state.metrics.InflightDedupTotal.Inc()
-	}
-
-	shared := resultIface.(*types.Result) //nolint:forcetypeassert // type guaranteed by Do closure
-	result := *shared
-
-	return &result, nil
 }
 
 func (v *Verifier) snap() snapshot {
@@ -632,11 +649,25 @@ func logResult(
 			"image", imageRef,
 			"digest", digest,
 			"namespace", namespace,
+			"allowed", result.Allowed,
 			"check", checkResult.Type,
 			"status", checkResult.Status,
 			"detail", checkResult.Detail,
 		)
 	}
+}
+
+func logAuditDecision(
+	ctx context.Context,
+	imageRef, digest, namespace, decision, reason string,
+) {
+	slog.InfoContext(ctx, "Supply chain audit",
+		"image", imageRef,
+		"digest", digest,
+		"namespace", namespace,
+		"decision", decision,
+		"reason", reason,
+	)
 }
 
 func recordMetrics(met *metrics.Metrics, result *types.Result) {
@@ -645,6 +676,25 @@ func recordMetrics(met *metrics.Metrics, result *types.Result) {
 			checkResult.Type, checkResult.Status,
 		).Inc()
 	}
+}
+
+func handleMissingPolicy(
+	ctx context.Context, cfg *config.Config,
+	imageRef, digest, namespace string,
+) (*types.Result, error) {
+	reason := fmt.Sprintf(
+		"no policy found for namespace %q and no default policy configured", namespace,
+	)
+
+	logAuditDecision(ctx, imageRef, digest, namespace, "denied", reason)
+
+	return applyEnforcement(ctx, cfg, &types.Result{
+		Allowed: false,
+		Reason:  reason,
+		CheckResults: []types.CheckResult{
+			*types.FailResult("policy", "no matching policy found"),
+		},
+	}, imageRef)
 }
 
 func policyForNamespace(
@@ -658,18 +708,7 @@ func policyForNamespace(
 		return pol
 	}
 
-	slog.Warn("No policy found for namespace and no default policy configured",
-		"namespace", namespace,
-	)
-
-	return &policy.Policy{
-		Trust:      nil,
-		Exclude:    nil,
-		Provenance: nil,
-		VEX:        nil,
-		VSA:        nil,
-		Signatures: nil,
-	}
+	return nil
 }
 
 func buildDigestRef(imageRef, digest string) string {

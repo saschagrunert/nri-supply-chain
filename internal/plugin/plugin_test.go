@@ -178,11 +178,12 @@ func TestConfigureWithEmptyConfig(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.DefaultConfig()
+	met := metrics.New()
 
-	v, err := verifier.New(cfg, metrics.New(), nil)
+	v, err := verifier.New(cfg, met, nil)
 	assertNoError(t, err)
 
-	plug := plugin.New(v, "")
+	plug := plugin.New(v, met, "")
 
 	_, err = plug.Configure(context.Background(), "", "cri-o", "1.32")
 	assertNoError(t, err)
@@ -195,11 +196,12 @@ func TestConfigureWithNRIConfig(t *testing.T) {
 	writePolicy(t, dir, "default.json", `{}`)
 
 	cfg := config.DefaultConfig()
+	met := metrics.New()
 
-	v, err := verifier.New(cfg, metrics.New(), nil)
+	v, err := verifier.New(cfg, met, nil)
 	assertNoError(t, err)
 
-	plug := plugin.New(v, "")
+	plug := plugin.New(v, met, "")
 
 	tomlConfig := `verification = "warn"` + "\n" +
 		`policy_dir = "` + dir + `"` + "\n"
@@ -212,11 +214,12 @@ func TestConfigureWithInvalidNRIConfig(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.DefaultConfig()
+	met := metrics.New()
 
-	v, err := verifier.New(cfg, metrics.New(), nil)
+	v, err := verifier.New(cfg, met, nil)
 	assertNoError(t, err)
 
-	plug := plugin.New(v, "")
+	plug := plugin.New(v, met, "")
 
 	_, err = plug.Configure(context.Background(), `[[[invalid`, "cri-o", "1.32")
 	if err == nil {
@@ -228,11 +231,12 @@ func TestConfigureWithInvalidPolicyDir(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.DefaultConfig()
+	met := metrics.New()
 
-	v, err := verifier.New(cfg, metrics.New(), nil)
+	v, err := verifier.New(cfg, met, nil)
 	assertNoError(t, err)
 
-	plug := plugin.New(v, "")
+	plug := plugin.New(v, met, "")
 
 	tomlConfig := "verification = \"warn\"\n" +
 		"policy_dir = \"/nonexistent/policies\"\n"
@@ -247,11 +251,12 @@ func TestConfigureSkipsWhenConfigPathSet(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.DefaultConfig()
+	met := metrics.New()
 
-	v, err := verifier.New(cfg, metrics.New(), nil)
+	v, err := verifier.New(cfg, met, nil)
 	assertNoError(t, err)
 
-	plug := plugin.New(v, "/some/config.toml")
+	plug := plugin.New(v, met, "/some/config.toml")
 
 	_, err = plug.Configure(context.Background(), `verification = "enforce"`, "cri-o", "1.32")
 	assertNoError(t, err)
@@ -267,10 +272,12 @@ func newTestPlugin(t *testing.T, mode, policyDir string) *plugin.Plugin {
 		cfg.PolicyDir = policyDir
 	}
 
-	v, err := verifier.New(cfg, metrics.New(), nil)
+	met := metrics.New()
+
+	v, err := verifier.New(cfg, met, nil)
 	assertNoError(t, err)
 
-	return plugin.New(v, "")
+	return plugin.New(v, met, "")
 }
 
 func writePolicy(t *testing.T, dir, name, content string) {
