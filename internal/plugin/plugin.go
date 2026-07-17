@@ -87,8 +87,6 @@ func (p *Plugin) Configure(
 ) (stub.EventMask, error) {
 	slog.Info("Connected to runtime", "runtime", runtime, "version", version)
 
-	p.connected.Store(true)
-
 	if p.configPath == "" && cfg != "" {
 		parsed, err := config.LoadFromString(cfg)
 		if err != nil {
@@ -105,6 +103,8 @@ func (p *Plugin) Configure(
 			return 0, fmt.Errorf("applying NRI config: %w", err)
 		}
 	}
+
+	p.connected.Store(true)
 
 	return 0, nil
 }
