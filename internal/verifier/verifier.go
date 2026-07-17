@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"log/slog"
 	"path"
-	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -33,11 +32,11 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/cache"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
+	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/slsa"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 	"github.com/saschagrunert/nri-supply-chain/internal/vex"
 	"github.com/saschagrunert/nri-supply-chain/internal/vsa"
-	"github.com/saschagrunert/nri-supply-chain/policy"
 )
 
 // ErrVerificationFailed is returned when supply chain verification fails in enforce mode.
@@ -53,13 +52,14 @@ type snapshot struct {
 
 // Verifier performs supply chain attestation verification on container images.
 type Verifier struct {
-	mu       sync.RWMutex
-	config   *config.Config
-	cache    *cache.Cache
-	policies map[string]*policy.Policy
-	metrics  *metrics.Metrics
-	fetcher  attestation.Fetcher
-	inflight singleflight.Group
+	mu           sync.RWMutex
+	config       *config.Config
+	cache        *cache.Cache
+	policies     map[string]*policy.Policy
+	policyHashes map[string]string
+	metrics      *metrics.Metrics
+	fetcher      attestation.Fetcher
+	inflight     singleflight.Group
 }
 
 // New creates a new Verifier with the given configuration, metrics, and attestation fetcher.
@@ -67,13 +67,14 @@ func New(cfg *config.Config, met *metrics.Metrics, fetcher attestation.Fetcher) 
 	cfgCopy := *cfg
 
 	verif := &Verifier{
-		mu:       sync.RWMutex{},
-		config:   &cfgCopy,
-		cache:    cache.NewWithGauge(cfgCopy.CacheTTL.Duration, met.CacheEntriesTotal),
-		policies: nil,
-		metrics:  met,
-		fetcher:  fetcher,
-		inflight: singleflight.Group{},
+		mu:           sync.RWMutex{},
+		config:       &cfgCopy,
+		cache:        cache.NewWithGauge(cfgCopy.CacheTTL.Duration, met.CacheEntriesTotal),
+		policies:     nil,
+		policyHashes: nil,
+		metrics:      met,
+		fetcher:      fetcher,
+		inflight:     singleflight.Group{},
 	}
 
 	if cfgCopy.Enabled() {
@@ -82,7 +83,18 @@ func New(cfg *config.Config, met *metrics.Metrics, fetcher attestation.Fetcher) 
 			return nil, fmt.Errorf("loading policies: %w", err)
 		}
 
+		err = validatePoliciesRuntime(policies)
+		if err != nil {
+			return nil, err
+		}
+
+		hashes, err := hashPolicies(policies)
+		if err != nil {
+			return nil, err
+		}
+
 		verif.policies = policies
+		verif.policyHashes = hashes
 	}
 
 	return verif, nil
@@ -174,7 +186,7 @@ func applyEnforcement(
 }
 
 // Reload reloads the verifier's configuration and policies.
-func (v *Verifier) Reload(cfg *config.Config) error {
+func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 	cfgCopy := *cfg
 
 	var policies map[string]*policy.Policy
@@ -186,20 +198,42 @@ func (v *Verifier) Reload(cfg *config.Config) error {
 		if err != nil {
 			return fmt.Errorf("reloading policies: %w", err)
 		}
+
+		err = validatePoliciesRuntime(policies)
+		if err != nil {
+			return err
+		}
+	}
+
+	newHashes, err := hashPolicies(policies)
+	if err != nil {
+		return err
 	}
 
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
-	if cacheAffectingFieldsChanged(v.config, &cfgCopy) || !reflect.DeepEqual(v.policies, policies) {
+	if cacheAffectingFieldsChanged(v.config, &cfgCopy) ||
+		!policyHashesEqual(v.policyHashes, newHashes) {
 		v.cache = cache.NewWithGauge(cfgCopy.CacheTTL.Duration, v.metrics.CacheEntriesTotal)
 	}
 
 	v.config = &cfgCopy
 	v.policies = policies
+	v.policyHashes = newHashes
 
 	if cfgCopy.Enabled() && v.fetcher == nil {
-		v.fetcher = attestation.NewOCIFetcher()
+		ociFetcher := attestation.NewOCIFetcher()
+
+		warmErr := ociFetcher.Warm(ctx)
+		if warmErr != nil {
+			slog.Warn(
+				"Failed to pre-warm Sigstore trusted root",
+				"error", warmErr,
+			)
+		}
+
+		v.fetcher = ociFetcher
 	}
 
 	return nil
@@ -677,4 +711,51 @@ func isExcluded(ctx context.Context, excludedImages []string, imageRef string) b
 	}
 
 	return false
+}
+
+func validatePoliciesRuntime(policies map[string]*policy.Policy) error {
+	for ns, pol := range policies {
+		err := pol.ValidateRuntime()
+		if err != nil {
+			label := ns
+			if label == "" {
+				label = "default"
+			}
+
+			return fmt.Errorf("policy %q: %w", label, err)
+		}
+	}
+
+	return nil
+}
+
+func hashPolicies(
+	policies map[string]*policy.Policy,
+) (map[string]string, error) {
+	hashes := make(map[string]string, len(policies))
+
+	for namespace, pol := range policies {
+		hash, err := pol.Hash()
+		if err != nil {
+			return nil, fmt.Errorf("policy %q: %w", namespace, err)
+		}
+
+		hashes[namespace] = hash
+	}
+
+	return hashes, nil
+}
+
+func policyHashesEqual(prev, next map[string]string) bool {
+	if len(prev) != len(next) {
+		return false
+	}
+
+	for key, hash := range prev {
+		if next[key] != hash {
+			return false
+		}
+	}
+
+	return true
 }

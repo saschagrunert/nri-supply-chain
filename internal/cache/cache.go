@@ -74,7 +74,7 @@ func (h *expiryHeap) Pop() any {
 
 // Cache stores supply chain verification results with TTL-based expiry.
 type Cache struct {
-	mu        sync.Mutex
+	mu        sync.RWMutex
 	entries   map[key]entry
 	ttl       time.Duration
 	gauge     prometheus.Gauge
@@ -85,7 +85,7 @@ type Cache struct {
 // New creates a new verification result cache with the given TTL.
 func New(ttl time.Duration) *Cache {
 	return &Cache{
-		mu:        sync.Mutex{},
+		mu:        sync.RWMutex{},
 		entries:   make(map[key]entry),
 		ttl:       ttl,
 		gauge:     nil,
@@ -102,7 +102,7 @@ func NewWithGauge(ttl time.Duration, gauge prometheus.Gauge) *Cache {
 	}
 
 	return &Cache{
-		mu:        sync.Mutex{},
+		mu:        sync.RWMutex{},
 		entries:   make(map[key]entry),
 		ttl:       ttl,
 		gauge:     gauge,
@@ -114,30 +114,49 @@ func NewWithGauge(ttl time.Duration, gauge prometheus.Gauge) *Cache {
 // Get retrieves a cached result for the given digest and namespace.
 // Returns nil if no valid cache entry exists.
 func (c *Cache) Get(digest, namespace string) *types.Result {
+	cacheKey := key{digest: digest, namespace: namespace}
+
+	c.mu.RLock()
+	cacheEntry, found := c.entries[cacheKey]
+
+	if !found {
+		c.mu.RUnlock()
+
+		return nil
+	}
+
+	if !time.Now().After(cacheEntry.expiresAt) {
+		result := cacheEntry.result
+
+		c.mu.RUnlock()
+
+		return result
+	}
+
+	c.mu.RUnlock()
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	cacheKey := key{digest: digest, namespace: namespace}
-
-	cacheEntry, found := c.entries[cacheKey]
+	cacheEntry, found = c.entries[cacheKey]
 	if !found {
 		return nil
 	}
 
-	if time.Now().After(cacheEntry.expiresAt) {
-		delete(c.entries, cacheKey)
-
-		if heapEnt, ok := c.heapIndex[cacheKey]; ok {
-			heap.Remove(&c.expHeap, heapEnt.index)
-			delete(c.heapIndex, cacheKey)
-		}
-
-		c.updateGaugeLocked()
-
-		return nil
+	if !time.Now().After(cacheEntry.expiresAt) {
+		return cacheEntry.result
 	}
 
-	return cacheEntry.result
+	delete(c.entries, cacheKey)
+
+	if heapEnt, ok := c.heapIndex[cacheKey]; ok {
+		heap.Remove(&c.expHeap, heapEnt.index)
+		delete(c.heapIndex, cacheKey)
+	}
+
+	c.updateGaugeLocked()
+
+	return nil
 }
 
 // Set stores a verification result in the cache.
@@ -191,8 +210,8 @@ func (c *Cache) Clear() {
 
 // Len returns the current number of entries in the cache.
 func (c *Cache) Len() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 
 	return len(c.entries)
 }

@@ -527,7 +527,7 @@ func TestReload(t *testing.T) { //nolint:funlen // Table-driven test.
 			assertNoError(t, err)
 
 			newCfg := test.newCfg(t)
-			err = verif.Reload(newCfg)
+			err = verif.Reload(t.Context(), newCfg)
 
 			if test.wantErr {
 				if err == nil {
@@ -566,7 +566,7 @@ func TestReloadPreservesCacheWhenConfigUnchanged(t *testing.T) {
 	reloadCfg.PolicyDir = dir
 	reloadCfg.CacheTTL = config.Duration{Duration: time.Hour}
 
-	err = verif.Reload(reloadCfg)
+	err = verif.Reload(t.Context(), reloadCfg)
 	assertNoError(t, err)
 
 	result2, err := verif.Verify(
@@ -606,7 +606,7 @@ func TestReloadClearsCacheWhenPolicyChanges(t *testing.T) {
 	reloadCfg.PolicyDir = dir
 	reloadCfg.CacheTTL = config.Duration{Duration: time.Hour}
 
-	err = verif.Reload(reloadCfg)
+	err = verif.Reload(t.Context(), reloadCfg)
 	assertNoError(t, err)
 
 	result2, err := verif.Verify(

@@ -27,8 +27,8 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	openvex "github.com/openvex/go-vex/pkg/vex"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
-	"github.com/saschagrunert/nri-supply-chain/policy"
 )
 
 const checkType = "vex"

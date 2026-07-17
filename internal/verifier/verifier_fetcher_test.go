@@ -18,6 +18,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,10 +29,10 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
+	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/slsa"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 	"github.com/saschagrunert/nri-supply-chain/internal/vsa"
-	"github.com/saschagrunert/nri-supply-chain/policy"
 )
 
 const (
@@ -143,7 +146,7 @@ func validVEXPayload(t *testing.T, status openvex.Status) []byte {
 	return marshalJSON(t, doc)
 }
 
-func TestVerifyWithFetcher(t *testing.T) { //nolint:funlen,maintidx // Table-driven test.
+func TestVerifyWithFetcher(t *testing.T) { //nolint:cyclop,funlen,maintidx // Table-driven test.
 	t.Parallel()
 
 	tests := []struct {
@@ -526,7 +529,14 @@ func TestVerifyWithFetcher(t *testing.T) { //nolint:funlen,maintidx // Table-dri
 			t.Parallel()
 
 			dir := t.TempDir()
-			writePolicy(t, dir, "default.json", test.policyJSON)
+
+			policyJSON := test.policyJSON
+			if strings.Contains(policyJSON, "/etc/keys/v.pub") {
+				keyPath := createTempKeyFile(t, dir)
+				policyJSON = strings.ReplaceAll(policyJSON, "/etc/keys/v.pub", keyPath)
+			}
+
+			writePolicy(t, dir, "default.json", policyJSON)
 
 			cfg := config.DefaultConfig()
 			cfg.Verification = test.mode
@@ -574,4 +584,17 @@ func TestVerifyWithFetcher(t *testing.T) { //nolint:funlen,maintidx // Table-dri
 			}
 		})
 	}
+}
+
+func createTempKeyFile(t *testing.T, dir string) string {
+	t.Helper()
+
+	keyPath := filepath.Join(dir, "verifier.pub")
+
+	err := os.WriteFile(keyPath, []byte("placeholder-key"), 0o600)
+	if err != nil {
+		t.Fatalf("creating temp key file: %v", err)
+	}
+
+	return keyPath
 }

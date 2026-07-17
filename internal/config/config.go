@@ -24,7 +24,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"github.com/saschagrunert/nri-supply-chain/policy"
+	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 )
 
 const (

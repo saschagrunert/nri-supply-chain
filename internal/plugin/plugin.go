@@ -55,7 +55,7 @@ func New(v *verifier.Verifier, configPath string) *Plugin {
 
 // Configure is called when the plugin connects to the NRI runtime.
 func (p *Plugin) Configure(
-	_ context.Context, cfg, runtime, version string,
+	ctx context.Context, cfg, runtime, version string,
 ) (stub.EventMask, error) {
 	slog.Info("Connected to runtime", "runtime", runtime, "version", version)
 
@@ -70,7 +70,7 @@ func (p *Plugin) Configure(
 			return 0, fmt.Errorf("validating NRI config: %w", err)
 		}
 
-		err = p.verifier.Reload(parsed)
+		err = p.verifier.Reload(ctx, parsed)
 		if err != nil {
 			return 0, fmt.Errorf("applying NRI config: %w", err)
 		}

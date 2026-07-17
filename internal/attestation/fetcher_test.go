@@ -17,6 +17,7 @@ package attestation_test
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -762,6 +763,95 @@ func TestFetch(t *testing.T) {
 
 			if len(result) != tt.wantCount {
 				t.Errorf("expected %d attestations, got %d", tt.wantCount, len(result))
+			}
+		})
+	}
+}
+
+func TestGlobToRegex(t *testing.T) { //nolint:funlen // Table-driven test.
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		pattern string
+		match   string
+		noMatch string
+	}{
+		{
+			name:    "literal",
+			pattern: "foo@bar.com",
+			match:   "foo@bar.com",
+			noMatch: "foo@baz.com",
+		},
+		{
+			name:    "star wildcard",
+			pattern: "*.example.com",
+			match:   "user.example.com",
+			noMatch: "a/b.example.com",
+		},
+		{
+			name:    "question mark",
+			pattern: "user?.example.com",
+			match:   "userA.example.com",
+			noMatch: "user.example.com",
+		},
+		{
+			name:    "character class",
+			pattern: "[abc].example.com",
+			match:   "a.example.com",
+			noMatch: "d.example.com",
+		},
+		{
+			name:    "character range",
+			pattern: "[a-z].example.com",
+			match:   "x.example.com",
+			noMatch: "1.example.com",
+		},
+		{
+			name:    "dot is escaped",
+			pattern: "foo.bar",
+			match:   "foo.bar",
+			noMatch: "fooXbar",
+		},
+		{
+			name:    "plus is escaped",
+			pattern: "a+b",
+			match:   "a+b",
+			noMatch: "aab",
+		},
+		{
+			name:    "multiple wildcards",
+			pattern: "*@*.example.com",
+			match:   "user@host.example.com",
+			noMatch: "user@a/b.example.com",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			regex := attestation.ExportGlobToRegex(test.pattern)
+			fullRegex := "^" + regex + "$"
+
+			matched, err := regexp.MatchString(fullRegex, test.match)
+			if err != nil {
+				t.Fatalf("regex error: %v", err)
+			}
+
+			if !matched {
+				t.Errorf("pattern %q (regex %q) should match %q",
+					test.pattern, fullRegex, test.match)
+			}
+
+			matched, err = regexp.MatchString(fullRegex, test.noMatch)
+			if err != nil {
+				t.Fatalf("regex error: %v", err)
+			}
+
+			if matched {
+				t.Errorf("pattern %q (regex %q) should not match %q",
+					test.pattern, fullRegex, test.noMatch)
 			}
 		})
 	}

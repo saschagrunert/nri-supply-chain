@@ -85,7 +85,7 @@ func run() int {
 
 	var fetcher attestation.Fetcher
 	if cfg.Enabled() {
-		fetcher = attestation.NewOCIFetcher()
+		fetcher = createFetcher()
 	}
 
 	verif, err := verifier.New(cfg, met, fetcher)
@@ -162,6 +162,20 @@ func setupConfig(opts *options) (*config.Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func createFetcher() *attestation.OCIFetcher {
+	ociFetcher := attestation.NewOCIFetcher()
+
+	warmErr := ociFetcher.Warm(context.Background())
+	if warmErr != nil {
+		slog.Warn(
+			"Failed to pre-warm Sigstore trusted root",
+			"error", warmErr,
+		)
+	}
+
+	return ociFetcher
 }
 
 func loadConfig(path string) (*config.Config, error) {
@@ -287,7 +301,7 @@ func setupReload(
 				}
 			}
 
-			reloadErr := verif.Reload(newCfg)
+			reloadErr := verif.Reload(ctx, newCfg)
 			if reloadErr != nil {
 				slog.Error("Verifier reload failed", "error", reloadErr)
 			} else {

@@ -17,6 +17,8 @@ package policy
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -69,6 +71,12 @@ var (
 
 	// ErrInvalidAction indicates an unrecognized policy action value.
 	ErrInvalidAction = errors.New("invalid policy action value")
+
+	// ErrEmptyValue indicates a list contains an empty string.
+	ErrEmptyValue = errors.New("empty value")
+
+	// ErrNotRegularFile indicates a path exists but is not a regular file.
+	ErrNotRegularFile = errors.New("not a regular file")
 )
 
 // Policy defines the trust roots and per-namespace verification settings.
@@ -127,6 +135,10 @@ type ProvenancePolicy struct {
 	MissingPolicy string `json:"missingPolicy,omitempty"`
 	// RejectUnknownParameters rejects provenance with unrecognized externalParameters fields.
 	RejectUnknownParameters bool `json:"rejectUnknownParameters,omitempty"`
+	// KnownParameters lists recognized externalParameters keys when
+	// RejectUnknownParameters is true. If empty, defaults to the GitHub
+	// Actions parameter set (source, repository, ref, workflow, buildType).
+	KnownParameters []string `json:"knownParameters,omitempty"`
 }
 
 // VEXPolicy contains VEX verification settings.
@@ -171,6 +183,18 @@ func (p *Policy) Builders() []TrustedBuilder {
 	return nil
 }
 
+// Hash returns a SHA-256 hex digest of the policy's JSON representation.
+func (p *Policy) Hash() (string, error) {
+	data, err := json.Marshal(p)
+	if err != nil {
+		return "", fmt.Errorf("hashing policy: %w", err)
+	}
+
+	sum := sha256.Sum256(data)
+
+	return hex.EncodeToString(sum[:]), nil
+}
+
 // Validate checks the policy for invalid values.
 func (p *Policy) Validate() error {
 	err := p.validateTrust()
@@ -194,6 +218,33 @@ func (p *Policy) Validate() error {
 	}
 
 	return p.validateVSA()
+}
+
+// ValidateRuntime performs runtime checks that require filesystem access,
+// such as verifying that verifier key files exist on disk.
+func (p *Policy) ValidateRuntime() error {
+	if p.Trust == nil {
+		return nil
+	}
+
+	for idx, verif := range p.Trust.Verifiers {
+		info, err := os.Stat(verif.Key)
+		if err != nil {
+			return fmt.Errorf(
+				"trust.verifiers[%d] %q: key file %q: %w",
+				idx, verif.ID, verif.Key, err,
+			)
+		}
+
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf(
+				"trust.verifiers[%d] %q: key path %q: %w",
+				idx, verif.ID, verif.Key, ErrNotRegularFile,
+			)
+		}
+	}
+
+	return nil
 }
 
 // Load loads and validates a policy file from disk.
@@ -305,6 +356,16 @@ func (p *Policy) validateTrust() error {
 		return err
 	}
 
+	err = validateNonEmpty("trust.sanPatterns", p.Trust.SANPatterns)
+	if err != nil {
+		return err
+	}
+
+	err = validateGlobPatterns("trust.sanPatterns", p.Trust.SANPatterns)
+	if err != nil {
+		return err
+	}
+
 	return p.validateVerifiers()
 }
 
@@ -347,6 +408,16 @@ func validateGlobPatterns(field string, patterns []string) error {
 	return nil
 }
 
+func validateNonEmpty(field string, values []string) error {
+	for idx, val := range values {
+		if val == "" {
+			return fmt.Errorf("%w in %s[%d]", ErrEmptyValue, field, idx)
+		}
+	}
+
+	return nil
+}
+
 func (p *Policy) validateExclude() error {
 	return validateGlobPatterns("exclude", p.Exclude)
 }
@@ -363,6 +434,13 @@ func (p *Policy) validateProvenance() error {
 		if err != nil {
 			return fmt.Errorf("validating provenance policy: %w", err)
 		}
+	}
+
+	err := validateNonEmpty(
+		"provenance.knownParameters", p.Provenance.KnownParameters,
+	)
+	if err != nil {
+		return err
 	}
 
 	return nil

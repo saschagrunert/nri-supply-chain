@@ -43,6 +43,11 @@ func ExportBuildCertificateID(issuers, sanPatterns []string) (verify.Certificate
 	return buildCertificateIdentity(issuers, sanPatterns)
 }
 
+// ExportGlobToRegex exposes globToRegex for external tests.
+func ExportGlobToRegex(pattern string) string {
+	return globToRegex(pattern)
+}
+
 // ExportBuildKeyMaterial exposes buildKeyMaterial for external tests.
 func ExportBuildKeyMaterial(keys []string) (*root.TrustedPublicKeyMaterial, error) {
 	return buildKeyMaterial(keys)

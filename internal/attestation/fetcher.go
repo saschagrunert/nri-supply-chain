@@ -147,6 +147,22 @@ func NewOCIFetcherWithVerifier(verifier BundleVerifyFunc) *OCIFetcher {
 	}
 }
 
+// Warm pre-fetches the Sigstore trusted root so that the first verification
+// does not pay the latency cost. Non-fatal: returns an error on failure but
+// the fetcher remains usable (it will retry lazily on the first Fetch call).
+func (f *OCIFetcher) Warm(ctx context.Context) error {
+	if f.rootCache == nil {
+		return nil
+	}
+
+	_, err := f.rootCache.get(ctx)
+	if err != nil {
+		return fmt.Errorf("pre-warming trusted root: %w", err)
+	}
+
+	return nil
+}
+
 // Fetch discovers and returns verified attestations for the given image.
 func (f *OCIFetcher) Fetch(
 	ctx context.Context, imageRef, digest string,
@@ -506,12 +522,12 @@ func buildCertificateIdentity(issuers, sanPatterns []string) (verify.Certificate
 	}
 
 	if len(sanPatterns) > 0 {
-		escaped := make([]string, len(sanPatterns))
+		converted := make([]string, len(sanPatterns))
 		for idx, p := range sanPatterns {
-			escaped[idx] = regexp.QuoteMeta(p)
+			converted[idx] = globToRegex(p)
 		}
 
-		sanRegex = "^(?:" + strings.Join(escaped, "|") + ")$"
+		sanRegex = "^(?:" + strings.Join(converted, "|") + ")$"
 	}
 
 	if len(issuers) == 1 {
@@ -561,4 +577,55 @@ func extractVerifiedPayload(bndl *bundle.Bundle) ([]byte, error) {
 	}
 
 	return payload, nil
+}
+
+// globToRegex converts a glob pattern to a regex string, consistent with
+// path.Match semantics: '*' matches non-'/' characters, '?' matches a single
+// non-'/' character, and '[...]' character classes are passed through verbatim.
+func globToRegex(pattern string) string {
+	var builder strings.Builder
+
+	runes := []rune(pattern)
+
+	for idx := 0; idx < len(runes); idx++ {
+		switch runes[idx] {
+		case '*':
+			builder.WriteString("[^/]*")
+		case '?':
+			builder.WriteString("[^/]")
+		case '[':
+			end := findBracketEnd(runes, idx)
+			if end < 0 {
+				builder.WriteString(regexp.QuoteMeta("["))
+			} else {
+				builder.WriteString(string(runes[idx : end+1]))
+				idx = end
+			}
+		default:
+			builder.WriteString(regexp.QuoteMeta(string(runes[idx])))
+		}
+	}
+
+	return builder.String()
+}
+
+func findBracketEnd(runes []rune, start int) int {
+	idx := start + 1
+	if idx < len(runes) && runes[idx] == '^' {
+		idx++
+	}
+
+	if idx < len(runes) && runes[idx] == ']' {
+		idx++
+	}
+
+	for idx < len(runes) {
+		if runes[idx] == ']' {
+			return idx
+		}
+
+		idx++
+	}
+
+	return -1
 }
