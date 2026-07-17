@@ -92,6 +92,7 @@ create_enforce_images() {
 @test "pod with unsigned image is rejected in enforce mode" {
 	run_pod "rejected-pod" "registry.k8s.io/pause:3.10" || true
 	assert_log_contains "Container rejected"
+	wait_for_pod_status "rejected-pod" "CreateContainerError"
 }
 
 @test "rejected container is logged" {
