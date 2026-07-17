@@ -209,6 +209,25 @@ func NewTestOCIFetcherFull(
 	}
 }
 
+// ExportCosignAttestationTag exposes cosignAttestationTag for external tests.
+func ExportCosignAttestationTag(ref name.Digest) name.Tag {
+	return cosignAttestationTag(ref)
+}
+
+// ExportExtractPredicateType exposes extractPredicateType for external tests.
+func ExportExtractPredicateType(payload []byte) string {
+	return extractPredicateType(payload)
+}
+
+// FetchCosignTagAttestations exposes fetchCosignTagAttestations for external tests.
+func (f *OCIFetcher) FetchCosignTagAttestations(
+	ctx context.Context, ref name.Digest, digest string,
+	remoteOpts []remote.Option,
+	fetchOpts FetchOptions, //nolint:gocritic // matches fetchCosignTagAttestations signature
+) ([]VerifiedAttestation, error) {
+	return f.fetchCosignTagAttestations(ctx, ref, digest, remoteOpts, fetchOpts)
+}
+
 // ExtractPayload exposes extractPayload for external tests.
 //
 //nolint:gocritic // hugeParam: test export layer passes FetchOptions by value
