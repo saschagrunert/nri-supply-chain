@@ -44,3 +44,15 @@ dependencies:
     refPaths:
       - path: Makefile
         match: ^MDTOC_VERSION
+
+  - name: cosign
+    version: 3.1.1
+    refPaths:
+      - path: Makefile
+        match: ^COSIGN_VERSION
+
+  - name: crane
+    version: 0.21.7
+    refPaths:
+      - path: Makefile
+        match: ^CRANE_VERSION

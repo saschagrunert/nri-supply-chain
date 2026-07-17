@@ -6,6 +6,8 @@ SHFMT_VERSION = v3.13.1
 SHELLCHECK_VERSION = v0.11.0
 KUBERNIX_VERSION = 0.3.3
 MDTOC_VERSION = v1.4.0
+COSIGN_VERSION = 3.1.1
+CRANE_VERSION = 0.21.7
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.1.0)
 BUILD_DIR := build
@@ -15,6 +17,8 @@ SHFMT := $(BUILD_DIR)/shfmt
 SHELLCHECK := $(BUILD_DIR)/shellcheck
 KUBERNIX := $(BUILD_DIR)/kubernix
 MDTOC := $(BUILD_DIR)/mdtoc
+COSIGN := $(BUILD_DIR)/cosign
+CRANE := $(BUILD_DIR)/crane
 
 ARCH ?= $(shell uname -m | \
 	sed 's/x86_64/amd64/' | \
@@ -23,6 +27,8 @@ ARCH ?= $(shell uname -m | \
 OS ?= $(shell uname -s | tr '[:upper:]' '[:lower:]')
 
 SHELLCHECK_ARCH ?= $(shell uname -m)
+CRANE_OS ?= $(shell uname -s)
+CRANE_ARCH ?= $(shell uname -m | sed 's/aarch64/arm64/')
 
 COLOR := \033[36m
 NOCOLOR := \033[0m
@@ -84,8 +90,8 @@ integration: build ## Run bats integration tests
 	bats --jobs $(shell nproc 2>/dev/null || sysctl -n hw.ncpu) test/integration/
 
 .PHONY: e2e
-e2e: build $(KUBERNIX) ## Run bats e2e tests (requires root and Nix)
-	bats --jobs $(shell nproc 2>/dev/null || sysctl -n hw.ncpu) test/e2e/
+e2e: build $(KUBERNIX) $(COSIGN) $(CRANE) ## Run bats e2e tests (requires root and Nix)
+	bats test/e2e/
 
 ##@ Verification
 
@@ -151,6 +157,18 @@ $(KUBERNIX):
 	curl -sSfL -o $(KUBERNIX) \
 		https://github.com/saschagrunert/kubernix/releases/download/v$(KUBERNIX_VERSION)/kubernix-$(shell uname -m)
 	chmod +x $(KUBERNIX)
+
+$(COSIGN):
+	@mkdir -p $(BUILD_DIR)
+	curl -sSfL -o $(COSIGN) \
+		https://github.com/sigstore/cosign/releases/download/v$(COSIGN_VERSION)/cosign-$(OS)-$(ARCH)
+	chmod +x $(COSIGN)
+
+$(CRANE):
+	@mkdir -p $(BUILD_DIR)
+	curl -sSfL \
+		https://github.com/google/go-containerregistry/releases/download/v$(CRANE_VERSION)/go-containerregistry_$(CRANE_OS)_$(CRANE_ARCH).tar.gz \
+		| tar xfz - -C $(BUILD_DIR) crane
 
 .PHONY: govulncheck
 govulncheck: ## Run govulncheck
