@@ -107,7 +107,7 @@ func DefaultConfig() *Config {
 		FetchFailurePolicy: policy.ActionWarn,
 		CacheTTL:           Duration{Duration: defaultCacheTTL},
 		PolicyDir:          "/etc/nri-supply-chain/policies",
-		MetricsAddr:        ":9090",
+		MetricsAddr:        "127.0.0.1:9090",
 	}
 }
 

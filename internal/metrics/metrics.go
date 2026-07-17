@@ -64,7 +64,7 @@ func New() *Metrics {
 				Namespace: namespace,
 				Name:      "verification_duration_seconds",
 				Help:      "Duration of supply chain verification in seconds.",
-				Buckets: append(
+				Buckets: sortedBuckets(
 					slices.Clone(prometheus.DefBuckets),
 					bucketFetchMid, bucketFetchTimeout,
 				),
@@ -105,6 +105,13 @@ func New() *Metrics {
 // Handler returns the Prometheus HTTP handler for the registered metrics.
 func (m *Metrics) Handler() http.Handler {
 	return promhttp.HandlerFor(m.registry, promhttp.HandlerOpts{})
+}
+
+func sortedBuckets(base []float64, extra ...float64) []float64 {
+	base = append(base, extra...)
+	slices.Sort(base)
+
+	return base
 }
 
 func (m *Metrics) register() {

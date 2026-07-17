@@ -35,6 +35,14 @@ type Result struct {
 }
 
 // CheckResult represents the outcome of an individual verification check.
+//
+// Passed and Status encode related but distinct signals:
+//   - PassResult:     Passed=true,  Status="pass" (check succeeded)
+//   - WarnResult:     Passed=true,  Status="warn" (succeeded with warnings, allowed)
+//   - FailResult:     Passed=false, Status="fail" (check failed, denied)
+//   - SoftFailResult: Passed=false, Status="warn" (inconclusive, not counted as pass)
+//
+// Always use the constructor functions to keep Passed and Status consistent.
 type CheckResult struct {
 	// Type is the check type (e.g., "slsa_provenance", "vex", "vsa").
 	Type string
@@ -72,6 +80,18 @@ func FailResult(checkType, detail string) *CheckResult {
 		Type:   checkType,
 		Passed: false,
 		Status: StatusFail,
+		Detail: detail,
+	}
+}
+
+// SoftFailResult returns a CheckResult that did not pass but is only a warning.
+// Used for inconclusive checks (e.g., untrusted or stale VSA verifier results)
+// that should not block container creation but are not counted as passing.
+func SoftFailResult(checkType, detail string) *CheckResult {
+	return &CheckResult{
+		Type:   checkType,
+		Passed: false,
+		Status: StatusWarn,
 		Detail: detail,
 	}
 }

@@ -10,7 +10,7 @@
       "https://accounts.google.com",
       "https://token.actions.githubusercontent.com"
     ],
-    "sources": ["https://github.com/myorg/*"]
+    "sources": ["github.com/myorg/*"]
   },
   "exclude": ["gcr.io/distroless/*"],
   "provenance": {

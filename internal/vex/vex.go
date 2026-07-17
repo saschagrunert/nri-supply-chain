@@ -83,7 +83,7 @@ func Verify(
 
 		switch stmt.Status {
 		case openvex.StatusAffected:
-			affectedNames = append(affectedNames, string(stmt.Vulnerability.Name))
+			affectedNames = append(affectedNames, vulnerabilityName(stmt))
 
 		case openvex.StatusUnderInvestigation:
 			hasUnderInvestigation = true
@@ -107,6 +107,14 @@ func Verify(
 	}
 
 	return passResult(), nil
+}
+
+func vulnerabilityName(stmt *openvex.Statement) string {
+	if vulnName := string(stmt.Vulnerability.Name); vulnName != "" {
+		return vulnName
+	}
+
+	return "unknown"
 }
 
 // VerifyMultiple checks multiple VEX documents. Most restrictive wins:
@@ -276,12 +284,7 @@ func handleUnderInvestigation(pol *policy.Policy) *types.CheckResult {
 	case policy.ActionWarn:
 		return types.WarnResult(checkType, detail)
 	default:
-		return &types.CheckResult{
-			Type:   checkType,
-			Passed: true,
-			Status: types.StatusPass,
-			Detail: detail,
-		}
+		return types.PassResult(checkType, detail)
 	}
 }
 

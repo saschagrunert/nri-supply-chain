@@ -333,14 +333,6 @@ func (f *OCIFetcher) extractPayload(
 	return f.verifyBundle(ctx, bundleBytes, fetchOpts)
 }
 
-func defaultVerifyBundle(
-	ctx context.Context,
-	bundleBytes []byte,
-	opts FetchOptions, //nolint:gocritic // matches BundleVerifyFunc signature
-) ([]byte, error) {
-	return verifyBundleWithCache(ctx, bundleBytes, opts, nil)
-}
-
 func verifyBundleWithCache(
 	ctx context.Context,
 	bundleBytes []byte,

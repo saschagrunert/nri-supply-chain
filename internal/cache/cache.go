@@ -107,7 +107,7 @@ func (c *Cache) Set(digest, namespace string, result *types.Result) {
 	}
 
 	if len(c.entries) >= maxSize {
-		c.evictRandomLocked()
+		c.evictOldestLocked()
 	}
 
 	cacheKey := key{digest: digest, namespace: namespace}
@@ -143,11 +143,23 @@ func (c *Cache) updateGaugeLocked() {
 	}
 }
 
-func (c *Cache) evictRandomLocked() {
-	for k := range c.entries {
-		delete(c.entries, k)
+func (c *Cache) evictOldestLocked() {
+	var (
+		oldestKey      key
+		oldestExpiry   time.Time
+		foundCandidate bool
+	)
 
-		break
+	for k, e := range c.entries {
+		if !foundCandidate || e.expiresAt.Before(oldestExpiry) {
+			oldestKey = k
+			oldestExpiry = e.expiresAt
+			foundCandidate = true
+		}
+	}
+
+	if foundCandidate {
+		delete(c.entries, oldestKey)
 	}
 }
 

@@ -78,6 +78,9 @@ e2e: build $(KUBERNIX) ## Run bats e2e tests (requires root and Nix)
 
 ##@ Verification
 
+.PHONY: verify-all
+verify-all: lint verify-shfmt verify-shellcheck verify-mdtoc verify-tidy verify-dependencies ## Run all verification targets
+
 .PHONY: lint
 lint: $(GOLANGCI_LINT) ## Run golangci-lint
 	$(GOLANGCI_LINT) run

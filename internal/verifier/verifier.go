@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/cache"
@@ -57,6 +58,7 @@ type Verifier struct {
 	policies map[string]*policy.Policy
 	metrics  *metrics.Metrics
 	fetcher  attestation.Fetcher
+	inflight singleflight.Group
 }
 
 // New creates a new Verifier with the given configuration, metrics, and attestation fetcher.
@@ -70,6 +72,7 @@ func New(cfg *config.Config, met *metrics.Metrics, fetcher attestation.Fetcher) 
 		policies: nil,
 		metrics:  met,
 		fetcher:  fetcher,
+		inflight: singleflight.Group{},
 	}
 
 	if cfgCopy.Enabled() {
@@ -135,19 +138,12 @@ func (v *Verifier) Verify(
 
 	state.metrics.CacheMissesTotal.Inc()
 
-	result := runChecks(ctx, &state, pol, imageRef, digest)
-
-	logResult(ctx, imageRef, digest, namespace, result)
-	recordMetrics(state.metrics, result)
-
-	state.cache.Set(digest, namespace, result)
-
-	result, err := applyEnforcement(ctx, state.config, result, imageRef)
+	result, err := v.verifyOnce(ctx, &state, pol, imageRef, digest, namespace)
 	if err != nil {
-		return result, err
+		return nil, fmt.Errorf("verification: %w", err)
 	}
 
-	return result, nil
+	return applyEnforcement(ctx, state.config, result, imageRef)
 }
 
 func applyEnforcement(
@@ -203,6 +199,36 @@ func (v *Verifier) Reload(cfg *config.Config) error {
 	}
 
 	return nil
+}
+
+func (v *Verifier) verifyOnce(
+	ctx context.Context, state *snapshot, pol *policy.Policy,
+	imageRef, digest, namespace string,
+) (*types.Result, error) {
+	flightKey := digest + "\x00" + namespace
+
+	resultIface, err, _ := v.inflight.Do(flightKey, func() (any, error) {
+		if cached := state.cache.Get(digest, namespace); cached != nil {
+			return cached, nil
+		}
+
+		result := runChecks(ctx, state, pol, imageRef, digest)
+
+		logResult(ctx, imageRef, digest, namespace, result)
+		recordMetrics(state.metrics, result)
+
+		state.cache.Set(digest, namespace, result)
+
+		return result, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("inflight verification: %w", err)
+	}
+
+	shared := resultIface.(*types.Result) //nolint:forcetypeassert // type guaranteed by Do closure
+	result := *shared
+
+	return &result, nil
 }
 
 func (v *Verifier) snap() snapshot {
@@ -531,27 +557,18 @@ func handleMissingAttestation(
 ) *types.CheckResult {
 	switch pol {
 	case policy.ActionDeny:
-		return &types.CheckResult{
-			Type: checkType, Passed: false,
-			Status: types.StatusFail, Detail: detail,
-		}
+		return types.FailResult(checkType, detail)
 	case policy.ActionWarn:
 		return types.WarnResult(checkType, detail)
 	case policy.ActionAllow:
-		return &types.CheckResult{
-			Type: checkType, Passed: true,
-			Status: types.StatusPass, Detail: detail,
-		}
+		return types.PassResult(checkType, detail)
 	default:
 		slog.Warn("Unrecognized missing attestation policy, defaulting to deny",
 			"policy", pol,
 			"check", checkType,
 		)
 
-		return &types.CheckResult{
-			Type: checkType, Passed: false,
-			Status: types.StatusFail, Detail: detail,
-		}
+		return types.FailResult(checkType, detail)
 	}
 }
 
@@ -590,6 +607,10 @@ func policyForNamespace(
 	if pol, found := policies[""]; found {
 		return pol
 	}
+
+	slog.Warn("No policy found for namespace and no default policy configured",
+		"namespace", namespace,
+	)
 
 	return &policy.Policy{
 		Trust:      nil,

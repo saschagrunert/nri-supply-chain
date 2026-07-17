@@ -19,4 +19,4 @@ cache_ttl = "24h"
 policy_dir = "/etc/nri-supply-chain/policies"
 
 # Listen address for the Prometheus metrics HTTP server.
-metrics_addr = ":9090"
+metrics_addr = "127.0.0.1:9090"
