@@ -17,6 +17,7 @@ package attestation_test
 import (
 	"context"
 	"errors"
+	"net/http"
 	"regexp"
 	"strings"
 	"testing"
@@ -26,6 +27,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 	"github.com/google/go-containerregistry/pkg/v1/static"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 
@@ -620,6 +622,7 @@ func TestBuildCertificateIdentitySANPatterns(t *testing.T) {
 	}
 }
 
+//nolint:unparam // called with PredicateOpenVEX and PredicateSLSAProvenanceV1
 func bundleDescriptor(predicateType string) ociV1.Descriptor {
 	return ociV1.Descriptor{
 		ArtifactType: attestation.BundleMediaType,
@@ -888,5 +891,263 @@ func TestGlobToRegex(t *testing.T) { //nolint:funlen // Table-driven test.
 					test.pattern, fullRegex, test.noMatch)
 			}
 		})
+	}
+}
+
+func TestCosignAttestationTag(t *testing.T) {
+	t.Parallel()
+
+	ref, err := name.NewDigest(
+		"docker.io/library/nginx@sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abcd",
+	)
+	if err != nil {
+		t.Fatalf("creating digest ref: %v", err)
+	}
+
+	tag := attestation.ExportCosignAttestationTag(ref)
+
+	want := "index.docker.io/library/nginx:sha256-abc123def456abc123def456abc123def456abc123def456abc123def456abcd.att"
+	if tag.String() != want {
+		t.Errorf("cosign tag = %q, want %q", tag.String(), want)
+	}
+}
+
+func TestExtractPredicateType(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		payload []byte
+		want    string
+	}{
+		{
+			name:    "SLSA provenance",
+			payload: []byte(`{"predicateType":"https://slsa.dev/provenance/v1"}`),
+			want:    "https://slsa.dev/provenance/v1",
+		},
+		{
+			name:    "invalid JSON",
+			payload: []byte(`not json`),
+			want:    "",
+		},
+		{
+			name:    "missing field",
+			payload: []byte(`{"other":"value"}`),
+			want:    "",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := attestation.ExportExtractPredicateType(test.payload)
+			if got != test.want {
+				t.Errorf("extractPredicateType() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+//nolint:funlen // table-driven test
+func TestFetchCosignTagAttestations(t *testing.T) {
+	t.Parallel()
+
+	ref, err := name.NewDigest(
+		"docker.io/library/nginx@sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abcd",
+	)
+	if err != nil {
+		t.Fatalf("creating digest ref: %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		imageFetch attestation.ImageFetchFunc
+		verifyFunc attestation.BundleVerifyFunc
+		wantCount  int
+		wantErr    bool
+	}{
+		{
+			name: "tag not found returns nil",
+			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+				return nil, &transport.Error{StatusCode: http.StatusNotFound}
+			},
+			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+				return nil, nil
+			},
+			wantCount: 0,
+			wantErr:   false,
+		},
+		{
+			name: "valid bundle layer",
+			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+				return fakeImageWithPayload([]byte(`{"bundle": "data"}`)), nil
+			},
+			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+				return []byte(
+					`{"predicateType":"https://slsa.dev/provenance/v1"}`,
+				), nil
+			},
+			wantCount: 1,
+			wantErr:   false,
+		},
+		{
+			name: "invalid bundle layer skipped",
+			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+				return fakeImageWithPayload([]byte(`not a bundle`)), nil
+			},
+			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+				return nil, errSignatureMismatch
+			},
+			wantCount: 0,
+			wantErr:   false,
+		},
+		{
+			name: "transport error propagated",
+			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+				return nil, &transport.Error{StatusCode: http.StatusInternalServerError}
+			},
+			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+				return nil, nil
+			},
+			wantCount: 0,
+			wantErr:   true,
+		},
+		{
+			name: "broken layers handled",
+			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+				return &brokenLayersImage{Image: empty.Image}, nil
+			},
+			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+				return nil, nil
+			},
+			wantCount: 0,
+			wantErr:   true,
+		},
+		{
+			name: "empty image returns nil",
+			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+				return empty.Image, nil
+			},
+			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+				return nil, nil
+			},
+			wantCount: 0,
+			wantErr:   false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			fetcher := attestation.NewTestOCIFetcher(
+				test.verifyFunc, test.imageFetch,
+			)
+
+			result, err := fetcher.FetchCosignTagAttestations(
+				context.Background(), ref, testFetchDigest,
+				nil, attestation.FetchOptions{},
+			)
+
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if len(result) != test.wantCount {
+				t.Errorf("expected %d attestations, got %d",
+					test.wantCount, len(result),
+				)
+			}
+		})
+	}
+}
+
+func TestFetchFallsBackToCosignTag(t *testing.T) {
+	t.Parallel()
+
+	var cosignTagFetched bool
+
+	fetcher := attestation.NewTestOCIFetcherFull(
+		func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+			return []byte(`{"predicateType":"https://slsa.dev/provenance/v1"}`), nil
+		},
+		func(ref name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+			if strings.HasSuffix(ref.String(), ".att") {
+				cosignTagFetched = true
+
+				return fakeImageWithPayload([]byte(`{"bundle": "ok"}`)), nil
+			}
+
+			return nil, errImageFetch
+		},
+		func(_ name.Digest, _ ...remote.Option) (ociV1.ImageIndex, error) {
+			return &fakeImageIndex{manifests: nil, err: nil}, nil
+		},
+	)
+
+	result, err := fetcher.Fetch(
+		context.Background(), testFetchImageRef, testFetchDigest, attestation.FetchOptions{},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !cosignTagFetched {
+		t.Error("cosign tag was not fetched as fallback")
+	}
+
+	if len(result) != 1 {
+		t.Errorf("expected 1 attestation, got %d", len(result))
+	}
+}
+
+func TestFetchSkipsCosignTagWhenReferrersExist(t *testing.T) {
+	t.Parallel()
+
+	var cosignTagFetched bool
+
+	fetcher := attestation.NewTestOCIFetcherFull(
+		func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+			return []byte(`{"predicateType":"https://slsa.dev/provenance/v1"}`), nil
+		},
+		func(ref name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+			if strings.HasSuffix(ref.String(), ".att") {
+				cosignTagFetched = true
+			}
+
+			return fakeImageWithPayload([]byte(`{"bundle": "ok"}`)), nil
+		},
+		func(_ name.Digest, _ ...remote.Option) (ociV1.ImageIndex, error) {
+			return &fakeImageIndex{
+				manifests: []ociV1.Descriptor{
+					bundleDescriptor(attestation.PredicateSLSAProvenanceV1),
+				},
+				err: nil,
+			}, nil
+		},
+	)
+
+	result, err := fetcher.Fetch(
+		context.Background(), testFetchImageRef, testFetchDigest, attestation.FetchOptions{},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cosignTagFetched {
+		t.Error("cosign tag should not be fetched when OCI referrers exist")
+	}
+
+	if len(result) != 1 {
+		t.Errorf("expected 1 attestation, got %d", len(result))
 	}
 }

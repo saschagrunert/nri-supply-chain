@@ -20,11 +20,13 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"regexp"
 	"strings"
 	"sync"
@@ -321,28 +323,10 @@ func (f *OCIFetcher) fetchOnce(
 		return nil, fmt.Errorf("reading referrers index: %w", err)
 	}
 
-	slog.DebugContext(ctx, "Referrers lookup result",
-		"ref", ref.String(),
-		"digest", digest,
-		"manifests_count", len(manifest.Manifests),
-	)
-
-	for i := range manifest.Manifests {
-		slog.DebugContext(ctx, "Referrer manifest",
-			"index", i,
-			"artifact_type", manifest.Manifests[i].ArtifactType,
-			"digest", manifest.Manifests[i].Digest.String(),
-			"annotations", manifest.Manifests[i].Annotations,
-		)
-	}
+	logReferrers(ctx, ref, digest, manifest.Manifests)
 
 	attestations, hadBundles := f.collectAttestations(
-		ctx,
-		manifest.Manifests,
-		ref,
-		digest,
-		remoteOpts,
-		fetchOpts,
+		ctx, manifest.Manifests, ref, digest, remoteOpts, fetchOpts,
 	)
 
 	ctxErr := ctx.Err()
@@ -351,10 +335,62 @@ func (f *OCIFetcher) fetchOnce(
 	}
 
 	if hadBundles && len(attestations) == 0 {
-		return nil, fmt.Errorf("%w: all referrer bundles failed verification", errAllBundlesFailed)
+		return nil, fmt.Errorf(
+			"%w: all referrer bundles failed verification", errAllBundlesFailed,
+		)
+	}
+
+	if len(attestations) == 0 {
+		return f.cosignTagFallback(ctx, ref, digest, remoteOpts, fetchOpts)
 	}
 
 	return attestations, nil
+}
+
+func logReferrers(
+	ctx context.Context, ref name.Digest, digest string,
+	manifests []ociV1.Descriptor,
+) {
+	slog.DebugContext(ctx, "Referrers lookup result",
+		"ref", ref.String(),
+		"digest", digest,
+		"manifests_count", len(manifests),
+	)
+
+	for i := range manifests {
+		slog.DebugContext(ctx, "Referrer manifest",
+			"index", i,
+			"artifact_type", manifests[i].ArtifactType,
+			"digest", manifests[i].Digest.String(),
+			"annotations", manifests[i].Annotations,
+		)
+	}
+}
+
+func (f *OCIFetcher) cosignTagFallback(
+	ctx context.Context, ref name.Digest, digest string,
+	remoteOpts []remote.Option,
+	fetchOpts FetchOptions, //nolint:gocritic // passed through to fetchCosignTagAttestations
+) ([]VerifiedAttestation, error) {
+	tagAtts, tagErr := f.fetchCosignTagAttestations(
+		ctx, ref, digest, remoteOpts, fetchOpts,
+	)
+	if tagErr != nil {
+		slog.DebugContext(ctx, "Cosign tag-based discovery failed",
+			"error", tagErr,
+		)
+
+		return nil, nil
+	}
+
+	if len(tagAtts) > 0 {
+		slog.DebugContext(ctx, "Discovered attestations via cosign tag scheme",
+			"count", len(tagAtts),
+			"digest", digest,
+		)
+	}
+
+	return tagAtts, nil
 }
 
 func isTransientError(err error) bool {
@@ -369,6 +405,142 @@ func isTransientError(err error) bool {
 	}
 
 	return false
+}
+
+func cosignAttestationTag(ref name.Digest) name.Tag {
+	return ref.Context().Tag(
+		strings.Replace(ref.DigestStr(), ":", "-", 1) + CosignAttestationTagSuffix,
+	)
+}
+
+func (f *OCIFetcher) fetchCosignTagAttestations(
+	ctx context.Context, ref name.Digest, digest string,
+	remoteOpts []remote.Option,
+	fetchOpts FetchOptions, //nolint:gocritic // passed through to verifyBundle
+) ([]VerifiedAttestation, error) {
+	attTag := cosignAttestationTag(ref)
+
+	slog.DebugContext(ctx, "Trying cosign tag-based attestation discovery",
+		"tag", attTag.String(),
+	)
+
+	img, fetchErr := f.fetchImage(attTag, remoteOpts...)
+	if fetchErr != nil {
+		var transportErr *transport.Error
+		if errors.As(fetchErr, &transportErr) &&
+			transportErr.StatusCode == http.StatusNotFound {
+			return nil, nil
+		}
+
+		return nil, fmt.Errorf(
+			"fetching cosign attestation tag %q: %w", attTag.String(), fetchErr,
+		)
+	}
+
+	layers, layerErr := img.Layers()
+	if layerErr != nil {
+		return nil, fmt.Errorf("reading cosign attestation layers: %w", layerErr)
+	}
+
+	if len(layers) == 0 {
+		return nil, nil
+	}
+
+	var attestations []VerifiedAttestation
+
+	for idx, layer := range layers {
+		ctxErr := ctx.Err()
+		if ctxErr != nil {
+			return nil, fmt.Errorf("cosign tag discovery interrupted: %w", ctxErr)
+		}
+
+		if idx >= maxReferrers {
+			slog.WarnContext(ctx, "Cosign attestation layer count exceeds limit",
+				"limit", maxReferrers,
+				"total", len(layers),
+			)
+
+			break
+		}
+
+		att, ok := f.processCosignLayer(ctx, layer, digest, fetchOpts)
+		if ok {
+			attestations = append(attestations, att)
+		}
+	}
+
+	return attestations, nil
+}
+
+func (f *OCIFetcher) processCosignLayer(
+	ctx context.Context, layer ociV1.Layer, digest string,
+	fetchOpts FetchOptions, //nolint:gocritic // passed through to verifyBundle
+) (VerifiedAttestation, bool) {
+	reader, readErr := layer.Uncompressed()
+	if readErr != nil {
+		slog.WarnContext(ctx, "Failed to read cosign attestation layer",
+			"error", readErr,
+		)
+
+		return VerifiedAttestation{PredicateType: "", Payload: nil, Digest: ""}, false
+	}
+
+	defer func() {
+		closeErr := reader.Close()
+		if closeErr != nil {
+			slog.WarnContext(ctx, "Failed to close cosign layer reader",
+				"error", closeErr,
+			)
+		}
+	}()
+
+	data, dataErr := io.ReadAll(io.LimitReader(reader, maxAttestationSize+1))
+	if dataErr != nil {
+		slog.WarnContext(ctx, "Failed to read cosign attestation data",
+			"error", dataErr,
+		)
+
+		return VerifiedAttestation{PredicateType: "", Payload: nil, Digest: ""}, false
+	}
+
+	if int64(len(data)) > maxAttestationSize {
+		slog.WarnContext(ctx, "Cosign attestation exceeds size limit",
+			"size", len(data),
+			"limit", maxAttestationSize,
+		)
+
+		return VerifiedAttestation{PredicateType: "", Payload: nil, Digest: ""}, false
+	}
+
+	payload, verifyErr := f.verifyBundle(ctx, data, fetchOpts)
+	if verifyErr != nil {
+		slog.DebugContext(ctx, "Cosign tag layer is not a valid sigstore bundle",
+			"error", verifyErr,
+		)
+
+		return VerifiedAttestation{PredicateType: "", Payload: nil, Digest: ""}, false
+	}
+
+	predicateType := extractPredicateType(payload)
+
+	return VerifiedAttestation{
+		PredicateType: predicateType,
+		Payload:       payload,
+		Digest:        digest,
+	}, true
+}
+
+func extractPredicateType(payload []byte) string {
+	var stmt struct {
+		PredicateType string `json:"predicateType"`
+	}
+
+	unmarshalErr := json.Unmarshal(payload, &stmt)
+	if unmarshalErr != nil {
+		return ""
+	}
+
+	return stmt.PredicateType
 }
 
 func (f *OCIFetcher) collectAttestations(

@@ -49,6 +49,9 @@ const (
 
 	// DSSEPayloadType is the expected DSSE envelope payload type for in-toto statements.
 	DSSEPayloadType = "application/vnd.in-toto+json"
+
+	// CosignAttestationTagSuffix is the tag suffix cosign uses for attestation images.
+	CosignAttestationTagSuffix = ".att"
 )
 
 // BundleVerifyFunc verifies a Sigstore bundle and returns the extracted DSSE payload.
