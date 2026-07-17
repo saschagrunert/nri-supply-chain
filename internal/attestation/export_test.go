@@ -28,6 +28,7 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/bundle"
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/verify"
+	"golang.org/x/sync/singleflight"
 )
 
 // ExportDefaultVerifyBundle exposes verifyBundleWithCache (nil cache) for external tests.
@@ -145,6 +146,7 @@ func NewTestTrustedRootCache(fetchFn TrustedRootFetchFunc) *trustedRootCache {
 		root:      nil,
 		fetchedAt: time.Time{},
 		fetchRoot: fetchFn,
+		inflight:  singleflight.Group{},
 	}
 }
 
@@ -157,6 +159,7 @@ func NewTestTrustedRootCacheWithRoot(
 		root:      cachedRoot,
 		fetchedAt: fetchedAt,
 		fetchRoot: fetchFn,
+		inflight:  singleflight.Group{},
 	}
 }
 

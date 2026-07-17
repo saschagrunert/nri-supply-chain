@@ -21,13 +21,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
+	"github.com/saschagrunert/nri-supply-chain/internal/plugin"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
@@ -226,9 +226,9 @@ func TestServeMetricsDisabled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	ready := &atomic.Bool{}
+	plug := newDisabledPlugin(t)
 
-	err := serveMetrics(ctx, metrics.New(), "", ready)
+	err := serveMetrics(ctx, metrics.New(), "", plug)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -237,18 +237,41 @@ func TestServeMetricsDisabled(t *testing.T) {
 func TestServeMetricsReadyz(t *testing.T) {
 	t.Parallel()
 
-	addr := startMetricsServer(t)
+	testPlug := newDisabledPlugin(t)
+	addr := startMetricsServer(t, testPlug)
 
-	assertReadyzStatus(t, addr, http.StatusServiceUnavailable)
+	assertProbeStatus(t, addr, "/readyz", http.StatusServiceUnavailable)
+	assertProbeStatus(t, addr, "/healthz", http.StatusOK)
 
-	testReady.Store(true)
+	_, configErr := testPlug.Configure(context.Background(), "", "cri-o", "1.32")
+	if configErr != nil {
+		t.Fatalf("configuring plugin: %v", configErr)
+	}
 
-	assertReadyzStatus(t, addr, http.StatusOK)
+	assertProbeStatus(t, addr, "/readyz", http.StatusOK)
+	assertProbeStatus(t, addr, "/healthz", http.StatusOK)
+
+	testPlug.SetDisconnected()
+
+	assertProbeStatus(t, addr, "/healthz", http.StatusOK)
+	assertProbeStatus(t, addr, "/readyz", http.StatusServiceUnavailable)
 }
 
-var testReady = &atomic.Bool{} //nolint:gochecknoglobals // test-only shared state
+func newDisabledPlugin(t *testing.T) *plugin.Plugin {
+	t.Helper()
 
-func startMetricsServer(t *testing.T) string {
+	cfg := config.DefaultConfig()
+	met := metrics.New()
+
+	v, err := verifier.New(cfg, met, nil)
+	if err != nil {
+		t.Fatalf("creating verifier: %v", err)
+	}
+
+	return plugin.New(v, met, "")
+}
+
+func startMetricsServer(t *testing.T, plug *plugin.Plugin) string {
 	t.Helper()
 
 	listenCfg := net.ListenConfig{
@@ -274,23 +297,21 @@ func startMetricsServer(t *testing.T) string {
 		t.Fatalf("closing listener: %v", err)
 	}
 
-	testReady.Store(false)
-
 	ctx, cancel := context.WithCancel(context.Background())
 
 	t.Cleanup(cancel)
 
 	go func() {
-		_ = serveMetrics(ctx, metrics.New(), addr, testReady)
+		_ = serveMetrics(ctx, metrics.New(), addr, plug)
 	}()
 
 	return addr
 }
 
-func assertReadyzStatus(t *testing.T, addr string, wantStatus int) {
+func assertProbeStatus(t *testing.T, addr, path string, wantStatus int) {
 	t.Helper()
 
-	readyzURL := "http://" + addr + "/readyz"
+	probeURL := "http://" + addr + path
 
 	var (
 		resp *http.Response
@@ -299,7 +320,7 @@ func assertReadyzStatus(t *testing.T, addr string, wantStatus int) {
 
 	for range 50 {
 		req, reqErr := http.NewRequestWithContext(
-			context.Background(), http.MethodGet, readyzURL, http.NoBody,
+			context.Background(), http.MethodGet, probeURL, http.NoBody,
 		)
 		if reqErr != nil {
 			t.Fatalf("creating request: %v", reqErr)
@@ -320,7 +341,7 @@ func assertReadyzStatus(t *testing.T, addr string, wantStatus int) {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != wantStatus {
-		t.Errorf("expected status %d, got %d", wantStatus, resp.StatusCode)
+		t.Errorf("%s: expected status %d, got %d", path, wantStatus, resp.StatusCode)
 	}
 }
 

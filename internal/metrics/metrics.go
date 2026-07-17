@@ -38,6 +38,8 @@ type Metrics struct {
 	VerificationTotal *prometheus.CounterVec
 	// VerificationDuration measures verification latency by type.
 	VerificationDuration *prometheus.HistogramVec
+	// VerificationSkippedTotal counts containers allowed without verification.
+	VerificationSkippedTotal *prometheus.CounterVec
 	// CacheHitsTotal counts cache hits for verification results.
 	CacheHitsTotal prometheus.Counter
 	// CacheMissesTotal counts cache misses for verification results.
@@ -54,26 +56,9 @@ type Metrics struct {
 // New creates and registers all supply chain verification metrics.
 func New() *Metrics {
 	met := &Metrics{
-		VerificationTotal: prometheus.NewCounterVec(
-			prometheus.CounterOpts{
-				Namespace: namespace,
-				Name:      "verification_total",
-				Help:      "Total number of supply chain verification attempts.",
-			},
-			[]string{labelType, "result"},
-		),
-		VerificationDuration: prometheus.NewHistogramVec(
-			prometheus.HistogramOpts{
-				Namespace: namespace,
-				Name:      "verification_duration_seconds",
-				Help:      "Duration of supply chain verification in seconds.",
-				Buckets: sortedBuckets(
-					slices.Clone(prometheus.DefBuckets),
-					bucketFetchMid, bucketFetchTimeout,
-				),
-			},
-			[]string{labelType},
-		),
+		VerificationTotal:        newVerificationTotal(),
+		VerificationDuration:     newVerificationDuration(),
+		VerificationSkippedTotal: newVerificationSkipped(),
 		CacheHitsTotal: prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: namespace,
 			Name:      "cache_hits_total",
@@ -110,6 +95,43 @@ func New() *Metrics {
 	return met
 }
 
+func newVerificationTotal() *prometheus.CounterVec {
+	return prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "verification_total",
+			Help:      "Total number of supply chain verification attempts.",
+		},
+		[]string{labelType, "result"},
+	)
+}
+
+func newVerificationDuration() *prometheus.HistogramVec {
+	return prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "verification_duration_seconds",
+			Help:      "Duration of supply chain verification in seconds.",
+			Buckets: sortedBuckets(
+				slices.Clone(prometheus.DefBuckets),
+				bucketFetchMid, bucketFetchTimeout,
+			),
+		},
+		[]string{labelType},
+	)
+}
+
+func newVerificationSkipped() *prometheus.CounterVec {
+	return prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "verification_skipped_total",
+			Help:      "Total number of containers allowed without verification.",
+		},
+		[]string{"reason"},
+	)
+}
+
 // Handler returns the Prometheus HTTP handler for the registered metrics.
 func (m *Metrics) Handler() http.Handler {
 	return promhttp.HandlerFor(m.registry, promhttp.HandlerOpts{})
@@ -126,6 +148,7 @@ func (m *Metrics) register() {
 	m.registry.MustRegister(
 		m.VerificationTotal,
 		m.VerificationDuration,
+		m.VerificationSkippedTotal,
 		m.CacheHitsTotal,
 		m.CacheMissesTotal,
 		m.CacheEntriesTotal,

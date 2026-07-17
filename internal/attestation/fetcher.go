@@ -17,9 +17,11 @@ package attestation
 import (
 	"context"
 	"crypto"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"regexp"
 	"strings"
 	"sync"
@@ -29,10 +31,12 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	ociV1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 	"github.com/sigstore/sigstore-go/pkg/bundle"
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/verify"
 	"github.com/sigstore/sigstore/pkg/signature"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -40,6 +44,8 @@ const (
 	maxReferrers            = 100
 	trustedRootCacheTTL     = 1 * time.Hour
 	trustedRootMaxStaleness = 24 * time.Hour
+	fetchMaxRetries         = 2
+	fetchRetryBaseDelay     = 500 * time.Millisecond
 )
 
 type trustedRootFetchFunc func() (*root.TrustedRoot, error)
@@ -49,6 +55,7 @@ type trustedRootCache struct {
 	root      *root.TrustedRoot
 	fetchedAt time.Time
 	fetchRoot trustedRootFetchFunc
+	inflight  singleflight.Group
 }
 
 func (c *trustedRootCache) get(ctx context.Context) (*root.TrustedRoot, error) {
@@ -69,36 +76,61 @@ func (c *trustedRootCache) get(ctx context.Context) (*root.TrustedRoot, error) {
 		return nil, fmt.Errorf("context canceled before fetching trusted root: %w", err)
 	}
 
-	trustedRoot, fetchErr := c.fetchRoot()
+	result, fetchErr, _ := c.inflight.Do("trusted-root", c.refreshRoot)
+	if fetchErr != nil {
+		return nil, fetchErr //nolint:wrapcheck // error already wrapped inside singleflight closure
+	}
+
+	return result.(*root.TrustedRoot), nil //nolint:forcetypeassert // type guaranteed by Do closure
+}
+
+func (c *trustedRootCache) refreshRoot() (any, error) {
+	c.mu.RLock()
+
+	if c.root != nil && time.Since(c.fetchedAt) < trustedRootCacheTTL {
+		cachedRoot := c.root
+
+		c.mu.RUnlock()
+
+		return cachedRoot, nil
+	}
+
+	c.mu.RUnlock()
+
+	trustedRoot, err := c.fetchRoot()
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if fetchErr != nil {
-		if c.root != nil {
-			age := time.Since(c.fetchedAt)
-			if age > trustedRootMaxStaleness {
-				return nil, fmt.Errorf(
-					"trusted root is stale (%s old, max %s) and refresh failed: %w",
-					age.Truncate(time.Second), trustedRootMaxStaleness, fetchErr,
-				)
-			}
-
-			slog.Warn("Failed to refresh trusted root, using stale cache",
-				"error", fetchErr,
-				"age", age,
-			)
-
-			return c.root, nil
-		}
-
-		return nil, fmt.Errorf("fetching sigstore trusted root: %w", fetchErr)
+	if err != nil {
+		return c.handleRefreshError(err)
 	}
 
 	c.root = trustedRoot
 	c.fetchedAt = time.Now()
 
 	return trustedRoot, nil
+}
+
+func (c *trustedRootCache) handleRefreshError(err error) (*root.TrustedRoot, error) {
+	if c.root != nil {
+		age := time.Since(c.fetchedAt)
+		if age > trustedRootMaxStaleness {
+			return nil, fmt.Errorf(
+				"trusted root is stale (%s old, max %s) and refresh failed: %w",
+				age.Truncate(time.Second), trustedRootMaxStaleness, err,
+			)
+		}
+
+		slog.Warn("Failed to refresh trusted root, using stale cache",
+			"error", err,
+			"age", age,
+		)
+
+		return c.root, nil
+	}
+
+	return nil, fmt.Errorf("fetching sigstore trusted root: %w", err)
 }
 
 // ImageFetchFunc fetches an OCI image by reference.
@@ -123,6 +155,7 @@ func NewOCIFetcher() *OCIFetcher {
 		root:      nil,
 		fetchedAt: time.Time{},
 		fetchRoot: root.FetchTrustedRoot,
+		inflight:  singleflight.Group{},
 	}
 
 	return &OCIFetcher{
@@ -185,6 +218,69 @@ func (f *OCIFetcher) Fetch(
 		remote.WithContext(ctx),
 	}
 
+	attestations, err := f.fetchWithRetry(ctx, ref, digest, remoteOpts, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	return attestations, nil
+}
+
+func (f *OCIFetcher) fetchWithRetry(
+	ctx context.Context,
+	ref name.Digest,
+	digest string,
+	remoteOpts []remote.Option,
+	fetchOpts FetchOptions, //nolint:gocritic // passed through to collectAttestations
+) ([]VerifiedAttestation, error) {
+	var lastErr error
+
+	for attempt := range fetchMaxRetries + 1 {
+		if attempt > 0 {
+			delay := fetchRetryBaseDelay * time.Duration(1<<(attempt-1))
+
+			slog.Debug("Retrying attestation fetch",
+				"attempt", attempt+1,
+				"delay", delay,
+			)
+
+			timer := time.NewTimer(delay)
+
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+
+				return nil, fmt.Errorf("attestation fetch interrupted: %w", ctx.Err())
+			case <-timer.C:
+			}
+		}
+
+		attestations, err := f.fetchOnce(ctx, ref, digest, remoteOpts, fetchOpts)
+		if err == nil {
+			return attestations, nil
+		}
+
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("attestation fetch interrupted: %w", ctx.Err())
+		}
+
+		if !isTransientError(err) {
+			return nil, err
+		}
+
+		lastErr = err
+	}
+
+	return nil, lastErr
+}
+
+func (f *OCIFetcher) fetchOnce(
+	ctx context.Context,
+	ref name.Digest,
+	digest string,
+	remoteOpts []remote.Option,
+	fetchOpts FetchOptions, //nolint:gocritic // passed through to collectAttestations
+) ([]VerifiedAttestation, error) {
 	idx, err := f.referrers(ref, remoteOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("listing referrers: %w", err)
@@ -201,7 +297,7 @@ func (f *OCIFetcher) Fetch(
 		ref,
 		digest,
 		remoteOpts,
-		opts,
+		fetchOpts,
 	)
 
 	ctxErr := ctx.Err()
@@ -214,6 +310,20 @@ func (f *OCIFetcher) Fetch(
 	}
 
 	return attestations, nil
+}
+
+func isTransientError(err error) bool {
+	var transportErr *transport.Error
+	if errors.As(err, &transportErr) {
+		return transportErr.Temporary()
+	}
+
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return netErr.Timeout()
+	}
+
+	return false
 }
 
 func (f *OCIFetcher) collectAttestations(

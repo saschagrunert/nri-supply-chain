@@ -20,11 +20,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 
 	"github.com/containerd/nri/pkg/api"
 	"github.com/containerd/nri/pkg/stub"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
+	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
@@ -42,15 +44,29 @@ const (
 // for supply chain attestation verification.
 type Plugin struct {
 	verifier   *verifier.Verifier
+	metrics    *metrics.Metrics
 	configPath string
+	connected  atomic.Bool
 }
 
-// New creates a new Plugin with the given verifier and config file path.
-func New(v *verifier.Verifier, configPath string) *Plugin {
+// New creates a new Plugin with the given verifier, metrics, and config file path.
+func New(v *verifier.Verifier, met *metrics.Metrics, configPath string) *Plugin {
 	return &Plugin{
 		verifier:   v,
+		metrics:    met,
 		configPath: configPath,
+		connected:  atomic.Bool{},
 	}
+}
+
+// Connected returns true if the plugin has successfully connected to the NRI runtime.
+func (p *Plugin) Connected() bool {
+	return p.connected.Load()
+}
+
+// SetDisconnected marks the plugin as disconnected from the NRI runtime.
+func (p *Plugin) SetDisconnected() {
+	p.connected.Store(false)
 }
 
 // Configure is called when the plugin connects to the NRI runtime.
@@ -58,6 +74,8 @@ func (p *Plugin) Configure(
 	ctx context.Context, cfg, runtime, version string,
 ) (stub.EventMask, error) {
 	slog.Info("Connected to runtime", "runtime", runtime, "version", version)
+
+	p.connected.Store(true)
 
 	if p.configPath == "" && cfg != "" {
 		parsed, err := config.LoadFromString(cfg)
@@ -105,6 +123,8 @@ func (p *Plugin) CreateContainer(
 			"pod", namespace+"/"+pod.GetName(),
 			"container", ctr.GetName(),
 		)
+
+		p.metrics.VerificationSkippedTotal.WithLabelValues("missing_annotations").Inc()
 
 		return nil, nil, nil
 	}
