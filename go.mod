@@ -5,6 +5,7 @@ go 1.26.5
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/containerd/nri v0.12.1
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/google/go-containerregistry v0.21.7
 	github.com/openvex/go-vex v0.2.8
 	github.com/prometheus/client_golang v1.24.0

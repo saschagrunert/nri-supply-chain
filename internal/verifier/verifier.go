@@ -434,10 +434,10 @@ func (v *Verifier) verifyOnce(
 		// should not inherit this caller's cancellation.
 		checkCtx := context.WithoutCancel(ctx)
 
-		result := runChecks(checkCtx, state, pol, imageRef, digest)
+		result := runChecks(checkCtx, state, pol, imageRef, digest, namespace)
 
 		logResult(checkCtx, state.auditLogger, imageRef, digest, namespace, result)
-		recordMetrics(state.metrics, result)
+		recordMetrics(state.metrics, result, namespace)
 
 		if resultHasFailures(result) && state.config.CacheFailureTTL.Duration > 0 {
 			state.cache.Set(digest, namespace, result, state.config.CacheFailureTTL.Duration)
@@ -480,7 +480,7 @@ func (v *Verifier) snap() snapshot {
 
 func runChecks(
 	ctx context.Context, state *snapshot,
-	pol *policy.Policy, imageRef, digest string,
+	pol *policy.Policy, imageRef, digest, namespace string,
 ) *types.Result {
 	if state.fetcher == nil {
 		return runChecksWithoutFetcher(pol, state.metrics, imageRef)
@@ -525,7 +525,7 @@ func runChecks(
 		return vsaResult
 	}
 
-	return runParallelChecks(ctx, attestations, pol, state.metrics, imageRef, digest)
+	return runParallelChecks(ctx, attestations, pol, state.metrics, imageRef, digest, namespace)
 }
 
 func runChecksWithoutFetcher(
@@ -581,7 +581,7 @@ func handleFetchError(
 	cfg *config.Config, met *metrics.Metrics,
 	fetchErr error, imageRef string,
 ) *types.Result {
-	met.FetchErrorsTotal.WithLabelValues("attestation").Inc()
+	met.FetchErrorsTotal.WithLabelValues("attestation", registryHost(imageRef)).Inc()
 
 	detail := fmt.Sprintf("attestation fetch failed for %s: %s", imageRef, fetchErr)
 
@@ -647,7 +647,7 @@ func checkVSA(
 
 func runParallelChecks(
 	ctx context.Context, attestations []attestation.VerifiedAttestation,
-	pol *policy.Policy, met *metrics.Metrics, imageRef, digest string,
+	pol *policy.Policy, met *metrics.Metrics, imageRef, digest, namespace string,
 ) *types.Result {
 	var (
 		slsaResult *types.CheckResult
@@ -662,13 +662,13 @@ func runParallelChecks(
 	go func() {
 		defer waitGroup.Done()
 
-		slsaResult = runSLSACheck(ctx, attestations, pol, met, imageRef, digest)
+		slsaResult = runSLSACheck(ctx, attestations, pol, met, imageRef, digest, namespace)
 	}()
 
 	go func() {
 		defer waitGroup.Done()
 
-		vexResult = runVEXCheck(ctx, attestations, pol, met, imageRef, digest)
+		vexResult = runVEXCheck(ctx, attestations, pol, met, imageRef, digest, namespace)
 	}()
 
 	waitGroup.Wait()
@@ -679,7 +679,7 @@ func runParallelChecks(
 func runSLSACheck(
 	ctx context.Context,
 	attestations []attestation.VerifiedAttestation,
-	pol *policy.Policy, met *metrics.Metrics, imageRef, digest string,
+	pol *policy.Policy, met *metrics.Metrics, imageRef, digest, namespace string,
 ) *types.CheckResult {
 	start := time.Now()
 
@@ -711,7 +711,7 @@ func runSLSACheck(
 			"image", imageRef,
 		)
 
-		met.VerificationTotal.WithLabelValues("slsa_provenance", "error").Inc()
+		met.VerificationTotal.WithLabelValues("slsa_provenance", "error", namespace).Inc()
 
 		return handleMissingAttestation(
 			pol.ProvenanceMissingPolicy(),
@@ -726,7 +726,7 @@ func runSLSACheck(
 func runVEXCheck(
 	ctx context.Context,
 	attestations []attestation.VerifiedAttestation,
-	pol *policy.Policy, met *metrics.Metrics, imageRef, digest string,
+	pol *policy.Policy, met *metrics.Metrics, imageRef, digest, namespace string,
 ) *types.CheckResult {
 	start := time.Now()
 
@@ -763,7 +763,7 @@ func runVEXCheck(
 			"image", imageRef,
 		)
 
-		met.VerificationTotal.WithLabelValues("vex", "error").Inc()
+		met.VerificationTotal.WithLabelValues("vex", "error", namespace).Inc()
 
 		return handleMissingAttestation(
 			vexMissingPolicy(pol),
@@ -917,10 +917,10 @@ func allowResult(
 	}
 }
 
-func recordMetrics(met *metrics.Metrics, result *types.Result) {
+func recordMetrics(met *metrics.Metrics, result *types.Result, namespace string) {
 	for _, checkResult := range result.CheckResults {
 		met.VerificationTotal.WithLabelValues(
-			checkResult.Type, checkResult.Status,
+			checkResult.Type, checkResult.Status, namespace,
 		).Inc()
 	}
 }
@@ -979,7 +979,7 @@ func recordBreakerFailure(
 	}
 
 	if tripped := breaker.RecordFailure(); tripped {
-		met.CircuitBreakerTripsTotal.Inc()
+		met.CircuitBreakerTripsTotal.WithLabelValues(registryHost(imageRef)).Inc()
 		slog.WarnContext(ctx, "Circuit breaker opened after repeated fetch failures, "+
 			"subsequent requests will use the configured fetch_failure_policy",
 			"registry", registryHost(imageRef),

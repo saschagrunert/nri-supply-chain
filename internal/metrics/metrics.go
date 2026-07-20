@@ -25,8 +25,10 @@ import (
 )
 
 const (
-	namespace = "nri_supply_chain"
-	labelType = "type"
+	namespace      = "nri_supply_chain"
+	labelType      = "type"
+	labelNamespace = "namespace"
+	labelRegistry  = "registry"
 
 	bucketFetchMid     = 15
 	bucketFetchTimeout = 30
@@ -51,7 +53,7 @@ type Metrics struct {
 	// InflightDedupTotal counts deduplicated inflight verifications.
 	InflightDedupTotal prometheus.Counter
 	// CircuitBreakerTripsTotal counts how many times the circuit breaker opened.
-	CircuitBreakerTripsTotal prometheus.Counter
+	CircuitBreakerTripsTotal *prometheus.CounterVec
 	registry                 *prometheus.Registry
 }
 
@@ -82,18 +84,21 @@ func New() *Metrics {
 				Name:      "fetch_errors_total",
 				Help:      "Total number of attestation fetch errors.",
 			},
-			[]string{labelType},
+			[]string{labelType, labelRegistry},
 		),
 		InflightDedupTotal: prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: namespace,
 			Name:      "inflight_dedup_total",
 			Help:      "Total number of deduplicated inflight verifications.",
 		}),
-		CircuitBreakerTripsTotal: prometheus.NewCounter(prometheus.CounterOpts{
-			Namespace: namespace,
-			Name:      "circuit_breaker_trips_total",
-			Help:      "Total number of times the fetch circuit breaker opened.",
-		}),
+		CircuitBreakerTripsTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: namespace,
+				Name:      "circuit_breaker_trips_total",
+				Help:      "Total number of times the fetch circuit breaker opened.",
+			},
+			[]string{labelRegistry},
+		),
 		registry: prometheus.NewRegistry(),
 	}
 
@@ -109,7 +114,7 @@ func newVerificationTotal() *prometheus.CounterVec {
 			Name:      "verification_total",
 			Help:      "Total number of supply chain verification attempts.",
 		},
-		[]string{labelType, "result"},
+		[]string{labelType, "result", labelNamespace},
 	)
 }
 
@@ -135,7 +140,7 @@ func newVerificationSkipped() *prometheus.CounterVec {
 			Name:      "verification_skipped_total",
 			Help:      "Total number of containers allowed without verification.",
 		},
-		[]string{"reason"},
+		[]string{"reason", labelNamespace},
 	)
 }
 

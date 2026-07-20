@@ -15,21 +15,38 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/fsnotify/fsnotify"
+	"github.com/google/go-containerregistry/pkg/crane"
+	"github.com/google/go-containerregistry/pkg/registry"
+	"github.com/google/go-containerregistry/pkg/v1/empty"
+	"github.com/google/go-containerregistry/pkg/v1/mutate"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/plugin"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
+)
+
+const (
+	testConfigFile    = "test.toml"
+	testNamespaceMain = "default"
 )
 
 func TestNewLogger(t *testing.T) {
@@ -75,13 +92,15 @@ func TestSetupConfig(t *testing.T) {
 		t.Parallel()
 
 		opts := &options{
-			configPath:  "",
-			metricsAddr: ":9999",
-			pluginName:  "",
-			pluginIdx:   "",
-			logLevel:    "",
-			showVersion: false,
-			validate:    false,
+			configPath:      "",
+			metricsAddr:     ":9999",
+			pluginName:      "",
+			pluginIdx:       "",
+			logLevel:        "",
+			verifyImage:     "",
+			verifyNamespace: "",
+			showVersion:     false,
+			validate:        false,
 		}
 
 		cfg, err := setupConfig(opts)
@@ -109,13 +128,15 @@ func TestSetupConfig(t *testing.T) {
 		}
 
 		opts := &options{
-			configPath:  configPath,
-			metricsAddr: "",
-			pluginName:  "",
-			pluginIdx:   "",
-			logLevel:    "",
-			showVersion: false,
-			validate:    false,
+			configPath:      configPath,
+			metricsAddr:     "",
+			pluginName:      "",
+			pluginIdx:       "",
+			logLevel:        "",
+			verifyImage:     "",
+			verifyNamespace: "",
+			showVersion:     false,
+			validate:        false,
 		}
 
 		_, err = setupConfig(opts)
@@ -262,6 +283,39 @@ func TestServeMetricsReadyz(t *testing.T) {
 	testPlug.SetDisconnected()
 
 	assertProbeStatus(t, addr, "/healthz", http.StatusOK)
+	assertProbeStatus(t, addr, "/readyz", http.StatusServiceUnavailable)
+}
+
+func TestServeMetricsReadyzVerifierNotReady(t *testing.T) {
+	t.Parallel()
+
+	// Create a plugin whose verifier is enabled but has no policies,
+	// so VerifierReady returns false after connecting.
+	policyDir := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = policyDir
+
+	met := metrics.New()
+
+	v, err := verifier.New(cfg, met, nil)
+	if err != nil {
+		t.Fatalf("creating verifier: %v", err)
+	}
+
+	testPlug := plugin.New(v, met, "")
+
+	// Connect the plugin so Connected() returns true.
+	_, configErr := testPlug.Configure(context.Background(), "", "cri-o", "1.32")
+	if configErr != nil {
+		t.Fatalf("configuring plugin: %v", configErr)
+	}
+
+	addr := startMetricsServer(t, testPlug)
+
+	// The plugin is connected but the verifier has no policies loaded,
+	// so readyz should return 503 with a "not ready" reason.
 	assertProbeStatus(t, addr, "/readyz", http.StatusServiceUnavailable)
 }
 
@@ -636,6 +690,102 @@ func TestWarnValidationEnforceDefaults(t *testing.T) {
 	}
 }
 
+func TestSetupFileWatch(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	policyDir := filepath.Join(dir, "policies")
+
+	err := os.Mkdir(policyDir, 0o750)
+	if err != nil {
+		t.Fatalf("creating policy dir: %v", err)
+	}
+
+	writeTestConfig(t, configPath, policyDir, "warn")
+
+	cfg, err := config.LoadFromFile(configPath)
+	if err != nil {
+		t.Fatalf("loading config: %v", err)
+	}
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	if err != nil {
+		t.Fatalf("creating verifier: %v", err)
+	}
+
+	if verif.Enforcing() {
+		t.Fatal("expected warn mode initially")
+	}
+
+	ctx := t.Context()
+
+	cleanup := setupFileWatch(ctx, configPath, policyDir, verif)
+	defer cleanup()
+
+	writeTestConfig(t, configPath, policyDir, "enforce")
+
+	deadline := time.After(3 * time.Second)
+
+	for !verif.Enforcing() {
+		select {
+		case <-deadline:
+			t.Fatal("verifier did not switch to enforce mode after file change")
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+func TestSetupFileWatchNoConfig(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	if err != nil {
+		t.Fatalf("creating verifier: %v", err)
+	}
+
+	cleanup := setupFileWatch(t.Context(), "", "", verif)
+	defer cleanup()
+
+	if verif.Enforcing() {
+		t.Fatal("expected disabled mode to remain unchanged")
+	}
+}
+
+func TestIsReloadEvent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		op   fsnotify.Op
+		want bool
+	}{
+		{name: "write", op: fsnotify.Write, want: true},
+		{name: "create", op: fsnotify.Create, want: true},
+		{name: "remove", op: fsnotify.Remove, want: true},
+		{name: "rename", op: fsnotify.Rename, want: false},
+		{name: "chmod", op: fsnotify.Chmod, want: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			event := fsnotify.Event{
+				Name: testConfigFile,
+				Op:   test.op,
+			}
+
+			if got := isReloadEvent(event); got != test.want {
+				t.Errorf("expected %v, got %v", test.want, got)
+			}
+		})
+	}
+}
+
 func writeValidationPolicy(t *testing.T, dir, name, content string) {
 	t.Helper()
 
@@ -644,5 +794,758 @@ func writeValidationPolicy(t *testing.T, dir, name, content string) {
 	)
 	if err != nil {
 		t.Fatalf("writing policy: %v", err)
+	}
+}
+
+// --- outputVerifyResult tests ---
+
+//nolint:paralleltest // captures os.Stdout
+func TestOutputVerifyResultAllowed(t *testing.T) {
+	checks := []checkEntry{
+		{Type: "slsa_provenance", Passed: true, Status: "pass", Detail: "verified"},
+	}
+
+	out := captureVerifyOutput(
+		t, "nginx:latest", "sha256:abc", testNamespaceMain, true, "verified", checks,
+	)
+
+	if out.Image != "nginx:latest" {
+		t.Errorf("Image = %q, want %q", out.Image, "nginx:latest")
+	}
+
+	if out.Digest != "sha256:abc" {
+		t.Errorf("Digest = %q, want %q", out.Digest, "sha256:abc")
+	}
+
+	if out.Namespace != testNamespaceMain {
+		t.Errorf("Namespace = %q, want %q", out.Namespace, testNamespaceMain)
+	}
+
+	if !out.Allowed {
+		t.Error("expected Allowed = true")
+	}
+
+	if out.Reason != "verified" {
+		t.Errorf("Reason = %q, want %q", out.Reason, "verified")
+	}
+
+	if len(out.CheckResults) != 1 {
+		t.Fatalf("CheckResults length = %d, want 1", len(out.CheckResults))
+	}
+
+	if out.CheckResults[0].Type != "slsa_provenance" {
+		t.Errorf("CheckResults[0].Type = %q, want %q", out.CheckResults[0].Type, "slsa_provenance")
+	}
+}
+
+//nolint:paralleltest // captures os.Stdout
+func TestOutputVerifyResultDenied(t *testing.T) {
+	out := captureVerifyOutput(t, "evil:latest", "sha256:bad", "prod", false, "failed checks", nil)
+
+	if out.Allowed {
+		t.Error("expected Allowed = false")
+	}
+
+	if out.Reason != "failed checks" {
+		t.Errorf("Reason = %q, want %q", out.Reason, "failed checks")
+	}
+
+	if out.CheckResults != nil {
+		t.Errorf("expected nil CheckResults, got %v", out.CheckResults)
+	}
+}
+
+func captureVerifyOutput(
+	t *testing.T,
+	imageRef, digest, namespace string,
+	allowed bool, reason string, checks []checkEntry,
+) verifyOutput {
+	t.Helper()
+
+	origStdout := os.Stdout
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("creating pipe: %v", err)
+	}
+
+	os.Stdout = w
+
+	outputVerifyResult(imageRef, digest, namespace, allowed, reason, checks)
+
+	err = w.Close()
+	if err != nil {
+		os.Stdout = origStdout
+
+		t.Fatalf("closing write pipe: %v", err)
+	}
+
+	os.Stdout = origStdout
+
+	var buf bytes.Buffer
+
+	_, err = io.Copy(&buf, r)
+	if err != nil {
+		t.Fatalf("reading pipe: %v", err)
+	}
+
+	var out verifyOutput
+
+	err = json.Unmarshal(buf.Bytes(), &out)
+	if err != nil {
+		t.Fatalf("invalid JSON output: %v\nraw: %s", err, buf.String())
+	}
+
+	return out
+}
+
+// --- resolveDigest tests ---
+
+func TestResolveDigestInvalidRef(t *testing.T) {
+	t.Parallel()
+
+	_, err := resolveDigest(":::invalid", 30*time.Second)
+	if err == nil {
+		t.Fatal("expected error for invalid image reference")
+	}
+
+	if !strings.Contains(err.Error(), "parsing image reference") {
+		t.Errorf("error = %q, expected to contain 'parsing image reference'", err)
+	}
+}
+
+func TestResolveDigestNetworkError(t *testing.T) {
+	t.Parallel()
+
+	// Use a closed server so connection is refused immediately.
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
+	addr := server.Listener.Addr().String()
+	server.Close()
+
+	_, err := resolveDigest(addr+"/test:latest", 30*time.Second)
+	if err == nil {
+		t.Fatal("expected error for unreachable registry")
+	}
+
+	if !strings.Contains(err.Error(), "resolving image digest") {
+		t.Errorf("error = %q, expected to contain 'resolving image digest'", err)
+	}
+}
+
+func TestResolveDigestSuccess(t *testing.T) {
+	t.Parallel()
+
+	regHandler := registry.New()
+	server := httptest.NewServer(regHandler)
+
+	t.Cleanup(server.Close)
+
+	addr := strings.TrimPrefix(server.URL, "http://")
+	imgRef := addr + "/test:latest"
+
+	img, err := mutate.ConfigFile(empty.Image, nil)
+	if err != nil {
+		t.Fatalf("creating test image: %v", err)
+	}
+
+	err = crane.Push(img, imgRef, crane.Insecure)
+	if err != nil {
+		t.Fatalf("pushing test image: %v", err)
+	}
+
+	digest, err := resolveDigest(imgRef, 30*time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.HasPrefix(digest, "sha256:") {
+		t.Errorf("digest = %q, expected sha256: prefix", digest)
+	}
+}
+
+// --- runVerify tests ---
+
+func TestRunVerifyResolveDigestFails(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	opts := &options{
+		configPath:      "",
+		metricsAddr:     "",
+		pluginName:      "",
+		pluginIdx:       "",
+		logLevel:        "",
+		verifyImage:     ":::invalid-ref",
+		verifyNamespace: testNamespaceMain,
+		showVersion:     false,
+		validate:        false,
+	}
+
+	code := runVerify(opts, cfg)
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+}
+
+//nolint:paralleltest // captures os.Stdout
+func TestRunVerifyDisabledAllowed(t *testing.T) {
+	// Push image to in-memory registry, then verify with disabled mode.
+	regHandler := registry.New()
+	server := httptest.NewServer(regHandler)
+
+	t.Cleanup(server.Close)
+
+	addr := strings.TrimPrefix(server.URL, "http://")
+	imgRef := addr + "/verify-test:latest"
+
+	img, err := mutate.ConfigFile(empty.Image, nil)
+	if err != nil {
+		t.Fatalf("creating test image: %v", err)
+	}
+
+	err = crane.Push(img, imgRef, crane.Insecure)
+	if err != nil {
+		t.Fatalf("pushing test image: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	opts := &options{
+		configPath:      "",
+		metricsAddr:     "",
+		pluginName:      "",
+		pluginIdx:       "",
+		logLevel:        "",
+		verifyImage:     imgRef,
+		verifyNamespace: testNamespaceMain,
+		showVersion:     false,
+		validate:        false,
+	}
+
+	out := captureRunVerify(t, opts, cfg)
+
+	if !out.Allowed {
+		t.Error("expected Allowed = true for disabled mode")
+	}
+
+	if out.Image != imgRef {
+		t.Errorf("Image = %q, want %q", out.Image, imgRef)
+	}
+}
+
+//nolint:paralleltest // captures os.Stdout
+func TestRunVerifyEnforceDenied(t *testing.T) {
+	// Push image to in-memory registry, then verify with enforce mode.
+	regHandler := registry.New()
+	server := httptest.NewServer(regHandler)
+
+	t.Cleanup(server.Close)
+
+	addr := strings.TrimPrefix(server.URL, "http://")
+	imgRef := addr + "/deny-test:latest"
+
+	img, err := mutate.ConfigFile(empty.Image, nil)
+	if err != nil {
+		t.Fatalf("creating test image: %v", err)
+	}
+
+	err = crane.Push(img, imgRef, crane.Insecure)
+	if err != nil {
+		t.Fatalf("pushing test image: %v", err)
+	}
+
+	policyDir := t.TempDir()
+	writeValidationPolicy(t, policyDir, "default.json",
+		`{"provenance": {"missingPolicy": "deny"}}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+	cfg.PolicyDir = policyDir
+
+	opts := &options{
+		configPath:      "",
+		metricsAddr:     "",
+		pluginName:      "",
+		pluginIdx:       "",
+		logLevel:        "",
+		verifyImage:     imgRef,
+		verifyNamespace: testNamespaceMain,
+		showVersion:     false,
+		validate:        false,
+	}
+
+	out := captureRunVerify(t, opts, cfg)
+
+	if out.Allowed {
+		t.Error("expected Allowed = false for enforce mode with deny policy")
+	}
+}
+
+func TestRunVerifyVerifierNewError(t *testing.T) {
+	t.Parallel()
+
+	// Create a policy dir with an invalid policy file so that
+	// verifier.New fails when loading policies.
+	policyDir := t.TempDir()
+	writeValidationPolicy(t, policyDir, "bad.json", `{invalid json}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = policyDir
+
+	opts := &options{
+		configPath:      "",
+		metricsAddr:     "",
+		pluginName:      "",
+		pluginIdx:       "",
+		logLevel:        "",
+		verifyImage:     "test:latest",
+		verifyNamespace: testNamespaceMain,
+		showVersion:     false,
+		validate:        false,
+	}
+
+	code := runVerify(opts, cfg)
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+}
+
+//nolint:paralleltest // captures os.Stdout
+func TestRunVerifyWarnModeWithChecks(t *testing.T) {
+	// In warn mode with a deny policy, the verifier returns check results
+	// but allows the image. This exercises the CheckResults loop body.
+	regHandler := registry.New()
+	server := httptest.NewServer(regHandler)
+
+	t.Cleanup(server.Close)
+
+	addr := strings.TrimPrefix(server.URL, "http://")
+	imgRef := addr + "/warn-test:latest"
+
+	img, err := mutate.ConfigFile(empty.Image, nil)
+	if err != nil {
+		t.Fatalf("creating test image: %v", err)
+	}
+
+	err = crane.Push(img, imgRef, crane.Insecure)
+	if err != nil {
+		t.Fatalf("pushing test image: %v", err)
+	}
+
+	policyDir := t.TempDir()
+	writeValidationPolicy(t, policyDir, "default.json",
+		`{"provenance": {"missingPolicy": "deny"}}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = policyDir
+
+	opts := &options{
+		configPath:      "",
+		metricsAddr:     "",
+		pluginName:      "",
+		pluginIdx:       "",
+		logLevel:        "",
+		verifyImage:     imgRef,
+		verifyNamespace: testNamespaceMain,
+		showVersion:     false,
+		validate:        false,
+	}
+
+	out := captureRunVerify(t, opts, cfg)
+
+	if !out.Allowed {
+		t.Error("expected Allowed = true for warn mode")
+	}
+
+	if len(out.CheckResults) == 0 {
+		t.Error("expected non-empty CheckResults for warn mode with deny policy")
+	}
+}
+
+func captureRunVerify(t *testing.T, opts *options, cfg *config.Config) verifyOutput {
+	t.Helper()
+
+	origStdout := os.Stdout
+
+	r, w, pErr := os.Pipe()
+	if pErr != nil {
+		t.Fatalf("creating pipe: %v", pErr)
+	}
+
+	os.Stdout = w
+
+	_ = runVerify(opts, cfg)
+
+	_ = w.Close()
+
+	os.Stdout = origStdout
+
+	var buf bytes.Buffer
+
+	_, _ = io.Copy(&buf, r)
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	lastJSON := findLastJSON(lines)
+
+	if lastJSON == "" {
+		t.Fatalf("no JSON found in output: %s", buf.String())
+	}
+
+	var out verifyOutput
+
+	err := json.Unmarshal([]byte(lastJSON), &out)
+	if err != nil {
+		t.Fatalf("invalid JSON: %v\nraw: %s", err, lastJSON)
+	}
+
+	return out
+}
+
+func findLastJSON(lines []string) string {
+	// outputVerifyResult writes a multi-line JSON object.
+	// Collect lines starting from last '{' to matching '}'.
+	var jsonLines []string
+
+	depth := 0
+
+	for _, line := range slices.Backward(lines) {
+		for _, ch := range line {
+			switch ch {
+			case '}':
+				depth++
+			case '{':
+				depth--
+			}
+		}
+
+		jsonLines = append([]string{line}, jsonLines...)
+
+		if depth == 0 && strings.Contains(line, "{") {
+			break
+		}
+	}
+
+	return strings.Join(jsonLines, "\n")
+}
+
+// --- setupSignals tests ---
+
+func TestSetupSignals(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	if err != nil {
+		t.Fatalf("creating verifier: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	cleanup := setupSignals(ctx, cancel, "", verif, cfg)
+	cleanup()
+}
+
+func TestSetupSignalsWithConfig(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	policyDir := filepath.Join(dir, "policies")
+
+	err := os.Mkdir(policyDir, 0o750)
+	if err != nil {
+		t.Fatalf("creating policy dir: %v", err)
+	}
+
+	writeTestConfig(t, configPath, policyDir, "warn")
+
+	cfg, err := config.LoadFromFile(configPath)
+	if err != nil {
+		t.Fatalf("loading config: %v", err)
+	}
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	if err != nil {
+		t.Fatalf("creating verifier: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	cleanup := setupSignals(ctx, cancel, configPath, verif, cfg)
+	cleanup()
+}
+
+// --- initLogging tests ---
+
+func TestInitLogging(t *testing.T) {
+	t.Parallel()
+
+	// Valid level.
+	initLogging(logLevelDebug)
+
+	// Unrecognized level triggers the warning log path.
+	initLogging("bogus")
+}
+
+// --- setupFileWatch error path tests ---
+
+func TestSetupFileWatchNonexistentConfigPath(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	if err != nil {
+		t.Fatalf("creating verifier: %v", err)
+	}
+
+	// Passing a nonexistent config path causes watcher.Add to fail,
+	// exercising the "Failed to watch config file" warning path.
+	cleanup := setupFileWatch(t.Context(), "/nonexistent/config.toml", "", verif)
+	cleanup()
+}
+
+func TestSetupFileWatchPolicyDirWatchFailure(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+
+	err := os.WriteFile(configPath, []byte("verification = \"disabled\"\n"), 0o600)
+	if err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	if err != nil {
+		t.Fatalf("creating verifier: %v", err)
+	}
+
+	// Config path exists (watcher.Add succeeds), but policy dir does not,
+	// exercising the "Failed to watch policy directory" warning path.
+	cleanup := setupFileWatch(t.Context(), configPath, "/nonexistent/policies", verif)
+	cleanup()
+}
+
+// --- createFetcher tests ---
+
+func TestCreateFetcherWithRateLimit(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.FetchRateLimit = 10.0
+
+	fetcher := createFetcher(cfg)
+
+	if fetcher == nil {
+		t.Fatal("expected non-nil fetcher")
+	}
+}
+
+// --- handleFileEvent tests ---
+
+func TestHandleFileEventChmodIgnored(t *testing.T) {
+	t.Parallel()
+
+	event := fsnotify.Event{Name: testConfigFile, Op: fsnotify.Chmod}
+	existingTimer := time.NewTimer(time.Hour)
+
+	defer existingTimer.Stop()
+
+	result := handleFileEvent(context.Background(), event, existingTimer, testConfigFile, nil)
+
+	if result != existingTimer {
+		t.Error("expected chmod event to return same debounce timer unchanged")
+	}
+}
+
+func TestHandleFileEventDebounceReplacement(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	policyDir := filepath.Join(dir, "policies")
+
+	err := os.Mkdir(policyDir, 0o750)
+	if err != nil {
+		t.Fatalf("creating policy dir: %v", err)
+	}
+
+	writeTestConfig(t, configPath, policyDir, "warn")
+
+	cfg, err := config.LoadFromFile(configPath)
+	if err != nil {
+		t.Fatalf("loading config: %v", err)
+	}
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	if err != nil {
+		t.Fatalf("creating verifier: %v", err)
+	}
+
+	// Create an existing debounce timer that should be stopped.
+	oldTimer := time.NewTimer(time.Hour)
+	defer oldTimer.Stop()
+
+	event := fsnotify.Event{Name: configPath, Op: fsnotify.Write}
+	newTimer := handleFileEvent(context.Background(), event, oldTimer, configPath, verif)
+
+	if newTimer == nil {
+		t.Fatal("expected new timer, got nil")
+	}
+
+	if newTimer == oldTimer {
+		t.Error("expected new timer to be different from old timer")
+	}
+
+	newTimer.Stop()
+}
+
+func TestHandleFileEventNilDebounce(t *testing.T) {
+	t.Parallel()
+
+	event := fsnotify.Event{Name: testConfigFile, Op: fsnotify.Write}
+	result := handleFileEvent(context.Background(), event, nil, testConfigFile, nil)
+
+	if result == nil {
+		t.Fatal("expected new timer, got nil")
+	}
+
+	result.Stop()
+}
+
+// --- runFileWatch tests ---
+
+func TestRunFileWatchContextCancel(t *testing.T) {
+	t.Parallel()
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatalf("creating watcher: %v", err)
+	}
+
+	defer func() { _ = watcher.Close() }()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+
+	err = os.WriteFile(configPath, []byte("verification = \"disabled\"\n"), 0o600)
+	if err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	err = watcher.Add(configPath)
+	if err != nil {
+		t.Fatalf("adding watch: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+
+	go func() {
+		runFileWatch(ctx, watcher, configPath, nil)
+		close(done)
+	}()
+
+	// Write to trigger an event so a debounce timer exists, then cancel.
+	err = os.WriteFile(configPath, []byte("verification = \"disabled\"\n# changed\n"), 0o600)
+	if err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	// Give the event time to be received.
+	time.Sleep(50 * time.Millisecond)
+
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("runFileWatch did not exit after context cancellation")
+	}
+}
+
+func TestRunFileWatchChannelClosed(t *testing.T) {
+	t.Parallel()
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatalf("creating watcher: %v", err)
+	}
+
+	done := make(chan struct{})
+
+	go func() {
+		runFileWatch(context.Background(), watcher, testConfigFile, nil)
+		close(done)
+	}()
+
+	// Close the watcher to close channels, triggering the !ok return paths.
+	err = watcher.Close()
+	if err != nil {
+		t.Fatalf("closing watcher: %v", err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("runFileWatch did not exit after watcher close")
+	}
+}
+
+func TestRunFileWatchErrorChannel(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+
+	err := os.WriteFile(configPath, []byte("verification = \"disabled\"\n"), 0o600)
+	if err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatalf("creating watcher: %v", err)
+	}
+
+	err = watcher.Add(configPath)
+	if err != nil {
+		t.Fatalf("adding watch: %v", err)
+	}
+
+	ctx := t.Context()
+
+	done := make(chan struct{})
+
+	go func() {
+		runFileWatch(ctx, watcher, configPath, nil)
+		close(done)
+	}()
+
+	// Remove the watched file and then close the watcher to trigger error.
+	err = os.Remove(configPath)
+	if err != nil {
+		t.Fatalf("removing config: %v", err)
+	}
+
+	// Give time for the remove event to be processed.
+	time.Sleep(50 * time.Millisecond)
+
+	// Close the watcher to end the loop.
+	_ = watcher.Close()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("runFileWatch did not exit")
 	}
 }

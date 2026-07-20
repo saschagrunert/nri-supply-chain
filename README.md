@@ -99,6 +99,13 @@ The plugin runs as a long-lived process that connects to the container runtime
 via NRI. It exposes Prometheus metrics and supports live config reload via
 SIGHUP.
 
+At startup, the NRI Synchronize callback delivers the list of pods and
+containers already running on the node. The plugin collects their image
+references, deduplicates by digest and namespace, and spawns a background
+goroutine that pre-verifies each image. This warms the cache so that
+verification results are immediately available if those containers are
+restarted, avoiding a cold-cache fetch penalty.
+
 ## Verification Flow
 
 When a container is created, the plugin performs verification in this order:
@@ -494,30 +501,32 @@ already attested the image.
 ## CLI Flags
 
 ```text
---config         Path to TOML config file
---metrics-addr   Metrics HTTP listen address (overrides config)
---plugin-name    NRI plugin name (default: supply-chain)
---plugin-idx     NRI plugin index (default: 10)
---log-level      Log level: debug, info, warn, error (default: info)
---version        Print version and exit
---validate       Validate config and policies, then exit
+--config              Path to TOML config file
+--metrics-addr        Metrics HTTP listen address (overrides config)
+--plugin-name         NRI plugin name (default: supply-chain)
+--plugin-idx          NRI plugin index (default: 10)
+--log-level           Log level: debug, info, warn, error (default: info)
+--version             Print version and exit
+--validate            Validate config and policies, then exit
+--verify-image        Verify a specific image and exit
+--verify-namespace    Namespace for verification (default: default)
 ```
 
 ## Metrics
 
 The plugin exposes Prometheus metrics at the configured address:
 
-| Metric                                           | Type      | Labels           | Description                             |
-| ------------------------------------------------ | --------- | ---------------- | --------------------------------------- |
-| `nri_supply_chain_verification_total`            | Counter   | `type`, `result` | Total verification attempts             |
-| `nri_supply_chain_verification_duration_seconds` | Histogram | `type`           | Verification latency                    |
-| `nri_supply_chain_cache_hits_total`              | Counter   |                  | Cache hits                              |
-| `nri_supply_chain_cache_misses_total`            | Counter   |                  | Cache misses                            |
-| `nri_supply_chain_cache_entries`                 | Gauge     |                  | Current number of cached entries        |
-| `nri_supply_chain_verification_skipped_total`    | Counter   | `reason`         | Containers allowed without verification |
-| `nri_supply_chain_fetch_errors_total`            | Counter   | `type`           | Attestation fetch errors                |
-| `nri_supply_chain_inflight_dedup_total`          | Counter   |                  | Deduplicated inflight verifications     |
-| `nri_supply_chain_circuit_breaker_trips_total`   | Counter   |                  | Circuit breaker open events             |
+| Metric                                           | Type      | Labels                        | Description                             |
+| ------------------------------------------------ | --------- | ----------------------------- | --------------------------------------- |
+| `nri_supply_chain_verification_total`            | Counter   | `type`, `result`, `namespace` | Total verification attempts             |
+| `nri_supply_chain_verification_duration_seconds` | Histogram | `type`                        | Verification latency                    |
+| `nri_supply_chain_cache_hits_total`              | Counter   |                               | Cache hits                              |
+| `nri_supply_chain_cache_misses_total`            | Counter   |                               | Cache misses                            |
+| `nri_supply_chain_cache_entries`                 | Gauge     |                               | Current number of cached entries        |
+| `nri_supply_chain_verification_skipped_total`    | Counter   | `reason`, `namespace`         | Containers allowed without verification |
+| `nri_supply_chain_fetch_errors_total`            | Counter   | `type`, `registry`            | Attestation fetch errors                |
+| `nri_supply_chain_inflight_dedup_total`          | Counter   |                               | Deduplicated inflight verifications     |
+| `nri_supply_chain_circuit_breaker_trips_total`   | Counter   | `registry`                    | Circuit breaker open events             |
 
 ### Health and Readiness Probes
 
@@ -557,6 +566,12 @@ nothing else needs to change, temporarily modify `cache_ttl` (for example,
 change it from `24h` to `23h59m`), send SIGHUP, then change it back and send
 SIGHUP again.
 
+The plugin also watches the config file and policy directory for changes using
+fsnotify. When a file is written, created, or removed, the plugin automatically
+reloads after a 500ms debounce window. Rapid successive writes within that
+window are collapsed into a single reload, so editors that perform atomic saves
+(write-then-rename) do not trigger duplicate reloads.
+
 ### Logging
 
 The plugin outputs structured JSON logs to stderr. Set `--log-level debug` for
@@ -589,19 +604,19 @@ groups:
   - name: nri-supply-chain
     rules:
       - alert: CircuitBreakerTripped
-        expr: increase(nri_supply_chain_circuit_breaker_trips_total[5m]) > 0
+        expr: sum(increase(nri_supply_chain_circuit_breaker_trips_total[5m])) > 0
         for: 5m
         annotations:
           summary: Circuit breaker opened, fetch failures bypass verification.
 
       - alert: HighFetchErrorRate
-        expr: rate(nri_supply_chain_fetch_errors_total[5m]) > 0.1
+        expr: sum(rate(nri_supply_chain_fetch_errors_total[5m])) > 0.1
         for: 5m
         annotations:
           summary: Sustained attestation fetch errors from the registry.
 
       - alert: VerificationFailures
-        expr: rate(nri_supply_chain_verification_total{result="fail"}[5m]) > 0
+        expr: sum(rate(nri_supply_chain_verification_total{result="fail"}[5m])) > 0
         for: 1m
         annotations:
           summary: Verification checks are failing (rejected in enforce, logged in warn).

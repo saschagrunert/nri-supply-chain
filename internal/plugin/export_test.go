@@ -14,7 +14,26 @@
 
 package plugin
 
+import "context"
+
 // ExportResolveImage exposes resolveImage for external tests.
 func ExportResolveImage(annotations map[string]string) (imageRef, digest string) {
 	return resolveImage(annotations)
+}
+
+// ExportPrewarmImage is an exported alias for prewarmImage.
+type ExportPrewarmImage = prewarmImage
+
+// NewExportPrewarmImage creates a prewarmImage for external tests.
+func NewExportPrewarmImage(imageRef, digest, namespace string) ExportPrewarmImage {
+	return prewarmImage{
+		imageRef:  imageRef,
+		digest:    digest,
+		namespace: namespace,
+	}
+}
+
+// ExportPrewarmCache exposes prewarmCache for external tests.
+func (p *Plugin) ExportPrewarmCache(ctx context.Context, images []ExportPrewarmImage) {
+	p.prewarmCache(ctx, images)
 }

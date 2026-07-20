@@ -25,6 +25,7 @@ import (
 
 	"github.com/containerd/nri/pkg/api"
 	"github.com/containerd/nri/pkg/stub"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
@@ -34,6 +35,14 @@ import (
 
 // ErrMissingAnnotations indicates that required CRI-O image annotations are absent.
 var ErrMissingAnnotations = errors.New("missing image annotations")
+
+const prewarmConcurrency = 5
+
+type prewarmImage struct {
+	imageRef  string
+	digest    string
+	namespace string
+}
 
 const (
 	// AnnotationImageName is the CRI-O annotation for the user-specified image reference.
@@ -113,6 +122,58 @@ func (p *Plugin) Configure(
 	return 0, nil
 }
 
+// Synchronize is called by NRI after Configure to deliver the list of
+// running pods and containers. It spawns a background goroutine to
+// pre-verify images from existing containers, warming the cache.
+func (p *Plugin) Synchronize(
+	ctx context.Context, pods []*api.PodSandbox, containers []*api.Container,
+) ([]*api.ContainerUpdate, error) {
+	podNS := make(map[string]string, len(pods))
+
+	for _, pod := range pods {
+		podNS[pod.GetId()] = pod.GetNamespace()
+	}
+
+	var images []prewarmImage
+
+	seen := make(map[string]struct{})
+
+	for _, ctr := range containers {
+		annotations := ctr.GetAnnotations()
+		imageRef, digest := resolveImage(annotations)
+
+		if imageRef == "" || digest == "" {
+			continue
+		}
+
+		namespace := podNS[ctr.GetPodSandboxId()]
+
+		key := digest + "\x00" + namespace
+
+		if _, ok := seen[key]; ok {
+			continue
+		}
+
+		seen[key] = struct{}{}
+
+		images = append(images, prewarmImage{
+			imageRef:  imageRef,
+			digest:    digest,
+			namespace: namespace,
+		})
+	}
+
+	if len(images) == 0 {
+		return nil, nil
+	}
+
+	// Use context.WithoutCancel so the pre-warm goroutine is not
+	// interrupted when the ttrpc request context completes.
+	go p.prewarmCache(context.WithoutCancel(ctx), images)
+
+	return nil, nil
+}
+
 // CreateContainer is called for each new container before it is created.
 // It verifies supply chain attestations and rejects the container on failure.
 func (p *Plugin) CreateContainer(
@@ -146,7 +207,7 @@ func (p *Plugin) CreateContainer(
 			"container", ctr.GetName(),
 		)
 
-		p.metrics.VerificationSkippedTotal.WithLabelValues("missing_annotations").Inc()
+		p.metrics.VerificationSkippedTotal.WithLabelValues("missing_annotations", namespace).Inc()
 
 		return nil, nil, nil
 	}
@@ -171,6 +232,56 @@ func (p *Plugin) CreateContainer(
 	)
 
 	return nil, nil, nil
+}
+
+func (p *Plugin) prewarmCache(ctx context.Context, images []prewarmImage) {
+	total := len(images)
+	slog.Info("Pre-warming cache", "images", total)
+
+	sem := semaphore.NewWeighted(prewarmConcurrency)
+	verified := atomic.Int32{}
+
+	for idx := range images {
+		img := images[idx]
+
+		err := sem.Acquire(ctx, 1)
+		if err != nil {
+			slog.Warn("Pre-warm cache cancelled", "error", err)
+
+			break
+		}
+
+		go func() {
+			defer sem.Release(1)
+
+			_, verifyErr := p.verifier.Verify(ctx, img.imageRef, img.digest, img.namespace)
+			if verifyErr != nil {
+				slog.Debug("Pre-warm verification failed",
+					"image", img.imageRef,
+					"error", verifyErr,
+				)
+			}
+
+			count := verified.Add(1)
+			slog.Debug("Pre-warming cache progress",
+				"verified", count,
+				"total", total,
+			)
+		}()
+	}
+
+	// Wait for all in-flight pre-warm goroutines to finish.
+	err := sem.Acquire(ctx, prewarmConcurrency)
+	if err != nil {
+		slog.Warn("Pre-warm cache wait cancelled", "error", err)
+
+		return
+	}
+
+	slog.Info("Pre-warming cache complete",
+		"verified", verified.Load(),
+		"total", total,
+	)
 }
 
 func resolveImage(annotations map[string]string) (imageRef, digest string) {
