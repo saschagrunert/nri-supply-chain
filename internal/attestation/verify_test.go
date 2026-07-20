@@ -205,9 +205,9 @@ func TestBuildCertificateIdentity(t *testing.T) {
 		},
 		{
 			name:            "single issuer no SAN uses wildcard",
-			issuers:         []string{"https://issuer.example.com"},
+			issuers:         []string{testIssuerExample},
 			sanPatterns:     nil,
-			wantIssuer:      "https://issuer.example.com",
+			wantIssuer:      testIssuerExample,
 			wantIssuerRegex: "",
 			wantSANRegex:    ".*",
 			wantErr:         false,
@@ -256,6 +256,141 @@ func TestBuildCertificateIdentity(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestBuildCertificateIdentityRegexSAN(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		issuers      []string
+		sanPatterns  []string
+		wantSANRegex string
+	}{
+		{
+			name:         "glob wildcard in SAN",
+			issuers:      []string{testIssuerGoogle},
+			sanPatterns:  []string{"*@example.com"},
+			wantSANRegex: `^(?:[^/]*@example\.com)$`,
+		},
+		{
+			name:         "question mark in SAN",
+			issuers:      []string{testIssuerGoogle},
+			sanPatterns:  []string{"user?.example.com"},
+			wantSANRegex: `^(?:user[^/]\.example\.com)$`,
+		},
+		{
+			name:    "multiple regex SAN patterns",
+			issuers: []string{testIssuerGoogle},
+			sanPatterns: []string{
+				"*@corp.example.com",
+				"ci-bot@build.internal",
+			},
+			wantSANRegex: `^(?:[^/]*@corp\.example\.com|ci-bot@build\.internal)$`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			certID, err := attestation.ExportBuildCertificateID(tt.issuers, tt.sanPatterns)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			sanRegex := certID.SubjectAlternativeName.Regexp.String()
+			if sanRegex != tt.wantSANRegex {
+				t.Errorf("expected SAN regex %q, got %q", tt.wantSANRegex, sanRegex)
+			}
+		})
+	}
+}
+
+func TestBuildKeylessConfigTransparencyLog(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name                   string
+		requireTransparencyLog bool
+		wantErr                bool
+	}{
+		{
+			name:                   "transparency log disabled",
+			requireTransparencyLog: false,
+			wantErr:                false,
+		},
+		{
+			name:                   "transparency log enabled",
+			requireTransparencyLog: true,
+			wantErr:                false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cache := attestation.NewTestTrustedRootCacheWithRoot(
+				func() (*root.TrustedRoot, error) {
+					return fakeTrustedRoot(), nil
+				},
+				fakeTrustedRoot(),
+				time.Now(),
+			)
+
+			opts := &attestation.FetchOptions{
+				TrustedIssuers:         []string{testIssuerGoogle},
+				RequireTransparencyLog: tt.requireTransparencyLog,
+			}
+
+			err := attestation.ExportBuildVerificationCfgWithCache(
+				context.Background(), opts, cache,
+			)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestBuildCertificateIdentityMissingSANFallback(t *testing.T) {
+	t.Parallel()
+
+	// When no SAN patterns are provided, the SAN regex should be ".*".
+	certID, err := attestation.ExportBuildCertificateID(
+		[]string{testIssuerExample}, nil,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	sanRegex := certID.SubjectAlternativeName.Regexp.String()
+	if sanRegex != ".*" {
+		t.Errorf("expected SAN regex %q for nil sanPatterns, got %q", ".*", sanRegex)
+	}
+
+	// Same for empty slice.
+	certID, err = attestation.ExportBuildCertificateID(
+		[]string{testIssuerExample}, []string{},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	sanRegex = certID.SubjectAlternativeName.Regexp.String()
+	if sanRegex != ".*" {
+		t.Errorf("expected SAN regex %q for empty sanPatterns, got %q", ".*", sanRegex)
 	}
 }
 

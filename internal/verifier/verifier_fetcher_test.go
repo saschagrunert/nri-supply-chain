@@ -27,6 +27,7 @@ import (
 	"time"
 
 	openvex "github.com/openvex/go-vex/pkg/vex"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
@@ -39,6 +40,7 @@ import (
 
 const (
 	testFetchDigest       = "sha256:abc123"
+	testDefaultNamespace  = "default"
 	policyTrustRunnerJSON = `{
 	"trust": {"builders": [{"id": "https://github.com/actions/runner", "maxLevel": 2}]}
 }`
@@ -565,7 +567,7 @@ func TestVerifyWithFetcher(t *testing.T) {
 			assertNoError(t, err)
 
 			result, err := verif.Verify(
-				context.Background(), "nginx:latest", testFetchDigest, "default",
+				context.Background(), "nginx:latest", testFetchDigest, testDefaultNamespace,
 			)
 
 			if test.wantErr != nil {
@@ -656,8 +658,8 @@ func TestVerifyConcurrentSameDigest(t *testing.T) {
 	const goroutines = 10
 
 	digest := "sha256:" + strings.Repeat("a", 64)
-	imageRef := "docker.io/library/nginx:latest"
-	namespace := "default"
+	imageRef := testDockerNginx
+	namespace := testDefaultNamespace
 
 	var waitGroup sync.WaitGroup
 
@@ -697,9 +699,9 @@ func TestVerifyCircuitBreakerIntegration(t *testing.T) {
 	ver, err := verifier.New(cfg, metrics.New(), fetcher)
 	assertNoError(t, err)
 
-	imageRef := "docker.io/library/nginx:latest"
+	imageRef := testDockerNginx
 	digest := "sha256:" + strings.Repeat("b", 64)
-	namespace := "default"
+	namespace := testDefaultNamespace
 
 	// Trip the circuit breaker with 3 failures.
 	for call := range 3 {
@@ -748,6 +750,138 @@ func TestVerifyCircuitBreakerIntegration(t *testing.T) {
 	}
 }
 
+func TestVerifyCircuitBreakerMetric(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writePolicy(t, dir, "default.json", `{}`)
+
+	fetcher := &failingFetcher{calls: atomic.Int32{}}
+
+	met := metrics.New()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+	cfg.CacheTTL = config.Duration{Duration: 0}
+	cfg.CircuitBreakerThreshold = 2
+	cfg.CircuitBreakerCooldown = config.Duration{Duration: 100 * time.Millisecond}
+
+	ver, err := verifier.New(cfg, met, fetcher)
+	assertNoError(t, err)
+
+	imageRef := testDockerNginx
+	namespace := testDefaultNamespace
+
+	// Trip the circuit breaker with 2 failures (threshold=2).
+	for call := range 2 {
+		digest := "sha256:" + strings.Repeat(string("0123456789abcdef"[call%16]), 64)
+
+		_, err := ver.Verify(context.Background(), imageRef, digest, namespace)
+		assertNoError(t, err)
+	}
+
+	// Verify the circuit breaker trips metric was incremented.
+	tripCount := testutil.ToFloat64(met.CircuitBreakerTripsTotal)
+	if tripCount < 1 {
+		t.Errorf("expected circuit breaker trips metric >= 1, got %v", tripCount)
+	}
+
+	// 3rd call: circuit breaker is open, fetch should be skipped.
+	digest := "sha256:" + strings.Repeat("c", 64)
+
+	result, err := ver.Verify(context.Background(), imageRef, digest, namespace)
+	assertNoError(t, err)
+
+	if !result.Allowed {
+		t.Error("expected allowed=true in warn mode with open breaker")
+	}
+
+	if !strings.Contains(result.Reason, "circuit breaker") {
+		t.Errorf("expected reason to mention circuit breaker, got %q", result.Reason)
+	}
+
+	if got := fetcher.calls.Load(); got != 2 {
+		t.Errorf("expected no fetch calls after breaker trip, got %d total", got)
+	}
+
+	// Wait for cooldown, verify the breaker allows a probe.
+	time.Sleep(150 * time.Millisecond)
+
+	digest = "sha256:" + strings.Repeat("d", 64)
+
+	_, err = ver.Verify(context.Background(), imageRef, digest, namespace)
+	assertNoError(t, err)
+
+	if got := fetcher.calls.Load(); got != 3 {
+		t.Errorf("expected 1 probe call after cooldown, got %d total", got)
+	}
+}
+
+func TestVerifyConcurrentWithReloadModeSwitch(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writePolicy(t, dir, "default.json", `{}`)
+
+	fetcher := &countingFetcher{
+		calls: atomic.Int32{},
+		delay: time.Millisecond,
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+	cfg.CacheTTL = config.Duration{Duration: 0}
+
+	ver, err := verifier.New(cfg, metrics.New(), fetcher)
+	assertNoError(t, err)
+
+	const (
+		numVerifiers = 20
+		numReloaders = 5
+	)
+
+	var waitGroup sync.WaitGroup
+
+	for idx := range numVerifiers {
+		waitGroup.Go(func() {
+			hexChar := string("0123456789abcdef"[idx%16])
+			digest := "sha256:" + strings.Repeat(hexChar, 64)
+
+			for range 10 {
+				_, verifyErr := ver.Verify(
+					context.Background(), testDockerNginx,
+					digest, testDefaultNamespace,
+				)
+				if verifyErr != nil && !errors.Is(verifyErr, verifier.ErrVerificationFailed) {
+					t.Errorf("unexpected verify error: %v", verifyErr)
+				}
+			}
+		})
+	}
+
+	modes := [2]string{config.ModeWarn, config.ModeEnforce}
+
+	for idx := range numReloaders {
+		waitGroup.Go(func() {
+			for range 10 {
+				reloadCfg := config.DefaultConfig()
+				reloadCfg.PolicyDir = dir
+				reloadCfg.CacheTTL = config.Duration{Duration: 0}
+				reloadCfg.Verification = modes[idx%2]
+
+				reloadErr := ver.Reload(context.Background(), reloadCfg)
+				if reloadErr != nil {
+					t.Errorf("unexpected reload error: %v", reloadErr)
+				}
+			}
+		})
+	}
+
+	waitGroup.Wait()
+}
+
 func TestVerifyConcurrentWithReload(t *testing.T) {
 	t.Parallel()
 
@@ -781,8 +915,8 @@ func TestVerifyConcurrentWithReload(t *testing.T) {
 
 			for range 10 {
 				_, verifyErr := ver.Verify(
-					context.Background(), "docker.io/library/nginx:latest",
-					digest, "default",
+					context.Background(), testDockerNginx,
+					digest, testDefaultNamespace,
 				)
 				if verifyErr != nil {
 					t.Errorf("unexpected verify error: %v", verifyErr)
