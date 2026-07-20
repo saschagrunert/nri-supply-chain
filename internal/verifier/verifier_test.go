@@ -594,6 +594,45 @@ func TestReloadPreservesCacheWhenConfigUnchanged(t *testing.T) {
 	}
 }
 
+func TestReloadClearsCacheWhenCacheFailureTTLChanges(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writePolicy(t, dir, "default.json", `{}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+	cfg.CacheTTL = config.Duration{Duration: time.Hour}
+	cfg.CacheFailureTTL = config.Duration{Duration: 5 * time.Minute}
+
+	// Verify that changing only CacheFailureTTL is detected.
+	changed := config.DefaultConfig()
+	changed.Verification = cfg.Verification
+	changed.PolicyDir = cfg.PolicyDir
+	changed.CacheTTL = cfg.CacheTTL
+	changed.CacheFailureTTL = config.Duration{Duration: 10 * time.Minute}
+	changed.FetchFailurePolicy = cfg.FetchFailurePolicy
+	changed.FetchTimeout = cfg.FetchTimeout
+
+	if !verifier.ExportCacheAffectingFieldsChanged(cfg, changed) {
+		t.Error("expected cache invalidation when CacheFailureTTL changes")
+	}
+
+	// Confirm no invalidation when CacheFailureTTL is the same.
+	same := config.DefaultConfig()
+	same.Verification = cfg.Verification
+	same.PolicyDir = cfg.PolicyDir
+	same.CacheTTL = cfg.CacheTTL
+	same.CacheFailureTTL = cfg.CacheFailureTTL
+	same.FetchFailurePolicy = cfg.FetchFailurePolicy
+	same.FetchTimeout = cfg.FetchTimeout
+
+	if verifier.ExportCacheAffectingFieldsChanged(cfg, same) {
+		t.Error("expected no cache invalidation when CacheFailureTTL is unchanged")
+	}
+}
+
 func TestReloadClearsCacheWhenPolicyChanges(t *testing.T) {
 	t.Parallel()
 
@@ -739,6 +778,96 @@ func TestReady(t *testing.T) {
 			t.Errorf("expected reason %q, got %q", "no policies loaded", reason)
 		}
 	})
+}
+
+func TestResultHasFailures(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		result   *types.Result
+		expected bool
+	}{
+		{
+			name: "allowed result has no failures",
+			result: &types.Result{
+				Allowed:      true,
+				Reason:       "ok",
+				CheckResults: nil,
+			},
+			expected: false,
+		},
+		{
+			name: "disallowed result has failures",
+			result: &types.Result{
+				Allowed:      false,
+				Reason:       "denied",
+				CheckResults: nil,
+			},
+			expected: true,
+		},
+		{
+			name: "allowed with failed check has failures",
+			result: &types.Result{
+				Allowed: true,
+				Reason:  "partial",
+				CheckResults: []types.CheckResult{
+					{Type: "slsa", Passed: false, Status: types.StatusFail, Detail: "err"},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "allowed with passing checks has no failures",
+			result: &types.Result{
+				Allowed: true,
+				Reason:  "ok",
+				CheckResults: []types.CheckResult{
+					{Type: "slsa", Passed: true, Status: types.StatusPass, Detail: "ok"},
+				},
+			},
+			expected: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := verifier.ExportResultHasFailures(test.result)
+			if got != test.expected {
+				t.Errorf("expected %v, got %v", test.expected, got)
+			}
+		})
+	}
+}
+
+func TestWarnEnforceDefaultsDoesNotPanicForWarnMode(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+
+	policies := map[string]*policy.Policy{
+		"": {},
+	}
+
+	// Should not panic; no warnings emitted for non-enforce mode.
+	verifier.ExportWarnEnforceDefaults(cfg, policies)
+}
+
+func TestWarnEnforceDefaultsEmitsForEnforceMode(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+
+	policies := map[string]*policy.Policy{
+		"": {},
+	}
+
+	// Should not panic; warnings are emitted but we just verify it runs.
+	verifier.ExportWarnEnforceDefaults(cfg, policies)
 }
 
 func TestEnforcing(t *testing.T) {

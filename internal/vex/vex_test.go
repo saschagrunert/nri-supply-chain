@@ -28,9 +28,11 @@ import (
 )
 
 const (
-	testImageRef   = "docker.io/library/nginx:latest"
-	testDigest     = "sha256:abc123def456"
-	testVEXContext = "https://openvex.dev/ns/v0.2.0"
+	testImageRef      = "docker.io/library/nginx:latest"
+	testDigest        = "sha256:abc123def456"
+	testVEXContext    = "https://openvex.dev/ns/v0.2.0"
+	testInTotoType    = "https://in-toto.io/Statement/v1"
+	testPredicateType = "https://openvex.dev/ns"
 )
 
 type inTotoWrapper struct {
@@ -71,14 +73,14 @@ func wrapInToto(t *testing.T, doc any, digest string) []byte {
 	predBytes := mustMarshal(t, doc)
 
 	wrapper := inTotoWrapper{
-		Type: "https://in-toto.io/Statement/v1",
+		Type: testInTotoType,
 		Subject: []inTotoSubj{
 			{
 				Name:   "test-image",
 				Digest: map[string]string{"sha256": digest[len("sha256:"):]},
 			},
 		},
-		PredicateType: "https://openvex.dev/ns",
+		PredicateType: testPredicateType,
 		Predicate:     predBytes,
 	}
 
@@ -263,8 +265,12 @@ func TestVerify(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
+			// Wrap VEX docs in in-toto format with a subject to satisfy
+			// subject binding requirements when digest is provided.
+			att := wrapInToto(t, test.doc, testDigest)
+
 			result, err := vex.Verify(
-				context.Background(), mustMarshal(t, test.doc),
+				context.Background(), att,
 				test.pol, testImageRef, testDigest,
 			)
 			if err != nil {
@@ -301,7 +307,7 @@ func TestVerifyCheckType(t *testing.T) {
 	doc := validVEXDoc(openvex.StatusAffected)
 
 	result, err := vex.Verify(
-		context.Background(), mustMarshal(t, doc),
+		context.Background(), wrapInToto(t, doc, testDigest),
 		&policy.Policy{}, testImageRef, testDigest,
 	)
 	if err != nil {
@@ -340,7 +346,7 @@ func TestVerifyPURLSingleSegmentRepo(t *testing.T) {
 	}
 
 	result, err := vex.Verify(
-		context.Background(), mustMarshal(t, doc),
+		context.Background(), wrapInToto(t, doc, digest),
 		&policy.Policy{}, imageRef, digest,
 	)
 	if err != nil {
@@ -406,7 +412,7 @@ func TestVerifyMultiple(t *testing.T) {
 
 			attestations := make([][]byte, len(test.docs))
 			for idx := range test.docs {
-				attestations[idx] = mustMarshal(t, test.docs[idx])
+				attestations[idx] = wrapInToto(t, test.docs[idx], testDigest)
 			}
 
 			result, err := vex.VerifyMultiple(
@@ -436,7 +442,7 @@ func TestVerifyMultipleSkipsInvalid(t *testing.T) {
 
 	attestations := [][]byte{
 		[]byte("invalid json"),
-		mustMarshal(t, goodDoc),
+		wrapInToto(t, goodDoc, testDigest),
 	}
 
 	result, err := vex.VerifyMultiple(
@@ -508,31 +514,87 @@ func TestVerifyInTotoWrapped(t *testing.T) {
 	}
 }
 
-func TestVerifyInTotoEmptySubject(t *testing.T) {
+func TestVerifyInTotoEmptySubjectWithDigest(t *testing.T) {
 	t.Parallel()
 
 	doc := validVEXDoc(openvex.StatusFixed)
 	predBytes := mustMarshal(t, doc)
 
 	wrapper := inTotoWrapper{
-		Type:          "https://in-toto.io/Statement/v1",
+		Type:          testInTotoType,
 		Subject:       []inTotoSubj{},
-		PredicateType: "https://openvex.dev/ns",
+		PredicateType: testPredicateType,
 		Predicate:     predBytes,
 	}
 
 	att := mustMarshal(t, wrapper)
 
-	result, err := vex.Verify(
+	_, err := vex.Verify(
 		context.Background(), att,
 		&policy.Policy{}, testImageRef, testDigest,
+	)
+	if !errors.Is(err, vex.ErrEmptySubjects) {
+		t.Errorf(
+			"expected ErrEmptySubjects when digest is available but subjects are empty, got: %v",
+			err,
+		)
+	}
+}
+
+func TestVerifyInTotoEmptySubjectWithoutDigest(t *testing.T) {
+	t.Parallel()
+
+	doc := validVEXDoc(openvex.StatusFixed)
+	predBytes := mustMarshal(t, doc)
+
+	wrapper := inTotoWrapper{
+		Type:          testInTotoType,
+		Subject:       []inTotoSubj{},
+		PredicateType: testPredicateType,
+		Predicate:     predBytes,
+	}
+
+	att := mustMarshal(t, wrapper)
+
+	// When no digest is available, empty subjects should be allowed (skip subject binding).
+	result, err := vex.Verify(
+		context.Background(), att,
+		&policy.Policy{}, testImageRef, "",
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	if !result.Passed {
-		t.Errorf("expected pass for empty subject (no enforcement), got: %s", result.Detail)
+		t.Errorf("expected pass for empty subject without digest, got: %s", result.Detail)
+	}
+}
+
+func TestVerifyInTotoNilSubjectWithDigest(t *testing.T) {
+	t.Parallel()
+
+	doc := validVEXDoc(openvex.StatusFixed)
+	predBytes := mustMarshal(t, doc)
+
+	wrapper := struct {
+		Type          string          `json:"_type"` //nolint:tagliatelle // In-toto spec field name.
+		PredicateType string          `json:"predicateType"`
+		Predicate     json.RawMessage `json:"predicate"`
+	}{
+		Type:          testInTotoType,
+		PredicateType: testPredicateType,
+		Predicate:     predBytes,
+	}
+
+	att := mustMarshal(t, wrapper)
+
+	// nil subject with a digest available should be rejected
+	_, err := vex.Verify(
+		context.Background(), att,
+		&policy.Policy{}, testImageRef, testDigest,
+	)
+	if !errors.Is(err, vex.ErrEmptySubjects) {
+		t.Errorf("expected ErrEmptySubjects for nil subjects with digest, got: %v", err)
 	}
 }
 

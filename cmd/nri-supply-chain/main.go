@@ -227,12 +227,51 @@ func runValidation(cfg *config.Config) int {
 		}
 	}
 
+	if cfg.Verification == config.ModeEnforce {
+		warnValidationEnforceDefaults(cfg, policies)
+	}
+
 	slog.Info("Validation passed",
 		"mode", cfg.Verification,
 		"policies", len(policies),
 	)
 
 	return 0
+}
+
+func warnValidationEnforceDefaults(cfg *config.Config, policies map[string]*policy.Policy) {
+	if cfg.FetchFailurePolicy != policy.ActionDeny {
+		slog.Warn("enforce mode with fetch_failure_policy="+cfg.FetchFailurePolicy+
+			" allows containers on fetch failure; consider setting fetch_failure_policy=deny",
+			"fetch_failure_policy", cfg.FetchFailurePolicy,
+		)
+	}
+
+	for ns, pol := range policies {
+		label := ns
+		if label == "" {
+			label = "default"
+		}
+
+		if pol.ProvenanceMissingPolicy() == policy.ActionAllow {
+			slog.Warn("enforce mode policy has provenance missingPolicy=allow; "+
+				"containers without provenance will be allowed",
+				"policy", label,
+			)
+		}
+
+		vexPolicy := policy.ActionAllow
+		if pol.VEX != nil && pol.VEX.MissingPolicy != "" {
+			vexPolicy = pol.VEX.MissingPolicy
+		}
+
+		if vexPolicy == policy.ActionAllow {
+			slog.Warn("enforce mode policy has VEX missingPolicy=allow; "+
+				"containers without VEX attestations will be allowed",
+				"policy", label,
+			)
+		}
+	}
 }
 
 func createFetcher(cfg *config.Config) *attestation.OCIFetcher {

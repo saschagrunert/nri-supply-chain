@@ -392,6 +392,59 @@ func TestCacheOverwriteAtCapacityKeepsGauge(t *testing.T) {
 	}
 }
 
+func TestCacheSetWithTTLOverride(t *testing.T) {
+	t.Parallel()
+
+	testCache := cache.New(time.Hour)
+
+	// Set with a short TTL override.
+	testCache.Set("sha256:fail", "default", &types.Result{
+		Allowed: false, Reason: "fetch failed", CheckResults: nil,
+	}, 10*time.Millisecond)
+
+	// Set with normal TTL (no override).
+	testCache.Set("sha256:pass", "default", &types.Result{
+		Allowed: true, Reason: "ok", CheckResults: nil,
+	})
+
+	// Both should be present immediately.
+	if got := testCache.Get("sha256:fail", "default"); got == nil {
+		t.Error("expected failure entry to be present immediately")
+	}
+
+	if got := testCache.Get("sha256:pass", "default"); got == nil {
+		t.Error("expected pass entry to be present immediately")
+	}
+
+	// Wait for the short TTL to expire.
+	time.Sleep(20 * time.Millisecond)
+
+	// Failure entry should have expired.
+	if got := testCache.Get("sha256:fail", "default"); got != nil {
+		t.Error("expected failure entry to have expired with short TTL override")
+	}
+
+	// Success entry should still be present.
+	if got := testCache.Get("sha256:pass", "default"); got == nil {
+		t.Error("expected pass entry to still be present with normal TTL")
+	}
+}
+
+func TestCacheSetZeroTTLOverrideUsesDefault(t *testing.T) {
+	t.Parallel()
+
+	testCache := cache.New(time.Hour)
+
+	// Zero override should use the default TTL.
+	testCache.Set("sha256:abc", "default", &types.Result{
+		Allowed: true, Reason: "ok", CheckResults: nil,
+	}, 0)
+
+	if got := testCache.Get("sha256:abc", "default"); got == nil {
+		t.Error("expected entry to be present when zero TTL override falls back to default")
+	}
+}
+
 func TestCacheClear(t *testing.T) {
 	t.Parallel()
 

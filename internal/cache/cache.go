@@ -164,8 +164,16 @@ func (c *Cache) Get(digest, namespace string) *types.Result {
 }
 
 // Set stores a verification result in the cache.
-func (c *Cache) Set(digest, namespace string, result *types.Result) {
-	if c.ttl <= 0 {
+// An optional ttlOverride can be provided to use a different TTL for this entry
+// (e.g., a shorter TTL for failure results).
+func (c *Cache) Set(digest, namespace string, result *types.Result, ttlOverride ...time.Duration) {
+	effectiveTTL := c.ttl
+
+	if len(ttlOverride) > 0 && ttlOverride[0] > 0 {
+		effectiveTTL = ttlOverride[0]
+	}
+
+	if effectiveTTL <= 0 {
 		return
 	}
 
@@ -182,7 +190,7 @@ func (c *Cache) Set(digest, namespace string, result *types.Result) {
 		}
 	}
 
-	expiresAt := time.Now().Add(c.ttl + jitter(c.ttl))
+	expiresAt := time.Now().Add(effectiveTTL + jitter(effectiveTTL))
 
 	c.entries[cacheKey] = entry{
 		result:    result,

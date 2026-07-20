@@ -34,6 +34,7 @@ func TestDefaultConfig(t *testing.T) {
 	assertEqual(t, 30*time.Second, cfg.FetchTimeout.Duration)
 	assertEqual(t, policy.ActionWarn, cfg.FetchFailurePolicy)
 	assertEqual(t, 24*time.Hour, cfg.CacheTTL.Duration)
+	assertEqual(t, 5*time.Minute, cfg.CacheFailureTTL.Duration)
 	assertEqual(t, "/etc/nri-supply-chain/policies", cfg.PolicyDir)
 	assertEqual(t, "127.0.0.1:9090", cfg.MetricsAddr)
 }
@@ -477,6 +478,43 @@ func TestConfigValidateCircuitBreakerCooldown(t *testing.T) {
 		if !errors.Is(err, config.ErrCircuitBreakerCooldown) {
 			t.Errorf("expected ErrCircuitBreakerCooldown, got %v", err)
 		}
+	})
+}
+
+func TestConfigValidateCacheFailureTTL(t *testing.T) {
+	t.Parallel()
+
+	t.Run("negative cache failure TTL rejected", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.CacheFailureTTL = config.Duration{Duration: -1 * time.Second}
+
+		err := cfg.Validate()
+		if !errors.Is(err, config.ErrCacheFailureTTLNegative) {
+			t.Errorf("expected ErrCacheFailureTTLNegative, got %v", err)
+		}
+	})
+
+	t.Run("zero cache failure TTL is valid (disables short caching)", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.CacheFailureTTL = config.Duration{Duration: 0}
+
+		assertNoError(t, cfg.Validate())
+	})
+
+	t.Run("positive cache failure TTL is valid", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.CacheFailureTTL = config.Duration{Duration: 5 * time.Minute}
+
+		assertNoError(t, cfg.Validate())
 	})
 }
 

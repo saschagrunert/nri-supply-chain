@@ -41,6 +41,8 @@ import (
 const (
 	testFetchDigest       = "sha256:abc123"
 	testDefaultNamespace  = "default"
+	testInTotoStatementV1 = "https://in-toto.io/Statement/v1"
+	testOpenVEXPredicate  = "https://openvex.dev/ns"
 	policyTrustRunnerJSON = `{
 	"trust": {"builders": [{"id": "https://github.com/actions/runner", "maxLevel": 2}]}
 }`
@@ -79,7 +81,7 @@ func validSLSAPayload(t *testing.T) []byte {
 	t.Helper()
 
 	stmt := slsa.Statement{
-		Type: "https://in-toto.io/Statement/v1",
+		Type: testInTotoStatementV1,
 		Subject: []slsa.Subject{
 			{
 				Name:   "nginx",
@@ -113,7 +115,7 @@ func validVSAPayload(t *testing.T, result string) []byte {
 	t.Helper()
 
 	stmt := vsa.Statement{
-		Type:          "https://in-toto.io/Statement/v1",
+		Type:          testInTotoStatementV1,
 		PredicateType: "https://slsa.dev/verification_summary/v1",
 		Predicate: vsa.Predicate{
 			Verifier: vsa.Verifier{
@@ -150,7 +152,34 @@ func validVEXPayload(t *testing.T, status openvex.Status) []byte {
 		},
 	}
 
-	return marshalJSON(t, doc)
+	predBytes := marshalJSON(t, doc)
+
+	// Wrap in in-toto format with a subject so that VEX subject binding
+	// does not reject the payload when a digest is available.
+	wrapper := struct {
+		Type    string `json:"_type"` //nolint:tagliatelle // In-toto spec field name.
+		Subject []struct {
+			Name   string            `json:"name"`
+			Digest map[string]string `json:"digest"`
+		} `json:"subject"`
+		PredicateType string          `json:"predicateType"`
+		Predicate     json.RawMessage `json:"predicate"`
+	}{
+		Type: testInTotoStatementV1,
+		Subject: []struct {
+			Name   string            `json:"name"`
+			Digest map[string]string `json:"digest"`
+		}{
+			{
+				Name:   "nginx",
+				Digest: map[string]string{"sha256": testFetchDigest[len("sha256:"):]},
+			},
+		},
+		PredicateType: testOpenVEXPredicate,
+		Predicate:     predBytes,
+	}
+
+	return marshalJSON(t, wrapper)
 }
 
 func TestVerifyWithFetcher(t *testing.T) {
@@ -604,6 +633,51 @@ func createTempKeyFile(t *testing.T, dir string) string {
 	}
 
 	return keyPath
+}
+
+func TestVerifyCacheFailureTTL(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writePolicy(t, dir, "default.json", `{
+		"trust": {"builders": [{"id": "test", "maxLevel": 2}]},
+		"provenance": {"missingPolicy": "deny"}
+	}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+	cfg.CacheTTL = config.Duration{Duration: time.Hour}
+	cfg.CacheFailureTTL = config.Duration{Duration: 10 * time.Millisecond}
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	assertNoError(t, err)
+
+	// First call: provenance missing with deny policy triggers a failure result.
+	// In warn mode it's allowed, but the underlying result has failures,
+	// so it should be cached with the short failure TTL.
+	result1, err := verif.Verify(
+		context.Background(), "nginx:latest", "sha256:failttl", "default",
+	)
+	assertNoError(t, err)
+
+	if !result1.Allowed {
+		t.Fatal("expected allowed=true in warn mode")
+	}
+
+	// Wait for the failure TTL to expire.
+	time.Sleep(20 * time.Millisecond)
+
+	// Second call: cache should have expired due to the short failure TTL.
+	// The result should still be computed fresh (same outcome in this case).
+	result2, err := verif.Verify(
+		context.Background(), "nginx:latest", "sha256:failttl", "default",
+	)
+	assertNoError(t, err)
+
+	if !result2.Allowed {
+		t.Fatal("expected allowed=true in warn mode on second call")
+	}
 }
 
 type countingFetcher struct {

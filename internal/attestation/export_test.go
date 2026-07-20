@@ -270,6 +270,13 @@ func ExportIsTransientError(err error) bool {
 	return isTransientError(err)
 }
 
+// ExportArtifactPolicyNonNil calls artifactPolicy and returns true if the
+// result is non-nil. This verifies that the function handles all digest
+// formats without panicking and always returns a usable policy option.
+func ExportArtifactPolicyNonNil(digest string) bool {
+	return artifactPolicy(digest) != nil
+}
+
 // NewTestMessageSignatureBundle creates a bundle with a message signature (no DSSE envelope).
 func NewTestMessageSignatureBundle() *bundle.Bundle {
 	protoBundle := &protobundle.Bundle{

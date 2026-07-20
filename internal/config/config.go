@@ -38,6 +38,7 @@ const (
 
 	defaultFetchTimeout            = 30 * time.Second
 	defaultCacheTTL                = 24 * time.Hour
+	defaultCacheFailureTTL         = 5 * time.Minute
 	defaultCircuitBreakerThreshold = 5
 	defaultCircuitBreakerCooldown  = 30 * time.Second
 )
@@ -69,6 +70,9 @@ var (
 
 	// ErrFetchRateLimitNegative indicates a negative fetch rate limit.
 	ErrFetchRateLimitNegative = errors.New("fetch_rate_limit must be non-negative")
+
+	// ErrCacheFailureTTLNegative indicates a negative cache failure TTL.
+	ErrCacheFailureTTLNegative = errors.New("cache_failure_ttl must be non-negative")
 
 	// ErrInvalidMetricsAddr indicates the metrics address is not a valid host:port.
 	ErrInvalidMetricsAddr = errors.New("invalid metrics_addr")
@@ -108,6 +112,10 @@ type Config struct {
 	FetchFailurePolicy string `toml:"fetch_failure_policy"`
 	// CacheTTL is how long verification results are cached per image digest + namespace.
 	CacheTTL Duration `toml:"cache_ttl"`
+	// CacheFailureTTL is how long failed verification results are cached.
+	// Defaults to 5m so that transient failures are retried sooner than the
+	// full CacheTTL (default 24h).
+	CacheFailureTTL Duration `toml:"cache_failure_ttl"`
 	// PolicyDir is the path to the directory containing JSON policy files.
 	PolicyDir string `toml:"policy_dir"`
 	// MetricsAddr is the listen address for the Prometheus metrics HTTP server.
@@ -130,6 +138,7 @@ func DefaultConfig() *Config {
 		FetchTimeout:            Duration{Duration: defaultFetchTimeout},
 		FetchFailurePolicy:      policy.ActionWarn,
 		CacheTTL:                Duration{Duration: defaultCacheTTL},
+		CacheFailureTTL:         Duration{Duration: defaultCacheFailureTTL},
 		PolicyDir:               "/etc/nri-supply-chain/policies",
 		MetricsAddr:             "127.0.0.1:9090",
 		CircuitBreakerThreshold: defaultCircuitBreakerThreshold,
@@ -200,6 +209,10 @@ func (c *Config) validateFetchAndCache() error {
 
 	if c.CacheTTL.Duration < 0 {
 		return fmt.Errorf("%w: got %s", ErrCacheTTLNegative, c.CacheTTL.Duration)
+	}
+
+	if c.CacheFailureTTL.Duration < 0 {
+		return fmt.Errorf("%w: got %s", ErrCacheFailureTTLNegative, c.CacheFailureTTL.Duration)
 	}
 
 	if c.PolicyDir == "" {

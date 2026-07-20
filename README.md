@@ -110,7 +110,9 @@ When a container is created, the plugin performs verification in this order:
    takes precedence. If CRI-O does not provide both, a complete containerd
    pair (`io.kubernetes.cri.image-name` + `io.kubernetes.cri.image-ref`) is
    used. If neither runtime provides a complete pair, available annotations
-   from either source are combined.
+   from either source are combined. Malformed digests from CRI-O annotations
+   are validated and rejected; only well-formed `algorithm:hex` digests are
+   accepted.
 
 2. **Policy resolution**: Looks up `<namespace>.json` in the policy directory.
    Falls back to `default.json` if no namespace-specific policy exists.
@@ -186,6 +188,10 @@ Status handling:
 Product matching operates at the image level using digest comparison and PURL
 (`pkg:oci/...`) matching.
 
+VEX statements with empty subjects are rejected when an image digest is
+available. This prevents attestations that lack subject binding from bypassing
+digest verification.
+
 When multiple VEX documents exist, the most restrictive result wins: any
 `affected` status causes failure.
 
@@ -228,6 +234,7 @@ verification = "warn"
 fetch_timeout = "30s"
 fetch_failure_policy = "warn"
 cache_ttl = "24h"
+cache_failure_ttl = "5m"
 policy_dir = "/etc/nri-supply-chain/policies"
 metrics_addr = "127.0.0.1:9090"
 circuit_breaker_threshold = 5
@@ -241,6 +248,7 @@ circuit_breaker_cooldown = "30s"
 | `fetch_timeout`             | `30s`                            | Per-fetch timeout for retrieving attestations from the registry    |
 | `fetch_failure_policy`      | `warn`                           | Behavior when attestation fetch fails: `allow`, `warn`, `deny`     |
 | `cache_ttl`                 | `24h`                            | TTL for cached verification results (`0s` disables caching)        |
+| `cache_failure_ttl`         | `5m`                             | TTL for cached failure results, so transient errors retry sooner   |
 | `policy_dir`                | `/etc/nri-supply-chain/policies` | Directory containing JSON policy files                             |
 | `metrics_addr`              | `127.0.0.1:9090`                 | Prometheus metrics HTTP listen address                             |
 | `circuit_breaker_threshold` | `5`                              | Consecutive fetch failures before a per-host circuit breaker opens |
@@ -596,6 +604,13 @@ registry, all subsequent fetch attempts to that registry short-circuit to
 container creation. Note that `"deny"` means registry outages will prevent all
 new containers from starting, trading availability for security. Choose based on
 your threat model.
+
+**Enforce-mode startup warnings.** When running in `enforce` mode, the plugin
+logs warnings at startup if permissive defaults are still in place. It warns
+when `fetch_failure_policy` is `warn` or `allow` (since fetch failures would let
+containers through), and when any policy has `provenance.missingPolicy` or
+`vex.missingPolicy` set to `allow`. Review these warnings and tighten the
+settings before relying on enforce mode in production.
 
 **SAN patterns for keyless verification.** In `enforce` mode, `trust.sanPatterns`
 is required when `trust.issuers` is configured. The plugin rejects the policy at
