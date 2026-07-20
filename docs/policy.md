@@ -32,7 +32,8 @@ patterns for the nri-supply-chain plugin.
   - [Gradual rollout](#gradual-rollout)
   - [VSA-accelerated verification](#vsa-accelerated-verification)
   - [Multi-verification mode](#multi-verification-mode)
-  <!-- /toc -->
+
+<!-- /toc -->
 
 ## Overview
 
@@ -389,7 +390,8 @@ Example: `default.json` requires provenance, but `dev.json` allows everything:
 }
 ```
 
-**`dev.json`** (overrides for the `dev` namespace):
+**`dev.json`** (full replacement for the `dev` namespace, trust roots from
+`default.json` do not apply):
 
 ```json
 {
