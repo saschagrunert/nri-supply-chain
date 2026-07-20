@@ -301,6 +301,50 @@ EOF
 	[[ "$output" == *"trailing"* ]]
 }
 
+@test "keyless policy with issuers and SAN patterns accepted by validate" {
+	mkdir -p "$TEST_DIR/policies"
+	cat >"$TEST_DIR/policies/default.json" <<EOF
+{
+    "trust": {
+        "issuers": [
+            "https://accounts.google.com",
+            "https://token.actions.githubusercontent.com"
+        ],
+        "sanPatterns": ["*@example.com", "ci-bot@build.internal"]
+    },
+    "signatures": {
+        "requireTransparencyLog": true
+    }
+}
+EOF
+	cat >"$TEST_DIR/config.toml" <<EOF
+verification = "enforce"
+policy_dir = "$TEST_DIR/policies"
+EOF
+	run_binary --config "$TEST_DIR/config.toml" --validate
+	[[ "$status" -eq 0 ]]
+}
+
+@test "keyless policy in warn mode accepted without SAN patterns" {
+	mkdir -p "$TEST_DIR/policies"
+	cat >"$TEST_DIR/policies/default.json" <<EOF
+{
+    "trust": {
+        "issuers": ["https://accounts.google.com"]
+    },
+    "signatures": {
+        "requireTransparencyLog": false
+    }
+}
+EOF
+	cat >"$TEST_DIR/config.toml" <<EOF
+verification = "warn"
+policy_dir = "$TEST_DIR/policies"
+EOF
+	run_binary --config "$TEST_DIR/config.toml" --validate
+	[[ "$status" -eq 0 ]]
+}
+
 @test "policy with VSA configuration" {
 	mkdir -p "$TEST_DIR/policies"
 	cat >"$TEST_DIR/policies/default.json" <<EOF

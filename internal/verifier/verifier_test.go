@@ -24,6 +24,8 @@ import (
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
+	"github.com/saschagrunert/nri-supply-chain/internal/policy"
+	"github.com/saschagrunert/nri-supply-chain/internal/types"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
@@ -764,6 +766,76 @@ func TestEnforcing(t *testing.T) {
 
 			if got := verif.Enforcing(); got != test.expected {
 				t.Errorf("expected %v, got %v", test.expected, got)
+			}
+		})
+	}
+}
+
+func TestHandleMissingAttestationUnknownPolicy(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		pol        string
+		wantPassed bool
+		wantStatus string
+	}{
+		{
+			name:       "allow policy passes",
+			pol:        policy.ActionAllow,
+			wantPassed: true,
+			wantStatus: types.StatusPass,
+		},
+		{
+			name:       "warn policy passes with warn status",
+			pol:        policy.ActionWarn,
+			wantPassed: true,
+			wantStatus: types.StatusWarn,
+		},
+		{
+			name:       "deny policy fails",
+			pol:        policy.ActionDeny,
+			wantPassed: false,
+			wantStatus: types.StatusFail,
+		},
+		{
+			name:       "unknown policy defaults to deny",
+			pol:        "invalid-value",
+			wantPassed: false,
+			wantStatus: types.StatusFail,
+		},
+		{
+			name:       "empty policy defaults to deny",
+			pol:        "",
+			wantPassed: false,
+			wantStatus: types.StatusFail,
+		},
+		{
+			name:       "random string defaults to deny",
+			pol:        "something-unexpected",
+			wantPassed: false,
+			wantStatus: types.StatusFail,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := verifier.ExportHandleMissingAttestation(
+				test.pol, "test_check", "test detail",
+			)
+
+			if result.Passed != test.wantPassed {
+				t.Errorf("expected Passed=%v, got %v", test.wantPassed, result.Passed)
+			}
+
+			if result.Status != test.wantStatus {
+				t.Errorf("expected Status=%q, got %q", test.wantStatus, result.Status)
+			}
+
+			if result.Type != "test_check" {
+				t.Errorf("expected Type=%q, got %q", "test_check", result.Type)
 			}
 		})
 	}

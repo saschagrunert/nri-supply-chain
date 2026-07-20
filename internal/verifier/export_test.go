@@ -14,7 +14,14 @@
 
 package verifier
 
+import "github.com/saschagrunert/nri-supply-chain/internal/types"
+
 // ExportBuildDigestRef exposes buildDigestRef for external tests.
 func ExportBuildDigestRef(imageRef, digest string) string {
 	return buildDigestRef(imageRef, digest)
+}
+
+// ExportHandleMissingAttestation exposes handleMissingAttestation for external tests.
+func ExportHandleMissingAttestation(pol, checkType, detail string) *types.CheckResult {
+	return handleMissingAttestation(pol, checkType, detail)
 }

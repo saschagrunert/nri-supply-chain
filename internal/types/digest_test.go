@@ -16,6 +16,7 @@ package types_test
 
 import (
 	"testing"
+	"unicode/utf8"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
@@ -59,4 +60,39 @@ func TestParseDigest(t *testing.T) {
 			}
 		})
 	}
+}
+
+func FuzzParseDigest(f *testing.F) {
+	f.Add("sha256:abc123")
+	f.Add("")
+	f.Add(":")
+	f.Add("sha256:")
+	f.Add(":abc")
+	f.Add("no-colon")
+	f.Add("sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890")
+
+	f.Fuzz(func(t *testing.T, input string) {
+		if !utf8.ValidString(input) {
+			return
+		}
+
+		algo, hash := types.ParseDigest(input)
+		if algo != "" {
+			if hash == "" {
+				t.Error("non-empty algo with empty hash")
+			}
+
+			for _, c := range algo {
+				if (c < 'a' || c > 'z') && (c < '0' || c > '9') {
+					t.Errorf("algo contains invalid character: %q", string(c))
+				}
+			}
+
+			for _, c := range hash {
+				if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+					t.Errorf("hash contains invalid character: %q", string(c))
+				}
+			}
+		}
+	})
 }

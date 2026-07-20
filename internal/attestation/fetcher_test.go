@@ -43,6 +43,7 @@ const (
 	testSANUser       = "user@example.com"
 	testFetchImageRef = "docker.io/library/nginx:latest"
 	testFetchDigest   = "sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abcd"
+	testIssuerExample = "https://issuer.example.com"
 )
 
 var (
@@ -1218,6 +1219,112 @@ func TestFetchRetriesOnTransientError(t *testing.T) {
 
 	if calls.Load() < 2 {
 		t.Errorf("expected at least 2 calls to referrers, got %d", calls.Load())
+	}
+}
+
+func TestFetchExhaustsAllRetries(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+
+	ref := "docker.io/library/nginx@sha256:" + strings.Repeat("a", 64)
+	digest := "sha256:" + strings.Repeat("a", 64)
+
+	// Every call returns a transient error (503), so all retries are exhausted.
+	fetcher := attestation.NewTestOCIFetcherFull(
+		func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
+			return nil, errNotReached
+		},
+		func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+			return nil, &transport.Error{StatusCode: http.StatusNotFound}
+		},
+		func(_ name.Digest, _ ...remote.Option) (ociV1.ImageIndex, error) {
+			calls.Add(1)
+
+			return nil, &transport.Error{StatusCode: http.StatusServiceUnavailable}
+		},
+	)
+
+	opts := &attestation.FetchOptions{Timeout: 10 * time.Second}
+
+	_, err := fetcher.Fetch(context.Background(), ref, digest, opts)
+	if err == nil {
+		t.Fatal("expected error when all retries are exhausted")
+	}
+
+	if !strings.Contains(err.Error(), "listing referrers") {
+		t.Errorf("expected listing referrers error, got: %v", err)
+	}
+
+	// fetchMaxRetries is 2, so we expect 3 calls (initial + 2 retries).
+	if got := calls.Load(); got != 3 {
+		t.Errorf("expected 3 calls (initial + 2 retries), got %d", got)
+	}
+}
+
+func TestSetRateLimit(t *testing.T) {
+	t.Parallel()
+
+	t.Run("positive rate", func(t *testing.T) {
+		t.Parallel()
+
+		fetcher := attestation.NewOCIFetcherWithVerifier(
+			func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
+				return nil, nil
+			},
+		)
+
+		// Should not panic.
+		fetcher.SetRateLimit(10.0)
+	})
+
+	t.Run("zero rate disables limiter", func(t *testing.T) {
+		t.Parallel()
+
+		fetcher := attestation.NewOCIFetcherWithVerifier(
+			func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
+				return nil, nil
+			},
+		)
+
+		fetcher.SetRateLimit(10.0)
+		fetcher.SetRateLimit(0)
+	})
+
+	t.Run("negative rate disables limiter", func(t *testing.T) {
+		t.Parallel()
+
+		fetcher := attestation.NewOCIFetcherWithVerifier(
+			func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
+				return nil, nil
+			},
+		)
+
+		fetcher.SetRateLimit(-1.0)
+	})
+}
+
+//nolint:paralleltest // clears a package-level sync.Map that other parallel tests use
+func TestResetSANPatternWarnings(t *testing.T) {
+	// Call buildCertificateIdentity with no SAN patterns to trigger
+	// the warning, then reset and verify a second call does not panic.
+	_, err := attestation.ExportBuildCertificateID(
+		[]string{testIssuerExample}, nil,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Reset warnings.
+	attestation.ResetSANPatternWarnings()
+
+	// After reset, a second call with the same issuers should work
+	// and re-emit the warning (no duplicate suppression).
+	_, err = attestation.ExportBuildCertificateID(
+		[]string{testIssuerExample}, nil,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error after reset: %v", err)
 	}
 }
 

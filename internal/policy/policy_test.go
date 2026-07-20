@@ -26,6 +26,7 @@ import (
 const (
 	testBuilderID    = "test"
 	testInvalidValue = "invalid"
+	testVerifierID   = "https://example.com/v"
 )
 
 type validateTest struct {
@@ -998,4 +999,172 @@ func TestValidateEnforcePassesNilTrust(t *testing.T) {
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
+}
+
+func TestValidateRuntime(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty policy passes", func(t *testing.T) {
+		t.Parallel()
+
+		pol := emptyPolicy()
+		err := pol.ValidateRuntime()
+		assertNoError(t, err)
+	})
+
+	t.Run("nil trust passes", func(t *testing.T) {
+		t.Parallel()
+
+		pol := &policy.Policy{}
+		err := pol.ValidateRuntime()
+		assertNoError(t, err)
+	})
+
+	t.Run("valid key file exists", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		keyPath := filepath.Join(dir, "verifier.pub")
+		writeFile(t, keyPath, "public-key-data")
+
+		pol := &policy.Policy{
+			Trust: &policy.TrustPolicy{
+				Verifiers: []policy.TrustedVerifier{
+					{ID: testVerifierID, Key: keyPath},
+				},
+			},
+		}
+
+		err := pol.ValidateRuntime()
+		assertNoError(t, err)
+	})
+
+	t.Run("nonexistent key path fails", func(t *testing.T) {
+		t.Parallel()
+
+		pol := &policy.Policy{
+			Trust: &policy.TrustPolicy{
+				Verifiers: []policy.TrustedVerifier{
+					{ID: testVerifierID, Key: "/nonexistent/key.pub"},
+				},
+			},
+		}
+
+		err := pol.ValidateRuntime()
+		assertError(t, err)
+	})
+
+	t.Run("key path is directory fails", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+
+		pol := &policy.Policy{
+			Trust: &policy.TrustPolicy{
+				Verifiers: []policy.TrustedVerifier{
+					{ID: testVerifierID, Key: dir},
+				},
+			},
+		}
+
+		err := pol.ValidateRuntime()
+		assertError(t, err)
+
+		if !errors.Is(err, policy.ErrNotRegularFile) {
+			t.Errorf("expected ErrNotRegularFile, got %v", err)
+		}
+	})
+}
+
+func TestHash(t *testing.T) {
+	t.Parallel()
+
+	t.Run("identical policies produce same hash", func(t *testing.T) {
+		t.Parallel()
+
+		pol1 := &policy.Policy{
+			Provenance: &policy.ProvenancePolicy{
+				MissingPolicy: policy.ActionDeny,
+			},
+		}
+		pol2 := &policy.Policy{
+			Provenance: &policy.ProvenancePolicy{
+				MissingPolicy: policy.ActionDeny,
+			},
+		}
+
+		hash1, err := pol1.Hash()
+		assertNoError(t, err)
+
+		hash2, err := pol2.Hash()
+		assertNoError(t, err)
+
+		if hash1 != hash2 {
+			t.Errorf("identical policies should produce same hash: %q vs %q",
+				hash1, hash2)
+		}
+	})
+
+	t.Run("different policies produce different hashes", func(t *testing.T) {
+		t.Parallel()
+
+		pol1 := &policy.Policy{
+			Provenance: &policy.ProvenancePolicy{
+				MissingPolicy: policy.ActionDeny,
+			},
+		}
+		pol2 := &policy.Policy{
+			Provenance: &policy.ProvenancePolicy{
+				MissingPolicy: policy.ActionAllow,
+			},
+		}
+
+		hash1, err := pol1.Hash()
+		assertNoError(t, err)
+
+		hash2, err := pol2.Hash()
+		assertNoError(t, err)
+
+		if hash1 == hash2 {
+			t.Error("different policies should produce different hashes")
+		}
+	})
+
+	t.Run("hash is deterministic", func(t *testing.T) {
+		t.Parallel()
+
+		pol := &policy.Policy{
+			Trust: &policy.TrustPolicy{
+				Builders: []policy.TrustedBuilder{
+					{ID: "https://example.com/builder", MaxLevel: 3},
+				},
+			},
+			Provenance: &policy.ProvenancePolicy{
+				MissingPolicy: policy.ActionWarn,
+			},
+		}
+
+		hash1, err := pol.Hash()
+		assertNoError(t, err)
+
+		hash2, err := pol.Hash()
+		assertNoError(t, err)
+
+		if hash1 != hash2 {
+			t.Errorf("hash should be deterministic: %q vs %q",
+				hash1, hash2)
+		}
+	})
+
+	t.Run("empty policy hashes without error", func(t *testing.T) {
+		t.Parallel()
+
+		pol := emptyPolicy()
+		hash, err := pol.Hash()
+		assertNoError(t, err)
+
+		if hash == "" {
+			t.Error("expected non-empty hash for empty policy")
+		}
+	})
 }
