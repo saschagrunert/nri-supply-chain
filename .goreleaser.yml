@@ -38,41 +38,33 @@ sboms:
 changelog:
   sort: asc
 
-dockers:
-  - image_templates:
-      - "ghcr.io/saschagrunert/nri-supply-chain:{{ .Version }}-amd64"
-      - "ghcr.io/saschagrunert/nri-supply-chain:latest-amd64"
-    use: buildx
+dockers_v2:
+  - images:
+      - "ghcr.io/saschagrunert/nri-supply-chain"
     dockerfile: Dockerfile.goreleaser
-    build_flag_templates:
-      - "--platform=linux/amd64"
-    goarch: amd64
-  - image_templates:
-      - "ghcr.io/saschagrunert/nri-supply-chain:{{ .Version }}-arm64"
-      - "ghcr.io/saschagrunert/nri-supply-chain:latest-arm64"
-    use: buildx
-    dockerfile: Dockerfile.goreleaser
-    build_flag_templates:
-      - "--platform=linux/arm64"
-    goarch: arm64
-
-docker_manifests:
-  - name_template: "ghcr.io/saschagrunert/nri-supply-chain:{{ .Version }}"
-    image_templates:
-      - "ghcr.io/saschagrunert/nri-supply-chain:{{ .Version }}-amd64"
-      - "ghcr.io/saschagrunert/nri-supply-chain:{{ .Version }}-arm64"
-  - name_template: "ghcr.io/saschagrunert/nri-supply-chain:latest"
-    image_templates:
-      - "ghcr.io/saschagrunert/nri-supply-chain:latest-amd64"
-      - "ghcr.io/saschagrunert/nri-supply-chain:latest-arm64"
+    tags:
+      - "{{ .Version }}"
+      - latest
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    annotations:
+      "org.opencontainers.image.title": "nri-supply-chain"
+      "org.opencontainers.image.description": "NRI plugin for container supply chain attestation verification"
+      "org.opencontainers.image.source": "https://github.com/saschagrunert/nri-supply-chain"
+      "org.opencontainers.image.url": "https://github.com/saschagrunert/nri-supply-chain"
+      "org.opencontainers.image.version": "{{ .Version }}"
+      "org.opencontainers.image.created": "{{ .Date }}"
+      "org.opencontainers.image.revision": "{{ .FullCommit }}"
+      "org.opencontainers.image.licenses": "Apache-2.0"
 
 docker_signs:
   - cmd: cosign
+    artifacts: all
     args:
       - sign
       - --yes
       - "${artifact}"
-    artifacts: manifests
 
 nfpms:
   - id: nri-supply-chain
@@ -102,3 +94,10 @@ nfpms:
     scripts:
       postinstall: deploy/scripts/postinstall.sh
       preremove: deploy/scripts/preremove.sh
+
+release:
+  extra_files:
+    - glob: deploy/kubernetes/*.yaml
+    - glob: deploy/systemd/*.service
+    - glob: deploy/examples/config.toml
+    - glob: deploy/examples/policies/default.json

@@ -388,12 +388,18 @@ The packages enable the systemd service on install and stop it on removal.
 ### Container Image
 
 Multi-arch container images (amd64, arm64) are published to
-`ghcr.io/saschagrunert/nri-supply-chain` for each release. Images are signed
-with cosign and built on distroless for a minimal attack surface.
+`ghcr.io/saschagrunert/nri-supply-chain`. Images are signed with cosign and
+built on distroless for a minimal attack surface.
+
+- **Tagged releases** (`v1.0.0`, etc.) are published by the release workflow
+- **`latest`** is automatically built and pushed on every merge to main
 
 ```console
 docker pull ghcr.io/saschagrunert/nri-supply-chain:latest
 ```
+
+GitHub releases also include Kubernetes manifests, systemd service files, and
+example configurations as downloadable assets.
 
 ### NRI Runtime Configuration
 
