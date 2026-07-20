@@ -28,6 +28,7 @@ import (
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
+	"github.com/saschagrunert/nri-supply-chain/internal/types"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
@@ -183,7 +184,7 @@ func resolveImage(annotations map[string]string) (imageRef, digest string) {
 	}
 
 	cImg := annotations[AnnotationContainerdImage]
-	cRef := annotations[AnnotationContainerdImageRef]
+	cRef := validDigestOrEmpty(annotations[AnnotationContainerdImageRef])
 
 	if cImg != "" && cRef != "" {
 		return cImg, cRef
@@ -219,4 +220,13 @@ func resolveCRIOImage(annotations map[string]string) (imageRef, digest string) {
 	}
 
 	return imageRef, digest
+}
+
+func validDigestOrEmpty(ref string) string {
+	algo, _ := types.ParseDigest(ref)
+	if algo == "" {
+		return ""
+	}
+
+	return ref
 }
