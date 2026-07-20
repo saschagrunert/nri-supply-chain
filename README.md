@@ -97,9 +97,11 @@ SIGHUP.
 When a container is created, the plugin performs verification in this order:
 
 1. **Image identification**: Extracts the image reference and digest from
-   container annotations. A complete CRI-O annotation pair
-   (`io.kubernetes.cri-o.Image` + `io.kubernetes.cri-o.ImageRef`) takes
-   precedence. If CRI-O does not provide both, a complete containerd pair
+   container annotations. A complete CRI-O annotation set
+   (`io.kubernetes.cri-o.ImageName` or `io.kubernetes.cri-o.Image` for the
+   reference, `io.kubernetes.cri-o.ImageRepoDigests` or
+   `io.kubernetes.cri-o.ImageRef` for the digest) takes precedence. If CRI-O
+   does not provide both, a complete containerd pair
    (`io.kubernetes.cri.image-name` + `io.kubernetes.cri.image-ref`) is used.
    If neither runtime provides a complete pair, available annotations from
    either source are combined.
@@ -475,7 +477,8 @@ detailed verification traces.
   Set `fetch_failure_policy = "allow"` temporarily to unblock while
   investigating.
 - **Stale cache**: Reduce `cache_ttl` or set to `0s` to disable caching during
-  debugging. Send SIGHUP to reload and clear the cache.
+  debugging. Send SIGHUP to reload; the cache is cleared automatically when
+  cache-affecting config fields or policies change.
 
 ### Monitoring and Alerting
 
@@ -546,7 +549,7 @@ To verify a release:
 1. Verify the checksum file signature with cosign:
 
    ```console
-   cosign verify-blob --signature checksums.txt.sig --certificate checksums.txt.cert checksums.txt
+   cosign verify-blob --bundle checksums.txt.sigstore.json checksums.txt
    ```
 
 2. Verify the binary against the checksum file:
