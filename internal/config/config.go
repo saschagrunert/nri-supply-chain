@@ -21,6 +21,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -72,6 +73,9 @@ var (
 
 	// ErrInvalidMetricsAddr indicates the metrics address is not a valid host:port.
 	ErrInvalidMetricsAddr = errors.New("invalid metrics_addr")
+
+	// ErrUnknownConfigKeys indicates the config file contains unrecognized keys.
+	ErrUnknownConfigKeys = errors.New("unknown config keys")
 )
 
 // Duration wraps time.Duration to support TOML unmarshalling from strings.
@@ -239,9 +243,18 @@ func (c *Config) validateResilienceFields() error {
 func LoadFromFile(path string) (*Config, error) {
 	cfg := DefaultConfig()
 
-	_, err := toml.DecodeFile(path, cfg)
+	meta, err := toml.DecodeFile(path, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("reading config file %q: %w", path, err)
+	}
+
+	if undecoded := meta.Undecoded(); len(undecoded) > 0 {
+		keys := make([]string, len(undecoded))
+		for i, k := range undecoded {
+			keys[i] = k.String()
+		}
+
+		return nil, fmt.Errorf("%w: %s", ErrUnknownConfigKeys, strings.Join(keys, ", "))
 	}
 
 	err = cfg.Validate()
@@ -256,9 +269,18 @@ func LoadFromFile(path string) (*Config, error) {
 func LoadFromString(data string) (*Config, error) {
 	cfg := DefaultConfig()
 
-	_, err := toml.Decode(data, cfg)
+	meta, err := toml.Decode(data, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
+	}
+
+	if undecoded := meta.Undecoded(); len(undecoded) > 0 {
+		keys := make([]string, len(undecoded))
+		for i, k := range undecoded {
+			keys[i] = k.String()
+		}
+
+		return nil, fmt.Errorf("%w: %s", ErrUnknownConfigKeys, strings.Join(keys, ", "))
 	}
 
 	err = cfg.Validate()

@@ -1,0 +1,3 @@
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY nri-supply-chain /usr/local/bin/nri-supply-chain
+ENTRYPOINT ["/usr/local/bin/nri-supply-chain"]

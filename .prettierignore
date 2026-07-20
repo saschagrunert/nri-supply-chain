@@ -4,9 +4,13 @@ dist/
 go.mod
 go.sum
 Makefile
+Dockerfile
+Dockerfile.goreleaser
 *.bats
 *.bash
 *.toml
+*.service
+*.sh
 LICENSE
 OWNERS
 SECURITY_CONTACTS

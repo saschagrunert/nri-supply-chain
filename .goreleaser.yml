@@ -37,3 +37,68 @@ sboms:
 
 changelog:
   sort: asc
+
+dockers:
+  - image_templates:
+      - "ghcr.io/saschagrunert/nri-supply-chain:{{ .Version }}-amd64"
+      - "ghcr.io/saschagrunert/nri-supply-chain:latest-amd64"
+    use: buildx
+    dockerfile: Dockerfile.goreleaser
+    build_flag_templates:
+      - "--platform=linux/amd64"
+    goarch: amd64
+  - image_templates:
+      - "ghcr.io/saschagrunert/nri-supply-chain:{{ .Version }}-arm64"
+      - "ghcr.io/saschagrunert/nri-supply-chain:latest-arm64"
+    use: buildx
+    dockerfile: Dockerfile.goreleaser
+    build_flag_templates:
+      - "--platform=linux/arm64"
+    goarch: arm64
+
+docker_manifests:
+  - name_template: "ghcr.io/saschagrunert/nri-supply-chain:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/saschagrunert/nri-supply-chain:{{ .Version }}-amd64"
+      - "ghcr.io/saschagrunert/nri-supply-chain:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/saschagrunert/nri-supply-chain:latest"
+    image_templates:
+      - "ghcr.io/saschagrunert/nri-supply-chain:latest-amd64"
+      - "ghcr.io/saschagrunert/nri-supply-chain:latest-arm64"
+
+docker_signs:
+  - cmd: cosign
+    args:
+      - sign
+      - --yes
+      - "${artifact}"
+    artifacts: manifests
+
+nfpms:
+  - id: nri-supply-chain
+    package_name: nri-supply-chain
+    vendor: nri-supply-chain Authors
+    homepage: https://github.com/saschagrunert/nri-supply-chain
+    maintainer: Sascha Grunert
+    description: NRI plugin for container supply chain attestation verification
+    license: Apache-2.0
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/local/bin
+    contents:
+      - src: deploy/systemd/nri-supply-chain.service
+        dst: /usr/lib/systemd/system/nri-supply-chain.service
+      - src: deploy/examples/config.toml
+        dst: /etc/nri-supply-chain/config.toml
+        type: config|noreplace
+      - src: deploy/examples/policies/default.json
+        dst: /etc/nri-supply-chain/policies/default.json
+        type: config|noreplace
+      - dst: /etc/nri-supply-chain/policies
+        type: dir
+        file_info:
+          mode: 0755
+    scripts:
+      postinstall: deploy/scripts/postinstall.sh
+      preremove: deploy/scripts/preremove.sh

@@ -29,6 +29,10 @@ must pass verification.
 - [Deployment](#deployment)
   - [Pre-installed NRI Plugin](#pre-installed-nri-plugin)
   - [External NRI Plugin](#external-nri-plugin)
+  - [Kubernetes DaemonSet](#kubernetes-daemonset)
+  - [Systemd Service](#systemd-service)
+  - [DEB/RPM Packages](#debrpm-packages)
+  - [Container Image](#container-image)
   - [NRI Runtime Configuration](#nri-runtime-configuration)
   - [Runtime Requirements](#runtime-requirements)
 - [Examples](#examples)
@@ -223,6 +227,11 @@ The plugin uses two configuration layers:
 
 ### Operational Config
 
+The TOML parser uses strict mode: unknown keys cause a startup error. If the
+config file contains fields that are not listed below (for example, leftover
+keys from an older version or custom annotations), the plugin will refuse to
+start. Remove or comment out any unrecognized keys before upgrading.
+
 ```toml
 verification = "warn"
 fetch_timeout = "30s"
@@ -317,21 +326,58 @@ Run as a standalone process that connects to the NRI socket:
 ./nri-supply-chain --config /etc/nri-supply-chain/config.toml
 ```
 
-Example systemd unit:
+### Kubernetes DaemonSet
 
-```ini
-[Unit]
-Description=NRI Supply Chain Verification Plugin
-After=crio.service
+Deploy as a DaemonSet to run the plugin on every node in the cluster:
 
-[Service]
-ExecStart=/usr/local/bin/nri-supply-chain --config /etc/nri-supply-chain/config.toml
-Restart=always
-RestartSec=5
-ExecReload=/bin/kill -HUP $MAINPID
+```console
+kubectl apply -k deploy/kubernetes/
+```
 
-[Install]
-WantedBy=multi-user.target
+The manifests in `deploy/kubernetes/` include a Namespace, ConfigMap with
+example config and policy, and the DaemonSet itself. Edit the ConfigMap to
+match your environment before deploying.
+
+### Systemd Service
+
+A systemd unit file is provided at `deploy/systemd/nri-supply-chain.service`.
+Install it and enable the service:
+
+```console
+cp deploy/systemd/nri-supply-chain.service /usr/lib/systemd/system/
+systemctl daemon-reload
+systemctl enable --now nri-supply-chain
+```
+
+Reload configuration without restarting:
+
+```console
+systemctl reload nri-supply-chain
+```
+
+### DEB/RPM Packages
+
+Release builds include `.deb` and `.rpm` packages that install the binary,
+systemd unit, and example configuration. Install with your package manager:
+
+```console
+# Debian/Ubuntu
+sudo dpkg -i nri-supply-chain_*.deb
+
+# RHEL/Fedora
+sudo rpm -i nri-supply-chain-*.rpm
+```
+
+The packages enable the systemd service on install and stop it on removal.
+
+### Container Image
+
+Multi-arch container images (amd64, arm64) are published to
+`ghcr.io/saschagrunert/nri-supply-chain` for each release. Images are signed
+with cosign and built on distroless for a minimal attack surface.
+
+```console
+docker pull ghcr.io/saschagrunert/nri-supply-chain:latest
 ```
 
 ### NRI Runtime Configuration
