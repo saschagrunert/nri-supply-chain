@@ -1,0 +1,30 @@
+[Unit]
+Description=NRI Supply Chain Verification Plugin
+Documentation=https://github.com/saschagrunert/nri-supply-chain
+After=crio.service containerd.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/nri-supply-chain --config /etc/nri-supply-chain/config.toml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/run/nri
+ReadOnlyPaths=/etc/nri-supply-chain
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+MemoryDenyWriteExecute=true
+LockPersonality=true
+RestrictNamespaces=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

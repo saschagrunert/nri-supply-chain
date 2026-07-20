@@ -554,6 +554,36 @@ func TestConfigValidateFetchRateLimit(t *testing.T) {
 	})
 }
 
+func TestLoadFromFileUnknownKeys(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.toml")
+
+	content := `verification = "disabled"
+unknown_key = "value"
+`
+	assertNoError(t, os.WriteFile(cfgPath, []byte(content), 0o600))
+
+	_, err := config.LoadFromFile(cfgPath)
+	assertError(t, err)
+
+	if !errors.Is(err, config.ErrUnknownConfigKeys) {
+		t.Errorf("expected error %v, got %v", config.ErrUnknownConfigKeys, err)
+	}
+}
+
+func TestLoadFromStringUnknownKeys(t *testing.T) {
+	t.Parallel()
+
+	_, err := config.LoadFromString(`unknown_field = "test"`)
+	assertError(t, err)
+
+	if !errors.Is(err, config.ErrUnknownConfigKeys) {
+		t.Errorf("expected error %v, got %v", config.ErrUnknownConfigKeys, err)
+	}
+}
+
 func TestLoadFromFileValidationError(t *testing.T) {
 	t.Parallel()
 

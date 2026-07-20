@@ -1,0 +1,25 @@
+{
+  "trust": {
+    "builders": [
+      {
+        "id": "https://github.com/actions/runner",
+        "maxLevel": 3
+      }
+    ],
+    "issuers": [
+      "https://accounts.google.com",
+      "https://token.actions.githubusercontent.com"
+    ],
+    "sources": ["github.com/myorg/*"]
+  },
+  "exclude": ["gcr.io/distroless/*"],
+  "provenance": {
+    "missingPolicy": "warn"
+  },
+  "vex": {
+    "missingPolicy": "allow"
+  },
+  "signatures": {
+    "requireTransparencyLog": false
+  }
+}
