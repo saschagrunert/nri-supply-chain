@@ -264,10 +264,7 @@ func verifySLSAVersion(ver string) error {
 		return fmt.Errorf("%w: empty version", ErrSLSAVersionTooOld)
 	}
 
-	verNum := versionToNumber(ver)
-	minNum := versionToNumber(minSLSAVersion)
-
-	if verNum < minNum {
+	if compareVersions(ver, minSLSAVersion) < 0 {
 		return fmt.Errorf(
 			"%w: got %q, minimum %q",
 			ErrSLSAVersionTooOld, ver, minSLSAVersion,
@@ -277,28 +274,36 @@ func verifySLSAVersion(ver string) error {
 	return nil
 }
 
-const versionScale = 1000
+func compareVersions(a, b string) int {
+	aMajor, aMinor := parseVersion(a)
+	bMajor, bMinor := parseVersion(b)
 
-func versionToNumber(ver string) int {
+	if aMajor != bMajor {
+		return aMajor - bMajor
+	}
+
+	return aMinor - bMinor
+}
+
+//nolint:nonamedreturns // gocritic requires names
+func parseVersion(ver string) (major, minor int) {
 	parts := strings.SplitN(ver, ".", 2) //nolint:mnd // major.minor split
 
 	major, err := strconv.Atoi(strings.TrimPrefix(parts[0], "v"))
 	if err != nil {
-		return 0
+		return -1, 0
 	}
-
-	result := major * versionScale
 
 	if len(parts) > 1 {
 		minor, minorErr := strconv.Atoi(parts[1])
 		if minorErr != nil {
-			return result
+			return major, 0
 		}
 
-		result += minor
+		return major, minor
 	}
 
-	return result
+	return major, 0
 }
 
 func verifyPolicyURI(vsaPolicy Policy, pol *policy.Policy) error {

@@ -370,6 +370,23 @@ func TestResolveImageContainerdPairOverPartialCRIO(t *testing.T) {
 	}
 }
 
+func TestResolveImageContainerdInvalidDigest(t *testing.T) {
+	t.Parallel()
+
+	imageRef, digest := plugin.ExportResolveImage(map[string]string{
+		plugin.AnnotationContainerdImage:    testImage,
+		plugin.AnnotationContainerdImageRef: "not-a-digest",
+	})
+
+	if imageRef != testImage {
+		t.Errorf("imageRef = %q, want %q", imageRef, testImage)
+	}
+
+	if digest != "" {
+		t.Errorf("digest = %q, want empty for invalid digest ref", digest)
+	}
+}
+
 func newTestPlugin(t *testing.T, mode, policyDir string) *plugin.Plugin {
 	t.Helper()
 

@@ -126,6 +126,9 @@ type TrustedBuilder struct {
 	// ID is the builder identity URI.
 	ID string `json:"id"`
 	// MaxLevel is the maximum SLSA level this builder can attest to (0-3).
+	// This field is only enforced by VSA verification (vsa.minimumLevel),
+	// not during SLSA provenance checks, because provenance attestations
+	// do not declare a build level.
 	MaxLevel int `json:"maxLevel"`
 }
 

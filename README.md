@@ -155,6 +155,10 @@ Checks performed:
 - **Unknown parameters**: If `provenance.rejectUnknownParameters` is enabled,
   unrecognized `externalParameters` fields cause rejection.
 
+Note: `trust.builders[].maxLevel` is not checked during provenance
+verification because provenance attestations do not declare a build level.
+Use `vsa.minimumLevel` to enforce build level requirements.
+
 When multiple provenance attestations exist, verification passes if any single
 valid attestation from a trusted builder passes (any-pass semantics).
 

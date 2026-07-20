@@ -149,14 +149,14 @@ Skip verification for known base images or internal tooling:
 
 Trust roots for verification. All sub-fields are optional.
 
-| Field         | Type  | Description                                                                                                                                                                                                                                 |
-| ------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `builders`    | array | Trusted SLSA provenance builders. Each entry has `id` (URI) and `maxLevel` (0-3).                                                                                                                                                           |
-| `verifiers`   | array | Trusted VSA verifiers. Each entry has `id` (URI) and `key` (absolute path to PEM public key). The key is also used for Sigstore bundle signature verification.                                                                              |
-| `issuers`     | array | Trusted OIDC issuers for keyless (Fulcio) verification.                                                                                                                                                                                     |
-| `sanPatterns` | array | Accepted certificate Subject Alternative Names. Supports glob patterns: `*` matches any non-`/` sequence, `?` matches a single non-`/` character, `[...]` matches a character class. When empty, any SAN from a trusted issuer is accepted. |
-| `sources`     | array | Allowed source repository glob patterns (Go `path.Match` syntax).                                                                                                                                                                           |
-| `buildTypes`  | array | Accepted build type URIs for SLSA provenance.                                                                                                                                                                                               |
+| Field         | Type  | Description                                                                                                                                                                                                                                                    |
+| ------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `builders`    | array | Trusted SLSA provenance builders. Each entry has `id` (URI) and `maxLevel` (0-3). Note: `maxLevel` is only enforced by VSA verification (`vsa.minimumLevel`), not during SLSA provenance checks, because provenance attestations do not declare a build level. |
+| `verifiers`   | array | Trusted VSA verifiers. Each entry has `id` (URI) and `key` (absolute path to PEM public key). The key is also used for Sigstore bundle signature verification.                                                                                                 |
+| `issuers`     | array | Trusted OIDC issuers for keyless (Fulcio) verification.                                                                                                                                                                                                        |
+| `sanPatterns` | array | Accepted certificate Subject Alternative Names. Supports glob patterns: `*` matches any non-`/` sequence, `?` matches a single non-`/` character, `[...]` matches a character class. When empty, any SAN from a trusted issuer is accepted.                    |
+| `sources`     | array | Allowed source repository glob patterns (Go `path.Match` syntax).                                                                                                                                                                                              |
+| `buildTypes`  | array | Accepted build type URIs for SLSA provenance.                                                                                                                                                                                                                  |
 
 ### `exclude` (array of strings)
 
@@ -219,6 +219,11 @@ performed:
   unrecognized `externalParameters` fields cause rejection. The recognized set
   defaults to GitHub Actions parameters (`source`, `repository`, `ref`,
   `workflow`, `buildType`) but can be overridden with `provenance.knownParameters`.
+
+Note: `trust.builders[].maxLevel` is not checked during provenance
+verification. SLSA provenance does not declare a build level; levels are a
+property of the builder's infrastructure. Use `vsa.minimumLevel` to enforce
+build level requirements via VSA verification.
 
 When multiple provenance attestations exist, verification passes if any single
 valid attestation from a trusted builder passes (any-pass semantics).
@@ -316,9 +321,15 @@ These use Go `path.Match` semantics:
 - `[abc]` matches any character in the set
 - `**` (globstar) is **not** supported
 
-Patterns must account for the full registry/namespace/image depth. For example,
+Patterns are matched against the full image reference as received from the
+container runtime, including registry and path components. Patterns must
+account for the full registry/namespace/image depth. For example,
 `registry.io/org/*` matches `registry.io/org/repo` but not
 `registry.io/org/team/repo`. Use multiple patterns for nested paths.
+
+Common mistake: writing `nginx:*` as an exclude pattern will not match
+`docker.io/library/nginx:latest` because `*` does not cross `/` boundaries.
+Use the full reference `docker.io/library/nginx:*` instead.
 
 ### `trust.sanPatterns`
 

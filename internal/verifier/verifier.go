@@ -237,10 +237,14 @@ func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
-	if cacheAffectingFieldsChanged(v.config, &cfgCopy) ||
-		!policyHashesEqual(v.policyHashes, newHashes) {
+	cacheInvalidated := cacheAffectingFieldsChanged(v.config, &cfgCopy) ||
+		!policyHashesEqual(v.policyHashes, newHashes)
+
+	if cacheInvalidated {
 		v.cache = cache.NewWithGauge(cfgCopy.CacheTTL.Duration, v.metrics.CacheEntriesTotal)
 	}
+
+	logReloadChanges(ctx, v.config, &cfgCopy, v.policyHashes, newHashes, cacheInvalidated)
 
 	v.config = &cfgCopy
 	v.policies = policies
@@ -880,4 +884,43 @@ func policyHashesEqual(prev, next map[string]string) bool {
 	}
 
 	return true
+}
+
+func logReloadChanges(
+	ctx context.Context,
+	prev, next *config.Config,
+	prevHashes, nextHashes map[string]string,
+	cacheInvalidated bool,
+) {
+	attrs := []any{
+		"cache_invalidated", cacheInvalidated,
+	}
+
+	if prev.Verification != next.Verification {
+		attrs = append(attrs, "mode_prev", prev.Verification, "mode_next", next.Verification)
+	}
+
+	if len(prevHashes) != len(nextHashes) {
+		attrs = append(attrs, "policies_prev", len(prevHashes), "policies_next", len(nextHashes))
+	} else {
+		changed := 0
+
+		for ns, hash := range prevHashes {
+			if nextHashes[ns] != hash {
+				changed++
+			}
+		}
+
+		for ns := range nextHashes {
+			if _, ok := prevHashes[ns]; !ok {
+				changed++
+			}
+		}
+
+		if changed > 0 {
+			attrs = append(attrs, "policies_changed", changed)
+		}
+	}
+
+	slog.InfoContext(ctx, "Config reload applied", attrs...)
 }
