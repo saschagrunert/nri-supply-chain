@@ -172,15 +172,16 @@ func (c *Cache) Set(digest, namespace string, result *types.Result) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if len(c.entries) >= maxSize {
-		c.evictExpiredLocked()
-	}
-
-	if len(c.entries) >= maxSize {
-		c.evictOldestLocked()
-	}
-
 	cacheKey := key{digest: digest, namespace: namespace}
+
+	if _, exists := c.entries[cacheKey]; !exists && len(c.entries) >= maxSize {
+		c.evictExpiredLocked()
+
+		if len(c.entries) >= maxSize {
+			c.evictOldestLocked()
+		}
+	}
+
 	expiresAt := time.Now().Add(c.ttl + jitter(c.ttl))
 
 	c.entries[cacheKey] = entry{

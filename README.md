@@ -235,7 +235,7 @@ circuit_breaker_cooldown = "30s"
 | `cache_ttl`                 | `24h`                            | TTL for cached verification results (`0s` disables caching)        |
 | `policy_dir`                | `/etc/nri-supply-chain/policies` | Directory containing JSON policy files                             |
 | `metrics_addr`              | `127.0.0.1:9090`                 | Prometheus metrics HTTP listen address                             |
-| `circuit_breaker_threshold` | `5`                              | Consecutive fetch failures before the global circuit breaker opens |
+| `circuit_breaker_threshold` | `5`                              | Consecutive fetch failures before a per-host circuit breaker opens |
 | `circuit_breaker_cooldown`  | `30s`                            | Duration the circuit breaker stays open before allowing a probe    |
 | `fetch_rate_limit`          | `0` (unlimited)                  | Maximum registry fetch requests per second                         |
 
@@ -517,20 +517,21 @@ groups:
 
 **fetch_failure_policy default is fail-open.** The default value `"warn"` allows
 containers through when attestation fetches fail, even in `enforce` mode. If the
-registry is unreachable, every image passes verification. The global circuit
-breaker amplifies this: once the failure threshold is reached, all subsequent
-fetch attempts short-circuit to `fetch_failure_policy` until the cooldown
-expires. Set `fetch_failure_policy = "deny"` in production to ensure fetch
-failures block container creation. Note that `"deny"` means registry outages
-will prevent all new containers from starting, trading availability for security.
-Choose based on your threat model.
+registry is unreachable, every image passes verification. The per-host circuit
+breaker amplifies this: once the failure threshold is reached for a given
+registry, all subsequent fetch attempts to that registry short-circuit to
+`fetch_failure_policy` until the cooldown expires. Set
+`fetch_failure_policy = "deny"` in production to ensure fetch failures block
+container creation. Note that `"deny"` means registry outages will prevent all
+new containers from starting, trading availability for security. Choose based on
+your threat model.
 
-**SAN patterns for keyless verification.** When `trust.issuers` is configured
-without corresponding `trust.sanPatterns`, any certificate issued by the trusted
-OIDC provider is accepted. This means any user of that identity provider can
-sign attestations that pass verification. Always pair `issuers` with
-`sanPatterns` (for example, `["*@example.com"]`) to restrict accepted
-identities.
+**SAN patterns for keyless verification.** In `enforce` mode, `trust.sanPatterns`
+is required when `trust.issuers` is configured. The plugin rejects the policy at
+startup and reload if this requirement is not met. In `warn` mode, omitting
+`sanPatterns` accepts any certificate issued by the trusted OIDC provider (with a
+log warning). Always pair `issuers` with `sanPatterns` (for example,
+`["*@example.com"]`) to restrict accepted identities.
 
 ## Verifying Releases
 

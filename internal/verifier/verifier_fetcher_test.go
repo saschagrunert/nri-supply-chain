@@ -747,3 +747,65 @@ func TestVerifyCircuitBreakerIntegration(t *testing.T) {
 		t.Errorf("expected 1 probe call after cooldown, got %d total", got)
 	}
 }
+
+func TestVerifyConcurrentWithReload(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writePolicy(t, dir, "default.json", `{}`)
+
+	fetcher := &countingFetcher{
+		calls: atomic.Int32{},
+		delay: time.Millisecond,
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+	cfg.CacheTTL = config.Duration{Duration: 0}
+
+	ver, err := verifier.New(cfg, metrics.New(), fetcher)
+	assertNoError(t, err)
+
+	const (
+		verifiers = 20
+		reloaders = 5
+	)
+
+	var waitGroup sync.WaitGroup
+
+	for idx := range verifiers {
+		waitGroup.Go(func() {
+			hexChar := string("0123456789abcdef"[idx%16])
+			digest := "sha256:" + strings.Repeat(hexChar, 64)
+
+			for range 10 {
+				_, verifyErr := ver.Verify(
+					context.Background(), "docker.io/library/nginx:latest",
+					digest, "default",
+				)
+				if verifyErr != nil {
+					t.Errorf("unexpected verify error: %v", verifyErr)
+				}
+			}
+		})
+	}
+
+	for range reloaders {
+		waitGroup.Go(func() {
+			for range 10 {
+				reloadCfg := config.DefaultConfig()
+				reloadCfg.Verification = config.ModeWarn
+				reloadCfg.PolicyDir = dir
+				reloadCfg.CacheTTL = config.Duration{Duration: 0}
+
+				reloadErr := ver.Reload(context.Background(), reloadCfg)
+				if reloadErr != nil {
+					t.Errorf("unexpected reload error: %v", reloadErr)
+				}
+			}
+		})
+	}
+
+	waitGroup.Wait()
+}

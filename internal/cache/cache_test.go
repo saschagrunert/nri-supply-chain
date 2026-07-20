@@ -329,6 +329,69 @@ func TestCacheConcurrent(t *testing.T) {
 	waitGroup.Wait()
 }
 
+func TestCacheCapacityEvictionUpdatesGauge(t *testing.T) {
+	t.Parallel()
+
+	testGauge := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "test_cache_eviction",
+		Help: testGaugeHelp,
+	})
+
+	testCache := cache.NewWithGauge(time.Hour, testGauge)
+
+	for idx := range 10001 {
+		testCache.Set(
+			fmt.Sprintf("sha256:%d", idx), "default",
+			&types.Result{Allowed: true, Reason: "", CheckResults: nil},
+		)
+	}
+
+	const expectedSize = 10000
+	if testCache.Len() != expectedSize {
+		t.Errorf("expected cache size %d, got %d", expectedSize, testCache.Len())
+	}
+
+	if val := testutil.ToFloat64(testGauge); val != expectedSize {
+		t.Errorf("expected gauge %d after eviction, got %f", expectedSize, val)
+	}
+}
+
+func TestCacheOverwriteAtCapacityKeepsGauge(t *testing.T) {
+	t.Parallel()
+
+	testGauge := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "test_cache_overwrite_at_cap",
+		Help: testGaugeHelp,
+	})
+
+	testCache := cache.NewWithGauge(time.Hour, testGauge)
+
+	const maxSize = 10000
+	for idx := range maxSize {
+		testCache.Set(
+			fmt.Sprintf("sha256:%d", idx), "default",
+			&types.Result{Allowed: true, Reason: "old", CheckResults: nil},
+		)
+	}
+
+	testCache.Set("sha256:0", "default", &types.Result{
+		Allowed: true, Reason: "updated", CheckResults: nil,
+	})
+
+	if testCache.Len() != maxSize {
+		t.Errorf("expected cache size %d, got %d", maxSize, testCache.Len())
+	}
+
+	if val := testutil.ToFloat64(testGauge); val != maxSize {
+		t.Errorf("expected gauge %d after overwrite, got %f", maxSize, val)
+	}
+
+	got := testCache.Get("sha256:0", "default")
+	if got == nil || got.Reason != "updated" {
+		t.Errorf("expected updated entry, got %v", got)
+	}
+}
+
 func TestCacheClear(t *testing.T) {
 	t.Parallel()
 

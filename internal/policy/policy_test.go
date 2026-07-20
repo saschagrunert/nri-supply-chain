@@ -944,3 +944,58 @@ func assertError(t *testing.T, err error) {
 		t.Fatal("expected error, got nil")
 	}
 }
+
+func TestValidateEnforceRequiresSANPatterns(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{
+		Trust: &policy.TrustPolicy{
+			Issuers: []string{"https://accounts.google.com"},
+		},
+	}
+
+	err := pol.ValidateEnforce()
+	if !errors.Is(err, policy.ErrSANPatternsRequired) {
+		t.Errorf("expected ErrSANPatternsRequired, got %v", err)
+	}
+}
+
+func TestValidateEnforcePassesWithSANPatterns(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{
+		Trust: &policy.TrustPolicy{
+			Issuers:     []string{"https://accounts.google.com"},
+			SANPatterns: []string{"build@example.com"},
+		},
+	}
+
+	err := pol.ValidateEnforce()
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateEnforcePassesWithoutIssuers(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{
+		Trust: &policy.TrustPolicy{},
+	}
+
+	err := pol.ValidateEnforce()
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateEnforcePassesNilTrust(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{}
+
+	err := pol.ValidateEnforce()
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
