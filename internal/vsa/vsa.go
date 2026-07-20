@@ -285,9 +285,10 @@ func compareVersions(a, b string) int {
 	return aMinor - bMinor
 }
 
-//nolint:nonamedreturns // gocritic requires names
 func parseVersion(ver string) (major, minor int) {
-	parts := strings.SplitN(ver, ".", 2) //nolint:mnd // major.minor split
+	const versionParts = 2
+
+	parts := strings.SplitN(ver, ".", versionParts)
 
 	major, err := strconv.Atoi(strings.TrimPrefix(parts[0], "v"))
 	if err != nil {

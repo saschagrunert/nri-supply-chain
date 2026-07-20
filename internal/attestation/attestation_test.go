@@ -32,14 +32,12 @@ type mockFetcher struct {
 	err          error
 }
 
-//nolint:gocritic // hugeParam: signature must match Fetcher interface
 func (m *mockFetcher) Fetch(
-	_ context.Context, _, _ string, _ attestation.FetchOptions,
+	_ context.Context, _, _ string, _ *attestation.FetchOptions,
 ) ([]attestation.VerifiedAttestation, error) {
 	return m.attestations, m.err
 }
 
-//nolint:funlen,varnamelen // table-driven test
 func TestMockFetcher(t *testing.T) {
 	t.Parallel()
 
@@ -108,7 +106,7 @@ func TestMockFetcher(t *testing.T) {
 
 			fetcher := &mockFetcher{attestations: tt.attestations, err: tt.err}
 			ctx := context.Background()
-			opts := attestation.FetchOptions{
+			opts := &attestation.FetchOptions{
 				Timeout: 30 * time.Second,
 			}
 

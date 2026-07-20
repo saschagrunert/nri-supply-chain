@@ -57,7 +57,7 @@ type mockFetcher struct {
 func (m *mockFetcher) Fetch(
 	_ context.Context,
 	_, _ string,
-	_ attestation.FetchOptions, //nolint:gocritic // hugeParam: matches Fetcher interface signature.
+	_ *attestation.FetchOptions,
 ) ([]attestation.VerifiedAttestation, error) {
 	return m.attestations, m.err
 }
@@ -151,7 +151,7 @@ func validVEXPayload(t *testing.T, status openvex.Status) []byte {
 	return marshalJSON(t, doc)
 }
 
-func TestVerifyWithFetcher(t *testing.T) { //nolint:cyclop,funlen,maintidx // Table-driven test.
+func TestVerifyWithFetcher(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -612,7 +612,7 @@ type countingFetcher struct {
 func (f *countingFetcher) Fetch(
 	_ context.Context,
 	_, _ string,
-	_ attestation.FetchOptions, //nolint:gocritic // hugeParam: matches Fetcher interface signature.
+	_ *attestation.FetchOptions,
 ) ([]attestation.VerifiedAttestation, error) {
 	f.calls.Add(1)
 	time.Sleep(f.delay)
@@ -627,7 +627,7 @@ type failingFetcher struct {
 func (f *failingFetcher) Fetch(
 	_ context.Context,
 	_, _ string,
-	_ attestation.FetchOptions, //nolint:gocritic // hugeParam: matches Fetcher interface signature.
+	_ *attestation.FetchOptions,
 ) ([]attestation.VerifiedAttestation, error) {
 	f.calls.Add(1)
 
@@ -640,7 +640,8 @@ func TestVerifyConcurrentSameDigest(t *testing.T) {
 	dir := t.TempDir()
 	writePolicy(t, dir, "default.json", `{}`)
 
-	fetcher := &countingFetcher{ //nolint:exhaustruct // calls is zero-valued
+	fetcher := &countingFetcher{
+		calls: atomic.Int32{},
 		delay: 10 * time.Millisecond,
 	}
 
@@ -678,14 +679,13 @@ func TestVerifyConcurrentSameDigest(t *testing.T) {
 	}
 }
 
-//nolint:funlen // integration test covers trip + recovery
 func TestVerifyCircuitBreakerIntegration(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
 	writePolicy(t, dir, "default.json", `{}`)
 
-	fetcher := &failingFetcher{} //nolint:exhaustruct // calls is zero-valued
+	fetcher := &failingFetcher{calls: atomic.Int32{}}
 
 	cfg := config.DefaultConfig()
 	cfg.Verification = config.ModeWarn

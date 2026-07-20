@@ -17,6 +17,7 @@ package attestation
 import (
 	"context"
 	"crypto"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
@@ -25,7 +26,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math/rand/v2"
+	"math/big"
 	"net"
 	"net/http"
 	"regexp"
@@ -46,6 +47,8 @@ import (
 	"golang.org/x/sync/singleflight"
 	"golang.org/x/time/rate"
 )
+
+var errUnexpectedSingleflightResult = errors.New("unexpected singleflight result type")
 
 const (
 	maxAttestationSize      = 10 << 20 // 10 MiB
@@ -87,10 +90,15 @@ func (c *trustedRootCache) get(ctx context.Context) (*root.TrustedRoot, error) {
 
 	result, fetchErr, _ := c.inflight.Do("trusted-root", c.refreshRoot)
 	if fetchErr != nil {
-		return nil, fetchErr //nolint:wrapcheck // error already wrapped inside singleflight closure
+		return nil, fmt.Errorf("trusted root refresh: %w", fetchErr)
 	}
 
-	return result.(*root.TrustedRoot), nil //nolint:forcetypeassert // type guaranteed by Do closure
+	tr, ok := result.(*root.TrustedRoot)
+	if !ok {
+		return nil, fmt.Errorf("%w: %T", errUnexpectedSingleflightResult, result)
+	}
+
+	return tr, nil
 }
 
 func (c *trustedRootCache) refreshRoot() (any, error) {
@@ -170,7 +178,7 @@ func NewOCIFetcher() *OCIFetcher {
 
 	return &OCIFetcher{
 		verifyBundle: func(
-			ctx context.Context, bundleBytes []byte, opts FetchOptions,
+			ctx context.Context, bundleBytes []byte, opts *FetchOptions,
 		) ([]byte, error) {
 			return verifyBundleWithCache(ctx, bundleBytes, opts, cachedRoot)
 		},
@@ -226,7 +234,7 @@ func (f *OCIFetcher) Warm(ctx context.Context) error {
 // Fetch discovers and returns verified attestations for the given image.
 func (f *OCIFetcher) Fetch(
 	ctx context.Context, imageRef, digest string,
-	opts FetchOptions, //nolint:gocritic // matches Fetcher interface
+	opts *FetchOptions,
 ) ([]VerifiedAttestation, error) {
 	if opts.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -253,22 +261,30 @@ func (f *OCIFetcher) Fetch(
 	return attestations, nil
 }
 
+func retryJitter(base time.Duration) time.Duration {
+	maxJitter := max(int64(base)/fetchRetryJitterDivisor, 1)
+
+	n, err := rand.Int(rand.Reader, big.NewInt(maxJitter))
+	if err != nil {
+		return 0
+	}
+
+	return time.Duration(n.Int64())
+}
+
 func (f *OCIFetcher) fetchWithRetry(
 	ctx context.Context,
 	ref name.Digest,
 	digest string,
 	remoteOpts []remote.Option,
-	fetchOpts FetchOptions, //nolint:gocritic // passed through to collectAttestations
+	fetchOpts *FetchOptions,
 ) ([]VerifiedAttestation, error) {
 	var lastErr error
 
 	for attempt := range fetchMaxRetries + 1 {
 		if attempt > 0 {
 			base := fetchRetryBaseDelay * time.Duration(1<<(attempt-1))
-			maxJitter := max(int64(base)/fetchRetryJitterDivisor, 1)
-			//nolint:gosec // jitter does not need crypto rand
-			jitter := time.Duration(rand.Int64N(maxJitter))
-			delay := base + jitter
+			delay := base + retryJitter(base)
 
 			slog.Debug("Retrying attestation fetch",
 				"attempt", attempt+1,
@@ -317,7 +333,7 @@ func (f *OCIFetcher) fetchOnce(
 	ref name.Digest,
 	digest string,
 	remoteOpts []remote.Option,
-	fetchOpts FetchOptions, //nolint:gocritic // passed through to collectAttestations
+	fetchOpts *FetchOptions,
 ) ([]VerifiedAttestation, error) {
 	idx, err := f.referrers(ref, remoteOpts...)
 	if err != nil {
@@ -376,7 +392,7 @@ func logReferrers(
 func (f *OCIFetcher) cosignTagFallback(
 	ctx context.Context, ref name.Digest, digest string,
 	remoteOpts []remote.Option,
-	fetchOpts FetchOptions, //nolint:gocritic // passed through to fetchCosignTagAttestations
+	fetchOpts *FetchOptions,
 ) ([]VerifiedAttestation, error) {
 	tagAtts, tagErr := f.fetchCosignTagAttestations(
 		ctx, ref, digest, remoteOpts, fetchOpts,
@@ -422,7 +438,7 @@ func cosignAttestationTag(ref name.Digest) name.Tag {
 func (f *OCIFetcher) fetchCosignTagAttestations(
 	ctx context.Context, ref name.Digest, digest string,
 	remoteOpts []remote.Option,
-	fetchOpts FetchOptions, //nolint:gocritic // passed through to verifyBundle
+	fetchOpts *FetchOptions,
 ) ([]VerifiedAttestation, error) {
 	attTag := cosignAttestationTag(ref)
 
@@ -480,7 +496,7 @@ func (f *OCIFetcher) fetchCosignTagAttestations(
 
 func (f *OCIFetcher) processCosignLayer(
 	ctx context.Context, layer ociV1.Layer, digest string,
-	fetchOpts FetchOptions, //nolint:gocritic // passed through to verifyBundle
+	fetchOpts *FetchOptions,
 ) (VerifiedAttestation, bool) {
 	reader, readErr := layer.Uncompressed()
 	if readErr != nil {
@@ -552,7 +568,7 @@ func extractPredicateType(payload []byte) string {
 func (f *OCIFetcher) collectAttestations(
 	ctx context.Context, manifests []ociV1.Descriptor,
 	ref name.Digest, digest string, remoteOpts []remote.Option,
-	fetchOpts FetchOptions, //nolint:gocritic // passed through to processDescriptor
+	fetchOpts *FetchOptions,
 ) ([]VerifiedAttestation, bool) {
 	var (
 		attestations []VerifiedAttestation
@@ -598,7 +614,7 @@ func (f *OCIFetcher) collectAttestations(
 func (f *OCIFetcher) processDescriptor(
 	ctx context.Context, desc *ociV1.Descriptor,
 	ref name.Digest, digest, predicateType string, remoteOpts []remote.Option,
-	fetchOpts FetchOptions, //nolint:gocritic // passed through to extractPayloadFromImage
+	fetchOpts *FetchOptions,
 ) (VerifiedAttestation, bool) {
 	attestRef := ref.Context().Digest(desc.Digest.String())
 
@@ -673,7 +689,7 @@ func parseDigestRef(imageRef, digest string) (name.Digest, error) {
 func (f *OCIFetcher) extractPayloadFromImage(
 	ctx context.Context,
 	img ociV1.Image,
-	fetchOpts FetchOptions, //nolint:gocritic // passed through to verifyBundle
+	fetchOpts *FetchOptions,
 ) ([]byte, error) {
 	layers, err := img.Layers()
 	if err != nil {
@@ -718,7 +734,7 @@ func (f *OCIFetcher) extractPayloadFromImage(
 func verifyBundleWithCache(
 	ctx context.Context,
 	bundleBytes []byte,
-	opts FetchOptions, //nolint:gocritic // matches BundleVerifyFunc signature
+	opts *FetchOptions,
 	cachedRoot *trustedRootCache,
 ) ([]byte, error) {
 	err := ctx.Err()
@@ -762,7 +778,7 @@ func verifyBundleWithCache(
 
 func buildVerificationConfig(
 	ctx context.Context,
-	opts FetchOptions, //nolint:gocritic // passed through from verifyBundleWithCache
+	opts *FetchOptions,
 	cachedRoot *trustedRootCache,
 ) (root.TrustedMaterialCollection, []verify.VerifierOption, []verify.PolicyOption, error) {
 	var (
@@ -857,7 +873,7 @@ func computeKeyHint(v signature.Verifier) (string, error) {
 
 func buildKeylessConfig(
 	ctx context.Context,
-	opts FetchOptions, //nolint:gocritic // passed through from buildVerificationConfig
+	opts *FetchOptions,
 	cachedRoot *trustedRootCache,
 ) (*root.TrustedRoot, []verify.VerifierOption, []verify.PolicyOption, error) {
 	var (
@@ -1023,7 +1039,6 @@ func globToRegex(pattern string) string {
 	return builder.String()
 }
 
-//nolint:nonamedreturns // gocritic requires names for multi-return
 func convertBracketExpr(runes []rune, idx int) (converted string, end int) {
 	end = findBracketEnd(runes, idx)
 	if end < 0 {

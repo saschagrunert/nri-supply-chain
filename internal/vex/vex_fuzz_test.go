@@ -27,7 +27,6 @@ func FuzzVerify(f *testing.F) {
 	f.Add([]byte(`{}`))
 
 	f.Fuzz(func(_ *testing.T, data []byte) {
-		//nolint:errcheck,gosec // fuzz: we test for panics
 		vex.Verify(
 			context.Background(), data, &policy.Policy{},
 			"docker.io/library/nginx:latest", "sha256:abc123",

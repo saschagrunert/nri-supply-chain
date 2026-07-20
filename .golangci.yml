@@ -82,7 +82,6 @@ linters:
     - noctx
     - noinlineerr
     - nolintlint
-    - nonamedreturns
     - nosprintfhostport
     - paralleltest
     - perfsprint
@@ -117,6 +116,22 @@ linters:
     - wrapcheck
     - wsl_v5
     - zerologlint
+    # - nonamedreturns # conflicts with gocritic/unnamedResult
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - cyclop
+          - funlen
+          - ireturn
+          - maintidx
+          - nilnil
+          - unparam
+          - varnamelen
+      - path: _fuzz_test\.go
+        linters:
+          - errcheck
+          - gosec
   settings:
     depguard:
       rules:
@@ -129,9 +144,12 @@ linters:
             - github.com/openvex/go-vex
             - github.com/prometheus/client_golang
             - github.com/saschagrunert/nri-supply-chain
+            - github.com/sigstore/protobuf-specs
             - github.com/sigstore/sigstore
             - golang.org/x/sync
             - golang.org/x/time
+    dogsled:
+      max-blank-identifiers: 3
     exhaustruct:
       exclude:
         - 'github\.com/containerd/nri/pkg/api\..*'

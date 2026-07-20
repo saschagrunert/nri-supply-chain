@@ -17,7 +17,8 @@ package cache
 
 import (
 	"container/heap"
-	"math/rand/v2"
+	"crypto/rand"
+	"math/big"
 	"sync"
 	"time"
 
@@ -59,7 +60,7 @@ func (h *expiryHeap) Swap(i, j int) {
 }
 
 func (h *expiryHeap) Push(x any) {
-	entry := x.(*heapEntry) //nolint:forcetypeassert // heap.Interface contract
+	entry := x.(*heapEntry) //nolint:forcetypeassert // heap.Interface contract guarantees *heapEntry
 	entry.index = len(*h)
 	*h = append(*h, entry)
 }
@@ -230,18 +231,26 @@ func (c *Cache) evictOldestLocked() {
 		return
 	}
 
-	he := heap.Pop(&c.expHeap).(*heapEntry) //nolint:forcetypeassert // heap contains only *heapEntry
-	delete(c.entries, he.cacheKey)
-	delete(c.heapIndex, he.cacheKey)
+	popped, ok := heap.Pop(&c.expHeap).(*heapEntry)
+	if !ok {
+		return
+	}
+
+	delete(c.entries, popped.cacheKey)
+	delete(c.heapIndex, popped.cacheKey)
 }
 
 func (c *Cache) evictExpiredLocked() {
 	now := time.Now()
 
 	for c.expHeap.Len() > 0 && now.After(c.expHeap[0].expiresAt) {
-		he := heap.Pop(&c.expHeap).(*heapEntry) //nolint:forcetypeassert // heap contains only *heapEntry
-		delete(c.entries, he.cacheKey)
-		delete(c.heapIndex, he.cacheKey)
+		popped, ok := heap.Pop(&c.expHeap).(*heapEntry)
+		if !ok {
+			return
+		}
+
+		delete(c.entries, popped.cacheKey)
+		delete(c.heapIndex, popped.cacheKey)
 	}
 }
 
@@ -251,6 +260,10 @@ func jitter(ttl time.Duration) time.Duration {
 		return 0
 	}
 
-	//nolint:gosec // jitter does not need crypto randomness
-	return time.Duration(rand.Int64N(maxJitter))
+	n, err := rand.Int(rand.Reader, big.NewInt(maxJitter))
+	if err != nil {
+		return 0
+	}
+
+	return time.Duration(n.Int64())
 }

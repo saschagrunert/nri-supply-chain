@@ -36,7 +36,6 @@ metrics_addr = ":8080"
 	f.Add(`verification = "unknown"`)
 
 	f.Fuzz(func(_ *testing.T, data string) {
-		//nolint:errcheck,gosec // fuzz: we test for panics
 		config.LoadFromString(data)
 	})
 }

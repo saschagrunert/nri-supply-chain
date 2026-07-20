@@ -31,7 +31,9 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
-func TestInitLogging(t *testing.T) { //nolint:paralleltest // modifies global slog default
+func TestNewLogger(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name  string
 		level string
@@ -44,11 +46,13 @@ func TestInitLogging(t *testing.T) { //nolint:paralleltest // modifies global sl
 		{name: "unrecognized defaults to info", level: "bogus", want: slog.LevelInfo},
 	}
 
-	for _, test := range tests { //nolint:paralleltest // modifies global slog default
+	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			initLogging(test.level)
+			t.Parallel()
 
-			handler := slog.Default().Handler()
+			logger := newLogger(test.level)
+			handler := logger.Handler()
+
 			if !handler.Enabled(context.Background(), test.want) {
 				t.Errorf("expected level %v to be enabled", test.want)
 			}

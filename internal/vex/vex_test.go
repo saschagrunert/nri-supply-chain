@@ -96,7 +96,7 @@ func mustMarshal(t *testing.T, val any) []byte {
 	return data
 }
 
-func TestVerify(t *testing.T) { //nolint:funlen // test table
+func TestVerify(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -352,7 +352,7 @@ func TestVerifyPURLSingleSegmentRepo(t *testing.T) {
 	}
 }
 
-func TestVerifyMultiple(t *testing.T) { //nolint:funlen // test table
+func TestVerifyMultiple(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {

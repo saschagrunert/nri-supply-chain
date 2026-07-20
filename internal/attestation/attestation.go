@@ -55,7 +55,7 @@ const (
 )
 
 // BundleVerifyFunc verifies a Sigstore bundle and returns the extracted DSSE payload.
-type BundleVerifyFunc func(ctx context.Context, bundleBytes []byte, opts FetchOptions) ([]byte, error)
+type BundleVerifyFunc func(ctx context.Context, bundleBytes []byte, opts *FetchOptions) ([]byte, error)
 
 // VerifiedAttestation holds a verified attestation with its parsed payload.
 type VerifiedAttestation struct {
@@ -67,7 +67,7 @@ type VerifiedAttestation struct {
 // Fetcher discovers and verifies attestations for a container image.
 type Fetcher interface {
 	Fetch(
-		ctx context.Context, imageRef, digest string, opts FetchOptions,
+		ctx context.Context, imageRef, digest string, opts *FetchOptions,
 	) ([]VerifiedAttestation, error)
 }
 

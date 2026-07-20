@@ -78,7 +78,7 @@ func trustedPolicy() *policy.Policy {
 	}
 }
 
-func TestVerify(t *testing.T) { //nolint:funlen,maintidx // test table
+func TestVerify(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {

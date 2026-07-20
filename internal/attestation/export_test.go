@@ -23,9 +23,9 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
-	protobundle "github.com/sigstore/protobuf-specs/gen/pb-go/bundle/v1" //nolint:depguard // test helper
-	protocommon "github.com/sigstore/protobuf-specs/gen/pb-go/common/v1" //nolint:depguard // test helper
-	protodsse "github.com/sigstore/protobuf-specs/gen/pb-go/dsse"        //nolint:depguard // test helper
+	protobundle "github.com/sigstore/protobuf-specs/gen/pb-go/bundle/v1"
+	protocommon "github.com/sigstore/protobuf-specs/gen/pb-go/common/v1"
+	protodsse "github.com/sigstore/protobuf-specs/gen/pb-go/dsse"
 	"github.com/sigstore/sigstore-go/pkg/bundle"
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/verify"
@@ -36,7 +36,7 @@ import (
 // ExportDefaultVerifyBundle exposes verifyBundleWithCache (nil cache) for external tests.
 func ExportDefaultVerifyBundle(
 	ctx context.Context, data []byte,
-	opts FetchOptions, //nolint:gocritic // matches BundleVerifyFunc signature
+	opts *FetchOptions,
 ) ([]byte, error) {
 	return verifyBundleWithCache(ctx, data, opts, nil)
 }
@@ -60,9 +60,8 @@ func ExportBuildKeyMaterial(keys []string) (*root.TrustedPublicKeyMaterial, erro
 // returning only the error to avoid the dogsled linter issue.
 func ExportBuildVerificationCfgErr(
 	ctx context.Context,
-	opts FetchOptions, //nolint:gocritic // wraps buildVerificationConfig
+	opts *FetchOptions,
 ) error {
-	//nolint:dogsled // wraps 4-return function
 	_, _, _, err := buildVerificationConfig(ctx, opts, nil)
 
 	return err
@@ -72,10 +71,9 @@ func ExportBuildVerificationCfgErr(
 // for external tests.
 func ExportBuildVerificationCfgWithCache(
 	ctx context.Context,
-	opts FetchOptions, //nolint:gocritic // wraps buildVerificationConfig
+	opts *FetchOptions,
 	cache *trustedRootCache,
 ) error {
-	//nolint:dogsled // wraps 4-return function
 	_, _, _, err := buildVerificationConfig(ctx, opts, cache)
 
 	return err
@@ -112,7 +110,7 @@ func ExportMaxReferrers() int { return maxReferrers }
 // VerifyBundle exposes the OCIFetcher's verifyBundle for testing.
 func (f *OCIFetcher) VerifyBundle(
 	ctx context.Context, data []byte,
-	opts FetchOptions, //nolint:gocritic // matches BundleVerifyFunc signature
+	opts *FetchOptions,
 ) ([]byte, error) {
 	return f.verifyBundle(ctx, data, opts)
 }
@@ -124,7 +122,7 @@ func (f *OCIFetcher) CollectAttestations(
 	ref name.Digest,
 	digest string,
 	remoteOpts []remote.Option,
-	opts FetchOptions, //nolint:gocritic // matches collectAttestations signature
+	opts *FetchOptions,
 ) ([]VerifiedAttestation, bool) {
 	return f.collectAttestations(ctx, manifests, ref, digest, remoteOpts, opts)
 }
@@ -180,7 +178,7 @@ func ExportTrustedRootMaxStaleness() time.Duration { return trustedRootMaxStalen
 // for testing the uncached keyless path.
 func ExportVerifyBundleWithCacheNil(
 	ctx context.Context, bundleBytes []byte,
-	opts FetchOptions, //nolint:gocritic // matches BundleVerifyFunc signature
+	opts *FetchOptions,
 ) ([]byte, error) {
 	return verifyBundleWithCache(ctx, bundleBytes, opts, nil)
 }
@@ -223,16 +221,14 @@ func ExportExtractPredicateType(payload []byte) string {
 func (f *OCIFetcher) FetchCosignTagAttestations(
 	ctx context.Context, ref name.Digest, digest string,
 	remoteOpts []remote.Option,
-	fetchOpts FetchOptions, //nolint:gocritic // matches fetchCosignTagAttestations signature
+	fetchOpts *FetchOptions,
 ) ([]VerifiedAttestation, error) {
 	return f.fetchCosignTagAttestations(ctx, ref, digest, remoteOpts, fetchOpts)
 }
 
 // ExtractPayloadFromImage exposes extractPayloadFromImage for external tests.
-//
-//nolint:gocritic // hugeParam: test export layer passes FetchOptions by value
 func (f *OCIFetcher) ExtractPayloadFromImage(
-	ctx context.Context, img v1.Image, fetchOpts FetchOptions,
+	ctx context.Context, img v1.Image, fetchOpts *FetchOptions,
 ) ([]byte, error) {
 	return f.extractPayloadFromImage(ctx, img, fetchOpts)
 }

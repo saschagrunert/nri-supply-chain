@@ -45,6 +45,8 @@ var (
 
 	// ErrCircuitBreakerOpen is returned when the circuit breaker is open.
 	ErrCircuitBreakerOpen = errors.New("circuit breaker open for image")
+
+	errUnexpectedSingleflightResult = errors.New("unexpected singleflight result type")
 )
 
 type snapshot struct {
@@ -121,8 +123,6 @@ func (v *Verifier) Enforcing() bool {
 
 // Ready returns true if the verifier is ready to serve requests.
 // When not ready, the second return value describes the reason.
-//
-//nolint:nonamedreturns // gocritic requires names
 func (v *Verifier) Ready() (ready bool, reason string) {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
@@ -270,7 +270,6 @@ func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 	return nil
 }
 
-//nolint:nonamedreturns // gocritic requires names for multi-value returns
 func loadAndHashPolicies(
 	cfg *config.Config,
 ) (policies map[string]*policy.Policy, hashes map[string]string, err error) {
@@ -358,7 +357,11 @@ func (v *Verifier) verifyOnce(
 			return nil, fmt.Errorf("inflight verification: %w", res.Err)
 		}
 
-		shared := res.Val.(*types.Result) //nolint:forcetypeassert // type guaranteed by DoChan closure
+		shared, ok := res.Val.(*types.Result)
+		if !ok {
+			return nil, fmt.Errorf("%w: %T", errUnexpectedSingleflightResult, res.Val)
+		}
+
 		result := *shared
 
 		return &result, nil
@@ -443,7 +446,7 @@ func fetchAttestations(
 	ctx context.Context, state *snapshot,
 	imageRef, digest string, pol *policy.Policy,
 ) ([]attestation.VerifiedAttestation, error) {
-	opts := attestation.FetchOptions{
+	opts := &attestation.FetchOptions{
 		RequireTransparencyLog: pol.Signatures != nil && pol.Signatures.RequireTransparencyLog,
 		Timeout:                state.config.FetchTimeout.Duration,
 	}
@@ -546,7 +549,9 @@ func runParallelChecks(
 		waitGroup  sync.WaitGroup
 	)
 
-	waitGroup.Add(2) //nolint:mnd // SLSA + VEX checks
+	const numChecks = 2
+
+	waitGroup.Add(numChecks)
 
 	go func() {
 		defer waitGroup.Done()
