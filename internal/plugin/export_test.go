@@ -15,8 +15,6 @@
 package plugin
 
 // ExportResolveImage exposes resolveImage for external tests.
-//
-//nolint:nonamedreturns // gocritic requires names
 func ExportResolveImage(annotations map[string]string) (imageRef, digest string) {
 	return resolveImage(annotations)
 }

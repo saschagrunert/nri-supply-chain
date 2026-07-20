@@ -93,7 +93,7 @@ func assertNoError(t *testing.T, err error) {
 	}
 }
 
-func TestVerify(t *testing.T) { //nolint:funlen,maintidx // Table-driven test.
+func TestVerify(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -581,7 +581,7 @@ func TestVerify(t *testing.T) { //nolint:funlen,maintidx // Table-driven test.
 	}
 }
 
-func TestVerifyMultiple(t *testing.T) { //nolint:funlen // Table-driven test.
+func TestVerifyMultiple(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {

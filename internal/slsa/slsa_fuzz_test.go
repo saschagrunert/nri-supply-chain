@@ -56,7 +56,6 @@ func FuzzVerify(f *testing.F) {
 	f.Add([]byte(`{"_type":"bad"}`))
 
 	f.Fuzz(func(_ *testing.T, data []byte) {
-		//nolint:errcheck,gosec // fuzz: we test for panics
 		slsa.Verify(data, &policy.Policy{}, testDigest)
 	})
 }

@@ -20,8 +20,6 @@ const digestPartCount = 2
 
 // ParseDigest splits a digest string (e.g., "sha256:abc123") into algorithm and hash.
 // Returns empty strings if the format is invalid.
-//
-//nolint:nonamedreturns // gocritic requires names
 func ParseDigest(digest string) (algo, hash string) {
 	parts := strings.SplitN(digest, ":", digestPartCount)
 	if len(parts) != digestPartCount || parts[0] == "" || parts[1] == "" {

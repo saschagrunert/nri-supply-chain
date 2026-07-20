@@ -54,7 +54,6 @@ func FuzzVerify(f *testing.F) {
 	}
 
 	f.Fuzz(func(_ *testing.T, data []byte) {
-		//nolint:errcheck,gosec // fuzz: we test for panics
 		vsa.Verify(data, pol, testImageRef)
 	})
 }

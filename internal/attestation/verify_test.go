@@ -65,7 +65,6 @@ func writeTestKey(t *testing.T) string {
 	return keyPath
 }
 
-//nolint:funlen,varnamelen // table-driven test
 func TestDefaultVerifyBundle(t *testing.T) {
 	t.Parallel()
 
@@ -73,7 +72,7 @@ func TestDefaultVerifyBundle(t *testing.T) {
 		name      string
 		ctx       func() context.Context
 		data      []byte
-		opts      attestation.FetchOptions
+		opts      *attestation.FetchOptions
 		wantErr   bool
 		wantInErr string
 	}{
@@ -81,7 +80,7 @@ func TestDefaultVerifyBundle(t *testing.T) {
 			name:      "invalid JSON",
 			ctx:       context.Background,
 			data:      []byte("not json"),
-			opts:      attestation.FetchOptions{},
+			opts:      &attestation.FetchOptions{},
 			wantErr:   true,
 			wantInErr: "",
 		},
@@ -89,7 +88,7 @@ func TestDefaultVerifyBundle(t *testing.T) {
 			name:      "invalid bundle content",
 			ctx:       context.Background,
 			data:      []byte(`{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json"}`),
-			opts:      attestation.FetchOptions{},
+			opts:      &attestation.FetchOptions{},
 			wantErr:   true,
 			wantInErr: "",
 		},
@@ -102,7 +101,7 @@ func TestDefaultVerifyBundle(t *testing.T) {
 				return ctx
 			},
 			data:      []byte("{}"),
-			opts:      attestation.FetchOptions{},
+			opts:      &attestation.FetchOptions{},
 			wantErr:   true,
 			wantInErr: "context canceled",
 		},
@@ -110,7 +109,7 @@ func TestDefaultVerifyBundle(t *testing.T) {
 			name: "nonexistent key path",
 			ctx:  context.Background,
 			data: []byte(`{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json"}`),
-			opts: attestation.FetchOptions{
+			opts: &attestation.FetchOptions{
 				TrustedKeys: []string{nonexistentKey},
 			},
 			wantErr:   true,
@@ -120,7 +119,7 @@ func TestDefaultVerifyBundle(t *testing.T) {
 			name:      "no trusted material configured",
 			ctx:       context.Background,
 			data:      []byte(`{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json"}`),
-			opts:      attestation.FetchOptions{},
+			opts:      &attestation.FetchOptions{},
 			wantErr:   true,
 			wantInErr: "",
 		},
@@ -150,7 +149,6 @@ func TestDefaultVerifyBundle(t *testing.T) {
 	}
 }
 
-//nolint:cyclop,funlen,varnamelen // table-driven test
 func TestBuildCertificateIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -261,7 +259,6 @@ func TestBuildCertificateIdentity(t *testing.T) {
 	}
 }
 
-//nolint:funlen,varnamelen // table-driven test
 func TestBuildKeyMaterial(t *testing.T) {
 	t.Parallel()
 
@@ -327,28 +324,27 @@ func TestBuildKeyMaterial(t *testing.T) {
 	}
 }
 
-//nolint:funlen,varnamelen // table-driven test
 func TestBuildVerificationConfig(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name      string
-		opts      func(t *testing.T) attestation.FetchOptions
+		opts      func(t *testing.T) *attestation.FetchOptions
 		wantErr   error
 		wantInErr string
 	}{
 		{
 			name: "no trusted material",
-			opts: func(_ *testing.T) attestation.FetchOptions {
-				return attestation.FetchOptions{}
+			opts: func(_ *testing.T) *attestation.FetchOptions {
+				return &attestation.FetchOptions{}
 			},
 			wantErr:   attestation.ExportErrNoTrustedMaterial(),
 			wantInErr: "",
 		},
 		{
 			name: "nonexistent key",
-			opts: func(_ *testing.T) attestation.FetchOptions {
-				return attestation.FetchOptions{
+			opts: func(_ *testing.T) *attestation.FetchOptions {
+				return &attestation.FetchOptions{
 					TrustedKeys: []string{nonexistentKey},
 				}
 			},
@@ -357,10 +353,10 @@ func TestBuildVerificationConfig(t *testing.T) {
 		},
 		{
 			name: "valid key only",
-			opts: func(t *testing.T) attestation.FetchOptions {
+			opts: func(t *testing.T) *attestation.FetchOptions {
 				t.Helper()
 
-				return attestation.FetchOptions{
+				return &attestation.FetchOptions{
 					TrustedKeys: []string{writeTestKey(t)},
 				}
 			},
@@ -399,20 +395,19 @@ func TestBuildVerificationConfig(t *testing.T) {
 	}
 }
 
-//nolint:funlen,varnamelen // table-driven test
 func TestBuildVerificationConfigWithCache(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name      string
-		opts      func(t *testing.T) attestation.FetchOptions
+		opts      func(t *testing.T) *attestation.FetchOptions
 		wantErr   bool
 		wantInErr string
 	}{
 		{
 			name: "issuers only with cache",
-			opts: func(_ *testing.T) attestation.FetchOptions {
-				return attestation.FetchOptions{
+			opts: func(_ *testing.T) *attestation.FetchOptions {
+				return &attestation.FetchOptions{
 					TrustedIssuers: []string{testIssuerGoogle},
 				}
 			},
@@ -421,10 +416,10 @@ func TestBuildVerificationConfigWithCache(t *testing.T) {
 		},
 		{
 			name: "issuers and keys with cache",
-			opts: func(t *testing.T) attestation.FetchOptions {
+			opts: func(t *testing.T) *attestation.FetchOptions {
 				t.Helper()
 
-				return attestation.FetchOptions{
+				return &attestation.FetchOptions{
 					TrustedKeys:    []string{writeTestKey(t)},
 					TrustedIssuers: []string{testIssuerGoogle},
 				}
@@ -434,8 +429,8 @@ func TestBuildVerificationConfigWithCache(t *testing.T) {
 		},
 		{
 			name: "issuers with transparency log",
-			opts: func(_ *testing.T) attestation.FetchOptions {
-				return attestation.FetchOptions{
+			opts: func(_ *testing.T) *attestation.FetchOptions {
+				return &attestation.FetchOptions{
 					TrustedIssuers:         []string{testIssuerGoogle},
 					RequireTransparencyLog: true,
 				}
@@ -445,8 +440,8 @@ func TestBuildVerificationConfigWithCache(t *testing.T) {
 		},
 		{
 			name: "issuers with SAN patterns",
-			opts: func(_ *testing.T) attestation.FetchOptions {
-				return attestation.FetchOptions{
+			opts: func(_ *testing.T) *attestation.FetchOptions {
+				return &attestation.FetchOptions{
 					TrustedIssuers: []string{testIssuerGoogle},
 					SANPatterns:    []string{testSANUser},
 				}
@@ -456,8 +451,8 @@ func TestBuildVerificationConfigWithCache(t *testing.T) {
 		},
 		{
 			name: "cache fetch error",
-			opts: func(_ *testing.T) attestation.FetchOptions {
-				return attestation.FetchOptions{
+			opts: func(_ *testing.T) *attestation.FetchOptions {
+				return &attestation.FetchOptions{
 					TrustedIssuers: []string{testIssuerGoogle},
 				}
 			},
@@ -511,7 +506,6 @@ func TestBuildVerificationConfigWithCache(t *testing.T) {
 	}
 }
 
-//nolint:varnamelen // table-driven test
 func TestOCIFetcherConstructors(t *testing.T) {
 	t.Parallel()
 
@@ -531,7 +525,7 @@ func TestOCIFetcherConstructors(t *testing.T) {
 			name: "custom verifier",
 			create: func() *attestation.OCIFetcher {
 				return attestation.NewOCIFetcherWithVerifier(
-					func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+					func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 						return []byte(`{"custom": true}`), nil
 					},
 				)
@@ -554,7 +548,7 @@ func TestOCIFetcherConstructors(t *testing.T) {
 				result, err := fetcher.VerifyBundle(
 					context.Background(),
 					nil,
-					attestation.FetchOptions{},
+					&attestation.FetchOptions{},
 				)
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
@@ -568,7 +562,6 @@ func TestOCIFetcherConstructors(t *testing.T) {
 	}
 }
 
-//nolint:varnamelen // table-driven test
 func TestParseDigestRef(t *testing.T) {
 	t.Parallel()
 
@@ -665,7 +658,6 @@ func TestParseDigestRefContextPreserved(t *testing.T) {
 	}
 }
 
-//nolint:funlen,varnamelen // table-driven test
 func TestExtractVerifiedPayload(t *testing.T) {
 	t.Parallel()
 
@@ -749,7 +741,7 @@ func TestVerifyBundleWithCacheNilCanceledCtx(t *testing.T) {
 	_, err := attestation.ExportVerifyBundleWithCacheNil(
 		ctx,
 		[]byte(`{}`),
-		attestation.FetchOptions{},
+		&attestation.FetchOptions{},
 	)
 	if err == nil {
 		t.Fatal("expected error for canceled context")
@@ -768,7 +760,7 @@ func TestNewOCIFetcherWithCacheVerifyBundleCanceledCtx(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := fetcher.VerifyBundle(ctx, []byte(`{}`), attestation.FetchOptions{})
+	_, err := fetcher.VerifyBundle(ctx, []byte(`{}`), &attestation.FetchOptions{})
 	if err == nil {
 		t.Fatal("expected error for canceled context")
 	}
@@ -786,7 +778,7 @@ func TestNewOCIFetcherWithCacheInvalidBundle(t *testing.T) {
 	_, err := fetcher.VerifyBundle(
 		context.Background(),
 		[]byte(`not json`),
-		attestation.FetchOptions{},
+		&attestation.FetchOptions{},
 	)
 	if err == nil {
 		t.Fatal("expected error for invalid bundle")
@@ -806,7 +798,7 @@ func TestNewTestOCIFetcherInjectsBoth(t *testing.T) {
 	)
 
 	fetcher := attestation.NewTestOCIFetcher(
-		func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+		func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 			verifyCalled = true
 
 			return []byte("ok"), nil
@@ -839,7 +831,7 @@ func TestNewTestOCIFetcherInjectsBoth(t *testing.T) {
 	}
 
 	result, _ := fetcher.CollectAttestations(
-		context.Background(), manifests, baseRef, "sha256:test", nil, attestation.FetchOptions{},
+		context.Background(), manifests, baseRef, "sha256:test", nil, &attestation.FetchOptions{},
 	)
 
 	if !fetchCalled {

@@ -254,31 +254,42 @@ func loadConfig(path string) (*config.Config, error) {
 }
 
 func initLogging(level string) {
-	var logLevel slog.Level
+	slog.SetDefault(newLogger(level))
 
-	var warnInvalid bool
+	if parseLogLevel(level) == nil {
+		slog.Warn("Unrecognized log level, defaulting to info", "level", level)
+	}
+}
+
+func parseLogLevel(level string) *slog.Level {
+	var parsed slog.Level
 
 	switch level {
 	case logLevelDebug:
-		logLevel = slog.LevelDebug
+		parsed = slog.LevelDebug
 	case logLevelInfo:
-		logLevel = slog.LevelInfo
+		parsed = slog.LevelInfo
 	case logLevelWarn:
-		logLevel = slog.LevelWarn
+		parsed = slog.LevelWarn
 	case logLevelError:
-		logLevel = slog.LevelError
+		parsed = slog.LevelError
 	default:
-		logLevel = slog.LevelInfo
-		warnInvalid = true
+		return nil
 	}
 
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+	return &parsed
+}
+
+func newLogger(level string) *slog.Logger {
+	logLevel := slog.LevelInfo
+
+	if parsed := parseLogLevel(level); parsed != nil {
+		logLevel = *parsed
+	}
+
+	return slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
 		Level: logLevel,
-	})))
-
-	if warnInvalid {
-		slog.Warn("Unrecognized log level, defaulting to info", "level", level)
-	}
+	}))
 }
 
 func runPlugin(
@@ -412,20 +423,8 @@ func serveMetrics(
 		ReadHeaderTimeout: readHeaderTimeout,
 	}
 
-	go func() { //nolint:gosec // ctx is cancelled at this point; fresh context is intentional
-		<-ctx.Done()
-
-		shutdownCtx, shutdownCancel := context.WithTimeout(
-			context.Background(), shutdownGracePeriod,
-		)
-		defer shutdownCancel()
-
-		//nolint:contextcheck // ctx is already cancelled here
-		shutdownErr := srv.Shutdown(shutdownCtx)
-		if shutdownErr != nil {
-			slog.Error("Failed to shutdown metrics server", "error", shutdownErr)
-		}
-	}()
+	//nolint:gosec,contextcheck // parent ctx is already cancelled; fresh context is intentional
+	go shutdownOnCancel(ctx.Done(), srv)
 
 	slog.Info("Starting metrics and health server", "addr", addr)
 
@@ -435,6 +434,20 @@ func serveMetrics(
 	}
 
 	return nil
+}
+
+func shutdownOnCancel(done <-chan struct{}, srv *http.Server) {
+	<-done
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(
+		context.Background(), shutdownGracePeriod,
+	)
+	defer shutdownCancel()
+
+	shutdownErr := srv.Shutdown(shutdownCtx)
+	if shutdownErr != nil {
+		slog.Error("Failed to shutdown metrics server", "error", shutdownErr)
+	}
 }
 
 func registerHealthProbes(mux *http.ServeMux, plug *plugin.Plugin) {

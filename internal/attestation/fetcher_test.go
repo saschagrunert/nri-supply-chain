@@ -72,14 +72,12 @@ func (f *fakeImageIndex) Size() (int64, error) { return 0, nil }
 
 func (f *fakeImageIndex) RawManifest() ([]byte, error) { return nil, nil }
 
-//nolint:ireturn // v1.ImageIndex requires this signature
 func (f *fakeImageIndex) Image(_ ociV1.Hash) (ociV1.Image, error) {
-	return nil, nil //nolint:nilnil // stub
+	return nil, nil
 }
 
-//nolint:ireturn // v1.ImageIndex requires this signature
 func (f *fakeImageIndex) ImageIndex(_ ociV1.Hash) (ociV1.ImageIndex, error) {
-	return nil, nil //nolint:nilnil // stub
+	return nil, nil
 }
 
 func (f *fakeImageIndex) IndexManifest() (*ociV1.IndexManifest, error) {
@@ -98,7 +96,6 @@ func (b *brokenLayersImage) Layers() ([]ociV1.Layer, error) {
 	return nil, errLayers
 }
 
-//nolint:ireturn // test helper intentionally returns interface
 func fakeImageWithPayload(payload []byte) ociV1.Image {
 	layer := static.NewLayer(payload, types.OCILayer)
 
@@ -110,16 +107,19 @@ func fakeImageWithPayload(payload []byte) ociV1.Image {
 	return img
 }
 
-//nolint:ireturn // test helper returning interface for test table usage
 func fakeImageWithAnnotations(payload []byte, annotations map[string]string) ociV1.Image {
 	img := fakeImageWithPayload(payload)
 
-	img = mutate.Annotations(img, annotations).(ociV1.Image) //nolint:forcetypeassert // test helper
+	annotated, ok := mutate.Annotations(img, annotations).(ociV1.Image)
+	if !ok {
+		panic("mutate.Annotations did not return v1.Image")
+	}
+
+	img = annotated
 
 	return img
 }
 
-//nolint:funlen,varnamelen // table-driven test
 func TestExtractPayloadFromImage(t *testing.T) {
 	t.Parallel()
 
@@ -134,7 +134,7 @@ func TestExtractPayloadFromImage(t *testing.T) {
 		{
 			name:  "successful extraction",
 			image: fakeImageWithPayload([]byte(`{"bundle": "data"}`)),
-			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return []byte(`{"verified": true}`), nil
 			},
 			wantErr:     false,
@@ -144,7 +144,7 @@ func TestExtractPayloadFromImage(t *testing.T) {
 		{
 			name:  "empty image with no layers",
 			image: empty.Image,
-			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return nil, nil
 			},
 			wantErr:     true,
@@ -158,7 +158,7 @@ func TestExtractPayloadFromImage(t *testing.T) {
 
 				return fakeImageWithPayload(oversized)
 			}(),
-			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return nil, nil
 			},
 			wantErr:     true,
@@ -168,7 +168,7 @@ func TestExtractPayloadFromImage(t *testing.T) {
 		{
 			name:  "layers error",
 			image: &brokenLayersImage{Image: empty.Image},
-			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return nil, nil
 			},
 			wantErr:     true,
@@ -178,7 +178,7 @@ func TestExtractPayloadFromImage(t *testing.T) {
 		{
 			name:  "bundle verification fails",
 			image: fakeImageWithPayload([]byte(`{"bundle": "bad"}`)),
-			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return nil, errSignatureMismatch
 			},
 			wantErr:     true,
@@ -194,7 +194,7 @@ func TestExtractPayloadFromImage(t *testing.T) {
 			fetcher := attestation.NewTestOCIFetcher(tt.verifyFunc, nil)
 
 			result, err := fetcher.ExtractPayloadFromImage(
-				context.Background(), tt.image, attestation.FetchOptions{},
+				context.Background(), tt.image, &attestation.FetchOptions{},
 			)
 
 			if tt.wantErr {
@@ -220,7 +220,6 @@ func TestExtractPayloadFromImage(t *testing.T) {
 	}
 }
 
-//nolint:funlen,varnamelen // table-driven test
 func TestCollectAttestations(t *testing.T) {
 	t.Parallel()
 
@@ -264,7 +263,7 @@ func TestCollectAttestations(t *testing.T) {
 			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
 				return nil, errImageFetch
 			},
-			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return nil, nil
 			},
 			wantCount:      0,
@@ -276,7 +275,7 @@ func TestCollectAttestations(t *testing.T) {
 			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
 				return nil, errImageFetch
 			},
-			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return nil, nil
 			},
 			cancelCtx:      false,
@@ -291,7 +290,7 @@ func TestCollectAttestations(t *testing.T) {
 			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
 				return nil, errImageFetch
 			},
-			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return nil, nil
 			},
 			cancelCtx:      false,
@@ -312,7 +311,7 @@ func TestCollectAttestations(t *testing.T) {
 			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
 				return nil, errImageFetch
 			},
-			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return nil, nil
 			},
 			cancelCtx:      false,
@@ -337,7 +336,7 @@ func TestCollectAttestations(t *testing.T) {
 
 				return fakeImageWithAnnotations([]byte(`{"bundle": "ok"}`), annot), nil
 			},
-			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return []byte(`{"slsa": true}`), nil
 			},
 			cancelCtx:      false,
@@ -352,7 +351,7 @@ func TestCollectAttestations(t *testing.T) {
 			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
 				return fakeImageWithPayload([]byte(`{"bundle": "ok"}`)), nil
 			},
-			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return []byte(`{"slsa": true}`), nil
 			},
 			cancelCtx:      false,
@@ -368,7 +367,7 @@ func TestCollectAttestations(t *testing.T) {
 			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
 				return fakeImageWithPayload([]byte(`{"bundle": "ok"}`)), nil
 			},
-			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return []byte(`{"payload": true}`), nil
 			},
 			cancelCtx:      false,
@@ -383,7 +382,7 @@ func TestCollectAttestations(t *testing.T) {
 			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
 				return nil, errImageFetch
 			},
-			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return nil, nil
 			},
 			cancelCtx:      false,
@@ -408,7 +407,7 @@ func TestCollectAttestations(t *testing.T) {
 					return fakeImageWithPayload([]byte(`{"bundle": "ok"}`)), nil
 				}
 			}(),
-			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return []byte(`{"payload": true}`), nil
 			},
 			cancelCtx:      false,
@@ -433,7 +432,7 @@ func TestCollectAttestations(t *testing.T) {
 			fetcher := attestation.NewTestOCIFetcher(tt.verifyFunc, tt.imageFetch)
 
 			result, hadBundles := fetcher.CollectAttestations(
-				ctx, tt.manifests, baseRef, testDigestVal, nil, attestation.FetchOptions{},
+				ctx, tt.manifests, baseRef, testDigestVal, nil, &attestation.FetchOptions{},
 			)
 
 			if len(result) != tt.wantCount {
@@ -474,7 +473,7 @@ func TestCollectAttestationsMaxReferrers(t *testing.T) {
 	}
 
 	fetcher := attestation.NewTestOCIFetcher(
-		func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+		func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 			return []byte(`{"ok": true}`), nil
 		},
 		func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
@@ -483,7 +482,7 @@ func TestCollectAttestationsMaxReferrers(t *testing.T) {
 	)
 
 	result, hadBundles := fetcher.CollectAttestations(
-		context.Background(), manifests, baseRef, "sha256:test", nil, attestation.FetchOptions{},
+		context.Background(), manifests, baseRef, "sha256:test", nil, &attestation.FetchOptions{},
 	)
 
 	if !hadBundles {
@@ -521,7 +520,7 @@ func TestCollectAttestationsDigestPreserved(t *testing.T) {
 	}
 
 	fetcher := attestation.NewTestOCIFetcher(
-		func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+		func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 			return []byte(`{"ok": true}`), nil
 		},
 		func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
@@ -530,7 +529,7 @@ func TestCollectAttestationsDigestPreserved(t *testing.T) {
 	)
 
 	result, _ := fetcher.CollectAttestations(
-		context.Background(), manifests, baseRef, wantDigest, nil, attestation.FetchOptions{},
+		context.Background(), manifests, baseRef, wantDigest, nil, &attestation.FetchOptions{},
 	)
 
 	if len(result) != 1 {
@@ -547,7 +546,6 @@ func TestCollectAttestationsDigestPreserved(t *testing.T) {
 	}
 }
 
-//nolint:varnamelen // table-driven test
 func TestBuildCertificateIdentitySANPatterns(t *testing.T) {
 	t.Parallel()
 
@@ -597,7 +595,6 @@ func TestBuildCertificateIdentitySANPatterns(t *testing.T) {
 	}
 }
 
-//nolint:unparam // called with PredicateOpenVEX and PredicateSLSAProvenanceV1
 func bundleDescriptor(predicateType string) ociV1.Descriptor {
 	return ociV1.Descriptor{
 		ArtifactType: attestation.BundleMediaType,
@@ -611,7 +608,6 @@ func bundleDescriptor(predicateType string) ociV1.Descriptor {
 	}
 }
 
-//nolint:funlen,varnamelen // table-driven test
 func TestFetch(t *testing.T) {
 	t.Parallel()
 
@@ -638,7 +634,7 @@ func TestFetch(t *testing.T) {
 			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
 				return fakeImageWithPayload([]byte(`{"bundle": "ok"}`)), nil
 			},
-			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return []byte(`{"verified": true}`), nil
 			},
 			cancelCtx:  false,
@@ -654,7 +650,7 @@ func TestFetch(t *testing.T) {
 			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
 				return nil, errImageFetch
 			},
-			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return nil, nil
 			},
 			cancelCtx:  false,
@@ -670,7 +666,7 @@ func TestFetch(t *testing.T) {
 			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
 				return nil, errImageFetch
 			},
-			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return nil, errSignatureMismatch
 			},
 			cancelCtx:  false,
@@ -686,7 +682,7 @@ func TestFetch(t *testing.T) {
 			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
 				return nil, errImageFetch
 			},
-			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return nil, errSignatureMismatch
 			},
 			cancelCtx:  false,
@@ -707,7 +703,7 @@ func TestFetch(t *testing.T) {
 			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
 				return fakeImageWithPayload([]byte(`{"bundle": "ok"}`)), nil
 			},
-			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return []byte(`{"ok": true}`), nil
 			},
 			cancelCtx:  true,
@@ -728,7 +724,7 @@ func TestFetch(t *testing.T) {
 			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
 				return nil, errImageFetch
 			},
-			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return nil, nil
 			},
 			cancelCtx:  false,
@@ -754,7 +750,7 @@ func TestFetch(t *testing.T) {
 			fetcher := attestation.NewTestOCIFetcherFull(tt.verifyFunc, tt.imageFetch, tt.referrers)
 
 			result, err := fetcher.Fetch(
-				ctx, testFetchImageRef, testFetchDigest, attestation.FetchOptions{},
+				ctx, testFetchImageRef, testFetchDigest, &attestation.FetchOptions{},
 			)
 
 			if tt.wantErr {
@@ -780,7 +776,7 @@ func TestFetch(t *testing.T) {
 	}
 }
 
-func TestGlobToRegex(t *testing.T) { //nolint:funlen // Table-driven test.
+func TestGlobToRegex(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -966,7 +962,6 @@ func TestExtractPredicateType(t *testing.T) {
 	}
 }
 
-//nolint:funlen // table-driven test
 func TestFetchCosignTagAttestations(t *testing.T) {
 	t.Parallel()
 
@@ -989,7 +984,7 @@ func TestFetchCosignTagAttestations(t *testing.T) {
 			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
 				return nil, &transport.Error{StatusCode: http.StatusNotFound}
 			},
-			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return nil, nil
 			},
 			wantCount: 0,
@@ -1000,7 +995,7 @@ func TestFetchCosignTagAttestations(t *testing.T) {
 			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
 				return fakeImageWithPayload([]byte(`{"bundle": "data"}`)), nil
 			},
-			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return []byte(
 					`{"predicateType":"https://slsa.dev/provenance/v1"}`,
 				), nil
@@ -1013,7 +1008,7 @@ func TestFetchCosignTagAttestations(t *testing.T) {
 			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
 				return fakeImageWithPayload([]byte(`not a bundle`)), nil
 			},
-			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return nil, errSignatureMismatch
 			},
 			wantCount: 0,
@@ -1024,7 +1019,7 @@ func TestFetchCosignTagAttestations(t *testing.T) {
 			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
 				return nil, &transport.Error{StatusCode: http.StatusInternalServerError}
 			},
-			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return nil, nil
 			},
 			wantCount: 0,
@@ -1035,7 +1030,7 @@ func TestFetchCosignTagAttestations(t *testing.T) {
 			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
 				return &brokenLayersImage{Image: empty.Image}, nil
 			},
-			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return nil, nil
 			},
 			wantCount: 0,
@@ -1046,7 +1041,7 @@ func TestFetchCosignTagAttestations(t *testing.T) {
 			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
 				return empty.Image, nil
 			},
-			verifyFunc: func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return nil, nil
 			},
 			wantCount: 0,
@@ -1064,7 +1059,7 @@ func TestFetchCosignTagAttestations(t *testing.T) {
 
 			result, err := fetcher.FetchCosignTagAttestations(
 				context.Background(), ref, testFetchDigest,
-				nil, attestation.FetchOptions{},
+				nil, &attestation.FetchOptions{},
 			)
 
 			if test.wantErr {
@@ -1094,7 +1089,7 @@ func TestFetchFallsBackToCosignTag(t *testing.T) {
 	var cosignTagFetched bool
 
 	fetcher := attestation.NewTestOCIFetcherFull(
-		func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+		func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 			return []byte(`{"predicateType":"https://slsa.dev/provenance/v1"}`), nil
 		},
 		func(ref name.Reference, _ ...remote.Option) (ociV1.Image, error) {
@@ -1112,7 +1107,7 @@ func TestFetchFallsBackToCosignTag(t *testing.T) {
 	)
 
 	result, err := fetcher.Fetch(
-		context.Background(), testFetchImageRef, testFetchDigest, attestation.FetchOptions{},
+		context.Background(), testFetchImageRef, testFetchDigest, &attestation.FetchOptions{},
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1137,7 +1132,6 @@ func (e *fakeNetError) Timeout() bool { return e.timeout }
 // Temporary satisfies net.Error but is not used by isTransientError.
 func (e *fakeNetError) Temporary() bool { return e.timeout }
 
-//nolint:varnamelen // table-driven test
 func TestIsTransientError(t *testing.T) {
 	t.Parallel()
 
@@ -1199,7 +1193,7 @@ func TestFetchRetriesOnTransientError(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 
 	fetcher := attestation.NewTestOCIFetcherFull(
-		func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+		func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 			return nil, errNotReached
 		},
 		func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
@@ -1215,7 +1209,7 @@ func TestFetchRetriesOnTransientError(t *testing.T) {
 		},
 	)
 
-	opts := attestation.FetchOptions{Timeout: 5 * time.Second}
+	opts := &attestation.FetchOptions{Timeout: 5 * time.Second}
 
 	_, err := fetcher.Fetch(context.Background(), ref, digest, opts)
 	if err != nil {
@@ -1233,7 +1227,7 @@ func TestFetchSkipsCosignTagWhenReferrersExist(t *testing.T) {
 	var cosignTagFetched bool
 
 	fetcher := attestation.NewTestOCIFetcherFull(
-		func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+		func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 			return []byte(`{"predicateType":"https://slsa.dev/provenance/v1"}`), nil
 		},
 		func(ref name.Reference, _ ...remote.Option) (ociV1.Image, error) {
@@ -1254,7 +1248,7 @@ func TestFetchSkipsCosignTagWhenReferrersExist(t *testing.T) {
 	)
 
 	result, err := fetcher.Fetch(
-		context.Background(), testFetchImageRef, testFetchDigest, attestation.FetchOptions{},
+		context.Background(), testFetchImageRef, testFetchDigest, &attestation.FetchOptions{},
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

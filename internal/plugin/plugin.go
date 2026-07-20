@@ -76,8 +76,6 @@ func (p *Plugin) Connected() bool {
 }
 
 // VerifierReady returns true if the verifier is ready to serve requests.
-//
-//nolint:nonamedreturns // gocritic requires names
 func (p *Plugin) VerifierReady() (ready bool, reason string) {
 	return p.verifier.Ready()
 }
@@ -175,7 +173,6 @@ func (p *Plugin) CreateContainer(
 	return nil, nil, nil
 }
 
-//nolint:nonamedreturns // gocritic requires names
 func resolveImage(annotations map[string]string) (imageRef, digest string) {
 	imageRef, digest = resolveCRIOImage(annotations)
 
@@ -201,7 +198,6 @@ func resolveImage(annotations map[string]string) (imageRef, digest string) {
 	return imageRef, digest
 }
 
-//nolint:nonamedreturns // gocritic requires names
 func resolveCRIOImage(annotations map[string]string) (imageRef, digest string) {
 	imageRef = annotations[AnnotationImageName]
 	if imageRef == "" {

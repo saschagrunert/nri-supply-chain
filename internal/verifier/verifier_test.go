@@ -27,7 +27,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
-func TestVerify(t *testing.T) { //nolint:funlen // Table-driven test.
+func TestVerify(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -459,7 +459,7 @@ func TestNew(t *testing.T) {
 	}
 }
 
-func TestReload(t *testing.T) { //nolint:funlen // Table-driven test.
+func TestReload(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {

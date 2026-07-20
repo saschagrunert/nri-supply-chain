@@ -15,7 +15,8 @@
 package attestation_test
 
 import (
-	"math/rand/v2"
+	"crypto/rand"
+	"math/big"
 	"sync"
 	"testing"
 	"time"
@@ -142,8 +143,8 @@ func TestCircuitBreakerConcurrent(t *testing.T) {
 		waitGroup.Go(func() {
 			for range 100 {
 				if breaker.Allow() {
-					//nolint:gosec // test jitter does not need crypto randomness
-					if rand.IntN(2) == 0 {
+					n, err := rand.Int(rand.Reader, big.NewInt(2))
+					if err != nil || n.Int64() == 0 {
 						breaker.RecordSuccess()
 					} else {
 						breaker.RecordFailure()
