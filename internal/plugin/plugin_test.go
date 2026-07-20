@@ -370,6 +370,59 @@ func TestResolveImageContainerdPairOverPartialCRIO(t *testing.T) {
 	}
 }
 
+func TestResolveImageCRIOInvalidDigestRepoDigests(t *testing.T) {
+	t.Parallel()
+
+	imageRef, digest := plugin.ExportResolveImage(map[string]string{
+		plugin.AnnotationImageName:        testImage,
+		plugin.AnnotationImageRepoDigests: "docker.io/library/nginx@not-a-valid-digest",
+	})
+
+	if imageRef != testImage {
+		t.Errorf("imageRef = %q, want %q", imageRef, testImage)
+	}
+
+	if digest != "" {
+		t.Errorf("digest = %q, want empty for invalid CRI-O repo digest", digest)
+	}
+}
+
+func TestResolveImageCRIOInvalidDigestImageRef(t *testing.T) {
+	t.Parallel()
+
+	imageRef, digest := plugin.ExportResolveImage(map[string]string{
+		plugin.AnnotationImageName: testImage,
+		plugin.AnnotationImageRef:  "not-a-valid-digest",
+	})
+
+	if imageRef != testImage {
+		t.Errorf("imageRef = %q, want %q", imageRef, testImage)
+	}
+
+	if digest != "" {
+		t.Errorf("digest = %q, want empty for invalid CRI-O ImageRef annotation", digest)
+	}
+}
+
+func TestResolveImageCRIOValidDigestRepoDigests(t *testing.T) {
+	t.Parallel()
+
+	const validDigest = "sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abcd"
+
+	imageRef, digest := plugin.ExportResolveImage(map[string]string{
+		plugin.AnnotationImageName:        testImage,
+		plugin.AnnotationImageRepoDigests: "docker.io/library/nginx@" + validDigest,
+	})
+
+	if imageRef != testImage {
+		t.Errorf("imageRef = %q, want %q", imageRef, testImage)
+	}
+
+	if digest != validDigest {
+		t.Errorf("digest = %q, want %q", digest, validDigest)
+	}
+}
+
 func TestResolveImageContainerdInvalidDigest(t *testing.T) {
 	t.Parallel()
 

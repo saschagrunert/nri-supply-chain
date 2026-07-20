@@ -28,6 +28,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/plugin"
+	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
@@ -474,6 +475,164 @@ func TestRunValidationRuntimeFailure(t *testing.T) {
 
 	if code := runValidation(cfg); code != 1 {
 		t.Errorf("expected exit code 1, got %d", code)
+	}
+}
+
+func TestRunValidationEnforceValid(t *testing.T) {
+	t.Parallel()
+
+	policyDir := filepath.Join(t.TempDir(), "policies")
+
+	err := os.MkdirAll(policyDir, 0o750)
+	if err != nil {
+		t.Fatalf("creating policy dir: %v", err)
+	}
+
+	writeValidationPolicy(t, policyDir, "default.json",
+		`{"provenance": {"missingPolicy": "allow"}}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+	cfg.PolicyDir = policyDir
+
+	if code := runValidation(cfg); code != 0 {
+		t.Errorf("expected exit code 0, got %d", code)
+	}
+}
+
+func TestWarnValidationEnforceDefaults(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		cfg      *config.Config
+		policies map[string]*policy.Policy
+	}{
+		{
+			name: "fetch failure policy warn",
+			cfg: func() *config.Config {
+				c := config.DefaultConfig()
+				c.Verification = config.ModeEnforce
+				c.FetchFailurePolicy = policy.ActionWarn
+
+				return c
+			}(),
+			policies: map[string]*policy.Policy{},
+		},
+		{
+			name: "fetch failure policy allow",
+			cfg: func() *config.Config {
+				c := config.DefaultConfig()
+				c.Verification = config.ModeEnforce
+				c.FetchFailurePolicy = policy.ActionAllow
+
+				return c
+			}(),
+			policies: map[string]*policy.Policy{},
+		},
+		{
+			name: "fetch failure policy deny",
+			cfg: func() *config.Config {
+				c := config.DefaultConfig()
+				c.Verification = config.ModeEnforce
+				c.FetchFailurePolicy = policy.ActionDeny
+
+				return c
+			}(),
+			policies: map[string]*policy.Policy{},
+		},
+		{
+			name: "provenance missing policy allow with default namespace",
+			cfg: func() *config.Config {
+				c := config.DefaultConfig()
+				c.Verification = config.ModeEnforce
+				c.FetchFailurePolicy = policy.ActionDeny
+
+				return c
+			}(),
+			policies: map[string]*policy.Policy{
+				"": {
+					Provenance: &policy.ProvenancePolicy{
+						MissingPolicy: policy.ActionAllow,
+					},
+				},
+			},
+		},
+		{
+			name: "provenance missing policy deny",
+			cfg: func() *config.Config {
+				c := config.DefaultConfig()
+				c.Verification = config.ModeEnforce
+				c.FetchFailurePolicy = policy.ActionDeny
+
+				return c
+			}(),
+			policies: map[string]*policy.Policy{
+				"prod": {
+					Provenance: &policy.ProvenancePolicy{
+						MissingPolicy: policy.ActionDeny,
+					},
+				},
+			},
+		},
+		{
+			name: "VEX missing policy allow with default namespace",
+			cfg: func() *config.Config {
+				c := config.DefaultConfig()
+				c.Verification = config.ModeEnforce
+				c.FetchFailurePolicy = policy.ActionDeny
+
+				return c
+			}(),
+			policies: map[string]*policy.Policy{
+				"": {
+					Provenance: &policy.ProvenancePolicy{
+						MissingPolicy: policy.ActionDeny,
+					},
+				},
+			},
+		},
+		{
+			name: "VEX missing policy deny",
+			cfg: func() *config.Config {
+				c := config.DefaultConfig()
+				c.Verification = config.ModeEnforce
+				c.FetchFailurePolicy = policy.ActionDeny
+
+				return c
+			}(),
+			policies: map[string]*policy.Policy{
+				"secure": {
+					Provenance: &policy.ProvenancePolicy{
+						MissingPolicy: policy.ActionDeny,
+					},
+					VEX: &policy.VEXPolicy{
+						MissingPolicy: policy.ActionDeny,
+					},
+				},
+			},
+		},
+		{
+			name: "named namespace with all defaults",
+			cfg: func() *config.Config {
+				c := config.DefaultConfig()
+				c.Verification = config.ModeEnforce
+
+				return c
+			}(),
+			policies: map[string]*policy.Policy{
+				"staging": {},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Should not panic for any combination.
+			warnValidationEnforceDefaults(test.cfg, test.policies)
+		})
 	}
 }
 

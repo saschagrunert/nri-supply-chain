@@ -1328,6 +1328,30 @@ func TestResetSANPatternWarnings(t *testing.T) {
 	}
 }
 
+func TestArtifactPolicy(t *testing.T) {
+	t.Parallel()
+
+	// Verify that artifactPolicy always returns a non-nil policy option
+	// for any digest format (valid, invalid, or empty). The underlying
+	// digest parsing logic is tested in types.TestParseDigest.
+	digests := []string{
+		"sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abcd",
+		"",
+		"sha256abc123",
+		"sha256:ABC123",
+		"sha256:xyz123",
+		"SHA256:abc123",
+		"sha512:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789" +
+			"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+	}
+
+	for _, digest := range digests {
+		if !attestation.ExportArtifactPolicyNonNil(digest) {
+			t.Errorf("artifactPolicy(%q) returned nil", digest)
+		}
+	}
+}
+
 func TestFetchSkipsCosignTagWhenReferrersExist(t *testing.T) {
 	t.Parallel()
 

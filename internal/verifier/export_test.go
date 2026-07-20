@@ -14,7 +14,11 @@
 
 package verifier
 
-import "github.com/saschagrunert/nri-supply-chain/internal/types"
+import (
+	"github.com/saschagrunert/nri-supply-chain/internal/config"
+	"github.com/saschagrunert/nri-supply-chain/internal/policy"
+	"github.com/saschagrunert/nri-supply-chain/internal/types"
+)
 
 // ExportBuildDigestRef exposes buildDigestRef for external tests.
 func ExportBuildDigestRef(imageRef, digest string) string {
@@ -24,4 +28,19 @@ func ExportBuildDigestRef(imageRef, digest string) string {
 // ExportHandleMissingAttestation exposes handleMissingAttestation for external tests.
 func ExportHandleMissingAttestation(pol, checkType, detail string) *types.CheckResult {
 	return handleMissingAttestation(pol, checkType, detail)
+}
+
+// ExportWarnEnforceDefaults exposes warnEnforceDefaults for external tests.
+func ExportWarnEnforceDefaults(cfg *config.Config, policies map[string]*policy.Policy) {
+	warnEnforceDefaults(cfg, policies)
+}
+
+// ExportResultHasFailures exposes resultHasFailures for external tests.
+func ExportResultHasFailures(result *types.Result) bool {
+	return resultHasFailures(result)
+}
+
+// ExportCacheAffectingFieldsChanged exposes cacheAffectingFieldsChanged for external tests.
+func ExportCacheAffectingFieldsChanged(prev, next *config.Config) bool {
+	return cacheAffectingFieldsChanged(prev, next)
 }

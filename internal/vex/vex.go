@@ -39,6 +39,11 @@ var (
 
 	// ErrSubjectMismatch indicates the in-toto subject does not match the image.
 	ErrSubjectMismatch = errors.New("VEX subject digest mismatch")
+
+	// ErrEmptySubjects indicates a VEX statement has no subjects when a digest
+	// is available for binding, which means subject verification cannot be
+	// performed.
+	ErrEmptySubjects = errors.New("VEX statement has no subjects for digest binding")
 )
 
 type inTotoStatement struct {
@@ -174,6 +179,13 @@ func verifySubjectAndExtract(att []byte, imageDigest string) ([]byte, error) {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidVEX, err)
 	}
 
+	if imageDigest != "" && len(stmt.Subject) == 0 {
+		return nil, fmt.Errorf(
+			"%w: digest %q available but statement has no subjects",
+			ErrEmptySubjects, imageDigest,
+		)
+	}
+
 	if len(stmt.Subject) > 0 && imageDigest != "" {
 		if !subjectMatchesDigest(stmt.Subject, imageDigest) {
 			return nil, fmt.Errorf(
@@ -181,10 +193,9 @@ func verifySubjectAndExtract(att []byte, imageDigest string) ([]byte, error) {
 				ErrSubjectMismatch, imageDigest,
 			)
 		}
-	} else {
-		slog.Warn("VEX subject verification skipped",
+	} else if imageDigest == "" {
+		slog.Warn("VEX subject verification skipped (no digest available)",
 			"subjectCount", len(stmt.Subject),
-			"hasDigest", imageDigest != "",
 		)
 	}
 

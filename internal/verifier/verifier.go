@@ -51,7 +51,10 @@ var (
 	errUnexpectedSingleflightResult = errors.New("unexpected singleflight result type")
 )
 
-const maxConcurrentFetches = 50
+const (
+	maxConcurrentFetches = 50
+	defaultPolicyLabel   = "default"
+)
 
 type snapshot struct {
 	config          *config.Config
@@ -125,9 +128,61 @@ func New(cfg *config.Config, met *metrics.Metrics, fetcher attestation.Fetcher) 
 
 		verif.policies = policies
 		verif.policyHashes = hashes
+
+		warnEnforceDefaults(&cfgCopy, policies)
 	}
 
 	return verif, nil
+}
+
+// warnEnforceDefaults logs warnings when enforce mode is used with default
+// permissive settings that may allow unverified containers through.
+func warnEnforceDefaults(cfg *config.Config, policies map[string]*policy.Policy) {
+	if cfg.Verification != config.ModeEnforce {
+		return
+	}
+
+	switch cfg.FetchFailurePolicy {
+	case policy.ActionWarn:
+		slog.Warn(
+			"enforce mode with default fetch_failure_policy=warn allows containers on fetch failure; "+
+				"consider setting fetch_failure_policy=deny",
+			"fetch_failure_policy",
+			cfg.FetchFailurePolicy,
+			"circuit_breaker_threshold",
+			cfg.CircuitBreakerThreshold,
+		)
+	case policy.ActionAllow:
+		slog.Warn(
+			"enforce mode with fetch_failure_policy=allow allows containers on fetch failure; "+
+				"consider setting fetch_failure_policy=deny",
+			"fetch_failure_policy",
+			cfg.FetchFailurePolicy,
+		)
+	}
+
+	for ns, pol := range policies {
+		label := ns
+		if label == "" {
+			label = defaultPolicyLabel
+		}
+
+		if pol.ProvenanceMissingPolicy() == policy.ActionAllow {
+			slog.Warn("enforce mode with default provenance missing_policy=allow allows "+
+				"containers without provenance attestations; consider setting missingPolicy=deny",
+				"policy", label,
+				"provenance_missing_policy", pol.ProvenanceMissingPolicy(),
+			)
+		}
+
+		if vexMissingPolicy(pol) == policy.ActionAllow {
+			slog.Warn("enforce mode with default VEX missing_policy=allow allows "+
+				"containers without VEX attestations; consider setting vex.missingPolicy=deny",
+				"policy", label,
+				"vex_missing_policy", vexMissingPolicy(pol),
+			)
+		}
+	}
 }
 
 // Enforcing returns true if the verifier is in enforce mode.
@@ -348,6 +403,7 @@ func cacheAffectingFieldsChanged(prev, next *config.Config) bool {
 	return prev.Verification != next.Verification ||
 		prev.PolicyDir != next.PolicyDir ||
 		prev.CacheTTL.Duration != next.CacheTTL.Duration ||
+		prev.CacheFailureTTL.Duration != next.CacheFailureTTL.Duration ||
 		prev.FetchFailurePolicy != next.FetchFailurePolicy ||
 		prev.FetchTimeout.Duration != next.FetchTimeout.Duration
 }
@@ -373,7 +429,11 @@ func (v *Verifier) verifyOnce(
 		logResult(checkCtx, state.auditLogger, imageRef, digest, namespace, result)
 		recordMetrics(state.metrics, result)
 
-		state.cache.Set(digest, namespace, result)
+		if resultHasFailures(result) && state.config.CacheFailureTTL.Duration > 0 {
+			state.cache.Set(digest, namespace, result, state.config.CacheFailureTTL.Duration)
+		} else {
+			state.cache.Set(digest, namespace, result)
+		}
 
 		return result, nil
 	})
@@ -450,7 +510,7 @@ func runChecks(
 
 	attestations, fetchErr := fetchAttestations(ctx, state, imageRef, digest, pol)
 	if fetchErr != nil {
-		recordBreakerFailure(ctx, breaker, state.metrics, imageRef)
+		recordBreakerFailure(ctx, breaker, state.metrics, imageRef, state.config.FetchFailurePolicy)
 
 		return handleFetchError(state.config, state.metrics, fetchErr, imageRef)
 	}
@@ -631,6 +691,11 @@ func runSLSACheck(
 
 	provenanceAtts := filterByPredicate(attestations, attestation.PredicateSLSAProvenanceV1)
 	if len(provenanceAtts) == 0 {
+		slog.WarnContext(ctx, "No provenance attestation found",
+			"reason", "missing_attestation",
+			"image", imageRef,
+		)
+
 		return handleMissingAttestation(
 			pol.ProvenanceMissingPolicy(),
 			"slsa_provenance",
@@ -640,7 +705,13 @@ func runSLSACheck(
 
 	result, err := slsa.VerifyMultiple(provenanceAtts, pol, digest)
 	if err != nil {
-		slog.WarnContext(ctx, "SLSA verification error", "error", err)
+		slog.ErrorContext(ctx, "SLSA verification error",
+			"error", err,
+			"reason", "verification_error",
+			"image", imageRef,
+		)
+
+		met.VerificationTotal.WithLabelValues("slsa_provenance", "error").Inc()
 
 		return handleMissingAttestation(
 			pol.ProvenanceMissingPolicy(),
@@ -667,6 +738,11 @@ func runVEXCheck(
 
 	vexAtts := filterByPredicate(attestations, attestation.PredicateOpenVEX)
 	if len(vexAtts) == 0 {
+		slog.WarnContext(ctx, "No VEX attestation found",
+			"reason", "missing_attestation",
+			"image", imageRef,
+		)
+
 		return handleMissingAttestation(
 			vexMissingPolicy(pol),
 			"vex",
@@ -681,7 +757,13 @@ func runVEXCheck(
 
 	result, err := vex.VerifyMultiple(ctx, payloads, pol, imageRef, digest)
 	if err != nil {
-		slog.WarnContext(ctx, "VEX verification error", "error", err)
+		slog.ErrorContext(ctx, "VEX verification error",
+			"error", err,
+			"reason", "verification_error",
+			"image", imageRef,
+		)
+
+		met.VerificationTotal.WithLabelValues("vex", "error").Inc()
 
 		return handleMissingAttestation(
 			vexMissingPolicy(pol),
@@ -691,6 +773,20 @@ func runVEXCheck(
 	}
 
 	return result
+}
+
+func resultHasFailures(result *types.Result) bool {
+	if !result.Allowed {
+		return true
+	}
+
+	for idx := range result.CheckResults {
+		if !result.CheckResults[idx].Passed {
+			return true
+		}
+	}
+
+	return false
 }
 
 func combineResults(slsaResult, vexResult *types.CheckResult) *types.Result {
@@ -876,6 +972,7 @@ func recordBreakerFailure(
 	breaker *attestation.CircuitBreaker,
 	met *metrics.Metrics,
 	imageRef string,
+	fetchFailurePolicy string,
 ) {
 	if breaker == nil {
 		return
@@ -883,8 +980,10 @@ func recordBreakerFailure(
 
 	if tripped := breaker.RecordFailure(); tripped {
 		met.CircuitBreakerTripsTotal.Inc()
-		slog.WarnContext(ctx, "Circuit breaker opened after repeated fetch failures",
+		slog.WarnContext(ctx, "Circuit breaker opened after repeated fetch failures, "+
+			"subsequent requests will use the configured fetch_failure_policy",
 			"registry", registryHost(imageRef),
+			"fetch_failure_policy", fetchFailurePolicy,
 		)
 	}
 }
@@ -946,7 +1045,7 @@ func validatePoliciesRuntime(policies map[string]*policy.Policy) error {
 		if err != nil {
 			label := ns
 			if label == "" {
-				label = "default"
+				label = defaultPolicyLabel
 			}
 
 			return fmt.Errorf("policy %q: %w", label, err)
@@ -968,7 +1067,7 @@ func validatePoliciesEnforce(
 		if err != nil {
 			label := ns
 			if label == "" {
-				label = "default"
+				label = defaultPolicyLabel
 			}
 
 			return fmt.Errorf("policy %q: %w", label, err)

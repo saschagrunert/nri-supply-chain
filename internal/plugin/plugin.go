@@ -207,12 +207,12 @@ func resolveCRIOImage(annotations map[string]string) (imageRef, digest string) {
 	if repoDigests := annotations[AnnotationImageRepoDigests]; repoDigests != "" {
 		first, _, _ := strings.Cut(repoDigests, ",")
 		if _, d, ok := strings.Cut(first, "@"); ok {
-			digest = d
+			digest = validDigestOrEmpty(d)
 		}
 	}
 
 	if digest == "" {
-		digest = annotations[AnnotationImageRef]
+		digest = validDigestOrEmpty(annotations[AnnotationImageRef])
 	}
 
 	return imageRef, digest
