@@ -461,21 +461,12 @@ func handleReload(ctx context.Context, configPath string, verif *verifier.Verifi
 	}
 }
 
-func createFetcher(cfg *config.Config) *attestation.OCIFetcher {
-	f := attestation.NewOCIFetcher()
-	if cfg.FetchRateLimit > 0 {
-		f.SetRateLimit(cfg.FetchRateLimit)
-	}
-
-	return f
-}
-
 func runVerify(opts *options, cfg *config.Config) int {
 	met := metrics.New()
 
 	var fetcher attestation.Fetcher
 	if cfg.Enabled() {
-		fetcher = createFetcher(cfg)
+		fetcher = verifier.NewFetcher(cfg)
 	}
 
 	verif, err := verifier.New(cfg, met, fetcher)

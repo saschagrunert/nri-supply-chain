@@ -37,6 +37,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/plugin"
@@ -1333,16 +1334,13 @@ func TestSetupFileWatchPolicyDirWatchFailure(t *testing.T) {
 	cleanup()
 }
 
-// --- createFetcher tests ---
+// --- OCIFetcher rate-limit tests ---
 
-func TestCreateFetcherWithRateLimit(t *testing.T) {
+func TestOCIFetcherWithRateLimit(t *testing.T) {
 	t.Parallel()
 
-	cfg := config.DefaultConfig()
-	cfg.Verification = config.ModeWarn
-	cfg.FetchRateLimit = 10.0
-
-	fetcher := createFetcher(cfg)
+	fetcher := attestation.NewOCIFetcher()
+	fetcher.SetRateLimit(10.0)
 
 	if fetcher == nil {
 		t.Fatal("expected non-nil fetcher")
