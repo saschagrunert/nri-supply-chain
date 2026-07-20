@@ -269,6 +269,11 @@ func NewTestBundle(payloadType, payload string) *bundle.Bundle {
 	return bndl
 }
 
+// ExportIsTransientError exposes isTransientError for external tests.
+func ExportIsTransientError(err error) bool {
+	return isTransientError(err)
+}
+
 // NewTestMessageSignatureBundle creates a bundle with a message signature (no DSSE envelope).
 func NewTestMessageSignatureBundle() *bundle.Bundle {
 	protoBundle := &protobundle.Bundle{

@@ -909,7 +909,7 @@ func buildCertificateIdentity(issuers, sanPatterns []string) (verify.Certificate
 	sanRegex := ".*"
 
 	if len(sanPatterns) == 0 {
-		warnNoSANPatterns()
+		warnNoSANPatterns(issuers)
 	}
 
 	if len(sanPatterns) > 0 {
@@ -948,13 +948,19 @@ func buildCertificateIdentity(issuers, sanPatterns []string) (verify.Certificate
 	return certID, nil
 }
 
-var warnNoSANPatternsOnce sync.Once //nolint:gochecknoglobals // once guard for startup warning
+var warnedSANPatterns sync.Map //nolint:gochecknoglobals // dedup per unique issuer set
 
-func warnNoSANPatterns() {
-	warnNoSANPatternsOnce.Do(func() {
-		slog.Warn("No SAN patterns configured for keyless verification; " +
-			"any certificate identity from a trusted issuer will be accepted")
-	})
+func warnNoSANPatterns(issuers []string) {
+	key := strings.Join(issuers, "\x00")
+
+	if _, loaded := warnedSANPatterns.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+
+	slog.Warn("No SAN patterns configured for keyless verification; "+
+		"any certificate identity from a trusted issuer will be accepted",
+		"issuers", issuers,
+	)
 }
 
 func extractVerifiedPayload(bndl *bundle.Bundle) ([]byte, error) {
@@ -1003,11 +1009,10 @@ func globToRegex(pattern string) string {
 		case '?':
 			builder.WriteString("[^/]")
 		case '[':
-			end := findBracketEnd(runes, idx)
-			if end < 0 {
-				builder.WriteString(regexp.QuoteMeta("["))
-			} else {
-				builder.WriteString(escapeCharClass(runes[idx : end+1]))
+			converted, end := convertBracketExpr(runes, idx)
+			builder.WriteString(converted)
+
+			if end > idx {
 				idx = end
 			}
 		default:
@@ -1016,6 +1021,29 @@ func globToRegex(pattern string) string {
 	}
 
 	return builder.String()
+}
+
+//nolint:nonamedreturns // gocritic requires names for multi-return
+func convertBracketExpr(runes []rune, idx int) (converted string, end int) {
+	end = findBracketEnd(runes, idx)
+	if end < 0 {
+		return regexp.QuoteMeta("["), idx
+	}
+
+	class := escapeCharClass(runes[idx : end+1])
+
+	_, compileErr := regexp.Compile(class)
+	if compileErr != nil {
+		var escaped strings.Builder
+
+		for _, r := range runes[idx : end+1] {
+			escaped.WriteString(regexp.QuoteMeta(string(r)))
+		}
+
+		return escaped.String(), end
+	}
+
+	return class, end
 }
 
 func escapeCharClass(runes []rune) string {

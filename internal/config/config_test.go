@@ -376,6 +376,48 @@ func TestLoadFromStringErrors(t *testing.T) {
 	})
 }
 
+func TestConfigValidateMetricsAddr(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		addr    string
+		wantErr bool
+	}{
+		{name: "default is valid", addr: "127.0.0.1:9090", wantErr: false},
+		{name: "port only", addr: ":8080", wantErr: false},
+		{name: "ipv6 localhost", addr: "[::1]:9090", wantErr: false},
+		{name: "empty is valid", addr: "", wantErr: false},
+		{name: "missing port", addr: "127.0.0.1", wantErr: true},
+		{name: "bare hostname", addr: "localhost", wantErr: true},
+		{name: "garbage", addr: "not-an-address", wantErr: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := config.DefaultConfig()
+			cfg.MetricsAddr = test.addr
+
+			err := cfg.Validate()
+			if test.wantErr && err == nil {
+				t.Error("expected error, got nil")
+			}
+
+			if !test.wantErr && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+
+			if test.wantErr && err != nil {
+				if !errors.Is(err, config.ErrInvalidMetricsAddr) {
+					t.Errorf("expected ErrInvalidMetricsAddr, got %v", err)
+				}
+			}
+		})
+	}
+}
+
 func TestConfigValidateCircuitBreakerThreshold(t *testing.T) {
 	t.Parallel()
 

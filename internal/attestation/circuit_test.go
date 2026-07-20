@@ -15,6 +15,8 @@
 package attestation_test
 
 import (
+	"math/rand/v2"
+	"sync"
 	"testing"
 	"time"
 
@@ -127,4 +129,33 @@ func TestCircuitBreakerFailureInHalfOpenReopens(t *testing.T) {
 	if breaker.Allow() {
 		t.Error("expected Allow() = false after half-open failure")
 	}
+}
+
+func TestCircuitBreakerConcurrent(t *testing.T) {
+	t.Parallel()
+
+	breaker := attestation.NewCircuitBreaker(10, 100*time.Millisecond)
+
+	var waitGroup sync.WaitGroup
+
+	for range 50 {
+		waitGroup.Go(func() {
+			for range 100 {
+				if breaker.Allow() {
+					//nolint:gosec // test jitter does not need crypto randomness
+					if rand.IntN(2) == 0 {
+						breaker.RecordSuccess()
+					} else {
+						breaker.RecordFailure()
+					}
+				}
+			}
+		})
+	}
+
+	waitGroup.Wait()
+
+	// Primary value of this test is the -race detector catching data races.
+	// These assertions just confirm the breaker is in a valid state afterward.
+	_ = breaker.IsOpen()
 }
