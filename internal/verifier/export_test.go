@@ -26,7 +26,9 @@ func ExportBuildDigestRef(imageRef, digest string) string {
 }
 
 // ExportHandleMissingAttestation exposes handleMissingAttestation for external tests.
-func ExportHandleMissingAttestation(pol, checkType, detail string) *types.CheckResult {
+func ExportHandleMissingAttestation(
+	pol policy.Action, checkType, detail string,
+) *types.CheckResult {
 	return handleMissingAttestation(pol, checkType, detail)
 }
 

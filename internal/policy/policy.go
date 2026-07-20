@@ -31,15 +31,18 @@ import (
 	"time"
 )
 
+// Action represents a policy action for missing or failed attestations.
+type Action string
+
 const (
 	maxSLSALevel = 3
 
 	// ActionAllow permits the action.
-	ActionAllow = "allow"
+	ActionAllow Action = "allow"
 	// ActionWarn logs a warning but permits the action.
-	ActionWarn = "warn"
+	ActionWarn Action = "warn"
 	// ActionDeny rejects the action.
-	ActionDeny = "deny"
+	ActionDeny Action = "deny"
 )
 
 var (
@@ -149,7 +152,7 @@ type TrustedVerifier struct {
 // ProvenancePolicy contains SLSA provenance verification settings.
 type ProvenancePolicy struct {
 	// MissingPolicy controls behavior when no provenance attestation is found.
-	MissingPolicy string `json:"missingPolicy,omitempty"`
+	MissingPolicy Action `json:"missingPolicy,omitempty"`
 	// RejectUnknownParameters rejects provenance with unrecognized externalParameters fields.
 	RejectUnknownParameters bool `json:"rejectUnknownParameters,omitempty"`
 	// KnownParameters lists recognized externalParameters keys when
@@ -161,9 +164,9 @@ type ProvenancePolicy struct {
 // VEXPolicy contains VEX verification settings.
 type VEXPolicy struct {
 	// MissingPolicy controls behavior when no VEX attestation is found.
-	MissingPolicy string `json:"missingPolicy,omitempty"`
+	MissingPolicy Action `json:"missingPolicy,omitempty"`
 	// UnderInvestigationPolicy controls behavior for "under_investigation" status.
-	UnderInvestigationPolicy string `json:"underInvestigationPolicy,omitempty"`
+	UnderInvestigationPolicy Action `json:"underInvestigationPolicy,omitempty"`
 }
 
 // VSAPolicy contains Verification Summary Attestation settings.
@@ -185,7 +188,7 @@ type SignaturesPolicy struct {
 }
 
 // ProvenanceMissingPolicy returns the effective provenance missing policy.
-func (p *Policy) ProvenanceMissingPolicy() string {
+func (p *Policy) ProvenanceMissingPolicy() Action {
 	if p.Provenance != nil && p.Provenance.MissingPolicy != "" {
 		return p.Provenance.MissingPolicy
 	}
@@ -675,7 +678,7 @@ func (p *Policy) initDerived() {
 }
 
 // ValidateAction validates that the given value is a valid policy action.
-func ValidateAction(name, value string) error {
+func ValidateAction(name string, value Action) error {
 	switch value {
 	case ActionAllow, ActionWarn, ActionDeny:
 		return nil

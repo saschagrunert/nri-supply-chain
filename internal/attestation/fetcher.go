@@ -51,7 +51,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
-var errUnexpectedSingleflightResult = errors.New("unexpected singleflight result type")
+var errUnexpectedSingleflightResult = errors.New("fetcher: unexpected singleflight result type")
 
 const (
 	maxAttestationSize      = 10 << 20 // 10 MiB
@@ -235,10 +235,15 @@ func (f *OCIFetcher) Warm(ctx context.Context) error {
 }
 
 // Fetch discovers and returns verified attestations for the given image.
+// The digest parameter is also stored into opts.Digest so that downstream
+// bundle verification can bind against the artifact digest without callers
+// having to set it separately.
 func (f *OCIFetcher) Fetch(
 	ctx context.Context, imageRef, digest string,
 	opts *FetchOptions,
 ) ([]VerifiedAttestation, error) {
+	opts.Digest = digest
+
 	if opts.Timeout > 0 {
 		var cancel context.CancelFunc
 

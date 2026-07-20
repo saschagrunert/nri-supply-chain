@@ -290,6 +290,8 @@ func handleUnderInvestigation(pol *policy.Policy) *types.CheckResult {
 		return failResult(detail)
 	case policy.ActionWarn:
 		return types.WarnResult(checkType, detail)
+	case policy.ActionAllow:
+		return types.PassResult(checkType, detail)
 	default:
 		return types.PassResult(checkType, detail)
 	}

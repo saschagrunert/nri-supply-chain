@@ -188,9 +188,9 @@ func TestVerifyWithFetcher(t *testing.T) {
 	tests := []struct {
 		name               string
 		policyJSON         string
-		mode               string
+		mode               config.VerificationMode
 		fetcher            *mockFetcher
-		fetchFailurePolicy string
+		fetchFailurePolicy policy.Action
 		setupPayloads      func(t *testing.T, fetcher *mockFetcher)
 		wantAllowed        bool
 		wantErr            error
@@ -935,7 +935,7 @@ func TestVerifyConcurrentWithReloadModeSwitch(t *testing.T) {
 		})
 	}
 
-	modes := [2]string{config.ModeWarn, config.ModeEnforce}
+	modes := [2]config.VerificationMode{config.ModeWarn, config.ModeEnforce}
 
 	for idx := range numReloaders {
 		waitGroup.Go(func() {

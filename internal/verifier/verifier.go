@@ -48,12 +48,13 @@ var (
 	// ErrCircuitBreakerOpen is returned when the circuit breaker is open.
 	ErrCircuitBreakerOpen = errors.New("circuit breaker open for image")
 
-	errUnexpectedSingleflightResult = errors.New("unexpected singleflight result type")
+	errUnexpectedSingleflightResult = errors.New("verifier: unexpected singleflight result type")
 )
 
 const (
 	maxConcurrentFetches = 50
 	defaultPolicyLabel   = "default"
+	warmTimeout          = 30 * time.Second
 )
 
 type snapshot struct {
@@ -69,17 +70,19 @@ type snapshot struct {
 
 // Verifier performs supply chain attestation verification on container images.
 type Verifier struct {
-	mu              sync.RWMutex
-	config          *config.Config
-	cache           *cache.Cache
-	policies        map[string]*policy.Policy
-	policyHashes    map[string]string
-	metrics         *metrics.Metrics
-	fetcher         attestation.Fetcher
-	inflight        singleflight.Group
-	circuitBreakers *attestation.CircuitBreakerRegistry
-	fetchSem        *semaphore.Weighted
-	auditLogger     *slog.Logger
+	snapshot // embedded: fields shared with point-in-time snapshots
+
+	mu           sync.RWMutex
+	policyHashes map[string]string
+	inflight     singleflight.Group
+}
+
+// NewFetcher creates a new OCI fetcher configured from cfg and pre-warms the
+// Sigstore trusted root. Use this when the caller wants the verifier to have a
+// real fetcher; pass the return value to New. Tests that need the "no fetcher"
+// code path should pass nil to New directly.
+func NewFetcher(cfg *config.Config) *attestation.OCIFetcher {
+	return createAndWarmFetcher(context.Background(), cfg)
 }
 
 // New creates a new Verifier with the given configuration, metrics, and attestation fetcher.
@@ -87,22 +90,24 @@ func New(cfg *config.Config, met *metrics.Metrics, fetcher attestation.Fetcher) 
 	cfgCopy := *cfg
 
 	verif := &Verifier{
-		mu:           sync.RWMutex{},
-		config:       &cfgCopy,
-		cache:        cache.NewWithGauge(cfgCopy.CacheTTL.Duration, met.CacheEntriesTotal),
-		policies:     nil,
+		mu: sync.RWMutex{},
+		snapshot: snapshot{
+			config:   &cfgCopy,
+			policies: nil,
+			cache:    cache.NewWithGauge(cfgCopy.CacheTTL.Duration, met.CacheEntriesTotal),
+			metrics:  met,
+			fetcher:  fetcher,
+			circuitBreakers: attestation.NewCircuitBreakerRegistry(
+				cfgCopy.CircuitBreakerThreshold,
+				cfgCopy.CircuitBreakerCooldown.Duration,
+			),
+			fetchSem: semaphore.NewWeighted(maxConcurrentFetches),
+			auditLogger: slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+				Level: slog.LevelInfo,
+			})),
+		},
 		policyHashes: nil,
-		metrics:      met,
-		fetcher:      fetcher,
 		inflight:     singleflight.Group{},
-		circuitBreakers: attestation.NewCircuitBreakerRegistry(
-			cfgCopy.CircuitBreakerThreshold,
-			cfgCopy.CircuitBreakerCooldown.Duration,
-		),
-		fetchSem: semaphore.NewWeighted(maxConcurrentFetches),
-		auditLogger: slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
-			Level: slog.LevelInfo,
-		})),
 	}
 
 	if cfgCopy.Enabled() {
@@ -143,6 +148,8 @@ func warnEnforceDefaults(cfg *config.Config, policies map[string]*policy.Policy)
 	}
 
 	switch cfg.FetchFailurePolicy {
+	case policy.ActionDeny:
+		// Desired state for enforce mode; no warning needed.
 	case policy.ActionWarn:
 		slog.Warn(
 			"enforce mode with default fetch_failure_policy=warn allows containers on fetch failure; "+
@@ -388,7 +395,10 @@ func createAndWarmFetcher(ctx context.Context, cfg *config.Config) *attestation.
 		ociFetcher.SetRateLimit(cfg.FetchRateLimit)
 	}
 
-	warmErr := ociFetcher.Warm(ctx)
+	warmCtx, warmCancel := context.WithTimeout(ctx, warmTimeout)
+	defer warmCancel()
+
+	warmErr := ociFetcher.Warm(warmCtx)
 	if warmErr != nil {
 		slog.Warn(
 			"Failed to pre-warm Sigstore trusted root",
@@ -465,16 +475,7 @@ func (v *Verifier) snap() snapshot {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 
-	return snapshot{
-		config:          v.config,
-		policies:        v.policies,
-		cache:           v.cache,
-		metrics:         v.metrics,
-		fetcher:         v.fetcher,
-		circuitBreakers: v.circuitBreakers,
-		fetchSem:        v.fetchSem,
-		auditLogger:     v.auditLogger,
-	}
+	return v.snapshot
 }
 
 func runChecks(
@@ -554,7 +555,6 @@ func fetchAttestations(
 	opts := &attestation.FetchOptions{
 		RequireTransparencyLog: pol.Signatures != nil && pol.Signatures.RequireTransparencyLog,
 		Timeout:                state.config.FetchTimeout.Duration,
-		Digest:                 digest,
 	}
 
 	if pol.Trust != nil {
@@ -845,7 +845,7 @@ func filterByPredicate(
 	return filtered
 }
 
-func vexMissingPolicy(pol *policy.Policy) string {
+func vexMissingPolicy(pol *policy.Policy) policy.Action {
 	if pol.VEX != nil && pol.VEX.MissingPolicy != "" {
 		return pol.VEX.MissingPolicy
 	}
@@ -854,7 +854,7 @@ func vexMissingPolicy(pol *policy.Policy) string {
 }
 
 func handleMissingAttestation(
-	pol, checkType, detail string,
+	pol policy.Action, checkType, detail string,
 ) *types.CheckResult {
 	switch pol {
 	case policy.ActionDeny:
@@ -972,7 +972,7 @@ func recordBreakerFailure(
 	breaker *attestation.CircuitBreaker,
 	met *metrics.Metrics,
 	imageRef string,
-	fetchFailurePolicy string,
+	fetchFailurePolicy policy.Action,
 ) {
 	if breaker == nil {
 		return
@@ -1056,7 +1056,7 @@ func validatePoliciesRuntime(policies map[string]*policy.Policy) error {
 }
 
 func validatePoliciesEnforce(
-	mode string, policies map[string]*policy.Policy,
+	mode config.VerificationMode, policies map[string]*policy.Policy,
 ) error {
 	if mode != config.ModeEnforce {
 		return nil

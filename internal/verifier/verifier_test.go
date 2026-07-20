@@ -29,6 +29,17 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
+func TestNewFetcher(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+
+	fetcher := verifier.NewFetcher(cfg)
+	if fetcher == nil {
+		t.Fatal("expected non-nil OCIFetcher from NewFetcher")
+	}
+}
+
 func TestVerify(t *testing.T) {
 	t.Parallel()
 
@@ -36,7 +47,7 @@ func TestVerify(t *testing.T) {
 		name        string
 		imageRef    string
 		setupDir    func(t *testing.T) string
-		mode        string
+		mode        config.VerificationMode
 		wantAllowed bool
 		wantErr     error
 	}{
@@ -875,7 +886,7 @@ func TestEnforcing(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		mode     string
+		mode     config.VerificationMode
 		expected bool
 	}{
 		{name: "disabled", mode: config.ModeDisabled, expected: false},
@@ -905,7 +916,7 @@ func TestHandleMissingAttestationUnknownPolicy(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		pol        string
+		pol        policy.Action
 		wantPassed bool
 		wantStatus string
 	}{

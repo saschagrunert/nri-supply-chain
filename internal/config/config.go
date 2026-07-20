@@ -29,13 +29,16 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 )
 
+// VerificationMode controls the supply chain verification behavior.
+type VerificationMode string
+
 const (
 	// ModeDisabled disables supply chain verification.
-	ModeDisabled = "disabled"
+	ModeDisabled VerificationMode = "disabled"
 	// ModeWarn enables verification in warn (log-only) mode.
-	ModeWarn = "warn"
+	ModeWarn VerificationMode = "warn"
 	// ModeEnforce enables verification in enforce (reject on failure) mode.
-	ModeEnforce = "enforce"
+	ModeEnforce VerificationMode = "enforce"
 
 	defaultFetchTimeout            = 30 * time.Second
 	defaultCacheTTL                = 24 * time.Hour
@@ -108,12 +111,12 @@ func (d Duration) MarshalText() ([]byte, error) {
 type Config struct {
 	// Verification is the master toggle for supply chain verification.
 	// Valid values: "disabled" (default), "warn" (log-only), "enforce" (reject on failure).
-	Verification string `toml:"verification"`
+	Verification VerificationMode `toml:"verification"`
 	// FetchTimeout is the per-fetch timeout for retrieving attestations.
 	FetchTimeout Duration `toml:"fetch_timeout"`
 	// FetchFailurePolicy controls behavior when attestation fetch fails due to
 	// network errors. Valid values: "allow", "warn" (default), "deny".
-	FetchFailurePolicy string `toml:"fetch_failure_policy"`
+	FetchFailurePolicy policy.Action `toml:"fetch_failure_policy"`
 	// CacheTTL is how long verification results are cached per image digest + namespace.
 	CacheTTL Duration `toml:"cache_ttl"`
 	// CacheFailureTTL is how long failed verification results are cached.
