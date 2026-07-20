@@ -40,6 +40,8 @@ must pass verification.
   - [Config Reload](#config-reload)
   - [Logging](#logging)
   - [Troubleshooting](#troubleshooting)
+  - [Monitoring and Alerting](#monitoring-and-alerting)
+- [Security Considerations](#security-considerations)
 - [Verifying Releases](#verifying-releases)
 - [Development](#development)
 - [License](#license)
@@ -474,6 +476,61 @@ detailed verification traces.
   investigating.
 - **Stale cache**: Reduce `cache_ttl` or set to `0s` to disable caching during
   debugging. Send SIGHUP to reload and clear the cache.
+
+### Monitoring and Alerting
+
+Example Prometheus alert rules for key failure conditions:
+
+```yaml
+groups:
+  - name: nri-supply-chain
+    rules:
+      - alert: CircuitBreakerTripped
+        expr: increase(nri_supply_chain_circuit_breaker_trips_total[5m]) > 0
+        for: 5m
+        annotations:
+          summary: Circuit breaker opened, fetch failures bypass verification.
+
+      - alert: HighFetchErrorRate
+        expr: rate(nri_supply_chain_fetch_errors_total[5m]) > 0.1
+        for: 5m
+        annotations:
+          summary: Sustained attestation fetch errors from the registry.
+
+      - alert: VerificationFailures
+        expr: rate(nri_supply_chain_verification_total{result="fail"}[5m]) > 0
+        for: 1m
+        annotations:
+          summary: Verification checks are failing (rejected in enforce, logged in warn).
+
+      - alert: HighVerificationLatency
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(nri_supply_chain_verification_duration_seconds_bucket[5m])) by (le)
+          ) > 5
+        for: 5m
+        annotations:
+          summary: p99 verification latency exceeds 5 seconds.
+```
+
+## Security Considerations
+
+**fetch_failure_policy default is fail-open.** The default value `"warn"` allows
+containers through when attestation fetches fail, even in `enforce` mode. If the
+registry is unreachable, every image passes verification. The global circuit
+breaker amplifies this: once the failure threshold is reached, all subsequent
+fetch attempts short-circuit to `fetch_failure_policy` until the cooldown
+expires. Set `fetch_failure_policy = "deny"` in production to ensure fetch
+failures block container creation. Note that `"deny"` means registry outages
+will prevent all new containers from starting, trading availability for security.
+Choose based on your threat model.
+
+**SAN patterns for keyless verification.** When `trust.issuers` is configured
+without corresponding `trust.sanPatterns`, any certificate issued by the trusted
+OIDC provider is accepted. This means any user of that identity provider can
+sign attestations that pass verification. Always pair `issuers` with
+`sanPatterns` (for example, `["*@example.com"]`) to restrict accepted
+identities.
 
 ## Verifying Releases
 

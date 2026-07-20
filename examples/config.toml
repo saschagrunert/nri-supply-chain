@@ -7,6 +7,9 @@ verification = "warn"
 fetch_timeout = "30s"
 
 # Behavior on network errors: "allow", "warn" (default), "deny".
+# WARNING: "warn" and "allow" let containers through on fetch failures even in
+# enforce mode. Combined with the circuit breaker, sustained registry outages
+# cause all images to bypass verification. Use "deny" in production.
 fetch_failure_policy = "warn"
 
 # How long verification results are cached per image digest + namespace.

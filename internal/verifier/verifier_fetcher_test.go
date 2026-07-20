@@ -21,6 +21,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -42,7 +44,10 @@ const (
 }`
 )
 
-var errMockFetch = errors.New("mock fetch error")
+var (
+	errMockFetch       = errors.New("mock fetch error")
+	errRegistryUnavail = errors.New("registry unavailable")
+)
 
 type mockFetcher struct {
 	attestations []attestation.VerifiedAttestation
@@ -597,4 +602,148 @@ func createTempKeyFile(t *testing.T, dir string) string {
 	}
 
 	return keyPath
+}
+
+type countingFetcher struct {
+	calls atomic.Int32
+	delay time.Duration
+}
+
+func (f *countingFetcher) Fetch(
+	_ context.Context,
+	_, _ string,
+	_ attestation.FetchOptions, //nolint:gocritic // hugeParam: matches Fetcher interface signature.
+) ([]attestation.VerifiedAttestation, error) {
+	f.calls.Add(1)
+	time.Sleep(f.delay)
+
+	return nil, nil
+}
+
+type failingFetcher struct {
+	calls atomic.Int32
+}
+
+func (f *failingFetcher) Fetch(
+	_ context.Context,
+	_, _ string,
+	_ attestation.FetchOptions, //nolint:gocritic // hugeParam: matches Fetcher interface signature.
+) ([]attestation.VerifiedAttestation, error) {
+	f.calls.Add(1)
+
+	return nil, errRegistryUnavail
+}
+
+func TestVerifyConcurrentSameDigest(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writePolicy(t, dir, "default.json", `{}`)
+
+	fetcher := &countingFetcher{ //nolint:exhaustruct // calls is zero-valued
+		delay: 10 * time.Millisecond,
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+	cfg.CacheTTL = config.Duration{Duration: 0}
+
+	ver, err := verifier.New(cfg, metrics.New(), fetcher)
+	assertNoError(t, err)
+
+	const goroutines = 10
+
+	digest := "sha256:" + strings.Repeat("a", 64)
+	imageRef := "docker.io/library/nginx:latest"
+	namespace := "default"
+
+	var waitGroup sync.WaitGroup
+
+	for range goroutines {
+		waitGroup.Go(func() {
+			_, verifyErr := ver.Verify(
+				context.Background(), imageRef, digest, namespace,
+			)
+			if verifyErr != nil {
+				t.Errorf("unexpected error: %v", verifyErr)
+			}
+		})
+	}
+
+	waitGroup.Wait()
+
+	if got := fetcher.calls.Load(); got != 1 {
+		t.Errorf("expected 1 fetch call (singleflight dedup), got %d", got)
+	}
+}
+
+//nolint:funlen // integration test covers trip + recovery
+func TestVerifyCircuitBreakerIntegration(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writePolicy(t, dir, "default.json", `{}`)
+
+	fetcher := &failingFetcher{} //nolint:exhaustruct // calls is zero-valued
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+	cfg.CacheTTL = config.Duration{Duration: 0}
+	cfg.CircuitBreakerThreshold = 3
+	cfg.CircuitBreakerCooldown = config.Duration{Duration: 100 * time.Millisecond}
+
+	ver, err := verifier.New(cfg, metrics.New(), fetcher)
+	assertNoError(t, err)
+
+	imageRef := "docker.io/library/nginx:latest"
+	digest := "sha256:" + strings.Repeat("b", 64)
+	namespace := "default"
+
+	// Trip the circuit breaker with 3 failures.
+	for call := range 3 {
+		result, verifyErr := ver.Verify(
+			context.Background(), imageRef, digest, namespace,
+		)
+		assertNoError(t, verifyErr)
+
+		if !result.Allowed {
+			t.Errorf("call %d: expected allowed=true in warn mode, got false", call+1)
+		}
+	}
+
+	if got := fetcher.calls.Load(); got != 3 {
+		t.Fatalf("expected 3 fetch calls before breaker trip, got %d", got)
+	}
+
+	// 4th call: circuit breaker is open, fetch should be skipped.
+	result, err := ver.Verify(
+		context.Background(), imageRef, digest, namespace,
+	)
+	assertNoError(t, err)
+
+	if !result.Allowed {
+		t.Error("expected allowed=true in warn mode with open breaker")
+	}
+
+	if !strings.Contains(result.Reason, "circuit breaker") {
+		t.Errorf("expected reason to mention circuit breaker, got %q", result.Reason)
+	}
+
+	if got := fetcher.calls.Load(); got != 3 {
+		t.Errorf("expected no additional fetch calls after breaker trip, got %d total", got)
+	}
+
+	// Wait for cooldown to expire, then verify the breaker allows a probe.
+	time.Sleep(150 * time.Millisecond)
+
+	_, err = ver.Verify(
+		context.Background(), imageRef, digest, namespace,
+	)
+	assertNoError(t, err)
+
+	if got := fetcher.calls.Load(); got != 4 {
+		t.Errorf("expected 1 probe call after cooldown, got %d total", got)
+	}
 }

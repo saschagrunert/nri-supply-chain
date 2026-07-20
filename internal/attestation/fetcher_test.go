@@ -20,7 +20,9 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	ociV1 "github.com/google/go-containerregistry/pkg/v1"
@@ -49,6 +51,8 @@ var (
 	errSignatureMismatch = errors.New("signature mismatch")
 	errReferrers         = errors.New("referrers failed")
 	errIndexManifest     = errors.New("index manifest error")
+	errPlainTest         = errors.New("something")
+	errNotReached        = errors.New("not reached")
 )
 
 type fakeImageIndex struct {
@@ -1120,6 +1124,106 @@ func TestFetchFallsBackToCosignTag(t *testing.T) {
 
 	if len(result) != 1 {
 		t.Errorf("expected 1 attestation, got %d", len(result))
+	}
+}
+
+type fakeNetError struct {
+	timeout bool
+}
+
+func (e *fakeNetError) Error() string { return "fake net error" }
+func (e *fakeNetError) Timeout() bool { return e.timeout }
+
+// Temporary satisfies net.Error but is not used by isTransientError.
+func (e *fakeNetError) Temporary() bool { return e.timeout }
+
+//nolint:varnamelen // table-driven test
+func TestIsTransientError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "transport error with Temporary true (429)",
+			err:  &transport.Error{StatusCode: http.StatusTooManyRequests},
+			want: true,
+		},
+		{
+			name: "transport error with Temporary true (503)",
+			err:  &transport.Error{StatusCode: http.StatusServiceUnavailable},
+			want: true,
+		},
+		{
+			name: "transport error with Temporary false (404)",
+			err:  &transport.Error{StatusCode: http.StatusNotFound},
+			want: false,
+		},
+		{
+			name: "net error with timeout true",
+			err:  &fakeNetError{timeout: true},
+			want: true,
+		},
+		{
+			name: "net error with timeout false",
+			err:  &fakeNetError{timeout: false},
+			want: false,
+		},
+		{
+			name: "plain error",
+			err:  errPlainTest,
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := attestation.ExportIsTransientError(tt.err)
+			if got != tt.want {
+				t.Errorf("isTransientError() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFetchRetriesOnTransientError(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+
+	ref := "docker.io/library/nginx@sha256:" + strings.Repeat("a", 64)
+	digest := "sha256:" + strings.Repeat("a", 64)
+
+	fetcher := attestation.NewTestOCIFetcherFull(
+		func(_ context.Context, _ []byte, _ attestation.FetchOptions) ([]byte, error) {
+			return nil, errNotReached
+		},
+		func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+			return nil, &transport.Error{StatusCode: http.StatusNotFound}
+		},
+		func(_ name.Digest, _ ...remote.Option) (ociV1.ImageIndex, error) {
+			n := calls.Add(1)
+			if n == 1 {
+				return nil, &transport.Error{StatusCode: http.StatusServiceUnavailable}
+			}
+
+			return &fakeImageIndex{manifests: nil, err: nil}, nil
+		},
+	)
+
+	opts := attestation.FetchOptions{Timeout: 5 * time.Second}
+
+	_, err := fetcher.Fetch(context.Background(), ref, digest, opts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if calls.Load() < 2 {
+		t.Errorf("expected at least 2 calls to referrers, got %d", calls.Load())
 	}
 }
 

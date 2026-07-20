@@ -18,6 +18,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"time"
@@ -68,6 +69,9 @@ var (
 
 	// ErrFetchRateLimitNegative indicates a negative fetch rate limit.
 	ErrFetchRateLimitNegative = errors.New("fetch_rate_limit must be non-negative")
+
+	// ErrInvalidMetricsAddr indicates the metrics address is not a valid host:port.
+	ErrInvalidMetricsAddr = errors.New("invalid metrics_addr")
 )
 
 // Duration wraps time.Duration to support TOML unmarshalling from strings.
@@ -145,6 +149,13 @@ func (c *Config) Validate() error {
 	case ModeDisabled, ModeWarn, ModeEnforce:
 	default:
 		return fmt.Errorf("%w: %q", ErrInvalidVerificationMode, c.Verification)
+	}
+
+	if c.MetricsAddr != "" {
+		_, _, err := net.SplitHostPort(c.MetricsAddr)
+		if err != nil {
+			return fmt.Errorf("%w: %q: %w", ErrInvalidMetricsAddr, c.MetricsAddr, err)
+		}
 	}
 
 	if !c.Enabled() {
