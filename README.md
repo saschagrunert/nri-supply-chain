@@ -29,6 +29,7 @@ must pass verification.
 - [Deployment](#deployment)
   - [Pre-installed NRI Plugin](#pre-installed-nri-plugin)
   - [External NRI Plugin](#external-nri-plugin)
+  - [NRI Runtime Configuration](#nri-runtime-configuration)
   - [Runtime Requirements](#runtime-requirements)
 - [Examples](#examples)
   - [Gradual Rollout](#gradual-rollout)
@@ -36,11 +37,13 @@ must pass verification.
   - [VSA-Accelerated Verification](#vsa-accelerated-verification)
 - [CLI Flags](#cli-flags)
 - [Metrics](#metrics)
+  - [Health and Readiness Probes](#health-and-readiness-probes)
 - [Operations](#operations)
   - [Config Reload](#config-reload)
   - [Logging](#logging)
   - [Troubleshooting](#troubleshooting)
   - [Monitoring and Alerting](#monitoring-and-alerting)
+- [Internal Limits](#internal-limits)
 - [Security Considerations](#security-considerations)
 - [Verifying Releases](#verifying-releases)
 - [Development](#development)
@@ -97,14 +100,17 @@ SIGHUP.
 When a container is created, the plugin performs verification in this order:
 
 1. **Image identification**: Extracts the image reference and digest from
-   container annotations. A complete CRI-O annotation set
-   (`io.kubernetes.cri-o.ImageName` or `io.kubernetes.cri-o.Image` for the
-   reference, `io.kubernetes.cri-o.ImageRepoDigests` or
-   `io.kubernetes.cri-o.ImageRef` for the digest) takes precedence. If CRI-O
-   does not provide both, a complete containerd pair
-   (`io.kubernetes.cri.image-name` + `io.kubernetes.cri.image-ref`) is used.
-   If neither runtime provides a complete pair, available annotations from
-   either source are combined.
+   container annotations. CRI-O annotations are checked first. For the image
+   reference, `io.kubernetes.cri-o.ImageName` is preferred; if absent,
+   `io.kubernetes.cri-o.Image` is used as a fallback. For the digest,
+   `io.kubernetes.cri-o.ImageRepoDigests` is preferred (the first
+   comma-separated entry is parsed and the digest extracted from the portion
+   after `@`); if absent, `io.kubernetes.cri-o.ImageRef` is used as a
+   fallback. When CRI-O provides both a reference and a digest, that pair
+   takes precedence. If CRI-O does not provide both, a complete containerd
+   pair (`io.kubernetes.cri.image-name` + `io.kubernetes.cri.image-ref`) is
+   used. If neither runtime provides a complete pair, available annotations
+   from either source are combined.
 
 2. **Policy resolution**: Looks up `<namespace>.json` in the policy directory.
    Falls back to `default.json` if no namespace-specific policy exists.
@@ -280,6 +286,13 @@ default for that namespace. By default this is a full replacement; set
 }
 ```
 
+When no policy file matches a container's namespace (no `<namespace>.json` and
+no `default.json`), the verifier denies the container with "no policy found for
+namespace and no default policy configured." In `enforce` mode, an empty policy
+directory blocks all containers. Always provide at least a `default.json` when
+verification is enabled. An empty policy `{}` allows all containers without
+performing any verification checks.
+
 For the complete field reference, pattern matching semantics, and scenario-based
 examples, see [docs/policy.md](docs/policy.md).
 
@@ -320,6 +333,16 @@ ExecReload=/bin/kill -HUP $MAINPID
 [Install]
 WantedBy=multi-user.target
 ```
+
+### NRI Runtime Configuration
+
+When the plugin is deployed as a pre-installed NRI plugin (without the
+`--config` flag), the container runtime can pass configuration inline via the
+NRI `Configure` callback. The plugin parses this string as TOML using the same
+format as the config file. This allows the runtime to manage plugin
+configuration directly, for example through CRI-O's NRI plugin config or
+containerd's NRI host configuration. If the `--config` flag is provided, the
+inline NRI configuration is ignored.
 
 ### Runtime Requirements
 
@@ -442,8 +465,18 @@ The plugin exposes Prometheus metrics at the configured address:
 | `nri_supply_chain_inflight_dedup_total`          | Counter   |                  | Deduplicated inflight verifications     |
 | `nri_supply_chain_circuit_breaker_trips_total`   | Counter   |                  | Circuit breaker open events             |
 
-The metrics server also exposes `/healthz` and `/readyz` endpoints for
-Kubernetes liveness and readiness probes.
+### Health and Readiness Probes
+
+The metrics server exposes `/healthz` and `/readyz` endpoints for Kubernetes
+liveness and readiness probes.
+
+- **`/healthz`** (liveness): Always returns HTTP 200. The plugin is considered
+  alive as long as the metrics server is running.
+- **`/readyz`** (readiness): Returns HTTP 200 only when both conditions are
+  met: (1) the plugin is connected to the NRI runtime, and (2) at least one
+  policy is loaded (when verification is enabled). Returns HTTP 503 with a
+  reason string otherwise. Before the NRI runtime connects, or if no policies
+  are loaded in `warn` or `enforce` mode, the readiness probe fails.
 
 ## Operations
 
@@ -461,6 +494,15 @@ Or with systemd:
 systemctl reload nri-supply-chain
 ```
 
+A reload re-reads the TOML config file and all policy files from disk. The
+verification cache is cleared only when cache-affecting config fields changed
+(`verification`, `policy_dir`, `cache_ttl`, `fetch_failure_policy`,
+`fetch_timeout`) or when the content of any policy file changed. If the config
+and policies are identical, the cache is preserved. To force a cache clear when
+nothing else needs to change, temporarily modify `cache_ttl` (for example,
+change it from `24h` to `23h59m`), send SIGHUP, then change it back and send
+SIGHUP again.
+
 ### Logging
 
 The plugin outputs structured JSON logs to stderr. Set `--log-level debug` for
@@ -477,8 +519,12 @@ detailed verification traces.
   Set `fetch_failure_policy = "allow"` temporarily to unblock while
   investigating.
 - **Stale cache**: Reduce `cache_ttl` or set to `0s` to disable caching during
-  debugging. Send SIGHUP to reload; the cache is cleared automatically when
-  cache-affecting config fields or policies change.
+  debugging. Send SIGHUP to reload; the cache is cleared only when
+  cache-affecting config fields (`verification`, `policy_dir`, `cache_ttl`,
+  `fetch_failure_policy`, `fetch_timeout`) or policy file contents have
+  changed. A SIGHUP with unchanged config and policies does not clear the
+  cache. To force a clear, change `cache_ttl` temporarily before sending
+  SIGHUP.
 
 ### Monitoring and Alerting
 
@@ -515,6 +561,28 @@ groups:
         annotations:
           summary: p99 verification latency exceeds 5 seconds.
 ```
+
+## Internal Limits
+
+The plugin enforces several hardcoded limits that are not configurable. These
+protect against resource exhaustion and unbounded processing.
+
+| Limit                       | Value                     | Behavior when exceeded                                                                                                   |
+| --------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Cache capacity              | 10,000 entries            | Expired entries are evicted first. If the cache is still full, the oldest entry is evicted to make room.                 |
+| Concurrent fetch limit      | 50                        | Additional verification requests block until a slot becomes available or the context is canceled.                        |
+| Fetch retry count           | 2 retries (3 total)       | Uses exponential backoff starting at 500ms. Only transient errors (network timeouts, HTTP 5xx) trigger retries.          |
+| Attestation size limit      | 10 MiB                    | Attestation bundles larger than 10 MiB are rejected. A warning is logged with the actual size.                           |
+| Max referrers per image     | 100                       | Only the first 100 bundle-type referrers are processed. Additional referrers are skipped with a warning.                 |
+| Sigstore trusted root cache | 1h TTL, 24h max staleness | The root is refreshed every hour. If the Sigstore TUF mirror is unreachable, the stale root is used for up to 24 hours.  |
+| VSA clock skew tolerance    | 60 seconds                | A VSA with `timeVerified` up to 60 seconds in the future is accepted. Beyond that, it is rejected as a future timestamp. |
+
+**Sigstore trusted root refresh.** For keyless (Fulcio) verification, the
+plugin fetches the Sigstore trusted root from the TUF mirror on startup and
+refreshes it every hour. If the mirror becomes unreachable, the cached root
+continues to be used for up to 24 hours. After 24 hours without a successful
+refresh, keyless verification fails with an error indicating the root is stale.
+Key-based verification is not affected by this limit.
 
 ## Security Considerations
 
