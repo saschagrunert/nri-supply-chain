@@ -29,14 +29,19 @@ func TestParseDigest(t *testing.T) {
 		wantAlgo string
 		wantHash string
 	}{
-		{"valid sha256", "sha256:abc123", "sha256", "abc123"},
+		{"valid sha256", "sha256:abcdef0123456789", "sha256", "abcdef0123456789"},
 		{"valid sha512", "sha512:def456", "sha512", "def456"},
 		{"missing colon", "sha256abc123", "", ""},
 		{"empty string", "", "", ""},
-		{"multiple colons preserves rest", "sha256:abc:def:ghi", "sha256", "abc:def:ghi"},
+		{"multiple colons rejected", "sha256:abc:def:ghi", "", ""},
 		{"colon only", ":", "", ""},
 		{"empty hash", "sha256:", "", ""},
 		{"empty algo", ":abc123", "", ""},
+		{"non-hex hash", "sha256:xyz123", "", ""},
+		{"uppercase hex rejected", "sha256:ABCDEF", "", ""},
+		{"uppercase algo rejected", "SHA256:abc123", "", ""},
+		{"algo with hyphen rejected", "sha-256:abc123", "", ""},
+		{"hash with spaces rejected", "sha256:abc 123", "", ""},
 	}
 
 	for _, test := range tests {

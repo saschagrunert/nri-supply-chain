@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -46,6 +47,8 @@ import (
 	"github.com/sigstore/sigstore/pkg/signature"
 	"golang.org/x/sync/singleflight"
 	"golang.org/x/time/rate"
+
+	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
 var errUnexpectedSingleflightResult = errors.New("unexpected singleflight result type")
@@ -759,12 +762,8 @@ func verifyBundleWithCache(
 		return nil, fmt.Errorf("creating sigstore verifier: %w", err)
 	}
 
-	// Artifact binding is skipped at the Sigstore level because downstream
-	// verifiers provide their own binding: SLSA checks subject digest, VSA
-	// checks resource URI. VEX requires explicit product matching (empty
-	// products are rejected by matchesImage).
 	pol := verify.NewPolicy(
-		verify.WithoutArtifactUnsafe(),
+		artifactPolicy(opts.Digest),
 		policyOpts...,
 	)
 
@@ -966,6 +965,17 @@ func buildCertificateIdentity(issuers, sanPatterns []string) (verify.Certificate
 
 var warnedSANPatterns sync.Map //nolint:gochecknoglobals // dedup per unique issuer set
 
+// ResetSANPatternWarnings clears the deduplication state so that SAN pattern
+// warnings are re-emitted on the next verification cycle. Call this after a
+// config reload to ensure warnings reflect the new policy state.
+func ResetSANPatternWarnings() {
+	warnedSANPatterns.Range(func(key, _ any) bool {
+		warnedSANPatterns.Delete(key)
+
+		return true
+	})
+}
+
 func warnNoSANPatterns(issuers []string) {
 	key := strings.Join(issuers, "\x00")
 
@@ -999,6 +1009,31 @@ func extractVerifiedPayload(bndl *bundle.Bundle) ([]byte, error) {
 	}
 
 	return payload, nil
+}
+
+func artifactPolicy(digest string) verify.ArtifactPolicyOption {
+	algo, hashHex := types.ParseDigest(digest)
+	if algo == "" {
+		if digest != "" {
+			slog.Warn("Malformed digest, skipping artifact binding",
+				"digest", digest,
+			)
+		}
+
+		return verify.WithoutArtifactUnsafe()
+	}
+
+	hashBytes, err := hex.DecodeString(hashHex)
+	if err != nil {
+		slog.Warn("Digest hex decode failed, skipping artifact binding",
+			"digest", digest,
+			"error", err,
+		)
+
+		return verify.WithoutArtifactUnsafe()
+	}
+
+	return verify.WithArtifactDigest(algo, hashBytes)
 }
 
 // globToRegex converts a glob pattern to a regex string, consistent with

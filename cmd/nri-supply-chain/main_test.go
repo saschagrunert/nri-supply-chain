@@ -131,7 +131,8 @@ func TestHandleShutdown(t *testing.T) {
 	defer cancel()
 
 	sigCh := make(chan os.Signal, 1)
-	handleShutdown(ctx, cancel, sigCh)
+	done := make(chan struct{})
+	handleShutdown(ctx, cancel, sigCh, done)
 
 	sigCh <- syscall.SIGTERM
 

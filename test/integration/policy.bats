@@ -148,6 +148,7 @@ EOF
 {
     "trust": {
         "issuers": ["https://accounts.google.com", "https://token.actions.githubusercontent.com"],
+        "sanPatterns": ["*@example.com"],
         "builders": [{"id": "https://github.com/actions/runner", "maxLevel": 3}]
     },
     "signatures": {
@@ -160,6 +161,41 @@ verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 EOF
 	run_binary --config "$TEST_DIR/config.toml" --version
+	[[ "$status" -eq 0 ]]
+}
+
+@test "enforce mode rejects issuers without SANPatterns" {
+	mkdir -p "$TEST_DIR/policies"
+	cat >"$TEST_DIR/policies/default.json" <<EOF
+{
+    "trust": {
+        "issuers": ["https://accounts.google.com"]
+    }
+}
+EOF
+	cat >"$TEST_DIR/config.toml" <<EOF
+verification = "enforce"
+policy_dir = "$TEST_DIR/policies"
+EOF
+	run_binary --config "$TEST_DIR/config.toml" --validate
+	[[ "$status" -ne 0 ]]
+	[[ "$output" == *"sanPatterns is required"* ]]
+}
+
+@test "warn mode allows issuers without SANPatterns" {
+	mkdir -p "$TEST_DIR/policies"
+	cat >"$TEST_DIR/policies/default.json" <<EOF
+{
+    "trust": {
+        "issuers": ["https://accounts.google.com"]
+    }
+}
+EOF
+	cat >"$TEST_DIR/config.toml" <<EOF
+verification = "warn"
+policy_dir = "$TEST_DIR/policies"
+EOF
+	run_binary --config "$TEST_DIR/config.toml" --validate
 	[[ "$status" -eq 0 ]]
 }
 

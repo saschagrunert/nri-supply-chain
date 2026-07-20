@@ -44,6 +44,7 @@ const (
 	readHeaderTimeout   = 10 * time.Second
 	shutdownGracePeriod = 5 * time.Second
 	warmTimeout         = 30 * time.Second
+	panicExitCode       = 2
 
 	logLevelDebug = "debug"
 	logLevelInfo  = "info"
@@ -129,12 +130,15 @@ func setupSignals(
 	sigterm := make(chan os.Signal, 1)
 	signal.Notify(sigterm, syscall.SIGINT, syscall.SIGTERM)
 
+	done := make(chan struct{})
+
 	setupReload(ctx, configPath, verif, sighup)
-	handleShutdown(ctx, cancel, sigterm)
+	handleShutdown(ctx, cancel, sigterm, done)
 
 	return func() {
 		signal.Stop(sighup)
 		signal.Stop(sigterm)
+		close(done)
 	}
 }
 
@@ -208,6 +212,18 @@ func runValidation(cfg *config.Config) int {
 			)
 
 			return 1
+		}
+
+		if cfg.Verification == config.ModeEnforce {
+			err = pol.ValidateEnforce()
+			if err != nil {
+				slog.Error("Policy enforce validation failed",
+					"policy", label,
+					"error", err,
+				)
+
+				return 1
+			}
 		}
 	}
 
@@ -348,42 +364,62 @@ func setupReload(
 			case <-sigCh:
 			}
 
-			slog.Info("Received SIGHUP, reloading config")
-
-			if configPath == "" {
-				slog.Warn("No config file specified, skipping reload")
-
-				continue
-			}
-
-			newCfg, err := config.LoadFromFile(configPath)
-			if err != nil {
-				slog.Error("Config reload failed", "error", err)
-
-				continue
-			}
-
-			if newCfg.Enabled() {
-				err = newCfg.ValidateRuntime()
-				if err != nil {
-					slog.Error("Config reload validation failed", "error", err)
-
-					continue
-				}
-			}
-
-			reloadErr := verif.Reload(ctx, newCfg)
-			if reloadErr != nil {
-				slog.Error("Verifier reload failed", "error", reloadErr)
-			} else {
-				slog.Info("Config reloaded successfully")
-			}
+			handleReload(ctx, configPath, verif)
 		}
 	}()
 }
 
-func handleShutdown(ctx context.Context, cancel context.CancelFunc, sigCh <-chan os.Signal) {
+func handleReload(ctx context.Context, configPath string, verif *verifier.Verifier) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("Recovered panic in reload handler", "error", r)
+		}
+	}()
+
+	slog.Info("Received SIGHUP, reloading config")
+
+	if configPath == "" {
+		slog.Warn("No config file specified, skipping reload")
+
+		return
+	}
+
+	newCfg, err := config.LoadFromFile(configPath)
+	if err != nil {
+		slog.Error("Config reload failed", "error", err)
+
+		return
+	}
+
+	if newCfg.Enabled() {
+		err = newCfg.ValidateRuntime()
+		if err != nil {
+			slog.Error("Config reload validation failed", "error", err)
+
+			return
+		}
+	}
+
+	reloadErr := verif.Reload(ctx, newCfg)
+	if reloadErr != nil {
+		slog.Error("Verifier reload failed", "error", reloadErr)
+	} else {
+		slog.Info("Config reloaded successfully")
+	}
+}
+
+func handleShutdown(
+	ctx context.Context, cancel context.CancelFunc,
+	sigCh <-chan os.Signal, done <-chan struct{},
+) {
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("Recovered panic in shutdown handler", "error", r)
+				os.Exit(panicExitCode)
+			}
+		}()
+
 		select {
 		case <-ctx.Done():
 			return
@@ -394,7 +430,7 @@ func handleShutdown(ctx context.Context, cancel context.CancelFunc, sigCh <-chan
 		cancel()
 
 		select {
-		case <-ctx.Done():
+		case <-done:
 		case <-sigCh:
 			slog.Warn("Received second signal, forcing exit")
 			os.Exit(1)

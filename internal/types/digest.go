@@ -18,13 +18,38 @@ import "strings"
 
 const digestPartCount = 2
 
-// ParseDigest splits a digest string (e.g., "sha256:abc123") into algorithm and hash.
-// Returns empty strings if the format is invalid.
+// ParseDigest splits a digest string (e.g., "sha256:abc123def...") into algorithm and hash.
+// Returns empty strings if the format is invalid. The algorithm must contain only
+// lowercase alphanumeric characters, and the hash must be a valid hex string.
 func ParseDigest(digest string) (algo, hash string) {
 	parts := strings.SplitN(digest, ":", digestPartCount)
 	if len(parts) != digestPartCount || parts[0] == "" || parts[1] == "" {
 		return "", ""
 	}
 
+	if !isAlphanumericLower(parts[0]) || !isHex(parts[1]) {
+		return "", ""
+	}
+
 	return parts[0], parts[1]
+}
+
+func isAlphanumericLower(s string) bool {
+	for _, c := range s {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') {
+			return false
+		}
+	}
+
+	return true
+}
+
+func isHex(s string) bool {
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+
+	return true
 }

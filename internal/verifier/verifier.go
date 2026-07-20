@@ -20,12 +20,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
+	"golang.org/x/sync/semaphore"
 	"golang.org/x/sync/singleflight"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
@@ -49,26 +51,32 @@ var (
 	errUnexpectedSingleflightResult = errors.New("unexpected singleflight result type")
 )
 
+const maxConcurrentFetches = 50
+
 type snapshot struct {
-	config         *config.Config
-	policies       map[string]*policy.Policy
-	cache          *cache.Cache
-	metrics        *metrics.Metrics
-	fetcher        attestation.Fetcher
-	circuitBreaker *attestation.CircuitBreaker
+	config          *config.Config
+	policies        map[string]*policy.Policy
+	cache           *cache.Cache
+	metrics         *metrics.Metrics
+	fetcher         attestation.Fetcher
+	circuitBreakers *attestation.CircuitBreakerRegistry
+	fetchSem        *semaphore.Weighted
+	auditLogger     *slog.Logger
 }
 
 // Verifier performs supply chain attestation verification on container images.
 type Verifier struct {
-	mu             sync.RWMutex
-	config         *config.Config
-	cache          *cache.Cache
-	policies       map[string]*policy.Policy
-	policyHashes   map[string]string
-	metrics        *metrics.Metrics
-	fetcher        attestation.Fetcher
-	inflight       singleflight.Group
-	circuitBreaker *attestation.CircuitBreaker
+	mu              sync.RWMutex
+	config          *config.Config
+	cache           *cache.Cache
+	policies        map[string]*policy.Policy
+	policyHashes    map[string]string
+	metrics         *metrics.Metrics
+	fetcher         attestation.Fetcher
+	inflight        singleflight.Group
+	circuitBreakers *attestation.CircuitBreakerRegistry
+	fetchSem        *semaphore.Weighted
+	auditLogger     *slog.Logger
 }
 
 // New creates a new Verifier with the given configuration, metrics, and attestation fetcher.
@@ -84,10 +92,14 @@ func New(cfg *config.Config, met *metrics.Metrics, fetcher attestation.Fetcher) 
 		metrics:      met,
 		fetcher:      fetcher,
 		inflight:     singleflight.Group{},
-		circuitBreaker: attestation.NewCircuitBreaker(
+		circuitBreakers: attestation.NewCircuitBreakerRegistry(
 			cfgCopy.CircuitBreakerThreshold,
 			cfgCopy.CircuitBreakerCooldown.Duration,
 		),
+		fetchSem: semaphore.NewWeighted(maxConcurrentFetches),
+		auditLogger: slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+			Level: slog.LevelInfo,
+		})),
 	}
 
 	if cfgCopy.Enabled() {
@@ -97,6 +109,11 @@ func New(cfg *config.Config, met *metrics.Metrics, fetcher attestation.Fetcher) 
 		}
 
 		err = validatePoliciesRuntime(policies)
+		if err != nil {
+			return nil, err
+		}
+
+		err = validatePoliciesEnforce(cfgCopy.Verification, policies)
 		if err != nil {
 			return nil, err
 		}
@@ -149,13 +166,10 @@ func (v *Verifier) Verify(
 	state := v.snap()
 
 	if !state.config.Enabled() {
-		logAuditDecision(ctx, imageRef, digest, namespace, "allowed", "verification disabled")
-
-		return &types.Result{
-			Allowed:      true,
-			Reason:       "verification disabled",
-			CheckResults: nil,
-		}, nil
+		return allowResult(
+			ctx, state.auditLogger, imageRef, digest,
+			namespace, "verification disabled",
+		), nil
 	}
 
 	slog.DebugContext(ctx, "Verifying image",
@@ -167,22 +181,22 @@ func (v *Verifier) Verify(
 	pol := policyForNamespace(state.policies, namespace)
 
 	if pol == nil {
-		return handleMissingPolicy(ctx, state.config, imageRef, digest, namespace)
+		return handleMissingPolicy(
+			ctx, state.auditLogger, state.config,
+			imageRef, digest, namespace,
+		)
 	}
 
 	if isExcluded(ctx, pol.Exclude, imageRef) {
-		logAuditDecision(ctx, imageRef, digest, namespace, "allowed", "image is excluded")
-
-		return &types.Result{
-			Allowed:      true,
-			Reason:       "image is excluded",
-			CheckResults: nil,
-		}, nil
+		return allowResult(
+			ctx, state.auditLogger, imageRef, digest,
+			namespace, "image is excluded",
+		), nil
 	}
 
 	if cached := state.cache.Get(digest, namespace); cached != nil {
 		state.metrics.CacheHitsTotal.Inc()
-		logResult(ctx, imageRef, digest, namespace, cached)
+		logResult(ctx, state.auditLogger, imageRef, digest, namespace, cached)
 
 		enforced, err := applyEnforcement(ctx, state.config, cached, imageRef)
 
@@ -237,8 +251,14 @@ func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
-	cacheInvalidated := cacheAffectingFieldsChanged(v.config, &cfgCopy) ||
-		!policyHashesEqual(v.policyHashes, newHashes)
+	err = validatePoliciesEnforce(cfgCopy.Verification, policies)
+	if err != nil {
+		return err
+	}
+
+	policiesChanged := !policyHashesEqual(v.policyHashes, newHashes)
+
+	cacheInvalidated := cacheAffectingFieldsChanged(v.config, &cfgCopy) || policiesChanged
 
 	if cacheInvalidated {
 		v.cache = cache.NewWithGauge(cfgCopy.CacheTTL.Duration, v.metrics.CacheEntriesTotal)
@@ -250,24 +270,37 @@ func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 	v.policies = policies
 	v.policyHashes = newHashes
 
-	if v.circuitBreaker == nil ||
-		v.circuitBreaker.Threshold() != cfgCopy.CircuitBreakerThreshold ||
-		v.circuitBreaker.Cooldown() != cfgCopy.CircuitBreakerCooldown.Duration {
-		v.circuitBreaker = attestation.NewCircuitBreaker(
-			cfgCopy.CircuitBreakerThreshold,
-			cfgCopy.CircuitBreakerCooldown.Duration,
-		)
-	}
+	v.updateCircuitBreakersLocked(&cfgCopy)
+	v.updateFetcherLocked(ctx, &cfgCopy)
 
-	if cfgCopy.Enabled() {
-		if v.fetcher == nil {
-			v.fetcher = createAndWarmFetcher(ctx, &cfgCopy)
-		} else if ociFetcher, ok := v.fetcher.(*attestation.OCIFetcher); ok {
-			ociFetcher.SetRateLimit(cfgCopy.FetchRateLimit)
-		}
+	if policiesChanged {
+		attestation.ResetSANPatternWarnings()
 	}
 
 	return nil
+}
+
+// updateCircuitBreakersLocked replaces the registry unconditionally to bound
+// memory: lazily-created per-host breakers would otherwise accumulate forever.
+// The tradeoff is that a reload during a registry outage resets the breaker,
+// allowing a short burst of retries before it re-trips.
+func (v *Verifier) updateCircuitBreakersLocked(cfg *config.Config) {
+	v.circuitBreakers = attestation.NewCircuitBreakerRegistry(
+		cfg.CircuitBreakerThreshold,
+		cfg.CircuitBreakerCooldown.Duration,
+	)
+}
+
+func (v *Verifier) updateFetcherLocked(ctx context.Context, cfg *config.Config) {
+	if !cfg.Enabled() {
+		return
+	}
+
+	if v.fetcher == nil {
+		v.fetcher = createAndWarmFetcher(ctx, cfg)
+	} else if ociFetcher, ok := v.fetcher.(*attestation.OCIFetcher); ok {
+		ociFetcher.SetRateLimit(cfg.FetchRateLimit)
+	}
 }
 
 func loadAndHashPolicies(
@@ -337,7 +370,7 @@ func (v *Verifier) verifyOnce(
 
 		result := runChecks(checkCtx, state, pol, imageRef, digest)
 
-		logResult(checkCtx, imageRef, digest, namespace, result)
+		logResult(checkCtx, state.auditLogger, imageRef, digest, namespace, result)
 		recordMetrics(state.metrics, result)
 
 		state.cache.Set(digest, namespace, result)
@@ -373,12 +406,14 @@ func (v *Verifier) snap() snapshot {
 	defer v.mu.RUnlock()
 
 	return snapshot{
-		config:         v.config,
-		policies:       v.policies,
-		cache:          v.cache,
-		metrics:        v.metrics,
-		fetcher:        v.fetcher,
-		circuitBreaker: v.circuitBreaker,
+		config:          v.config,
+		policies:        v.policies,
+		cache:           v.cache,
+		metrics:         v.metrics,
+		fetcher:         v.fetcher,
+		circuitBreakers: v.circuitBreakers,
+		fetchSem:        v.fetchSem,
+		auditLogger:     v.auditLogger,
 	}
 }
 
@@ -390,7 +425,9 @@ func runChecks(
 		return runChecksWithoutFetcher(pol, state.metrics, imageRef)
 	}
 
-	if state.circuitBreaker != nil && !state.circuitBreaker.Allow() {
+	breaker := registryBreaker(state.circuitBreakers, imageRef)
+
+	if breaker != nil && !breaker.Allow() {
 		return handleFetchError(
 			state.config, state.metrics,
 			fmt.Errorf("%w: %s", ErrCircuitBreakerOpen, imageRef),
@@ -398,20 +435,28 @@ func runChecks(
 		)
 	}
 
+	if state.fetchSem != nil {
+		semErr := state.fetchSem.Acquire(ctx, 1)
+		if semErr != nil {
+			return handleFetchError(
+				state.config, state.metrics,
+				fmt.Errorf("fetch concurrency limit: %w", semErr),
+				imageRef,
+			)
+		}
+
+		defer state.fetchSem.Release(1)
+	}
+
 	attestations, fetchErr := fetchAttestations(ctx, state, imageRef, digest, pol)
 	if fetchErr != nil {
-		if state.circuitBreaker != nil {
-			if tripped := state.circuitBreaker.RecordFailure(); tripped {
-				state.metrics.CircuitBreakerTripsTotal.Inc()
-				slog.WarnContext(ctx, "Circuit breaker opened after repeated fetch failures")
-			}
-		}
+		recordBreakerFailure(ctx, breaker, state.metrics, imageRef)
 
 		return handleFetchError(state.config, state.metrics, fetchErr, imageRef)
 	}
 
-	if state.circuitBreaker != nil {
-		state.circuitBreaker.RecordSuccess()
+	if breaker != nil {
+		breaker.RecordSuccess()
 	}
 
 	vsaResult := checkVSA(ctx, attestations, pol, imageRef, digest, state.metrics)
@@ -449,6 +494,7 @@ func fetchAttestations(
 	opts := &attestation.FetchOptions{
 		RequireTransparencyLog: pol.Signatures != nil && pol.Signatures.RequireTransparencyLog,
 		Timeout:                state.config.FetchTimeout.Duration,
+		Digest:                 digest,
 	}
 
 	if pol.Trust != nil {
@@ -732,12 +778,12 @@ func handleMissingAttestation(
 }
 
 func logResult(
-	ctx context.Context,
+	ctx context.Context, logger *slog.Logger,
 	imageRef, digest, namespace string,
 	result *types.Result,
 ) {
 	for _, checkResult := range result.CheckResults {
-		slog.InfoContext(ctx, "Supply chain audit",
+		logger.InfoContext(ctx, "Supply chain audit",
 			"image", imageRef,
 			"digest", digest,
 			"namespace", namespace,
@@ -750,16 +796,29 @@ func logResult(
 }
 
 func logAuditDecision(
-	ctx context.Context,
+	ctx context.Context, logger *slog.Logger,
 	imageRef, digest, namespace, decision, reason string,
 ) {
-	slog.InfoContext(ctx, "Supply chain audit",
+	logger.InfoContext(ctx, "Supply chain audit",
 		"image", imageRef,
 		"digest", digest,
 		"namespace", namespace,
 		"decision", decision,
 		"reason", reason,
 	)
+}
+
+func allowResult(
+	ctx context.Context, logger *slog.Logger,
+	imageRef, digest, namespace, reason string,
+) *types.Result {
+	logAuditDecision(ctx, logger, imageRef, digest, namespace, "allowed", reason)
+
+	return &types.Result{
+		Allowed:      true,
+		Reason:       reason,
+		CheckResults: nil,
+	}
 }
 
 func recordMetrics(met *metrics.Metrics, result *types.Result) {
@@ -771,14 +830,14 @@ func recordMetrics(met *metrics.Metrics, result *types.Result) {
 }
 
 func handleMissingPolicy(
-	ctx context.Context, cfg *config.Config,
+	ctx context.Context, logger *slog.Logger, cfg *config.Config,
 	imageRef, digest, namespace string,
 ) (*types.Result, error) {
 	reason := fmt.Sprintf(
 		"no policy found for namespace %q and no default policy configured", namespace,
 	)
 
-	logAuditDecision(ctx, imageRef, digest, namespace, "denied", reason)
+	logAuditDecision(ctx, logger, imageRef, digest, namespace, "denied", reason)
 
 	return applyEnforcement(ctx, cfg, &types.Result{
 		Allowed: false,
@@ -801,6 +860,43 @@ func policyForNamespace(
 	}
 
 	return nil
+}
+
+func registryHost(imageRef string) string {
+	ref, err := name.ParseReference(imageRef)
+	if err != nil {
+		return imageRef
+	}
+
+	return ref.Context().RegistryStr()
+}
+
+func recordBreakerFailure(
+	ctx context.Context,
+	breaker *attestation.CircuitBreaker,
+	met *metrics.Metrics,
+	imageRef string,
+) {
+	if breaker == nil {
+		return
+	}
+
+	if tripped := breaker.RecordFailure(); tripped {
+		met.CircuitBreakerTripsTotal.Inc()
+		slog.WarnContext(ctx, "Circuit breaker opened after repeated fetch failures",
+			"registry", registryHost(imageRef),
+		)
+	}
+}
+
+func registryBreaker(
+	registry *attestation.CircuitBreakerRegistry, imageRef string,
+) *attestation.CircuitBreaker {
+	if registry == nil {
+		return nil
+	}
+
+	return registry.Get(registryHost(imageRef))
 }
 
 func buildDigestRef(imageRef, digest string) string {
@@ -847,6 +943,28 @@ func isExcluded(ctx context.Context, excludedImages []string, imageRef string) b
 func validatePoliciesRuntime(policies map[string]*policy.Policy) error {
 	for ns, pol := range policies {
 		err := pol.ValidateRuntime()
+		if err != nil {
+			label := ns
+			if label == "" {
+				label = "default"
+			}
+
+			return fmt.Errorf("policy %q: %w", label, err)
+		}
+	}
+
+	return nil
+}
+
+func validatePoliciesEnforce(
+	mode string, policies map[string]*policy.Policy,
+) error {
+	if mode != config.ModeEnforce {
+		return nil
+	}
+
+	for ns, pol := range policies {
+		err := pol.ValidateEnforce()
 		if err != nil {
 			label := ns
 			if label == "" {

@@ -78,4 +78,5 @@ type FetchOptions struct {
 	SANPatterns            []string
 	RequireTransparencyLog bool
 	Timeout                time.Duration
+	Digest                 string
 }

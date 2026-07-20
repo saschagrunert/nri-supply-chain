@@ -27,11 +27,9 @@ const (
 	circuitHalfOpen
 )
 
-// CircuitBreaker prevents repeated fetch attempts when the registry is unavailable.
+// CircuitBreaker prevents repeated fetch attempts when a registry is unavailable.
 // After a configurable number of consecutive failures, it short-circuits to the
 // configured failure policy for a cooldown period before allowing a probe request.
-// The breaker is global (not per-registry): one failing registry can open the
-// breaker for all registries.
 type CircuitBreaker struct {
 	mu                  sync.Mutex
 	state               circuitState
@@ -133,4 +131,56 @@ func (cb *CircuitBreaker) Cooldown() time.Duration {
 	defer cb.mu.Unlock()
 
 	return cb.cooldown
+}
+
+// CircuitBreakerRegistry manages per-host circuit breakers. Each registry host
+// gets its own breaker so that a failing registry does not block requests to
+// healthy registries.
+type CircuitBreakerRegistry struct {
+	mu        sync.Mutex
+	breakers  map[string]*CircuitBreaker
+	threshold int
+	cooldown  time.Duration
+}
+
+// NewCircuitBreakerRegistry creates a registry that lazily creates per-host
+// circuit breakers with the given threshold and cooldown.
+func NewCircuitBreakerRegistry(threshold int, cooldown time.Duration) *CircuitBreakerRegistry {
+	return &CircuitBreakerRegistry{
+		mu:        sync.Mutex{},
+		breakers:  make(map[string]*CircuitBreaker),
+		threshold: threshold,
+		cooldown:  cooldown,
+	}
+}
+
+// Get returns the circuit breaker for the given registry host, creating one
+// if it does not exist.
+func (r *CircuitBreakerRegistry) Get(host string) *CircuitBreaker {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	breaker, ok := r.breakers[host]
+	if !ok {
+		breaker = NewCircuitBreaker(r.threshold, r.cooldown)
+		r.breakers[host] = breaker
+	}
+
+	return breaker
+}
+
+// Threshold returns the configured failure threshold.
+func (r *CircuitBreakerRegistry) Threshold() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return r.threshold
+}
+
+// Cooldown returns the configured cooldown duration.
+func (r *CircuitBreakerRegistry) Cooldown() time.Duration {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return r.cooldown
 }

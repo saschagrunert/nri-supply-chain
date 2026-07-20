@@ -83,6 +83,11 @@ var (
 
 	// ErrNotRegularFile indicates a path exists but is not a regular file.
 	ErrNotRegularFile = errors.New("not a regular file")
+
+	// ErrSANPatternsRequired indicates keyless verification requires SANPatterns.
+	ErrSANPatternsRequired = errors.New(
+		"trust.sanPatterns is required when trust.issuers is set in enforce mode",
+	)
 )
 
 // Policy defines the trust roots and per-namespace verification settings.
@@ -315,6 +320,20 @@ func (p *Policy) Validate() error {
 	}
 
 	return p.validateVSA()
+}
+
+// ValidateEnforce runs additional checks required for enforce mode.
+// Keyless verification (issuers set) requires explicit SANPatterns.
+func (p *Policy) ValidateEnforce() error {
+	if p.Trust == nil {
+		return nil
+	}
+
+	if len(p.Trust.Issuers) > 0 && len(p.Trust.SANPatterns) == 0 {
+		return ErrSANPatternsRequired
+	}
+
+	return nil
 }
 
 // ValidateRuntime performs runtime checks that require filesystem access,

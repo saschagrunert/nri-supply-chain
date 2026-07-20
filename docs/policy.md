@@ -76,6 +76,7 @@ Define which builders and issuers you trust. For GitHub Actions with keyless
       }
     ],
     "issuers": ["https://token.actions.githubusercontent.com"],
+    "sanPatterns": ["https://github.com/myorg/*"],
     "sources": ["github.com/myorg/*"]
   }
 }
@@ -110,7 +111,8 @@ provenance:
         "maxLevel": 3
       }
     ],
-    "issuers": ["https://token.actions.githubusercontent.com"]
+    "issuers": ["https://token.actions.githubusercontent.com"],
+    "sanPatterns": ["https://github.com/myorg/*"]
   },
   "provenance": {
     "missingPolicy": "deny"
@@ -135,7 +137,8 @@ Skip verification for known base images or internal tooling:
         "maxLevel": 3
       }
     ],
-    "issuers": ["https://token.actions.githubusercontent.com"]
+    "issuers": ["https://token.actions.githubusercontent.com"],
+    "sanPatterns": ["https://github.com/myorg/*"]
   },
   "provenance": {
     "missingPolicy": "deny"
@@ -149,14 +152,14 @@ Skip verification for known base images or internal tooling:
 
 Trust roots for verification. All sub-fields are optional.
 
-| Field         | Type  | Description                                                                                                                                                                                                                                                    |
-| ------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `builders`    | array | Trusted SLSA provenance builders. Each entry has `id` (URI) and `maxLevel` (0-3). Note: `maxLevel` is only enforced by VSA verification (`vsa.minimumLevel`), not during SLSA provenance checks, because provenance attestations do not declare a build level. |
-| `verifiers`   | array | Trusted VSA verifiers. Each entry has `id` (URI) and `key` (absolute path to PEM public key). The key is also used for Sigstore bundle signature verification.                                                                                                 |
-| `issuers`     | array | Trusted OIDC issuers for keyless (Fulcio) verification.                                                                                                                                                                                                        |
-| `sanPatterns` | array | Accepted certificate Subject Alternative Names. Supports glob patterns: `*` matches any non-`/` sequence, `?` matches a single non-`/` character, `[...]` matches a character class. When empty, any SAN from a trusted issuer is accepted.                    |
-| `sources`     | array | Allowed source repository glob patterns (Go `path.Match` syntax).                                                                                                                                                                                              |
-| `buildTypes`  | array | Accepted build type URIs for SLSA provenance.                                                                                                                                                                                                                  |
+| Field         | Type  | Description                                                                                                                                                                                                                                                                                                                            |
+| ------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `builders`    | array | Trusted SLSA provenance builders. Each entry has `id` (URI) and `maxLevel` (0-3). Note: `maxLevel` is only enforced by VSA verification (`vsa.minimumLevel`), not during SLSA provenance checks, because provenance attestations do not declare a build level.                                                                         |
+| `verifiers`   | array | Trusted VSA verifiers. Each entry has `id` (URI) and `key` (absolute path to PEM public key). The key is also used for Sigstore bundle signature verification.                                                                                                                                                                         |
+| `issuers`     | array | Trusted OIDC issuers for keyless (Fulcio) verification.                                                                                                                                                                                                                                                                                |
+| `sanPatterns` | array | Accepted certificate Subject Alternative Names. Supports glob patterns: `*` matches any non-`/` sequence, `?` matches a single non-`/` character, `[...]` matches a character class. Required when `issuers` is set in `enforce` mode. In `warn` mode, omitting this field accepts any SAN from a trusted issuer (with a log warning). |
+| `sources`     | array | Allowed source repository glob patterns (Go `path.Match` syntax).                                                                                                                                                                                                                                                                      |
+| `buildTypes`  | array | Accepted build type URIs for SLSA provenance.                                                                                                                                                                                                                                                                                          |
 
 ### `exclude` (array of strings)
 
@@ -295,9 +298,10 @@ The plugin supports two verification modes that can be used independently or
 together:
 
 **Keyless (Fulcio)**: Uses OIDC identity. Configure `trust.issuers` with
-trusted identity providers. Optionally restrict accepted certificate SANs with
-`trust.sanPatterns`. Requires the Sigstore public-good instance (Fulcio +
-Rekor).
+trusted identity providers. In `enforce` mode, `trust.sanPatterns` is required
+to restrict accepted certificate SANs. In `warn` mode, omitting `sanPatterns`
+accepts any SAN from a trusted issuer (with a log warning). Requires the
+Sigstore public-good instance (Fulcio + Rekor).
 
 **Key-based**: Uses a local PEM public key. Configure `trust.verifiers` with
 the verifier ID and key path. Does not require network access to Sigstore
@@ -487,6 +491,7 @@ The plugin tries both modes; either can satisfy the policy:
       }
     ],
     "issuers": ["https://token.actions.githubusercontent.com"],
+    "sanPatterns": ["https://github.com/myorg/*"],
     "sources": ["github.com/myorg/*"]
   },
   "provenance": {

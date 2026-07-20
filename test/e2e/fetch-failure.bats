@@ -8,7 +8,8 @@ setup_file() {
 	cat >"$POLICY_DIR/default.json" <<-'EOF'
 		{
 		  "trust": {
-		    "issuers": ["https://token.actions.githubusercontent.com"]
+		    "issuers": ["https://token.actions.githubusercontent.com"],
+		    "sanPatterns": ["*"]
 		  },
 		  "provenance": {"missingPolicy": "deny"},
 		  "vex": {"missingPolicy": "allow"},

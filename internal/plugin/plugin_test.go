@@ -264,7 +264,7 @@ func TestConfigureSkipsWhenConfigPathSet(t *testing.T) {
 
 const (
 	testCrioImage          = "crio-image"
-	testContainerdDigest   = "sha256:containerd"
+	testContainerdDigest   = "sha256:c0a1ae4deadbeef0c0a1ae4deadbeef0c0a1ae4deadbeef0c0a1ae4deadbeef0"
 	testContainerdImageRef = "containerd-image"
 )
 

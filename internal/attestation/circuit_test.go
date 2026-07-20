@@ -160,3 +160,50 @@ func TestCircuitBreakerConcurrent(t *testing.T) {
 	// These assertions just confirm the breaker is in a valid state afterward.
 	_ = breaker.IsOpen()
 }
+
+func TestCircuitBreakerRegistryPerHost(t *testing.T) {
+	t.Parallel()
+
+	registry := attestation.NewCircuitBreakerRegistry(2, time.Minute)
+
+	a := registry.Get("registry-a.example.com")
+	b := registry.Get("registry-b.example.com")
+
+	if a == b {
+		t.Error("expected different breaker instances per host")
+	}
+
+	a.RecordFailure()
+	a.RecordFailure()
+
+	if !a.IsOpen() {
+		t.Error("expected breaker A to be open after threshold failures")
+	}
+
+	if b.IsOpen() {
+		t.Error("expected breaker B to remain closed")
+	}
+
+	if registry.Get("registry-a.example.com") != a {
+		t.Error("expected same breaker instance for same host")
+	}
+}
+
+func TestCircuitBreakerRegistryThresholdAndCooldown(t *testing.T) {
+	t.Parallel()
+
+	const (
+		threshold = 5
+		cooldown  = 10 * time.Second
+	)
+
+	registry := attestation.NewCircuitBreakerRegistry(threshold, cooldown)
+
+	if registry.Threshold() != threshold {
+		t.Errorf("threshold = %d, want %d", registry.Threshold(), threshold)
+	}
+
+	if registry.Cooldown() != cooldown {
+		t.Errorf("cooldown = %v, want %v", registry.Cooldown(), cooldown)
+	}
+}
