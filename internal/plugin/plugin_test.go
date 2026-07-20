@@ -440,7 +440,7 @@ func TestResolveImageContainerdInvalidDigest(t *testing.T) {
 	}
 }
 
-func newTestPlugin(t *testing.T, mode, policyDir string) *plugin.Plugin {
+func newTestPlugin(t *testing.T, mode config.VerificationMode, policyDir string) *plugin.Plugin {
 	t.Helper()
 
 	cfg := config.DefaultConfig()

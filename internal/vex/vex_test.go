@@ -149,7 +149,7 @@ func TestVerify(t *testing.T) {
 			name: "under investigation warn",
 			doc:  validVEXDoc(openvex.StatusUnderInvestigation),
 			pol: &policy.Policy{
-				VEX: &policy.VEXPolicy{UnderInvestigationPolicy: "warn"},
+				VEX: &policy.VEXPolicy{UnderInvestigationPolicy: policy.ActionWarn},
 			},
 			wantPassed: true,
 			wantStatus: types.StatusWarn,
@@ -158,7 +158,7 @@ func TestVerify(t *testing.T) {
 			name: "under investigation deny",
 			doc:  validVEXDoc(openvex.StatusUnderInvestigation),
 			pol: &policy.Policy{
-				VEX: &policy.VEXPolicy{UnderInvestigationPolicy: "deny"},
+				VEX: &policy.VEXPolicy{UnderInvestigationPolicy: policy.ActionDeny},
 			},
 			wantPassed: false,
 			wantStatus: types.StatusFail,

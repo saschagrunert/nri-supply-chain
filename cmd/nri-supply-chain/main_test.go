@@ -388,7 +388,7 @@ func TestLoadConfig(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		if cfg.Verification != "warn" {
+		if cfg.Verification != config.ModeWarn {
 			t.Errorf("expected warn, got %s", cfg.Verification)
 		}
 	})

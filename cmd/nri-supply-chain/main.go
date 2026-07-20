@@ -43,7 +43,6 @@ var version = "0.1.0"
 const (
 	readHeaderTimeout   = 10 * time.Second
 	shutdownGracePeriod = 5 * time.Second
-	warmTimeout         = 30 * time.Second
 	panicExitCode       = 2
 
 	logLevelDebug = "debug"
@@ -92,7 +91,7 @@ func run() int {
 
 	var fetcher attestation.Fetcher
 	if cfg.Enabled() {
-		fetcher = createFetcher(cfg)
+		fetcher = verifier.NewFetcher(cfg)
 	}
 
 	verif, err := verifier.New(cfg, met, fetcher)
@@ -241,7 +240,7 @@ func runValidation(cfg *config.Config) int {
 
 func warnValidationEnforceDefaults(cfg *config.Config, policies map[string]*policy.Policy) {
 	if cfg.FetchFailurePolicy != policy.ActionDeny {
-		slog.Warn("enforce mode with fetch_failure_policy="+cfg.FetchFailurePolicy+
+		slog.Warn("enforce mode with fetch_failure_policy="+string(cfg.FetchFailurePolicy)+
 			" allows containers on fetch failure; consider setting fetch_failure_policy=deny",
 			"fetch_failure_policy", cfg.FetchFailurePolicy,
 		)
@@ -272,27 +271,6 @@ func warnValidationEnforceDefaults(cfg *config.Config, policies map[string]*poli
 			)
 		}
 	}
-}
-
-func createFetcher(cfg *config.Config) *attestation.OCIFetcher {
-	ociFetcher := attestation.NewOCIFetcher()
-
-	if cfg.FetchRateLimit > 0 {
-		ociFetcher.SetRateLimit(cfg.FetchRateLimit)
-	}
-
-	warmCtx, warmCancel := context.WithTimeout(context.Background(), warmTimeout)
-	defer warmCancel()
-
-	warmErr := ociFetcher.Warm(warmCtx)
-	if warmErr != nil {
-		slog.Warn(
-			"Failed to pre-warm Sigstore trusted root",
-			"error", warmErr,
-		)
-	}
-
-	return ociFetcher
 }
 
 func loadConfig(path string) (*config.Config, error) {

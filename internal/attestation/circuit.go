@@ -118,18 +118,14 @@ func (cb *CircuitBreaker) IsOpen() bool {
 }
 
 // Threshold returns the configured failure threshold.
+// Safe to call without synchronization: threshold is immutable after construction.
 func (cb *CircuitBreaker) Threshold() int {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-
 	return cb.threshold
 }
 
 // Cooldown returns the configured cooldown duration.
+// Safe to call without synchronization: cooldown is immutable after construction.
 func (cb *CircuitBreaker) Cooldown() time.Duration {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-
 	return cb.cooldown
 }
 
@@ -170,17 +166,13 @@ func (r *CircuitBreakerRegistry) Get(host string) *CircuitBreaker {
 }
 
 // Threshold returns the configured failure threshold.
+// Safe to call without synchronization: threshold is immutable after construction.
 func (r *CircuitBreakerRegistry) Threshold() int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	return r.threshold
 }
 
 // Cooldown returns the configured cooldown duration.
+// Safe to call without synchronization: cooldown is immutable after construction.
 func (r *CircuitBreakerRegistry) Cooldown() time.Duration {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	return r.cooldown
 }

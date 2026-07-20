@@ -44,12 +44,12 @@ func TestConfigEnabled(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		mode     string
+		mode     config.VerificationMode
 		expected bool
 	}{
-		{name: config.ModeDisabled, mode: config.ModeDisabled, expected: false},
-		{name: config.ModeWarn, mode: config.ModeWarn, expected: true},
-		{name: config.ModeEnforce, mode: config.ModeEnforce, expected: true},
+		{name: string(config.ModeDisabled), mode: config.ModeDisabled, expected: false},
+		{name: string(config.ModeWarn), mode: config.ModeWarn, expected: true},
+		{name: string(config.ModeEnforce), mode: config.ModeEnforce, expected: true},
 	}
 
 	for _, test := range tests {
@@ -81,7 +81,7 @@ func TestConfigValidateDefaults(t *testing.T) {
 		},
 		{
 			name:        "invalid verification mode",
-			modify:      func(c *config.Config) { c.Verification = "invalid" },
+			modify:      func(c *config.Config) { c.Verification = config.VerificationMode("invalid") },
 			wantErr:     true,
 			expectedErr: config.ErrInvalidVerificationMode,
 		},
@@ -132,7 +132,7 @@ func TestConfigValidateEnabledPolicies(t *testing.T) {
 			name: "invalid fetch failure policy",
 			modify: func(c *config.Config) {
 				c.Verification = config.ModeWarn
-				c.FetchFailurePolicy = "invalid"
+				c.FetchFailurePolicy = policy.Action("invalid")
 			},
 			wantErr:     true,
 			expectedErr: policy.ErrInvalidAction,

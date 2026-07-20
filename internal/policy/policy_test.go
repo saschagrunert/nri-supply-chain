@@ -277,7 +277,7 @@ func TestProvenanceMissingPolicy(t *testing.T) {
 	tests := []struct {
 		name     string
 		policy   policy.Policy
-		expected string
+		expected policy.Action
 	}{
 		{
 			name:     "nil provenance defaults to allow",
