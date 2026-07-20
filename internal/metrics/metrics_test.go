@@ -75,7 +75,7 @@ func TestMetricsHandler(t *testing.T) {
 
 	met.CacheHitsTotal.Inc()
 	met.CacheMissesTotal.Inc()
-	met.VerificationTotal.WithLabelValues("slsa_provenance", "pass").Inc()
+	met.VerificationTotal.WithLabelValues("slsa_provenance", "pass", "default").Inc()
 
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequestWithContext(

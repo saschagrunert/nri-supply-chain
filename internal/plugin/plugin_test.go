@@ -18,7 +18,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/containerd/nri/pkg/api"
 
@@ -31,6 +33,7 @@ import (
 const (
 	testNamespace = "default"
 	testPodName   = "test-pod"
+	testPodID     = "pod-1"
 	testCtrName   = "test-container"
 	testImage     = "nginx:latest"
 	testDigest    = "sha256:abc123"
@@ -440,6 +443,93 @@ func TestResolveImageContainerdInvalidDigest(t *testing.T) {
 	}
 }
 
+func TestSynchronizePrewarm(t *testing.T) {
+	t.Parallel()
+
+	plug := newTestPlugin(t, config.ModeDisabled, "")
+
+	pods := []*api.PodSandbox{
+		{Id: testPodID, Namespace: testNamespace, Name: testPodName},
+	}
+
+	containers := []*api.Container{
+		{
+			Id:           "ctr-1",
+			PodSandboxId: testPodID,
+			Name:         testCtrName,
+			Annotations: map[string]string{
+				plugin.AnnotationImage:    testImage,
+				plugin.AnnotationImageRef: testDigest,
+			},
+		},
+	}
+
+	updates, err := plug.Synchronize(context.Background(), pods, containers)
+	assertNoError(t, err)
+
+	if updates != nil {
+		t.Error("expected nil updates")
+	}
+
+	// Give the prewarm goroutine time to complete.
+	time.Sleep(100 * time.Millisecond)
+}
+
+func TestSynchronizeNoContainers(t *testing.T) {
+	t.Parallel()
+
+	plug := newTestPlugin(t, config.ModeDisabled, "")
+
+	updates, err := plug.Synchronize(
+		context.Background(), []*api.PodSandbox{}, []*api.Container{},
+	)
+	assertNoError(t, err)
+
+	if updates != nil {
+		t.Error("expected nil updates")
+	}
+}
+
+func TestSynchronizeDeduplicates(t *testing.T) {
+	t.Parallel()
+
+	plug := newTestPlugin(t, config.ModeDisabled, "")
+
+	pods := []*api.PodSandbox{
+		{Id: testPodID, Namespace: testNamespace, Name: testPodName},
+	}
+
+	containers := []*api.Container{
+		{
+			Id:           "ctr-1",
+			PodSandboxId: testPodID,
+			Name:         "container-a",
+			Annotations: map[string]string{
+				plugin.AnnotationImage:    testImage,
+				plugin.AnnotationImageRef: testDigest,
+			},
+		},
+		{
+			Id:           "ctr-2",
+			PodSandboxId: testPodID,
+			Name:         "container-b",
+			Annotations: map[string]string{
+				plugin.AnnotationImage:    testImage,
+				plugin.AnnotationImageRef: testDigest,
+			},
+		},
+	}
+
+	updates, err := plug.Synchronize(context.Background(), pods, containers)
+	assertNoError(t, err)
+
+	if updates != nil {
+		t.Error("expected nil updates")
+	}
+
+	time.Sleep(100 * time.Millisecond)
+}
+
 func newTestPlugin(t *testing.T, mode config.VerificationMode, policyDir string) *plugin.Plugin {
 	t.Helper()
 
@@ -465,6 +555,154 @@ func writePolicy(t *testing.T, dir, name, content string) {
 	if err != nil {
 		t.Fatalf("writing policy: %v", err)
 	}
+}
+
+func TestSynchronizePrewarmVerifyError(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writePolicy(t, dir, "default.json", `{
+		"trust": {
+			"builders": [{"id": "test", "maxLevel": 3}]
+		},
+		"provenance": {"missingPolicy": "deny"}
+	}`)
+
+	plug := newTestPlugin(t, config.ModeEnforce, dir)
+
+	pods := []*api.PodSandbox{
+		{Id: testPodID, Namespace: testNamespace, Name: testPodName},
+	}
+
+	containers := []*api.Container{
+		{
+			Id:           "ctr-err-1",
+			PodSandboxId: testPodID,
+			Name:         "error-container",
+			Annotations: map[string]string{
+				plugin.AnnotationImage:    testImage,
+				plugin.AnnotationImageRef: testDigest,
+			},
+		},
+	}
+
+	updates, err := plug.Synchronize(context.Background(), pods, containers)
+	assertNoError(t, err)
+
+	if updates != nil {
+		t.Error("expected nil updates")
+	}
+
+	// Give the prewarm goroutine time to complete.
+	time.Sleep(200 * time.Millisecond)
+}
+
+func TestSynchronizePrewarmCancelledContext(t *testing.T) {
+	t.Parallel()
+
+	plug := newTestPlugin(t, config.ModeDisabled, "")
+
+	pods := []*api.PodSandbox{
+		{Id: testPodID, Namespace: testNamespace, Name: testPodName},
+	}
+
+	// Create enough containers to exceed semaphore capacity, so some
+	// will fail to acquire the semaphore when context is cancelled.
+	containers := make([]*api.Container, 10)
+	for i := range containers {
+		idx := strconv.Itoa(i)
+		// Use a unique padded hex digest per container.
+		hexPad := "000000000000000000000000000000000000000000000000000000000000000"
+
+		containers[i] = &api.Container{
+			Id:           "ctr-cancel-" + idx,
+			PodSandboxId: testPodID,
+			Name:         "cancel-container-" + idx,
+			Annotations: map[string]string{
+				plugin.AnnotationImage:    "image-" + idx + ":latest",
+				plugin.AnnotationImageRef: "sha256:" + idx + hexPad[:64-len(idx)],
+			},
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately so sem.Acquire fails.
+
+	updates, err := plug.Synchronize(ctx, pods, containers)
+	assertNoError(t, err)
+
+	if updates != nil {
+		t.Error("expected nil updates")
+	}
+
+	// Give the prewarm goroutine time to complete (it should exit quickly).
+	time.Sleep(200 * time.Millisecond)
+}
+
+func TestSynchronizeSkipsMissingAnnotations(t *testing.T) {
+	t.Parallel()
+
+	plug := newTestPlugin(t, config.ModeDisabled, "")
+
+	pods := []*api.PodSandbox{
+		{Id: testPodID, Namespace: testNamespace, Name: testPodName},
+	}
+
+	// Containers with empty annotations should be skipped during
+	// image collection, exercising the imageRef=="" continue branch.
+	containers := []*api.Container{
+		{
+			Id:           "ctr-no-annot",
+			PodSandboxId: testPodID,
+			Name:         "no-annotations",
+			Annotations:  map[string]string{},
+		},
+		{
+			Id:           "ctr-has-annot",
+			PodSandboxId: testPodID,
+			Name:         "has-annotations",
+			Annotations: map[string]string{
+				plugin.AnnotationImage:    testImage,
+				plugin.AnnotationImageRef: testDigest,
+			},
+		},
+	}
+
+	updates, err := plug.Synchronize(context.Background(), pods, containers)
+	assertNoError(t, err)
+
+	if updates != nil {
+		t.Error("expected nil updates")
+	}
+
+	// Give the prewarm goroutine time to complete.
+	time.Sleep(100 * time.Millisecond)
+}
+
+func TestPrewarmCacheDirectCancel(t *testing.T) {
+	t.Parallel()
+
+	plug := newTestPlugin(t, config.ModeDisabled, "")
+
+	images := make([]plugin.ExportPrewarmImage, 10)
+	hexPad := "000000000000000000000000000000000000000000000000000000000000000"
+
+	for i := range images {
+		idx := strconv.Itoa(i)
+		images[i] = plugin.NewExportPrewarmImage(
+			"image-"+idx+":latest",
+			"sha256:"+idx+hexPad[:64-len(idx)],
+			testNamespace,
+		)
+	}
+
+	// Cancel context immediately so sem.Acquire fails inside prewarmCache,
+	// covering the "Pre-warm cache cancelled" and "Pre-warm cache wait
+	// cancelled" error paths.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	plug.ExportPrewarmCache(ctx, images)
 }
 
 func assertNoError(t *testing.T, err error) {
