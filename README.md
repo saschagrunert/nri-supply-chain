@@ -1,6 +1,7 @@
 # Supply Chain NRI Plugin
 
 [![ci](https://github.com/saschagrunert/nri-supply-chain/actions/workflows/ci.yml/badge.svg)](https://github.com/saschagrunert/nri-supply-chain/actions/workflows/ci.yml)
+[![deploy](https://github.com/saschagrunert/nri-supply-chain/actions/workflows/deploy.yml/badge.svg)](https://github.com/saschagrunert/nri-supply-chain/actions/workflows/deploy.yml)
 [![codecov](https://codecov.io/gh/saschagrunert/nri-supply-chain/graph/badge.svg)](https://codecov.io/gh/saschagrunert/nri-supply-chain)
 [![Go Reference](https://pkg.go.dev/badge/github.com/saschagrunert/nri-supply-chain.svg)](https://pkg.go.dev/github.com/saschagrunert/nri-supply-chain)
 
