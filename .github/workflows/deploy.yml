@@ -98,7 +98,7 @@ jobs:
         working-directory: /tmp/digests
         run: |
           readarray -t args < <(jq -cr '.tags[] | "-t\n" + .' <<< "$DOCKER_METADATA_OUTPUT_JSON")
-          readarray -t -O "${#args[@]}" args < <(jq -cr '.annotations[] | "--annotation\n" + .' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          readarray -t -O "${#args[@]}" args < <(jq -cr '.annotations[] | sub("^manifest:"; "") | "--annotation\n" + .' <<< "$DOCKER_METADATA_OUTPUT_JSON")
           docker buildx imagetools create "${args[@]}" \
             $(printf '${{ env.IMAGE }}@sha256:%s ' *)
           digest=$(docker buildx imagetools inspect "$IMAGE:latest" --format '{{.Manifest.Digest}}')
