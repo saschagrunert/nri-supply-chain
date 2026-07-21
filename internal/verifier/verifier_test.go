@@ -25,6 +25,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
+	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
@@ -240,7 +241,7 @@ func TestVerify(t *testing.T) {
 			}
 
 			verif, err := verifier.New(cfg, metrics.New(), nil)
-			assertNoError(t, err)
+			testutil.AssertNoError(t, err)
 
 			result, err := verif.Verify(
 				context.Background(), imageRef, "sha256:abc", "default",
@@ -254,7 +255,7 @@ func TestVerify(t *testing.T) {
 				return
 			}
 
-			assertNoError(t, err)
+			testutil.AssertNoError(t, err)
 
 			if result.Allowed != test.wantAllowed {
 				t.Errorf("expected allowed=%v, got allowed=%v (reason: %s)",
@@ -276,17 +277,17 @@ func TestVerifyCache(t *testing.T) {
 	cfg.CacheTTL = config.Duration{Duration: time.Hour}
 
 	verif, err := verifier.New(cfg, metrics.New(), nil)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	result1, err := verif.Verify(
 		context.Background(), "nginx:latest", "sha256:abc", "default",
 	)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	result2, err := verif.Verify(
 		context.Background(), "nginx:latest", "sha256:abc", "default",
 	)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	if result1.Reason != result2.Reason {
 		t.Errorf("expected cached result to match: %q vs %q",
@@ -312,12 +313,12 @@ func TestVerifyCacheWarnMode(t *testing.T) {
 	cfg.CacheTTL = config.Duration{Duration: time.Hour}
 
 	verif, err := verifier.New(cfg, metrics.New(), nil)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	result1, err := verif.Verify(
 		context.Background(), "nginx:latest", "sha256:warn-cache", "default",
 	)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	if !result1.Allowed {
 		t.Fatalf("first call: expected Allowed=true in warn mode, got false (reason: %s)",
@@ -327,7 +328,7 @@ func TestVerifyCacheWarnMode(t *testing.T) {
 	result2, err := verif.Verify(
 		context.Background(), "nginx:latest", "sha256:warn-cache", "default",
 	)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	if !result2.Allowed {
 		t.Fatalf(
@@ -357,7 +358,7 @@ func TestVerifyCacheEnforceMode(t *testing.T) {
 	cfg.CacheTTL = config.Duration{Duration: time.Hour}
 
 	verif, err := verifier.New(cfg, metrics.New(), nil)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	_, err = verif.Verify(
 		context.Background(), "nginx:latest", "sha256:enforce-cache", "default",
@@ -395,7 +396,7 @@ func TestVerifyNamespacePolicy(t *testing.T) {
 	cfg.PolicyDir = dir
 
 	verif, err := verifier.New(cfg, metrics.New(), nil)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	_, err = verif.Verify(
 		context.Background(), "nginx:latest", "sha256:abc", "default",
@@ -407,7 +408,7 @@ func TestVerifyNamespacePolicy(t *testing.T) {
 	result, err := verif.Verify(
 		context.Background(), "nginx:latest", "sha256:def", "staging",
 	)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	if !result.Allowed {
 		t.Error("expected allowed for staging namespace")
@@ -549,7 +550,7 @@ func TestReload(t *testing.T) {
 			cfg.PolicyDir = dir
 
 			verif, err := verifier.New(cfg, metrics.New(), nil)
-			assertNoError(t, err)
+			testutil.AssertNoError(t, err)
 
 			newCfg := test.newCfg(t)
 			err = verif.Reload(t.Context(), newCfg)
@@ -562,7 +563,7 @@ func TestReload(t *testing.T) {
 				return
 			}
 
-			assertNoError(t, err)
+			testutil.AssertNoError(t, err)
 		})
 	}
 }
@@ -579,12 +580,12 @@ func TestReloadPreservesCacheWhenConfigUnchanged(t *testing.T) {
 	cfg.CacheTTL = config.Duration{Duration: time.Hour}
 
 	verif, err := verifier.New(cfg, metrics.New(), nil)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	result1, err := verif.Verify(
 		context.Background(), "nginx:latest", "sha256:preserve", "default",
 	)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	reloadCfg := config.DefaultConfig()
 	reloadCfg.Verification = config.ModeWarn
@@ -592,12 +593,12 @@ func TestReloadPreservesCacheWhenConfigUnchanged(t *testing.T) {
 	reloadCfg.CacheTTL = config.Duration{Duration: time.Hour}
 
 	err = verif.Reload(t.Context(), reloadCfg)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	result2, err := verif.Verify(
 		context.Background(), "nginx:latest", "sha256:preserve", "default",
 	)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	if result1.Reason != result2.Reason {
 		t.Errorf("expected cached result to survive reload: %q vs %q",
@@ -656,12 +657,12 @@ func TestReloadClearsCacheWhenPolicyChanges(t *testing.T) {
 	cfg.CacheTTL = config.Duration{Duration: time.Hour}
 
 	verif, err := verifier.New(cfg, metrics.New(), nil)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	result1, err := verif.Verify(
 		context.Background(), "nginx:latest", "sha256:polchange", "default",
 	)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	writePolicy(t, dir, "default.json", `{"provenance":{"missingPolicy":"deny"}}`)
 
@@ -671,12 +672,12 @@ func TestReloadClearsCacheWhenPolicyChanges(t *testing.T) {
 	reloadCfg.CacheTTL = config.Duration{Duration: time.Hour}
 
 	err = verif.Reload(t.Context(), reloadCfg)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	result2, err := verif.Verify(
 		context.Background(), "nginx:latest", "sha256:polchange", "default",
 	)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	if result1.Reason == result2.Reason {
 		t.Error("expected cache to be cleared after policy change")
@@ -741,7 +742,7 @@ func TestReady(t *testing.T) {
 		cfg := config.DefaultConfig()
 
 		verif, err := verifier.New(cfg, metrics.New(), nil)
-		assertNoError(t, err)
+		testutil.AssertNoError(t, err)
 
 		ready, reason := verif.Ready()
 		if !ready {
@@ -760,7 +761,7 @@ func TestReady(t *testing.T) {
 		cfg.PolicyDir = dir
 
 		verif, err := verifier.New(cfg, metrics.New(), nil)
-		assertNoError(t, err)
+		testutil.AssertNoError(t, err)
 
 		ready, reason := verif.Ready()
 		if !ready {
@@ -778,7 +779,7 @@ func TestReady(t *testing.T) {
 		cfg.PolicyDir = dir
 
 		verif, err := verifier.New(cfg, metrics.New(), nil)
-		assertNoError(t, err)
+		testutil.AssertNoError(t, err)
 
 		ready, reason := verif.Ready()
 		if ready {
@@ -902,7 +903,7 @@ func TestEnforcing(t *testing.T) {
 			cfg.Verification = test.mode
 
 			verif, err := verifier.New(cfg, metrics.New(), nil)
-			assertNoError(t, err)
+			testutil.AssertNoError(t, err)
 
 			if got := verif.Enforcing(); got != test.expected {
 				t.Errorf("expected %v, got %v", test.expected, got)
@@ -987,13 +988,5 @@ func writePolicy(t *testing.T, dir, name, content string) {
 	err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600)
 	if err != nil {
 		t.Fatalf("writing policy: %v", err)
-	}
-}
-
-func assertNoError(t *testing.T, err error) {
-	t.Helper()
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
 	}
 }

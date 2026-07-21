@@ -17,7 +17,6 @@ package attestation
 import (
 	"context"
 	"crypto"
-	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
@@ -27,7 +26,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math/big"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"regexp"
@@ -66,11 +65,12 @@ const (
 type trustedRootFetchFunc func() (*root.TrustedRoot, error)
 
 type trustedRootCache struct {
-	mu        sync.RWMutex
-	root      *root.TrustedRoot
-	fetchedAt time.Time
-	fetchRoot trustedRootFetchFunc
-	inflight  singleflight.Group
+	mu         sync.RWMutex
+	root       *root.TrustedRoot
+	fetchedAt  time.Time
+	fetchRoot  trustedRootFetchFunc
+	inflight   singleflight.Group
+	onStaleHit func()
 }
 
 func (c *trustedRootCache) get(ctx context.Context) (*root.TrustedRoot, error) {
@@ -147,6 +147,10 @@ func (c *trustedRootCache) handleRefreshError(err error) (*root.TrustedRoot, err
 			"age", age,
 		)
 
+		if c.onStaleHit != nil {
+			c.onStaleHit()
+		}
+
 		return c.root, nil
 	}
 
@@ -172,11 +176,12 @@ type OCIFetcher struct {
 // NewOCIFetcher creates a new OCI-based attestation fetcher.
 func NewOCIFetcher() *OCIFetcher {
 	cachedRoot := &trustedRootCache{
-		mu:        sync.RWMutex{},
-		root:      nil,
-		fetchedAt: time.Time{},
-		fetchRoot: root.FetchTrustedRoot,
-		inflight:  singleflight.Group{},
+		mu:         sync.RWMutex{},
+		root:       nil,
+		fetchedAt:  time.Time{},
+		fetchRoot:  root.FetchTrustedRoot,
+		inflight:   singleflight.Group{},
+		onStaleHit: nil,
 	}
 
 	return &OCIFetcher{
@@ -200,6 +205,14 @@ func NewOCIFetcherWithVerifier(verifier BundleVerifyFunc) *OCIFetcher {
 		referrers:    remote.Referrers,
 		rootCache:    nil,
 		limiter:      atomic.Pointer[rate.Limiter]{},
+	}
+}
+
+// SetStaleRootCallback sets a function to be called each time the fetcher
+// serves a stale trusted root from cache after a refresh failure.
+func (f *OCIFetcher) SetStaleRootCallback(fn func()) {
+	if f.rootCache != nil {
+		f.rootCache.onStaleHit = fn
 	}
 }
 
@@ -272,12 +285,8 @@ func (f *OCIFetcher) Fetch(
 func retryJitter(base time.Duration) time.Duration {
 	maxJitter := max(int64(base)/fetchRetryJitterDivisor, 1)
 
-	n, err := rand.Int(rand.Reader, big.NewInt(maxJitter))
-	if err != nil {
-		return 0
-	}
-
-	return time.Duration(n.Int64())
+	//nolint:gosec // jitter does not need cryptographic randomness
+	return time.Duration(rand.IntN(int(maxJitter)))
 }
 
 func (f *OCIFetcher) fetchWithRetry(

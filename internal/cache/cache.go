@@ -17,8 +17,7 @@ package cache
 
 import (
 	"container/heap"
-	"crypto/rand"
-	"math/big"
+	"math/rand/v2"
 	"sync"
 	"time"
 
@@ -269,10 +268,6 @@ func jitter(ttl time.Duration) time.Duration {
 		return 0
 	}
 
-	n, err := rand.Int(rand.Reader, big.NewInt(maxJitter))
-	if err != nil {
-		return 0
-	}
-
-	return time.Duration(n.Int64())
+	//nolint:gosec // jitter does not need cryptographic randomness
+	return time.Duration(rand.IntN(int(maxJitter)))
 }

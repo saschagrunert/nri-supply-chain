@@ -27,6 +27,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/plugin"
+	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
@@ -60,7 +61,7 @@ func TestCreateContainerDisabled(t *testing.T) {
 	}
 
 	adj, updates, err := plug.CreateContainer(context.Background(), pod, ctr)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	if adj != nil {
 		t.Error("expected nil adjustment")
@@ -106,7 +107,7 @@ func TestCreateContainerMissingAnnotationsWarn(t *testing.T) {
 	}
 
 	adj, updates, err := plug.CreateContainer(context.Background(), pod, ctr)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	if adj != nil {
 		t.Error("expected nil adjustment")
@@ -174,7 +175,7 @@ func TestCreateContainerWarnAllow(t *testing.T) {
 	}
 
 	_, _, err := plug.CreateContainer(context.Background(), pod, ctr)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 }
 
 func TestConfigureWithEmptyConfig(t *testing.T) {
@@ -184,12 +185,12 @@ func TestConfigureWithEmptyConfig(t *testing.T) {
 	met := metrics.New()
 
 	v, err := verifier.New(cfg, met, nil)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	plug := plugin.New(v, met, "")
 
 	_, err = plug.Configure(context.Background(), "", "cri-o", "1.32")
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 }
 
 func TestConfigureWithNRIConfig(t *testing.T) {
@@ -202,7 +203,7 @@ func TestConfigureWithNRIConfig(t *testing.T) {
 	met := metrics.New()
 
 	v, err := verifier.New(cfg, met, nil)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	plug := plugin.New(v, met, "")
 
@@ -210,7 +211,7 @@ func TestConfigureWithNRIConfig(t *testing.T) {
 		`policy_dir = "` + dir + `"` + "\n"
 
 	_, err = plug.Configure(context.Background(), tomlConfig, "cri-o", "1.32")
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 }
 
 func TestConfigureWithInvalidNRIConfig(t *testing.T) {
@@ -220,7 +221,7 @@ func TestConfigureWithInvalidNRIConfig(t *testing.T) {
 	met := metrics.New()
 
 	v, err := verifier.New(cfg, met, nil)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	plug := plugin.New(v, met, "")
 
@@ -237,7 +238,7 @@ func TestConfigureWithInvalidPolicyDir(t *testing.T) {
 	met := metrics.New()
 
 	v, err := verifier.New(cfg, met, nil)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	plug := plugin.New(v, met, "")
 
@@ -257,12 +258,12 @@ func TestConfigureSkipsWhenConfigPathSet(t *testing.T) {
 	met := metrics.New()
 
 	v, err := verifier.New(cfg, met, nil)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	plug := plugin.New(v, met, "/some/config.toml")
 
 	_, err = plug.Configure(context.Background(), `verification = "enforce"`, "cri-o", "1.32")
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 }
 
 const (
@@ -465,7 +466,7 @@ func TestSynchronizePrewarm(t *testing.T) {
 	}
 
 	updates, err := plug.Synchronize(context.Background(), pods, containers)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	if updates != nil {
 		t.Error("expected nil updates")
@@ -483,7 +484,7 @@ func TestSynchronizeNoContainers(t *testing.T) {
 	updates, err := plug.Synchronize(
 		context.Background(), []*api.PodSandbox{}, []*api.Container{},
 	)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	if updates != nil {
 		t.Error("expected nil updates")
@@ -521,7 +522,7 @@ func TestSynchronizeDeduplicates(t *testing.T) {
 	}
 
 	updates, err := plug.Synchronize(context.Background(), pods, containers)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	if updates != nil {
 		t.Error("expected nil updates")
@@ -543,7 +544,7 @@ func newTestPlugin(t *testing.T, mode config.VerificationMode, policyDir string)
 	met := metrics.New()
 
 	v, err := verifier.New(cfg, met, nil)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	return plugin.New(v, met, "")
 }
@@ -587,7 +588,7 @@ func TestSynchronizePrewarmVerifyError(t *testing.T) {
 	}
 
 	updates, err := plug.Synchronize(context.Background(), pods, containers)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	if updates != nil {
 		t.Error("expected nil updates")
@@ -629,7 +630,7 @@ func TestSynchronizePrewarmCancelledContext(t *testing.T) {
 	cancel() // Cancel immediately so sem.Acquire fails.
 
 	updates, err := plug.Synchronize(ctx, pods, containers)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	if updates != nil {
 		t.Error("expected nil updates")
@@ -669,7 +670,7 @@ func TestSynchronizeSkipsMissingAnnotations(t *testing.T) {
 	}
 
 	updates, err := plug.Synchronize(context.Background(), pods, containers)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	if updates != nil {
 		t.Error("expected nil updates")
@@ -703,12 +704,4 @@ func TestPrewarmCacheDirectCancel(t *testing.T) {
 	cancel()
 
 	plug.ExportPrewarmCache(ctx, images)
-}
-
-func assertNoError(t *testing.T, err error) {
-	t.Helper()
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
 }

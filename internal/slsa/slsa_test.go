@@ -23,6 +23,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/slsa"
+	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
@@ -83,14 +84,6 @@ func mustMarshal(t *testing.T, val any) []byte {
 	}
 
 	return data
-}
-
-func assertNoError(t *testing.T, err error) {
-	t.Helper()
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
 }
 
 func TestVerify(t *testing.T) {
@@ -563,7 +556,7 @@ func TestVerify(t *testing.T) {
 				return
 			}
 
-			assertNoError(t, err)
+			testutil.AssertNoError(t, err)
 
 			if result.Passed != test.wantPass {
 				t.Errorf("expected Passed=%v, got Passed=%v (detail: %s)",
@@ -717,7 +710,7 @@ func TestVerifyMultiple(t *testing.T) {
 			result, err := slsa.VerifyMultiple(
 				test.attestations(t), test.policy, testDigest,
 			)
-			assertNoError(t, err)
+			testutil.AssertNoError(t, err)
 
 			if result.Passed != test.wantPass {
 				t.Errorf("expected Passed=%v, got Passed=%v (detail: %s)",

@@ -873,7 +873,7 @@ func TestVerifyBundleWithCacheNilCanceledCtx(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := attestation.ExportVerifyBundleWithCacheNil(
+	_, err := attestation.ExportDefaultVerifyBundle(
 		ctx,
 		[]byte(`{}`),
 		&attestation.FetchOptions{},
@@ -890,7 +890,7 @@ func TestVerifyBundleWithCacheNilCanceledCtx(t *testing.T) {
 func TestNewOCIFetcherWithCacheVerifyBundleCanceledCtx(t *testing.T) {
 	t.Parallel()
 
-	fetcher := attestation.NewOCIFetcherWithCache()
+	fetcher := attestation.NewOCIFetcher()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -908,7 +908,7 @@ func TestNewOCIFetcherWithCacheVerifyBundleCanceledCtx(t *testing.T) {
 func TestNewOCIFetcherWithCacheInvalidBundle(t *testing.T) {
 	t.Parallel()
 
-	fetcher := attestation.NewOCIFetcherWithCache()
+	fetcher := attestation.NewOCIFetcher()
 
 	_, err := fetcher.VerifyBundle(
 		context.Background(),

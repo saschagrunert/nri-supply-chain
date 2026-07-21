@@ -54,7 +54,11 @@ type Metrics struct {
 	InflightDedupTotal prometheus.Counter
 	// CircuitBreakerTripsTotal counts how many times the circuit breaker opened.
 	CircuitBreakerTripsTotal *prometheus.CounterVec
-	registry                 *prometheus.Registry
+	// TrustedRootStaleTotal counts how many times a stale trusted root was served.
+	TrustedRootStaleTotal prometheus.Counter
+	// CacheFailureHitsTotal counts cache hits that returned a previously cached failure result.
+	CacheFailureHitsTotal prometheus.Counter
+	registry              *prometheus.Registry
 }
 
 // New creates and registers all supply chain verification metrics.
@@ -99,6 +103,16 @@ func New() *Metrics {
 			},
 			[]string{labelRegistry},
 		),
+		TrustedRootStaleTotal: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "trusted_root_stale_total",
+			Help:      "Total number of times a stale trusted root was served from cache.",
+		}),
+		CacheFailureHitsTotal: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "cache_failure_hits_total",
+			Help:      "Total number of cache hits that returned a previously cached failure result.",
+		}),
 		registry: prometheus.NewRegistry(),
 	}
 
@@ -167,6 +181,8 @@ func (m *Metrics) register() {
 		m.FetchErrorsTotal,
 		m.InflightDedupTotal,
 		m.CircuitBreakerTripsTotal,
+		m.TrustedRootStaleTotal,
+		m.CacheFailureHitsTotal,
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{
 			PidFn:        nil,
 			Namespace:    "",
