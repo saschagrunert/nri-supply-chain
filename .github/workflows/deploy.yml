@@ -57,11 +57,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           DEPLOY_ID=$(gh api repos/${{ github.repository }}/deployments \
-            -f ref="${{ github.sha }}" \
-            -f environment=latest \
-            -F auto_merge=false \
-            -F 'required_contexts=[]' \
-            --jq '.id')
+            --input - \
+            --jq '.id' <<EOF
+          {"ref":"${{ github.sha }}","environment":"latest","auto_merge":false,"required_contexts":[]}
+          EOF
+          )
           gh api repos/${{ github.repository }}/deployments/$DEPLOY_ID/statuses \
             -f state=success \
             -f environment_url="https://ghcr.io/${{ github.repository }}:latest" \
