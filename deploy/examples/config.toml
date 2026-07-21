@@ -16,6 +16,10 @@ fetch_failure_policy = "warn"
 # Set to "0s" to disable caching.
 cache_ttl = "24h"
 
+# How long failed verification results are cached before retrying.
+# Shorter than cache_ttl so transient failures are retried sooner.
+cache_failure_ttl = "5m"
+
 # Directory containing per-namespace JSON policy files.
 # <dir>/default.json is the base policy.
 # <dir>/<namespace>.json overrides for that namespace.
@@ -33,3 +37,7 @@ circuit_breaker_cooldown = "30s"
 
 # Maximum registry fetch requests per second (0 = unlimited).
 # fetch_rate_limit = 50
+
+# Log level override from config (takes effect on reload).
+# Valid values: "debug", "info", "warn", "error".
+# log_level = "info"

@@ -28,20 +28,21 @@ import (
 )
 
 const (
-	testDigest         = "sha256:abc123def456"
-	testDigestHash     = "abc123def456"
-	testDigestAlgo     = "sha256"
-	testBuilderID      = "https://github.com/actions/runner"
-	testBuildType      = "https://actions.github.io/buildtypes/workflow/v1"
-	testSource         = "github.com/example/repo"
-	testWorkflow       = ".github/workflows/release.yml"
-	testSourceGlob     = "github.com/example/*"
-	testKeySource      = "source"
-	testKeyWorkflow    = "workflow"
-	testPlaceholder    = "test"
-	testCustomParamKey = "custom-param"
-	testValue          = "value"
-	testSubjectName    = "nginx"
+	testDigest           = "sha256:abc123def456"
+	testDigestHash       = "abc123def456"
+	testDigestAlgo       = "sha256"
+	testBuilderID        = "https://github.com/actions/runner"
+	testUntrustedBuilder = "https://untrusted.example.com"
+	testBuildType        = "https://actions.github.io/buildtypes/workflow/v1"
+	testSource           = "github.com/example/repo"
+	testWorkflow         = ".github/workflows/release.yml"
+	testSourceGlob       = "github.com/example/*"
+	testKeySource        = "source"
+	testKeyWorkflow      = "workflow"
+	testPlaceholder      = "test"
+	testCustomParamKey   = "custom-param"
+	testValue            = "value"
+	testSubjectName      = "nginx"
 )
 
 func validStatement() slsa.Statement {
@@ -574,6 +575,319 @@ func TestVerify(t *testing.T) {
 	}
 }
 
+func TestVerifyEdgeCases(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty payload", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := slsa.Verify([]byte{}, &policy.Policy{}, testDigest)
+		testutil.AssertError(t, err)
+
+		if !errors.Is(err, slsa.ErrInvalidProvenance) {
+			t.Errorf("expected ErrInvalidProvenance, got %v", err)
+		}
+	})
+
+	t.Run("nil policy trust section", func(t *testing.T) {
+		t.Parallel()
+
+		result, err := slsa.Verify(
+			mustMarshal(t, validStatement()),
+			&policy.Policy{},
+			testDigest,
+		)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, true, result.Passed)
+	})
+
+	t.Run("empty JSON object", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := slsa.Verify([]byte("{}"), &policy.Policy{}, testDigest)
+
+		if !errors.Is(err, slsa.ErrInvalidProvenance) {
+			t.Errorf("expected ErrInvalidProvenance for empty JSON object, got %v", err)
+		}
+	})
+
+	t.Run("empty subjects list", func(t *testing.T) {
+		t.Parallel()
+
+		stmt := validStatement()
+		stmt.Subject = []slsa.Subject{}
+
+		result, err := slsa.Verify(mustMarshal(t, stmt), &policy.Policy{}, testDigest)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, false, result.Passed)
+		testutil.AssertEqual(t, types.StatusFail, result.Status)
+	})
+
+	t.Run("subject with wrong algorithm", func(t *testing.T) {
+		t.Parallel()
+
+		stmt := validStatement()
+		stmt.Subject = []slsa.Subject{
+			{
+				Name:   testSubjectName,
+				Digest: map[string]string{"sha512": testDigestHash},
+			},
+		}
+
+		result, err := slsa.Verify(mustMarshal(t, stmt), &policy.Policy{}, testDigest)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, false, result.Passed)
+	})
+
+	t.Run("subject with empty digest map", func(t *testing.T) {
+		t.Parallel()
+
+		stmt := validStatement()
+		stmt.Subject = []slsa.Subject{
+			{
+				Name:   testSubjectName,
+				Digest: map[string]string{},
+			},
+		}
+
+		result, err := slsa.Verify(mustMarshal(t, stmt), &policy.Policy{}, testDigest)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, false, result.Passed)
+	})
+
+	t.Run("empty digest string", func(t *testing.T) {
+		t.Parallel()
+
+		result, err := slsa.Verify(mustMarshal(t, validStatement()), &policy.Policy{}, "")
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, false, result.Passed)
+	})
+
+	t.Run("digest with empty hash", func(t *testing.T) {
+		t.Parallel()
+
+		result, err := slsa.Verify(mustMarshal(t, validStatement()), &policy.Policy{}, "sha256:")
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, false, result.Passed)
+	})
+
+	t.Run("digest with empty algorithm", func(t *testing.T) {
+		t.Parallel()
+
+		result, err := slsa.Verify(mustMarshal(t, validStatement()), &policy.Policy{}, ":abc123")
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, false, result.Passed)
+	})
+
+	t.Run("empty external parameters with reject unknown", func(t *testing.T) {
+		t.Parallel()
+
+		stmt := validStatement()
+		stmt.Predicate.BuildDefinition.ExternalParameters = map[string]any{}
+
+		result, err := slsa.Verify(mustMarshal(t, stmt), &policy.Policy{
+			Provenance: &policy.ProvenancePolicy{
+				RejectUnknownParameters: true,
+			},
+		}, testDigest)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, true, result.Passed)
+	})
+
+	t.Run("nil provenance policy allows unknown parameters", func(t *testing.T) {
+		t.Parallel()
+
+		stmt := validStatement()
+		stmt.Predicate.BuildDefinition.ExternalParameters["extra"] = "data"
+
+		result, err := slsa.Verify(mustMarshal(t, stmt), &policy.Policy{}, testDigest)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, true, result.Passed)
+	})
+
+	t.Run("multiple builders with one matching", func(t *testing.T) {
+		t.Parallel()
+
+		result, err := slsa.Verify(
+			mustMarshal(t, validStatement()),
+			&policy.Policy{
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: "https://other-builder.example.com", MaxLevel: 3},
+						{ID: testBuilderID, MaxLevel: 2},
+						{ID: "https://yet-another.example.com", MaxLevel: 1},
+					},
+				},
+			},
+			testDigest,
+		)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, true, result.Passed)
+	})
+
+	t.Run("empty builder ID in statement", func(t *testing.T) {
+		t.Parallel()
+
+		stmt := validStatement()
+		stmt.Predicate.RunDetails.Builder.ID = ""
+
+		result, err := slsa.Verify(
+			mustMarshal(t, stmt),
+			&policy.Policy{
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: testBuilderID, MaxLevel: 2},
+					},
+				},
+			},
+			testDigest,
+		)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, false, result.Passed)
+	})
+
+	t.Run("multiple source patterns with later match", func(t *testing.T) {
+		t.Parallel()
+
+		result, err := slsa.Verify(
+			mustMarshal(t, validStatement()),
+			&policy.Policy{
+				Trust: &policy.TrustPolicy{
+					Sources: []string{
+						"github.com/other/*",
+						"github.com/another/*",
+						testSourceGlob,
+					},
+				},
+			},
+			testDigest,
+		)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, true, result.Passed)
+	})
+
+	t.Run("source glob does not match nested paths", func(t *testing.T) {
+		t.Parallel()
+
+		stmt := validStatement()
+		stmt.Predicate.BuildDefinition.ExternalParameters[testKeySource] = "github.com/example/repo/subdir"
+
+		result, err := slsa.Verify(
+			mustMarshal(t, stmt),
+			&policy.Policy{
+				Trust: &policy.TrustPolicy{
+					Sources: []string{testSourceGlob},
+				},
+			},
+			testDigest,
+		)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, false, result.Passed)
+	})
+
+	t.Run("no build types configured allows any", func(t *testing.T) {
+		t.Parallel()
+
+		result, err := slsa.Verify(
+			mustMarshal(t, validStatement()),
+			&policy.Policy{
+				Trust: &policy.TrustPolicy{},
+			},
+			testDigest,
+		)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, true, result.Passed)
+	})
+
+	t.Run("multiple build types with match", func(t *testing.T) {
+		t.Parallel()
+
+		result, err := slsa.Verify(
+			mustMarshal(t, validStatement()),
+			&policy.Policy{
+				Trust: &policy.TrustPolicy{
+					BuildTypes: []string{
+						"https://other.example.com/build/v1",
+						testBuildType,
+					},
+				},
+			},
+			testDigest,
+		)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, true, result.Passed)
+	})
+
+	t.Run("truncated JSON", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := slsa.Verify([]byte(`{"_type":"https://in-toto`), &policy.Policy{}, testDigest)
+
+		if !errors.Is(err, slsa.ErrInvalidProvenance) {
+			t.Errorf("expected ErrInvalidProvenance, got %v", err)
+		}
+	})
+
+	t.Run("multiple subjects none matching", func(t *testing.T) {
+		t.Parallel()
+
+		stmt := validStatement()
+		stmt.Subject = []slsa.Subject{
+			{
+				Name:   "image-a",
+				Digest: map[string]string{testDigestAlgo: "aaa111"},
+			},
+			{
+				Name:   "image-b",
+				Digest: map[string]string{testDigestAlgo: "bbb222"},
+			},
+			{
+				Name:   "image-c",
+				Digest: map[string]string{testDigestAlgo: "ccc333"},
+			},
+		}
+
+		result, err := slsa.Verify(mustMarshal(t, stmt), &policy.Policy{}, testDigest)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, false, result.Passed)
+	})
+
+	t.Run("source with exact match no glob", func(t *testing.T) {
+		t.Parallel()
+
+		result, err := slsa.Verify(
+			mustMarshal(t, validStatement()),
+			&policy.Policy{
+				Trust: &policy.TrustPolicy{
+					Sources: []string{testSource},
+				},
+			},
+			testDigest,
+		)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, true, result.Passed)
+	})
+
+	t.Run("empty source string in params", func(t *testing.T) {
+		t.Parallel()
+
+		stmt := validStatement()
+		stmt.Predicate.BuildDefinition.ExternalParameters[testKeySource] = ""
+
+		result, err := slsa.Verify(
+			mustMarshal(t, stmt),
+			&policy.Policy{
+				Trust: &policy.TrustPolicy{
+					Sources: []string{testSourceGlob},
+				},
+			},
+			testDigest,
+		)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, false, result.Passed)
+	})
+}
+
 func TestVerifyMultiple(t *testing.T) {
 	t.Parallel()
 
@@ -591,7 +905,7 @@ func TestVerifyMultiple(t *testing.T) {
 
 				goodStmt := validStatement()
 				badStmt := validStatement()
-				badStmt.Predicate.RunDetails.Builder.ID = "https://untrusted.example.com"
+				badStmt.Predicate.RunDetails.Builder.ID = testUntrustedBuilder
 
 				return []attestation.VerifiedAttestation{
 					{
@@ -622,7 +936,7 @@ func TestVerifyMultiple(t *testing.T) {
 				t.Helper()
 
 				badStmt := validStatement()
-				badStmt.Predicate.RunDetails.Builder.ID = "https://untrusted.example.com"
+				badStmt.Predicate.RunDetails.Builder.ID = testUntrustedBuilder
 
 				return []attestation.VerifiedAttestation{
 					{
@@ -724,4 +1038,133 @@ func TestVerifyMultiple(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestVerifyMultipleEdgeCases(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil attestation slice", func(t *testing.T) {
+		t.Parallel()
+
+		result, err := slsa.VerifyMultiple(nil, &policy.Policy{}, testDigest)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, false, result.Passed)
+
+		if !strings.Contains(result.Detail, "no valid provenance") {
+			t.Errorf("expected detail about no valid provenance, got %q", result.Detail)
+		}
+	})
+
+	t.Run("mix of parse errors and verification failures", func(t *testing.T) {
+		t.Parallel()
+
+		badStmt := validStatement()
+		badStmt.Predicate.RunDetails.Builder.ID = testUntrustedBuilder
+
+		atts := []attestation.VerifiedAttestation{
+			{
+				PredicateType: attestation.PredicateSLSAProvenanceV1,
+				Payload:       mustMarshal(t, badStmt),
+				Digest:        testDigest,
+			},
+			{
+				PredicateType: attestation.PredicateSLSAProvenanceV1,
+				Payload:       []byte("not json"),
+				Digest:        testDigest,
+			},
+		}
+
+		result, err := slsa.VerifyMultiple(atts, &policy.Policy{
+			Trust: &policy.TrustPolicy{
+				Builders: []policy.TrustedBuilder{
+					{ID: testBuilderID, MaxLevel: 2},
+				},
+			},
+		}, testDigest)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, false, result.Passed)
+
+		if !strings.Contains(result.Detail, "also failed to parse") {
+			t.Errorf("expected detail mentioning parse failures, got %q", result.Detail)
+		}
+	})
+
+	t.Run("first attestation passes stops early", func(t *testing.T) {
+		t.Parallel()
+
+		goodStmt := validStatement()
+
+		atts := []attestation.VerifiedAttestation{
+			{
+				PredicateType: attestation.PredicateSLSAProvenanceV1,
+				Payload:       mustMarshal(t, goodStmt),
+				Digest:        testDigest,
+			},
+			{
+				PredicateType: attestation.PredicateSLSAProvenanceV1,
+				Payload:       []byte("should not matter"),
+				Digest:        testDigest,
+			},
+		}
+
+		result, err := slsa.VerifyMultiple(atts, &policy.Policy{}, testDigest)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, true, result.Passed)
+	})
+
+	t.Run("single valid attestation passes", func(t *testing.T) {
+		t.Parallel()
+
+		goodStmt := validStatement()
+
+		atts := []attestation.VerifiedAttestation{
+			{
+				PredicateType: attestation.PredicateSLSAProvenanceV1,
+				Payload:       mustMarshal(t, goodStmt),
+				Digest:        testDigest,
+			},
+		}
+
+		result, err := slsa.VerifyMultiple(atts, &policy.Policy{}, testDigest)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, true, result.Passed)
+	})
+
+	t.Run("multiple failures aggregated", func(t *testing.T) {
+		t.Parallel()
+
+		badStmt1 := validStatement()
+		badStmt1.Predicate.RunDetails.Builder.ID = "https://untrusted-a.example.com"
+
+		badStmt2 := validStatement()
+		badStmt2.Predicate.RunDetails.Builder.ID = "https://untrusted-b.example.com"
+
+		atts := []attestation.VerifiedAttestation{
+			{
+				PredicateType: attestation.PredicateSLSAProvenanceV1,
+				Payload:       mustMarshal(t, badStmt1),
+				Digest:        testDigest,
+			},
+			{
+				PredicateType: attestation.PredicateSLSAProvenanceV1,
+				Payload:       mustMarshal(t, badStmt2),
+				Digest:        testDigest,
+			},
+		}
+
+		result, err := slsa.VerifyMultiple(atts, &policy.Policy{
+			Trust: &policy.TrustPolicy{
+				Builders: []policy.TrustedBuilder{
+					{ID: testBuilderID, MaxLevel: 2},
+				},
+			},
+		}, testDigest)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, false, result.Passed)
+
+		if !strings.Contains(result.Detail, "untrusted-a") ||
+			!strings.Contains(result.Detail, "untrusted-b") {
+			t.Errorf("expected both failure reasons in detail, got %q", result.Detail)
+		}
+	})
 }

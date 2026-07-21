@@ -865,7 +865,7 @@ func TestWarnEnforceDefaultsDoesNotPanicForWarnMode(t *testing.T) {
 	}
 
 	// Should not panic; no warnings emitted for non-enforce mode.
-	verifier.ExportWarnEnforceDefaults(cfg, policies)
+	verifier.WarnEnforceDefaults(cfg, policies)
 }
 
 func TestWarnEnforceDefaultsEmitsForEnforceMode(t *testing.T) {
@@ -879,7 +879,7 @@ func TestWarnEnforceDefaultsEmitsForEnforceMode(t *testing.T) {
 	}
 
 	// Should not panic; warnings are emitted but we just verify it runs.
-	verifier.ExportWarnEnforceDefaults(cfg, policies)
+	verifier.WarnEnforceDefaults(cfg, policies)
 }
 
 func TestEnforcing(t *testing.T) {

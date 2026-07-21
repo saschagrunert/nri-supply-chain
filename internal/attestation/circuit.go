@@ -15,9 +15,12 @@
 package attestation
 
 import (
+	"log/slog"
 	"sync"
 	"time"
 )
+
+const maxCircuitBreakers = 1000
 
 type circuitState int
 
@@ -151,16 +154,30 @@ func NewCircuitBreakerRegistry(threshold int, cooldown time.Duration) *CircuitBr
 }
 
 // Get returns the circuit breaker for the given registry host, creating one
-// if it does not exist.
+// if it does not exist. The registry is capped at 1000 entries; when full,
+// existing closed breakers are evicted before adding new ones.
 func (r *CircuitBreakerRegistry) Get(host string) *CircuitBreaker {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	breaker, ok := r.breakers[host]
-	if !ok {
-		breaker = NewCircuitBreaker(r.threshold, r.cooldown)
-		r.breakers[host] = breaker
+	if ok {
+		return breaker
 	}
+
+	if len(r.breakers) >= maxCircuitBreakers {
+		r.evictNonOpenLocked()
+	}
+
+	if len(r.breakers) >= maxCircuitBreakers {
+		slog.Warn("Circuit breaker registry at capacity, reusing default breaker",
+			"host", host, "capacity", maxCircuitBreakers)
+
+		return NewCircuitBreaker(r.threshold, r.cooldown)
+	}
+
+	breaker = NewCircuitBreaker(r.threshold, r.cooldown)
+	r.breakers[host] = breaker
 
 	return breaker
 }
@@ -175,4 +192,12 @@ func (r *CircuitBreakerRegistry) Threshold() int {
 // Safe to call without synchronization: cooldown is immutable after construction.
 func (r *CircuitBreakerRegistry) Cooldown() time.Duration {
 	return r.cooldown
+}
+
+func (r *CircuitBreakerRegistry) evictNonOpenLocked() {
+	for host, breaker := range r.breakers {
+		if !breaker.IsOpen() {
+			delete(r.breakers, host)
+		}
+	}
 }

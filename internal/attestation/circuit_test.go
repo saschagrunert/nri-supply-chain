@@ -16,6 +16,7 @@ package attestation_test
 
 import (
 	"crypto/rand"
+	"fmt"
 	"math/big"
 	"sync"
 	"testing"
@@ -186,6 +187,53 @@ func TestCircuitBreakerRegistryPerHost(t *testing.T) {
 
 	if registry.Get("registry-a.example.com") != a {
 		t.Error("expected same breaker instance for same host")
+	}
+}
+
+func TestCircuitBreakerRegistryEvictsClosedAtCapacity(t *testing.T) {
+	t.Parallel()
+
+	registry := attestation.NewCircuitBreakerRegistry(2, time.Minute)
+
+	for idx := range attestation.ExportMaxCircuitBreakers {
+		registry.Get(fmt.Sprintf("host-%d.example.com", idx))
+	}
+
+	extra := registry.Get("overflow.example.com")
+
+	if extra == nil {
+		t.Fatal("expected non-nil breaker for overflow host")
+	}
+
+	if !extra.Allow() {
+		t.Error("expected overflow breaker to allow requests")
+	}
+}
+
+func TestCircuitBreakerRegistryDetachedWhenAllOpen(t *testing.T) {
+	t.Parallel()
+
+	registry := attestation.NewCircuitBreakerRegistry(1, time.Minute)
+
+	for idx := range attestation.ExportMaxCircuitBreakers {
+		breaker := registry.Get(fmt.Sprintf("host-%d.example.com", idx))
+		breaker.RecordFailure()
+	}
+
+	extra := registry.Get("overflow.example.com")
+
+	if extra == nil {
+		t.Fatal("expected non-nil detached breaker")
+	}
+
+	if !extra.Allow() {
+		t.Error("expected detached breaker to allow requests (closed state)")
+	}
+
+	sameHost := registry.Get("overflow.example.com")
+
+	if sameHost == extra {
+		t.Error("expected detached breaker not to be stored in registry")
 	}
 }
 

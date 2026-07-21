@@ -190,10 +190,6 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	if !c.Enabled() {
-		return nil
-	}
-
 	err := c.validateFetchAndCache()
 	if err != nil {
 		return err
@@ -238,12 +234,14 @@ func (c *Config) validateFetchAndCache() error {
 		return fmt.Errorf("%w: got %s", ErrCacheFailureTTLNegative, c.CacheFailureTTL.Duration)
 	}
 
-	if c.PolicyDir == "" {
-		return ErrPolicyDirEmpty
-	}
+	if c.Enabled() {
+		if c.PolicyDir == "" {
+			return ErrPolicyDirEmpty
+		}
 
-	if !filepath.IsAbs(c.PolicyDir) {
-		return fmt.Errorf("%w: %q", ErrPolicyDirNotAbsolute, c.PolicyDir)
+		if !filepath.IsAbs(c.PolicyDir) {
+			return fmt.Errorf("%w: %q", ErrPolicyDirNotAbsolute, c.PolicyDir)
+		}
 	}
 
 	return nil

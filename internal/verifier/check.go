@@ -65,13 +65,14 @@ func runChecks(
 		return runChecksWithoutFetcher(pol, state.metrics, imageRef)
 	}
 
-	breaker := registryBreaker(state.circuitBreakers, imageRef)
+	host := registryHost(imageRef)
+	breaker := registryBreakerByHost(state.circuitBreakers, host)
 
 	if breaker != nil && !breaker.Allow() {
 		return handleFetchError(
 			state.config, state.metrics,
 			fmt.Errorf("%w: %s", ErrCircuitBreakerOpen, imageRef),
-			imageRef,
+			imageRef, host,
 		)
 	}
 
@@ -81,7 +82,7 @@ func runChecks(
 			return handleFetchError(
 				state.config, state.metrics,
 				fmt.Errorf("fetch concurrency limit: %w", semErr),
-				imageRef,
+				imageRef, host,
 			)
 		}
 
@@ -90,21 +91,23 @@ func runChecks(
 
 	attestations, fetchErr := fetchAttestations(ctx, state, imageRef, digest, pol)
 	if fetchErr != nil {
-		recordBreakerFailure(ctx, breaker, state.metrics, imageRef, state.config.FetchFailurePolicy)
+		recordBreakerFailure(ctx, breaker, state.metrics, host, state.config.FetchFailurePolicy)
 
-		return handleFetchError(state.config, state.metrics, fetchErr, imageRef)
+		return handleFetchError(state.config, state.metrics, fetchErr, imageRef, host)
 	}
 
 	if breaker != nil {
 		breaker.RecordSuccess()
 	}
 
-	vsaResult := checkVSA(ctx, attestations, pol, imageRef, digest, state.metrics)
+	bins := binAttestations(attestations)
+
+	vsaResult := checkVSA(ctx, bins.vsa, pol, imageRef, digest, state.metrics)
 	if vsaResult != nil {
 		return vsaResult
 	}
 
-	return runParallelChecks(ctx, attestations, pol, state.metrics, imageRef, digest, namespace)
+	return runParallelChecks(ctx, &bins, pol, state.metrics, imageRef, digest, namespace)
 }
 
 func runChecksWithoutFetcher(
@@ -158,9 +161,9 @@ func fetchAttestations(
 
 func handleFetchError(
 	cfg *config.Config, met *metrics.Metrics,
-	fetchErr error, imageRef string,
+	fetchErr error, imageRef, host string,
 ) *types.Result {
-	met.FetchErrorsTotal.WithLabelValues("attestation", registryHost(imageRef)).Inc()
+	met.FetchErrorsTotal.WithLabelValues("attestation", host).Inc()
 
 	detail := fmt.Sprintf("attestation fetch failed for %s: %s", imageRef, fetchErr)
 
@@ -174,10 +177,9 @@ func handleFetchError(
 }
 
 func checkVSA(
-	ctx context.Context, attestations []attestation.VerifiedAttestation,
+	ctx context.Context, vsaAttestations []attestation.VerifiedAttestation,
 	pol *policy.Policy, imageRef, digest string, met *metrics.Metrics,
 ) *types.Result {
-	vsaAttestations := filterByPredicate(attestations, attestation.PredicateVSA)
 	if len(vsaAttestations) == 0 {
 		return nil
 	}
@@ -225,7 +227,7 @@ func checkVSA(
 }
 
 func runParallelChecks(
-	ctx context.Context, attestations []attestation.VerifiedAttestation,
+	ctx context.Context, bins *attestationBins,
 	pol *policy.Policy, met *metrics.Metrics, imageRef, digest, namespace string,
 ) *types.Result {
 	var (
@@ -241,13 +243,13 @@ func runParallelChecks(
 	go func() {
 		defer waitGroup.Done()
 
-		slsaResult = runSLSACheck(ctx, attestations, pol, met, imageRef, digest, namespace)
+		slsaResult = runSLSACheck(ctx, bins.provenance, pol, met, imageRef, digest, namespace)
 	}()
 
 	go func() {
 		defer waitGroup.Done()
 
-		vexResult = runVEXCheck(ctx, attestations, pol, met, imageRef, digest, namespace)
+		vexResult = runVEXCheck(ctx, bins.vex, pol, met, imageRef, digest, namespace)
 	}()
 
 	waitGroup.Wait()
@@ -257,7 +259,7 @@ func runParallelChecks(
 
 func runSLSACheck(
 	ctx context.Context,
-	attestations []attestation.VerifiedAttestation,
+	provenanceAtts []attestation.VerifiedAttestation,
 	pol *policy.Policy, met *metrics.Metrics, imageRef, digest, namespace string,
 ) *types.CheckResult {
 	start := time.Now()
@@ -268,7 +270,6 @@ func runSLSACheck(
 		)
 	}()
 
-	provenanceAtts := filterByPredicate(attestations, attestation.PredicateSLSAProvenanceV1)
 	if len(provenanceAtts) == 0 {
 		slog.WarnContext(ctx, "No provenance attestation found",
 			"reason", "missing_attestation",
@@ -304,7 +305,7 @@ func runSLSACheck(
 
 func runVEXCheck(
 	ctx context.Context,
-	attestations []attestation.VerifiedAttestation,
+	vexAtts []attestation.VerifiedAttestation,
 	pol *policy.Policy, met *metrics.Metrics, imageRef, digest, namespace string,
 ) *types.CheckResult {
 	start := time.Now()
@@ -315,7 +316,6 @@ func runVEXCheck(
 		)
 	}()
 
-	vexAtts := filterByPredicate(attestations, attestation.PredicateOpenVEX)
 	if len(vexAtts) == 0 {
 		slog.WarnContext(ctx, "No VEX attestation found",
 			"reason", "missing_attestation",
@@ -410,18 +410,27 @@ func applyCheckResult(result *types.Result, check *types.CheckResult) {
 	}
 }
 
-func filterByPredicate(
-	attestations []attestation.VerifiedAttestation, predicateType string,
-) []attestation.VerifiedAttestation {
-	var filtered []attestation.VerifiedAttestation
+type attestationBins struct {
+	vsa        []attestation.VerifiedAttestation
+	provenance []attestation.VerifiedAttestation
+	vex        []attestation.VerifiedAttestation
+}
+
+func binAttestations(attestations []attestation.VerifiedAttestation) attestationBins {
+	var bins attestationBins
 
 	for idx := range attestations {
-		if attestations[idx].PredicateType == predicateType {
-			filtered = append(filtered, attestations[idx])
+		switch attestations[idx].PredicateType {
+		case attestation.PredicateVSA:
+			bins.vsa = append(bins.vsa, attestations[idx])
+		case attestation.PredicateSLSAProvenanceV1:
+			bins.provenance = append(bins.provenance, attestations[idx])
+		case attestation.PredicateOpenVEX:
+			bins.vex = append(bins.vex, attestations[idx])
 		}
 	}
 
-	return filtered
+	return bins
 }
 
 func vexMissingPolicy(pol *policy.Policy) policy.Action {

@@ -32,7 +32,7 @@ func FuzzVerify(f *testing.F) {
 			ResourceURI:        testImageRef,
 			Policy:             vsa.Policy{URI: testPolicyURI},
 			VerificationResult: "PASSED",
-			VerifiedLevels:     []string{"SLSA_BUILD_LEVEL_3"},
+			VerifiedLevels:     []string{testBuildLevel3},
 			SLSAVersion:        "1.0",
 		},
 	}

@@ -27,10 +27,14 @@ import (
 )
 
 const (
-	testImageRef    = "docker.io/library/nginx@sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abc1"
-	testVerifierID  = "https://example.com/verifier"
-	testVerifierKey = "/etc/keys/verifier.pub"
-	testPolicyURI   = "https://example.com/policy"
+	testImageRef      = "docker.io/library/nginx@sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abc1"
+	testVerifierID    = "https://example.com/verifier"
+	testVerifierKey   = "/etc/keys/verifier.pub"
+	testPolicyURI     = "https://example.com/policy"
+	testBuildLevel3   = "SLSA_BUILD_LEVEL_3"
+	testBuildLevel2   = "SLSA_BUILD_LEVEL_2"
+	testBuildLevel1   = "SLSA_BUILD_LEVEL_1"
+	testBuildLevelPfx = "SLSA_BUILD_LEVEL_"
 )
 
 func validVSAStatement() vsa.Statement {
@@ -45,7 +49,7 @@ func validVSAStatement() vsa.Statement {
 			ResourceURI:        testImageRef,
 			Policy:             vsa.Policy{URI: testPolicyURI},
 			VerificationResult: vsa.ResultPassed,
-			VerifiedLevels:     []string{"SLSA_BUILD_LEVEL_3"},
+			VerifiedLevels:     []string{testBuildLevel3},
 			SLSAVersion:        "1.0",
 		},
 	}
@@ -133,7 +137,7 @@ func TestVerify(t *testing.T) {
 		{
 			name: "insufficient level",
 			modify: func(s *vsa.Statement) {
-				s.Predicate.VerifiedLevels = []string{"SLSA_BUILD_LEVEL_1"}
+				s.Predicate.VerifiedLevels = []string{testBuildLevel1}
 			},
 			pol:        trustedPolicy(),
 			wantPassed: false,
@@ -144,7 +148,7 @@ func TestVerify(t *testing.T) {
 		{
 			name: "meets exact level",
 			modify: func(s *vsa.Statement) {
-				s.Predicate.VerifiedLevels = []string{"SLSA_BUILD_LEVEL_2"}
+				s.Predicate.VerifiedLevels = []string{testBuildLevel2}
 			},
 			pol:        trustedPolicy(),
 			wantPassed: true,
@@ -155,7 +159,7 @@ func TestVerify(t *testing.T) {
 		{
 			name: "no minimum level required",
 			modify: func(s *vsa.Statement) {
-				s.Predicate.VerifiedLevels = []string{"SLSA_BUILD_LEVEL_1"}
+				s.Predicate.VerifiedLevels = []string{testBuildLevel1}
 			},
 			pol: &policy.Policy{
 				Trust: &policy.TrustPolicy{
@@ -435,6 +439,405 @@ func TestVerify(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestVerifyMalformedPayloads(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty payload", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := vsa.Verify([]byte{}, trustedPolicy(), testImageRef)
+
+		if !errors.Is(err, vsa.ErrInvalidVSA) {
+			t.Errorf("expected ErrInvalidVSA, got %v", err)
+		}
+	})
+
+	t.Run("nil payload", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := vsa.Verify(nil, trustedPolicy(), testImageRef)
+
+		if !errors.Is(err, vsa.ErrInvalidVSA) {
+			t.Errorf("expected ErrInvalidVSA, got %v", err)
+		}
+	})
+
+	t.Run("empty JSON object", func(t *testing.T) {
+		t.Parallel()
+
+		result, err := vsa.Verify([]byte("{}"), trustedPolicy(), testImageRef)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.Check.Passed {
+			t.Error("expected fail for empty JSON object")
+		}
+	})
+
+	t.Run("truncated JSON", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := vsa.Verify([]byte(`{"predicate":{`), trustedPolicy(), testImageRef)
+
+		if !errors.Is(err, vsa.ErrInvalidVSA) {
+			t.Errorf("expected ErrInvalidVSA, got %v", err)
+		}
+	})
+}
+
+func TestVerifyVerifierEdgeCases(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty verifier ID in statement", func(t *testing.T) {
+		t.Parallel()
+
+		stmt := validVSAStatement()
+		stmt.Predicate.Verifier.ID = ""
+
+		result, err := vsa.Verify(mustMarshal(t, stmt), trustedPolicy(), testImageRef)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.Check.Passed {
+			t.Error("expected fail for empty verifier ID")
+		}
+
+		if result.Check.Status != types.StatusWarn {
+			t.Errorf("expected warn status, got %q", result.Check.Status)
+		}
+	})
+
+	t.Run("multiple verifiers with one match", func(t *testing.T) {
+		t.Parallel()
+
+		stmt := validVSAStatement()
+
+		pol := &policy.Policy{
+			Trust: &policy.TrustPolicy{
+				Verifiers: []policy.TrustedVerifier{
+					{ID: "https://other.example.com", Key: "/etc/keys/other.pub"},
+					{ID: testVerifierID, Key: testVerifierKey},
+				},
+			},
+		}
+
+		result, err := vsa.Verify(mustMarshal(t, stmt), pol, testImageRef)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if !result.Check.Passed {
+			t.Errorf("expected pass with matching verifier, got: %s", result.Check.Detail)
+		}
+	})
+
+	t.Run("empty verification result string", func(t *testing.T) {
+		t.Parallel()
+
+		stmt := validVSAStatement()
+		stmt.Predicate.VerificationResult = ""
+
+		result, err := vsa.Verify(mustMarshal(t, stmt), trustedPolicy(), testImageRef)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.Check.Passed {
+			t.Error("expected fail for empty verification result")
+		}
+	})
+
+	t.Run("case sensitive verification result", func(t *testing.T) {
+		t.Parallel()
+
+		stmt := validVSAStatement()
+		stmt.Predicate.VerificationResult = "passed"
+
+		result, err := vsa.Verify(mustMarshal(t, stmt), trustedPolicy(), testImageRef)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.Check.Passed {
+			t.Error("expected fail for lowercase 'passed'")
+		}
+	})
+
+	t.Run("hard reject does not pass", func(t *testing.T) {
+		t.Parallel()
+
+		stmt := validVSAStatement()
+		stmt.Predicate.VerificationResult = vsa.ResultFailed
+
+		result, err := vsa.Verify(mustMarshal(t, stmt), trustedPolicy(), testImageRef)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.Check.Passed {
+			t.Error("expected fail for FAILED result")
+		}
+
+		if !result.HardReject {
+			t.Error("expected hard reject for FAILED result")
+		}
+
+		if result.Check.Status != types.StatusFail {
+			t.Errorf("expected fail status, got %q", result.Check.Status)
+		}
+	})
+}
+
+func TestVerifyLevelEdgeCases(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty verified levels with minimum required", func(t *testing.T) {
+		t.Parallel()
+
+		stmt := validVSAStatement()
+		stmt.Predicate.VerifiedLevels = []string{}
+
+		result, err := vsa.Verify(mustMarshal(t, stmt), trustedPolicy(), testImageRef)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.Check.Passed {
+			t.Error("expected fail for empty verified levels with minimum required")
+		}
+	})
+
+	t.Run("nil verified levels with minimum required", func(t *testing.T) {
+		t.Parallel()
+
+		stmt := validVSAStatement()
+		stmt.Predicate.VerifiedLevels = nil
+
+		result, err := vsa.Verify(mustMarshal(t, stmt), trustedPolicy(), testImageRef)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.Check.Passed {
+			t.Error("expected fail for nil verified levels with minimum required")
+		}
+	})
+
+	t.Run("malformed level string", func(t *testing.T) {
+		t.Parallel()
+
+		stmt := validVSAStatement()
+		stmt.Predicate.VerifiedLevels = []string{"NOT_A_LEVEL"}
+
+		result, err := vsa.Verify(mustMarshal(t, stmt), trustedPolicy(), testImageRef)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.Check.Passed {
+			t.Error("expected fail for malformed level string")
+		}
+	})
+
+	t.Run("level with non-numeric suffix", func(t *testing.T) {
+		t.Parallel()
+
+		stmt := validVSAStatement()
+		stmt.Predicate.VerifiedLevels = []string{testBuildLevelPfx + "abc"}
+
+		result, err := vsa.Verify(mustMarshal(t, stmt), trustedPolicy(), testImageRef)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.Check.Passed {
+			t.Error("expected fail for non-numeric level suffix")
+		}
+	})
+
+	t.Run("multiple levels with one sufficient", func(t *testing.T) {
+		t.Parallel()
+
+		stmt := validVSAStatement()
+		stmt.Predicate.VerifiedLevels = []string{
+			testBuildLevel1,
+			testBuildLevel3,
+		}
+
+		result, err := vsa.Verify(mustMarshal(t, stmt), trustedPolicy(), testImageRef)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if !result.Check.Passed {
+			t.Errorf("expected pass when one level is sufficient, got: %s", result.Check.Detail)
+		}
+	})
+}
+
+func TestVerifyVersionEdgeCases(t *testing.T) {
+	t.Parallel()
+
+	t.Run("SLSA version with v prefix", func(t *testing.T) {
+		t.Parallel()
+
+		stmt := validVSAStatement()
+		stmt.Predicate.SLSAVersion = "v1.0"
+
+		result, err := vsa.Verify(mustMarshal(t, stmt), trustedPolicy(), testImageRef)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if !result.Check.Passed {
+			t.Errorf("expected pass for v-prefixed version, got: %s", result.Check.Detail)
+		}
+	})
+
+	t.Run("SLSA version non-numeric", func(t *testing.T) {
+		t.Parallel()
+
+		stmt := validVSAStatement()
+		stmt.Predicate.SLSAVersion = "abc"
+
+		result, err := vsa.Verify(mustMarshal(t, stmt), trustedPolicy(), testImageRef)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.Check.Passed {
+			t.Error("expected fail for non-numeric SLSA version")
+		}
+	})
+
+	t.Run("policy URI empty in policy allows any", func(t *testing.T) {
+		t.Parallel()
+
+		stmt := validVSAStatement()
+		stmt.Predicate.Policy = vsa.Policy{URI: "https://arbitrary.example.com/pol"}
+
+		pol := &policy.Policy{
+			Trust: &policy.TrustPolicy{
+				Verifiers: []policy.TrustedVerifier{
+					{ID: testVerifierID, Key: testVerifierKey},
+				},
+			},
+			VSA: &policy.VSAPolicy{MinimumLevel: 2},
+		}
+
+		result, err := vsa.Verify(mustMarshal(t, stmt), pol, testImageRef)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if !result.Check.Passed {
+			t.Errorf("expected pass when no policy URI required, got: %s", result.Check.Detail)
+		}
+	})
+
+	t.Run("invalid resource URI format", func(t *testing.T) {
+		t.Parallel()
+
+		stmt := validVSAStatement()
+		stmt.Predicate.ResourceURI = ":::not-a-valid-ref:::"
+
+		result, err := vsa.Verify(mustMarshal(t, stmt), trustedPolicy(), testImageRef)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.Check.Passed {
+			t.Error("expected fail for invalid resource URI")
+		}
+	})
+}
+
+func TestVerifyFreshnessEdgeCases(t *testing.T) {
+	t.Parallel()
+
+	t.Run("timestamp at exact clock skew boundary", func(t *testing.T) {
+		t.Parallel()
+
+		stmt := validVSAStatement()
+		stmt.Predicate.TimeVerified = time.Now().
+			Add(59 * time.Second).
+			UTC().
+			Format(time.RFC3339)
+
+		result, err := vsa.Verify(mustMarshal(t, stmt), trustedPolicy(), testImageRef)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if !result.Check.Passed {
+			t.Errorf("expected pass within clock skew tolerance, got: %s", result.Check.Detail)
+		}
+	})
+
+	t.Run("timestamp well beyond clock skew", func(t *testing.T) {
+		t.Parallel()
+
+		stmt := validVSAStatement()
+		stmt.Predicate.TimeVerified = time.Now().
+			Add(5 * time.Minute).
+			UTC().
+			Format(time.RFC3339)
+
+		result, err := vsa.Verify(mustMarshal(t, stmt), trustedPolicy(), testImageRef)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.Check.Passed {
+			t.Error("expected fail for future timestamp beyond tolerance")
+		}
+	})
+
+	t.Run("stale VSA beyond max age", func(t *testing.T) {
+		t.Parallel()
+
+		stmt := validVSAStatement()
+		stmt.Predicate.TimeVerified = time.Now().
+			Add(-25 * time.Hour).
+			UTC().
+			Format(time.RFC3339)
+
+		result, err := vsa.Verify(mustMarshal(t, stmt), trustedPolicy(), testImageRef)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.Check.Passed {
+			t.Error("expected stale result for VSA older than max age")
+		}
+
+		if result.Check.Status != types.StatusWarn {
+			t.Errorf("expected warn status for stale, got %q", result.Check.Status)
+		}
+	})
+
+	t.Run("fresh VSA within max age", func(t *testing.T) {
+		t.Parallel()
+
+		stmt := validVSAStatement()
+		stmt.Predicate.TimeVerified = time.Now().
+			Add(-1 * time.Hour).
+			UTC().
+			Format(time.RFC3339)
+
+		result, err := vsa.Verify(mustMarshal(t, stmt), trustedPolicy(), testImageRef)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if !result.Check.Passed {
+			t.Errorf("expected pass for VSA within max age, got: %s", result.Check.Detail)
+		}
+	})
 }
 
 func TestVerifyInvalidJSON(t *testing.T) {
