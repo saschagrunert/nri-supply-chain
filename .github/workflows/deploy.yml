@@ -97,9 +97,9 @@ jobs:
         id: manifest
         working-directory: /tmp/digests
         run: |
-          docker buildx imagetools create \
-            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(jq -cr '.annotations | map("--annotation " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+          readarray -t args < <(jq -cr '.tags[] | "-t\n" + .' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          readarray -t -O "${#args[@]}" args < <(jq -cr '.annotations[] | "--annotation\n" + .' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          docker buildx imagetools create "${args[@]}" \
             $(printf '${{ env.IMAGE }}@sha256:%s ' *)
           digest=$(docker buildx imagetools inspect "$IMAGE:latest" --format '{{.Manifest.Digest}}')
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
