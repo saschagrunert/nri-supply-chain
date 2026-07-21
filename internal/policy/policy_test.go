@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
+	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 )
 
 const (
@@ -334,7 +335,7 @@ func TestLoadPolicyValid(t *testing.T) {
 	writeFile(t, policyPath, content)
 
 	pol, err := policy.Load(policyPath)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	if len(pol.Builders()) != 1 {
 		t.Fatalf("expected 1 builder, got %d", len(pol.Builders()))
@@ -361,7 +362,7 @@ func TestLoadPolicyErrors(t *testing.T) {
 		writeFile(t, policyPath, `{"unknownField": true}`)
 
 		_, err := policy.Load(policyPath)
-		assertError(t, err)
+		testutil.AssertError(t, err)
 	})
 
 	t.Run("trailing content rejected", func(t *testing.T) {
@@ -373,7 +374,7 @@ func TestLoadPolicyErrors(t *testing.T) {
 		writeFile(t, policyPath, `{}{}`)
 
 		_, err := policy.Load(policyPath)
-		assertError(t, err)
+		testutil.AssertError(t, err)
 
 		if !errors.Is(err, policy.ErrTrailingContent) {
 			t.Errorf("expected error %v, got %v", policy.ErrTrailingContent, err)
@@ -384,7 +385,7 @@ func TestLoadPolicyErrors(t *testing.T) {
 		t.Parallel()
 
 		_, err := policy.Load("/nonexistent/policy.json")
-		assertError(t, err)
+		testutil.AssertError(t, err)
 	})
 }
 
@@ -399,7 +400,7 @@ func TestLoadAllNamespaces(t *testing.T) {
 		`{"provenance":{"missingPolicy":"deny"}}`)
 
 	policies, err := policy.LoadAll(dir)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	if len(policies) != 2 {
 		t.Fatalf("expected 2 policies, got %d", len(policies))
@@ -521,10 +522,10 @@ func TestLoadAllSkipsNonJSON(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "readme.txt"), `not a policy`)
 
 	subDir := filepath.Join(dir, "subdir")
-	assertNoError(t, os.MkdirAll(subDir, 0o750))
+	testutil.AssertNoError(t, os.MkdirAll(subDir, 0o750))
 
 	policies, err := policy.LoadAll(dir)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	if len(policies) != 1 {
 		t.Errorf("expected 1 policy, got %d", len(policies))
@@ -538,7 +539,7 @@ func TestLoadAllInvalidPolicy(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "bad.json"), `{invalid json}`)
 
 	_, err := policy.LoadAll(dir)
-	assertError(t, err)
+	testutil.AssertError(t, err)
 }
 
 func TestLoadPolicyValidationError(t *testing.T) {
@@ -550,7 +551,7 @@ func TestLoadPolicyValidationError(t *testing.T) {
 	writeFile(t, policyPath, `{"trust":{"builders":[{"id":"","maxLevel":0}]}}`)
 
 	_, err := policy.Load(policyPath)
-	assertError(t, err)
+	testutil.AssertError(t, err)
 
 	if !errors.Is(err, policy.ErrBuilderIDRequired) {
 		t.Errorf("expected error %v, got %v", policy.ErrBuilderIDRequired, err)
@@ -566,7 +567,7 @@ func TestLoadAllEmpty(t *testing.T) {
 		dir := t.TempDir()
 
 		policies, err := policy.LoadAll(dir)
-		assertNoError(t, err)
+		testutil.AssertNoError(t, err)
 
 		if len(policies) != 0 {
 			t.Errorf("expected 0 policies, got %d", len(policies))
@@ -577,7 +578,7 @@ func TestLoadAllEmpty(t *testing.T) {
 		t.Parallel()
 
 		policies, err := policy.LoadAll("/nonexistent/dir")
-		assertNoError(t, err)
+		testutil.AssertNoError(t, err)
 
 		if len(policies) != 0 {
 			t.Errorf("expected 0 policies, got %d", len(policies))
@@ -588,7 +589,7 @@ func TestLoadAllEmpty(t *testing.T) {
 		t.Parallel()
 
 		policies, err := policy.LoadAll("")
-		assertNoError(t, err)
+		testutil.AssertNoError(t, err)
 
 		if len(policies) != 0 {
 			t.Errorf("expected 0 policies, got %d", len(policies))
@@ -848,7 +849,7 @@ func TestLoadAllInheritsMergesWithDefault(t *testing.T) {
 	}`)
 
 	policies, err := policy.LoadAll(dir)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	staging := policies["staging"]
 	if staging.ProvenanceMissingPolicy() != policy.ActionAllow {
@@ -875,7 +876,7 @@ func TestLoadAllInheritsFalseNoMerge(t *testing.T) {
 	}`)
 
 	policies, err := policy.LoadAll(dir)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	staging := policies["staging"]
 	if staging.Exclude != nil {
@@ -894,7 +895,7 @@ func TestLoadAllInheritsNilNoMerge(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "staging.json"), `{}`)
 
 	policies, err := policy.LoadAll(dir)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	staging := policies["staging"]
 	if staging.Exclude != nil {
@@ -927,22 +928,6 @@ func writeFile(t *testing.T, path, content string) {
 	err := os.WriteFile(path, []byte(content), 0o600)
 	if err != nil {
 		t.Fatalf("writing file %s: %v", path, err)
-	}
-}
-
-func assertNoError(t *testing.T, err error) {
-	t.Helper()
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func assertError(t *testing.T, err error) {
-	t.Helper()
-
-	if err == nil {
-		t.Fatal("expected error, got nil")
 	}
 }
 
@@ -1009,7 +994,7 @@ func TestValidateRuntime(t *testing.T) {
 
 		pol := emptyPolicy()
 		err := pol.ValidateRuntime()
-		assertNoError(t, err)
+		testutil.AssertNoError(t, err)
 	})
 
 	t.Run("nil trust passes", func(t *testing.T) {
@@ -1017,7 +1002,7 @@ func TestValidateRuntime(t *testing.T) {
 
 		pol := &policy.Policy{}
 		err := pol.ValidateRuntime()
-		assertNoError(t, err)
+		testutil.AssertNoError(t, err)
 	})
 
 	t.Run("valid key file exists", func(t *testing.T) {
@@ -1036,7 +1021,7 @@ func TestValidateRuntime(t *testing.T) {
 		}
 
 		err := pol.ValidateRuntime()
-		assertNoError(t, err)
+		testutil.AssertNoError(t, err)
 	})
 
 	t.Run("nonexistent key path fails", func(t *testing.T) {
@@ -1051,7 +1036,7 @@ func TestValidateRuntime(t *testing.T) {
 		}
 
 		err := pol.ValidateRuntime()
-		assertError(t, err)
+		testutil.AssertError(t, err)
 	})
 
 	t.Run("key path is directory fails", func(t *testing.T) {
@@ -1068,7 +1053,7 @@ func TestValidateRuntime(t *testing.T) {
 		}
 
 		err := pol.ValidateRuntime()
-		assertError(t, err)
+		testutil.AssertError(t, err)
 
 		if !errors.Is(err, policy.ErrNotRegularFile) {
 			t.Errorf("expected ErrNotRegularFile, got %v", err)
@@ -1094,10 +1079,10 @@ func TestHash(t *testing.T) {
 		}
 
 		hash1, err := pol1.Hash()
-		assertNoError(t, err)
+		testutil.AssertNoError(t, err)
 
 		hash2, err := pol2.Hash()
-		assertNoError(t, err)
+		testutil.AssertNoError(t, err)
 
 		if hash1 != hash2 {
 			t.Errorf("identical policies should produce same hash: %q vs %q",
@@ -1120,10 +1105,10 @@ func TestHash(t *testing.T) {
 		}
 
 		hash1, err := pol1.Hash()
-		assertNoError(t, err)
+		testutil.AssertNoError(t, err)
 
 		hash2, err := pol2.Hash()
-		assertNoError(t, err)
+		testutil.AssertNoError(t, err)
 
 		if hash1 == hash2 {
 			t.Error("different policies should produce different hashes")
@@ -1145,10 +1130,10 @@ func TestHash(t *testing.T) {
 		}
 
 		hash1, err := pol.Hash()
-		assertNoError(t, err)
+		testutil.AssertNoError(t, err)
 
 		hash2, err := pol.Hash()
-		assertNoError(t, err)
+		testutil.AssertNoError(t, err)
 
 		if hash1 != hash2 {
 			t.Errorf("hash should be deterministic: %q vs %q",
@@ -1161,7 +1146,7 @@ func TestHash(t *testing.T) {
 
 		pol := emptyPolicy()
 		hash, err := pol.Hash()
-		assertNoError(t, err)
+		testutil.AssertNoError(t, err)
 
 		if hash == "" {
 			t.Error("expected non-empty hash for empty policy")

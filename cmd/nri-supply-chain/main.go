@@ -45,6 +45,8 @@ import (
 
 var version = "0.1.0"
 
+var logLevelVar slog.LevelVar //nolint:gochecknoglobals // shared between initLogging and reload
+
 const (
 	readHeaderTimeout   = 10 * time.Second
 	shutdownGracePeriod = 5 * time.Second
@@ -160,10 +162,9 @@ func setupSignals(
 
 	done := make(chan struct{})
 
-	setupReload(ctx, configPath, verif, sighup)
+	cleanupWatch, watcher := setupFileWatch(ctx, configPath, cfg.PolicyDir, verif)
+	setupReload(ctx, configPath, verif, sighup, watcher)
 	handleShutdown(ctx, cancel, sigterm, done)
-
-	cleanupWatch := setupFileWatch(ctx, configPath, cfg.PolicyDir, verif)
 
 	return func() {
 		signal.Stop(sighup)
@@ -323,11 +324,22 @@ func loadConfig(path string) (*config.Config, error) {
 }
 
 func initLogging(level string) {
-	slog.SetDefault(newLogger(level))
+	updateLogLevel(level)
+	slog.SetDefault(newLogger())
 
 	if parseLogLevel(level) == nil {
 		slog.Warn("Unrecognized log level, defaulting to info", "level", level)
 	}
+}
+
+func updateLogLevel(level string) {
+	logLevel := slog.LevelInfo
+
+	if parsed := parseLogLevel(level); parsed != nil {
+		logLevel = *parsed
+	}
+
+	logLevelVar.Set(logLevel)
 }
 
 func parseLogLevel(level string) *slog.Level {
@@ -349,15 +361,9 @@ func parseLogLevel(level string) *slog.Level {
 	return &parsed
 }
 
-func newLogger(level string) *slog.Logger {
-	logLevel := slog.LevelInfo
-
-	if parsed := parseLogLevel(level); parsed != nil {
-		logLevel = *parsed
-	}
-
+func newLogger() *slog.Logger {
 	return slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
-		Level: logLevel,
+		Level: &logLevelVar,
 	}))
 }
 
@@ -407,7 +413,7 @@ func runPlugin(
 
 func setupReload(
 	ctx context.Context, configPath string, verif *verifier.Verifier,
-	sigCh <-chan os.Signal,
+	sigCh <-chan os.Signal, watcher *fsnotify.Watcher,
 ) {
 	go func() {
 		for {
@@ -417,12 +423,15 @@ func setupReload(
 			case <-sigCh:
 			}
 
-			handleReload(ctx, configPath, verif)
+			handleReload(ctx, configPath, verif, watcher)
 		}
 	}()
 }
 
-func handleReload(ctx context.Context, configPath string, verif *verifier.Verifier) {
+func handleReload(
+	ctx context.Context, configPath string,
+	verif *verifier.Verifier, watcher *fsnotify.Watcher,
+) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("Recovered panic in reload handler", "error", r)
@@ -453,11 +462,68 @@ func handleReload(ctx context.Context, configPath string, verif *verifier.Verifi
 		}
 	}
 
+	if newCfg.LogLevel != "" {
+		if parsed := parseLogLevel(newCfg.LogLevel); parsed != nil {
+			current := logLevelVar.Level()
+
+			if current != *parsed {
+				logLevelVar.Set(*parsed)
+				slog.Info("Log level changed", "from", current, "to", *parsed)
+			}
+		}
+	}
+
 	reloadErr := verif.Reload(ctx, newCfg)
 	if reloadErr != nil {
 		slog.Error("Verifier reload failed", "error", reloadErr)
 	} else {
 		slog.Info("Config reloaded successfully")
+		updatePolicyDirWatch(watcher, configPath, newCfg.PolicyDir)
+	}
+}
+
+func updatePolicyDirWatch(watcher *fsnotify.Watcher, configPath, newPolicyDir string) {
+	if watcher == nil {
+		return
+	}
+
+	newAbsDir := ""
+
+	if newPolicyDir != "" {
+		abs, absErr := filepath.Abs(newPolicyDir)
+		if absErr == nil {
+			newAbsDir = abs
+		}
+	}
+
+	// Remove any watched path that is not the config file or the new policy directory.
+	for _, watched := range watcher.WatchList() {
+		if watched == configPath || watched == newAbsDir {
+			continue
+		}
+
+		removeErr := watcher.Remove(watched)
+		if removeErr != nil {
+			slog.Warn("Failed to unwatch old policy directory",
+				"path", watched, "error", removeErr)
+		} else {
+			slog.Info("Removed old policy directory from file watcher",
+				"path", watched)
+		}
+	}
+
+	if newAbsDir == "" {
+		return
+	}
+
+	// watcher.Add is a no-op for already-watched paths.
+	addErr := watcher.Add(newAbsDir)
+	if addErr != nil {
+		slog.Warn("Failed to watch new policy directory",
+			"path", newAbsDir, "error", addErr)
+	} else {
+		slog.Info("Added new policy directory to file watcher",
+			"path", newAbsDir)
 	}
 }
 
@@ -559,16 +625,16 @@ func outputVerifyResult(
 func setupFileWatch(
 	ctx context.Context, configPath, policyDir string,
 	verif *verifier.Verifier,
-) func() {
+) (func(), *fsnotify.Watcher) {
 	if configPath == "" {
-		return func() {}
+		return func() {}, nil
 	}
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		slog.Warn("Failed to create file watcher, relying on SIGHUP", "error", err)
 
-		return func() {}
+		return func() {}, nil
 	}
 
 	watchErr := watcher.Add(configPath)
@@ -596,7 +662,7 @@ func setupFileWatch(
 		if closeErr != nil {
 			slog.Warn("Failed to close file watcher", "error", closeErr)
 		}
-	}
+	}, watcher
 }
 
 func runFileWatch(
@@ -619,7 +685,7 @@ func runFileWatch(
 				return
 			}
 
-			debounce = handleFileEvent(ctx, event, debounce, configPath, verif)
+			debounce = handleFileEvent(ctx, event, debounce, configPath, verif, watcher)
 
 		case watchErr, ok := <-watcher.Errors:
 			if !ok {
@@ -634,7 +700,7 @@ func runFileWatch(
 func handleFileEvent(
 	ctx context.Context, event fsnotify.Event,
 	debounce *time.Timer, configPath string,
-	verif *verifier.Verifier,
+	verif *verifier.Verifier, watcher *fsnotify.Watcher,
 ) *time.Timer {
 	if !isReloadEvent(event) {
 		return debounce
@@ -647,7 +713,7 @@ func handleFileEvent(
 	}
 
 	return time.AfterFunc(fileWatchDebounce, func() {
-		handleReload(ctx, configPath, verif)
+		handleReload(ctx, configPath, verif, watcher)
 	})
 }
 

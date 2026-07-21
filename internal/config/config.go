@@ -81,6 +81,9 @@ var (
 	// ErrInvalidMetricsAddr indicates the metrics address is not a valid host:port.
 	ErrInvalidMetricsAddr = errors.New("invalid metrics_addr")
 
+	// ErrInvalidLogLevel indicates an unrecognized log level value.
+	ErrInvalidLogLevel = errors.New("invalid log_level")
+
 	// ErrUnknownConfigKeys indicates the config file contains unrecognized keys.
 	ErrUnknownConfigKeys = errors.New("unknown config keys")
 )
@@ -136,6 +139,10 @@ type Config struct {
 	// FetchRateLimit is the maximum number of registry fetch requests per
 	// second. 0 means unlimited.
 	FetchRateLimit float64 `toml:"fetch_rate_limit"`
+	// LogLevel is the log verbosity level.
+	// Valid values: "debug", "info", "warn", "error".
+	// Empty means the level is determined by the --log-level CLI flag.
+	LogLevel string `toml:"log_level"`
 }
 
 // DefaultConfig returns the default configuration.
@@ -151,6 +158,7 @@ func DefaultConfig() *Config {
 		CircuitBreakerThreshold: defaultCircuitBreakerThreshold,
 		CircuitBreakerCooldown:  Duration{Duration: defaultCircuitBreakerCooldown},
 		FetchRateLimit:          0,
+		LogLevel:                "",
 	}
 }
 
@@ -165,6 +173,14 @@ func (c *Config) Validate() error {
 	case ModeDisabled, ModeWarn, ModeEnforce:
 	default:
 		return fmt.Errorf("%w: %q", ErrInvalidVerificationMode, c.Verification)
+	}
+
+	if c.LogLevel != "" {
+		switch c.LogLevel {
+		case "debug", "info", "warn", "error":
+		default:
+			return fmt.Errorf("%w: %q", ErrInvalidLogLevel, c.LogLevel)
+		}
 	}
 
 	if c.MetricsAddr != "" {

@@ -23,6 +23,7 @@ import (
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
+	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -30,13 +31,13 @@ func TestDefaultConfig(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 
-	assertEqual(t, config.ModeDisabled, cfg.Verification)
-	assertEqual(t, 30*time.Second, cfg.FetchTimeout.Duration)
-	assertEqual(t, policy.ActionWarn, cfg.FetchFailurePolicy)
-	assertEqual(t, 24*time.Hour, cfg.CacheTTL.Duration)
-	assertEqual(t, 5*time.Minute, cfg.CacheFailureTTL.Duration)
-	assertEqual(t, "/etc/nri-supply-chain/policies", cfg.PolicyDir)
-	assertEqual(t, "127.0.0.1:9090", cfg.MetricsAddr)
+	testutil.AssertEqual(t, config.ModeDisabled, cfg.Verification)
+	testutil.AssertEqual(t, 30*time.Second, cfg.FetchTimeout.Duration)
+	testutil.AssertEqual(t, policy.ActionWarn, cfg.FetchFailurePolicy)
+	testutil.AssertEqual(t, 24*time.Hour, cfg.CacheTTL.Duration)
+	testutil.AssertEqual(t, 5*time.Minute, cfg.CacheFailureTTL.Duration)
+	testutil.AssertEqual(t, "/etc/nri-supply-chain/policies", cfg.PolicyDir)
+	testutil.AssertEqual(t, "127.0.0.1:9090", cfg.MetricsAddr)
 }
 
 func TestConfigEnabled(t *testing.T) {
@@ -59,7 +60,7 @@ func TestConfigEnabled(t *testing.T) {
 			cfg := config.DefaultConfig()
 			cfg.Verification = test.mode
 
-			assertEqual(t, test.expected, cfg.Enabled())
+			testutil.AssertEqual(t, test.expected, cfg.Enabled())
 		})
 	}
 }
@@ -239,7 +240,7 @@ func TestConfigValidateRuntime(t *testing.T) {
 		t.Parallel()
 
 		cfg := config.DefaultConfig()
-		assertNoError(t, cfg.ValidateRuntime())
+		testutil.AssertNoError(t, cfg.ValidateRuntime())
 	})
 
 	t.Run("existing directory passes", func(t *testing.T) {
@@ -251,7 +252,7 @@ func TestConfigValidateRuntime(t *testing.T) {
 		cfg.Verification = config.ModeWarn
 		cfg.PolicyDir = dir
 
-		assertNoError(t, cfg.ValidateRuntime())
+		testutil.AssertNoError(t, cfg.ValidateRuntime())
 	})
 
 	t.Run("missing directory fails", func(t *testing.T) {
@@ -261,7 +262,7 @@ func TestConfigValidateRuntime(t *testing.T) {
 		cfg.Verification = config.ModeWarn
 		cfg.PolicyDir = "/nonexistent/path"
 
-		assertError(t, cfg.ValidateRuntime())
+		testutil.AssertError(t, cfg.ValidateRuntime())
 	})
 
 	t.Run("file instead of directory fails", func(t *testing.T) {
@@ -269,14 +270,14 @@ func TestConfigValidateRuntime(t *testing.T) {
 
 		dir := t.TempDir()
 		filePath := filepath.Join(dir, "not-a-dir")
-		assertNoError(t, os.WriteFile(filePath, []byte(""), 0o600))
+		testutil.AssertNoError(t, os.WriteFile(filePath, []byte(""), 0o600))
 
 		cfg := config.DefaultConfig()
 		cfg.Verification = config.ModeWarn
 		cfg.PolicyDir = filePath
 
 		err := cfg.ValidateRuntime()
-		assertError(t, err)
+		testutil.AssertError(t, err)
 
 		if !errors.Is(err, config.ErrPolicyDirNotDirectory) {
 			t.Errorf("expected error %v, got %v", config.ErrPolicyDirNotDirectory, err)
@@ -294,7 +295,7 @@ func TestLoadFromFile(t *testing.T) {
 		cfgPath := filepath.Join(dir, "config.toml")
 
 		policyDir := filepath.Join(dir, "policies")
-		assertNoError(t, os.MkdirAll(policyDir, 0o750))
+		testutil.AssertNoError(t, os.MkdirAll(policyDir, 0o750))
 
 		content := `verification = "warn"
 fetch_timeout = "10s"
@@ -303,24 +304,24 @@ cache_ttl = "1h"
 policy_dir = "` + policyDir + `"
 metrics_addr = ":8080"
 `
-		assertNoError(t, os.WriteFile(cfgPath, []byte(content), 0o600))
+		testutil.AssertNoError(t, os.WriteFile(cfgPath, []byte(content), 0o600))
 
 		cfg, err := config.LoadFromFile(cfgPath)
-		assertNoError(t, err)
+		testutil.AssertNoError(t, err)
 
-		assertEqual(t, config.ModeWarn, cfg.Verification)
-		assertEqual(t, 10*time.Second, cfg.FetchTimeout.Duration)
-		assertEqual(t, policy.ActionDeny, cfg.FetchFailurePolicy)
-		assertEqual(t, time.Hour, cfg.CacheTTL.Duration)
-		assertEqual(t, policyDir, cfg.PolicyDir)
-		assertEqual(t, ":8080", cfg.MetricsAddr)
+		testutil.AssertEqual(t, config.ModeWarn, cfg.Verification)
+		testutil.AssertEqual(t, 10*time.Second, cfg.FetchTimeout.Duration)
+		testutil.AssertEqual(t, policy.ActionDeny, cfg.FetchFailurePolicy)
+		testutil.AssertEqual(t, time.Hour, cfg.CacheTTL.Duration)
+		testutil.AssertEqual(t, policyDir, cfg.PolicyDir)
+		testutil.AssertEqual(t, ":8080", cfg.MetricsAddr)
 	})
 
 	t.Run("missing file", func(t *testing.T) {
 		t.Parallel()
 
 		_, err := config.LoadFromFile("/nonexistent/config.toml")
-		assertError(t, err)
+		testutil.AssertError(t, err)
 	})
 }
 
@@ -331,9 +332,9 @@ func TestLoadFromString(t *testing.T) {
 fetch_timeout = "5s"
 policy_dir = "/tmp/policies"
 `)
-	assertNoError(t, err)
-	assertEqual(t, config.ModeEnforce, cfg.Verification)
-	assertEqual(t, 5*time.Second, cfg.FetchTimeout.Duration)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqual(t, config.ModeEnforce, cfg.Verification)
+	testutil.AssertEqual(t, 5*time.Second, cfg.FetchTimeout.Duration)
 }
 
 func TestDurationMarshalText(t *testing.T) {
@@ -342,8 +343,8 @@ func TestDurationMarshalText(t *testing.T) {
 	dur := config.Duration{Duration: 5 * time.Second}
 
 	text, err := dur.MarshalText()
-	assertNoError(t, err)
-	assertEqual(t, "5s", string(text))
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqual(t, "5s", string(text))
 }
 
 func TestDurationUnmarshalTextError(t *testing.T) {
@@ -352,7 +353,7 @@ func TestDurationUnmarshalTextError(t *testing.T) {
 	var dur config.Duration
 
 	err := dur.UnmarshalText([]byte("not-a-duration"))
-	assertError(t, err)
+	testutil.AssertError(t, err)
 }
 
 func TestLoadFromStringErrors(t *testing.T) {
@@ -362,14 +363,14 @@ func TestLoadFromStringErrors(t *testing.T) {
 		t.Parallel()
 
 		_, err := config.LoadFromString(`[[[invalid`)
-		assertError(t, err)
+		testutil.AssertError(t, err)
 	})
 
 	t.Run("validation failure", func(t *testing.T) {
 		t.Parallel()
 
 		_, err := config.LoadFromString(`verification = "invalid"`)
-		assertError(t, err)
+		testutil.AssertError(t, err)
 
 		if !errors.Is(err, config.ErrInvalidVerificationMode) {
 			t.Errorf("expected error %v, got %v", config.ErrInvalidVerificationMode, err)
@@ -504,7 +505,7 @@ func TestConfigValidateCacheFailureTTL(t *testing.T) {
 		cfg.Verification = config.ModeWarn
 		cfg.CacheFailureTTL = config.Duration{Duration: 0}
 
-		assertNoError(t, cfg.Validate())
+		testutil.AssertNoError(t, cfg.Validate())
 	})
 
 	t.Run("positive cache failure TTL is valid", func(t *testing.T) {
@@ -514,7 +515,7 @@ func TestConfigValidateCacheFailureTTL(t *testing.T) {
 		cfg.Verification = config.ModeWarn
 		cfg.CacheFailureTTL = config.Duration{Duration: 5 * time.Minute}
 
-		assertNoError(t, cfg.Validate())
+		testutil.AssertNoError(t, cfg.Validate())
 	})
 }
 
@@ -540,7 +541,7 @@ func TestConfigValidateFetchRateLimit(t *testing.T) {
 		cfg := config.DefaultConfig()
 		cfg.Verification = config.ModeWarn
 
-		assertNoError(t, cfg.Validate())
+		testutil.AssertNoError(t, cfg.Validate())
 	})
 
 	t.Run("positive rate limit is valid", func(t *testing.T) {
@@ -550,8 +551,54 @@ func TestConfigValidateFetchRateLimit(t *testing.T) {
 		cfg.Verification = config.ModeWarn
 		cfg.FetchRateLimit = 50.0
 
-		assertNoError(t, cfg.Validate())
+		testutil.AssertNoError(t, cfg.Validate())
 	})
+}
+
+func TestConfigValidateLogLevel(t *testing.T) {
+	t.Parallel()
+
+	t.Run("valid levels", func(t *testing.T) {
+		t.Parallel()
+
+		for _, level := range []string{"debug", "info", "warn", "error"} {
+			t.Run(level, func(t *testing.T) {
+				t.Parallel()
+
+				cfg := config.DefaultConfig()
+				cfg.LogLevel = level
+
+				testutil.AssertNoError(t, cfg.Validate())
+			})
+		}
+	})
+
+	t.Run("empty is valid", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		testutil.AssertNoError(t, cfg.Validate())
+	})
+
+	t.Run("invalid level", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.LogLevel = "invalid"
+
+		err := cfg.Validate()
+		if !errors.Is(err, config.ErrInvalidLogLevel) {
+			t.Errorf("expected ErrInvalidLogLevel, got %v", err)
+		}
+	})
+}
+
+func TestLoadFromStringLogLevel(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.LoadFromString(`log_level = "debug"`)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqual(t, "debug", cfg.LogLevel)
 }
 
 func TestLoadFromFileUnknownKeys(t *testing.T) {
@@ -563,10 +610,10 @@ func TestLoadFromFileUnknownKeys(t *testing.T) {
 	content := `verification = "disabled"
 unknown_key = "value"
 `
-	assertNoError(t, os.WriteFile(cfgPath, []byte(content), 0o600))
+	testutil.AssertNoError(t, os.WriteFile(cfgPath, []byte(content), 0o600))
 
 	_, err := config.LoadFromFile(cfgPath)
-	assertError(t, err)
+	testutil.AssertError(t, err)
 
 	if !errors.Is(err, config.ErrUnknownConfigKeys) {
 		t.Errorf("expected error %v, got %v", config.ErrUnknownConfigKeys, err)
@@ -577,7 +624,7 @@ func TestLoadFromStringUnknownKeys(t *testing.T) {
 	t.Parallel()
 
 	_, err := config.LoadFromString(`unknown_field = "test"`)
-	assertError(t, err)
+	testutil.AssertError(t, err)
 
 	if !errors.Is(err, config.ErrUnknownConfigKeys) {
 		t.Errorf("expected error %v, got %v", config.ErrUnknownConfigKeys, err)
@@ -593,36 +640,12 @@ func TestLoadFromFileValidationError(t *testing.T) {
 	content := `verification = "warn"
 policy_dir = "relative/path"
 `
-	assertNoError(t, os.WriteFile(cfgPath, []byte(content), 0o600))
+	testutil.AssertNoError(t, os.WriteFile(cfgPath, []byte(content), 0o600))
 
 	_, err := config.LoadFromFile(cfgPath)
-	assertError(t, err)
+	testutil.AssertError(t, err)
 
 	if !errors.Is(err, config.ErrPolicyDirNotAbsolute) {
 		t.Errorf("expected error %v, got %v", config.ErrPolicyDirNotAbsolute, err)
-	}
-}
-
-func assertEqual[T comparable](t *testing.T, expected, actual T) {
-	t.Helper()
-
-	if expected != actual {
-		t.Errorf("expected %v, got %v", expected, actual)
-	}
-}
-
-func assertNoError(t *testing.T, err error) {
-	t.Helper()
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func assertError(t *testing.T, err error) {
-	t.Helper()
-
-	if err == nil {
-		t.Fatal("expected error, got nil")
 	}
 }

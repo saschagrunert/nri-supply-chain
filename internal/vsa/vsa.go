@@ -344,22 +344,12 @@ func verifyFreshness(timeVerified string, pol *policy.Policy) error {
 		return nil
 	}
 
-	maxAge := pol.VSA.MaxAgeDuration
-	if maxAge == 0 {
-		var err error
-
-		maxAge, err = time.ParseDuration(pol.VSA.MaxAge)
-		if err != nil {
-			return fmt.Errorf("parsing max_age %q: %w", pol.VSA.MaxAge, err)
-		}
-	}
-
-	if age > maxAge {
+	if age > pol.VSA.MaxAgeDuration {
 		return fmt.Errorf(
 			"%w: verified %s ago, max %s",
 			ErrStaleVSA,
 			age.Truncate(time.Second),
-			maxAge,
+			pol.VSA.MaxAgeDuration,
 		)
 	}
 

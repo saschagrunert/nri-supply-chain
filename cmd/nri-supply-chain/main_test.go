@@ -50,9 +50,8 @@ const (
 	testNamespaceMain = "default"
 )
 
+//nolint:paralleltest // modifies package-level logLevelVar
 func TestNewLogger(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		name  string
 		level string
@@ -67,9 +66,9 @@ func TestNewLogger(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
+			updateLogLevel(test.level)
 
-			logger := newLogger(test.level)
+			logger := newLogger()
 			handler := logger.Handler()
 
 			if !handler.Enabled(context.Background(), test.want) {
@@ -197,7 +196,7 @@ func TestSetupReload(t *testing.T) {
 	ctx := t.Context()
 
 	sigCh := make(chan os.Signal, 1)
-	setupReload(ctx, configPath, verif, sigCh)
+	setupReload(ctx, configPath, verif, sigCh, nil)
 
 	writeTestConfig(t, configPath, policyDir, "enforce")
 
@@ -228,7 +227,7 @@ func TestSetupReloadNoConfig(t *testing.T) {
 	ctx := t.Context()
 
 	sigCh := make(chan os.Signal, 1)
-	setupReload(ctx, "", verif, sigCh)
+	setupReload(ctx, "", verif, sigCh, nil)
 
 	sigCh <- syscall.SIGHUP
 
@@ -721,7 +720,7 @@ func TestSetupFileWatch(t *testing.T) {
 
 	ctx := t.Context()
 
-	cleanup := setupFileWatch(ctx, configPath, policyDir, verif)
+	cleanup, _ := setupFileWatch(ctx, configPath, policyDir, verif)
 	defer cleanup()
 
 	writeTestConfig(t, configPath, policyDir, "enforce")
@@ -748,7 +747,7 @@ func TestSetupFileWatchNoConfig(t *testing.T) {
 		t.Fatalf("creating verifier: %v", err)
 	}
 
-	cleanup := setupFileWatch(t.Context(), "", "", verif)
+	cleanup, _ := setupFileWatch(t.Context(), "", "", verif)
 	defer cleanup()
 
 	if verif.Enforcing() {
@@ -1282,13 +1281,14 @@ func TestSetupSignalsWithConfig(t *testing.T) {
 
 // --- initLogging tests ---
 
+//nolint:paralleltest // modifies package-level logLevelVar
 func TestInitLogging(t *testing.T) {
-	t.Parallel()
-
-	// Valid level.
 	initLogging(logLevelDebug)
 
-	// Unrecognized level triggers the warning log path.
+	if logLevelVar.Level() != slog.LevelDebug {
+		t.Errorf("expected debug level, got %v", logLevelVar.Level())
+	}
+
 	initLogging("bogus")
 }
 
@@ -1306,7 +1306,7 @@ func TestSetupFileWatchNonexistentConfigPath(t *testing.T) {
 
 	// Passing a nonexistent config path causes watcher.Add to fail,
 	// exercising the "Failed to watch config file" warning path.
-	cleanup := setupFileWatch(t.Context(), "/nonexistent/config.toml", "", verif)
+	cleanup, _ := setupFileWatch(t.Context(), "/nonexistent/config.toml", "", verif)
 	cleanup()
 }
 
@@ -1330,7 +1330,7 @@ func TestSetupFileWatchPolicyDirWatchFailure(t *testing.T) {
 
 	// Config path exists (watcher.Add succeeds), but policy dir does not,
 	// exercising the "Failed to watch policy directory" warning path.
-	cleanup := setupFileWatch(t.Context(), configPath, "/nonexistent/policies", verif)
+	cleanup, _ := setupFileWatch(t.Context(), configPath, "/nonexistent/policies", verif)
 	cleanup()
 }
 
@@ -1357,7 +1357,7 @@ func TestHandleFileEventChmodIgnored(t *testing.T) {
 
 	defer existingTimer.Stop()
 
-	result := handleFileEvent(context.Background(), event, existingTimer, testConfigFile, nil)
+	result := handleFileEvent(context.Background(), event, existingTimer, testConfigFile, nil, nil)
 
 	if result != existingTimer {
 		t.Error("expected chmod event to return same debounce timer unchanged")
@@ -1393,7 +1393,7 @@ func TestHandleFileEventDebounceReplacement(t *testing.T) {
 	defer oldTimer.Stop()
 
 	event := fsnotify.Event{Name: configPath, Op: fsnotify.Write}
-	newTimer := handleFileEvent(context.Background(), event, oldTimer, configPath, verif)
+	newTimer := handleFileEvent(context.Background(), event, oldTimer, configPath, verif, nil)
 
 	if newTimer == nil {
 		t.Fatal("expected new timer, got nil")
@@ -1410,7 +1410,7 @@ func TestHandleFileEventNilDebounce(t *testing.T) {
 	t.Parallel()
 
 	event := fsnotify.Event{Name: testConfigFile, Op: fsnotify.Write}
-	result := handleFileEvent(context.Background(), event, nil, testConfigFile, nil)
+	result := handleFileEvent(context.Background(), event, nil, testConfigFile, nil, nil)
 
 	if result == nil {
 		t.Fatal("expected new timer, got nil")
@@ -1545,5 +1545,132 @@ func TestRunFileWatchErrorChannel(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("runFileWatch did not exit")
+	}
+}
+
+// --- dynamic log level tests ---
+
+//nolint:paralleltest // modifies package-level logLevelVar
+func TestUpdateLogLevel(t *testing.T) {
+	tests := []struct {
+		name  string
+		level string
+		want  slog.Level
+	}{
+		{name: logLevelDebug, level: logLevelDebug, want: slog.LevelDebug},
+		{name: logLevelInfo, level: logLevelInfo, want: slog.LevelInfo},
+		{name: logLevelWarn, level: logLevelWarn, want: slog.LevelWarn},
+		{name: logLevelError, level: logLevelError, want: slog.LevelError},
+		{name: "unrecognized defaults to info", level: "bogus", want: slog.LevelInfo},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			updateLogLevel(test.level)
+
+			if logLevelVar.Level() != test.want {
+				t.Errorf("expected level %v, got %v", test.want, logLevelVar.Level())
+			}
+		})
+	}
+}
+
+//nolint:paralleltest // modifies package-level logLevelVar
+func TestLogLevelDynamic(t *testing.T) {
+	updateLogLevel(logLevelInfo)
+
+	logger := newLogger()
+	handler := logger.Handler()
+
+	// Info should be enabled at info level.
+	if !handler.Enabled(context.Background(), slog.LevelInfo) {
+		t.Error("expected info to be enabled at info level")
+	}
+
+	// Debug should be disabled at info level.
+	if handler.Enabled(context.Background(), slog.LevelDebug) {
+		t.Error("expected debug to be disabled at info level")
+	}
+
+	// Change to debug level dynamically.
+	updateLogLevel(logLevelDebug)
+
+	// The same handler should now reflect the new level.
+	if !handler.Enabled(context.Background(), slog.LevelDebug) {
+		t.Error("expected debug to be enabled after dynamic level change")
+	}
+}
+
+//nolint:paralleltest // modifies package-level logLevelVar
+func TestHandleReloadLogLevel(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	policyDir := filepath.Join(dir, "policies")
+
+	err := os.Mkdir(policyDir, 0o750)
+	if err != nil {
+		t.Fatalf("creating policy dir: %v", err)
+	}
+
+	// Start with info level.
+	updateLogLevel(logLevelInfo)
+
+	// Write config with debug log level.
+	data := "verification = \"warn\"\npolicy_dir = \"" + policyDir + "\"\nlog_level = \"debug\"\n"
+
+	err = os.WriteFile(configPath, []byte(data), 0o600)
+	if err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	cfg, err := config.LoadFromFile(configPath)
+	if err != nil {
+		t.Fatalf("loading config: %v", err)
+	}
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	if err != nil {
+		t.Fatalf("creating verifier: %v", err)
+	}
+
+	handleReload(context.Background(), configPath, verif, nil)
+
+	if logLevelVar.Level() != slog.LevelDebug {
+		t.Errorf("expected log level DEBUG after reload, got %v", logLevelVar.Level())
+	}
+}
+
+//nolint:paralleltest // modifies package-level logLevelVar
+func TestHandleReloadNoLogLevel(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	policyDir := filepath.Join(dir, "policies")
+
+	err := os.Mkdir(policyDir, 0o750)
+	if err != nil {
+		t.Fatalf("creating policy dir: %v", err)
+	}
+
+	// Set an explicit debug level.
+	updateLogLevel(logLevelDebug)
+
+	// Write config without log_level field.
+	writeTestConfig(t, configPath, policyDir, "warn")
+
+	cfg, err := config.LoadFromFile(configPath)
+	if err != nil {
+		t.Fatalf("loading config: %v", err)
+	}
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	if err != nil {
+		t.Fatalf("creating verifier: %v", err)
+	}
+
+	handleReload(context.Background(), configPath, verif, nil)
+
+	// Without log_level in config, the level should remain unchanged.
+	if logLevelVar.Level() != slog.LevelDebug {
+		t.Errorf("expected log level to remain DEBUG, got %v", logLevelVar.Level())
 	}
 }

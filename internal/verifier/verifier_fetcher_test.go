@@ -27,13 +27,14 @@ import (
 	"time"
 
 	openvex "github.com/openvex/go-vex/pkg/vex"
-	"github.com/prometheus/client_golang/prometheus/testutil"
+	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/slsa"
+	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 	"github.com/saschagrunert/nri-supply-chain/internal/vsa"
 )
@@ -593,7 +594,7 @@ func TestVerifyWithFetcher(t *testing.T) {
 			}
 
 			verif, err := verifier.New(cfg, metrics.New(), fetcher)
-			assertNoError(t, err)
+			testutil.AssertNoError(t, err)
 
 			result, err := verif.Verify(
 				context.Background(), "nginx:latest", testFetchDigest, testDefaultNamespace,
@@ -607,7 +608,7 @@ func TestVerifyWithFetcher(t *testing.T) {
 				return
 			}
 
-			assertNoError(t, err)
+			testutil.AssertNoError(t, err)
 
 			if result.Allowed != test.wantAllowed {
 				t.Errorf("expected allowed=%v, got allowed=%v (reason: %s)",
@@ -651,7 +652,7 @@ func TestVerifyCacheFailureTTL(t *testing.T) {
 	cfg.CacheFailureTTL = config.Duration{Duration: 10 * time.Millisecond}
 
 	verif, err := verifier.New(cfg, metrics.New(), nil)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	// First call: provenance missing with deny policy triggers a failure result.
 	// In warn mode it's allowed, but the underlying result has failures,
@@ -659,7 +660,7 @@ func TestVerifyCacheFailureTTL(t *testing.T) {
 	result1, err := verif.Verify(
 		context.Background(), "nginx:latest", "sha256:failttl", "default",
 	)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	if !result1.Allowed {
 		t.Fatal("expected allowed=true in warn mode")
@@ -673,7 +674,7 @@ func TestVerifyCacheFailureTTL(t *testing.T) {
 	result2, err := verif.Verify(
 		context.Background(), "nginx:latest", "sha256:failttl", "default",
 	)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	if !result2.Allowed {
 		t.Fatal("expected allowed=true in warn mode on second call")
@@ -727,7 +728,7 @@ func TestVerifyConcurrentSameDigest(t *testing.T) {
 	cfg.CacheTTL = config.Duration{Duration: 0}
 
 	ver, err := verifier.New(cfg, metrics.New(), fetcher)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	const goroutines = 10
 
@@ -771,7 +772,7 @@ func TestVerifyCircuitBreakerIntegration(t *testing.T) {
 	cfg.CircuitBreakerCooldown = config.Duration{Duration: 100 * time.Millisecond}
 
 	ver, err := verifier.New(cfg, metrics.New(), fetcher)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	imageRef := testDockerNginx
 	digest := "sha256:" + strings.Repeat("b", 64)
@@ -782,7 +783,7 @@ func TestVerifyCircuitBreakerIntegration(t *testing.T) {
 		result, verifyErr := ver.Verify(
 			context.Background(), imageRef, digest, namespace,
 		)
-		assertNoError(t, verifyErr)
+		testutil.AssertNoError(t, verifyErr)
 
 		if !result.Allowed {
 			t.Errorf("call %d: expected allowed=true in warn mode, got false", call+1)
@@ -797,7 +798,7 @@ func TestVerifyCircuitBreakerIntegration(t *testing.T) {
 	result, err := ver.Verify(
 		context.Background(), imageRef, digest, namespace,
 	)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	if !result.Allowed {
 		t.Error("expected allowed=true in warn mode with open breaker")
@@ -817,7 +818,7 @@ func TestVerifyCircuitBreakerIntegration(t *testing.T) {
 	_, err = ver.Verify(
 		context.Background(), imageRef, digest, namespace,
 	)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	if got := fetcher.calls.Load(); got != 4 {
 		t.Errorf("expected 1 probe call after cooldown, got %d total", got)
@@ -842,7 +843,7 @@ func TestVerifyCircuitBreakerMetric(t *testing.T) {
 	cfg.CircuitBreakerCooldown = config.Duration{Duration: 100 * time.Millisecond}
 
 	ver, err := verifier.New(cfg, met, fetcher)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	imageRef := testDockerNginx
 	namespace := testDefaultNamespace
@@ -852,11 +853,11 @@ func TestVerifyCircuitBreakerMetric(t *testing.T) {
 		digest := "sha256:" + strings.Repeat(string("0123456789abcdef"[call%16]), 64)
 
 		_, err := ver.Verify(context.Background(), imageRef, digest, namespace)
-		assertNoError(t, err)
+		testutil.AssertNoError(t, err)
 	}
 
 	// Verify the circuit breaker trips metric was incremented.
-	tripCount := testutil.ToFloat64(met.CircuitBreakerTripsTotal)
+	tripCount := promtestutil.ToFloat64(met.CircuitBreakerTripsTotal)
 	if tripCount < 1 {
 		t.Errorf("expected circuit breaker trips metric >= 1, got %v", tripCount)
 	}
@@ -865,7 +866,7 @@ func TestVerifyCircuitBreakerMetric(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("c", 64)
 
 	result, err := ver.Verify(context.Background(), imageRef, digest, namespace)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	if !result.Allowed {
 		t.Error("expected allowed=true in warn mode with open breaker")
@@ -885,7 +886,7 @@ func TestVerifyCircuitBreakerMetric(t *testing.T) {
 	digest = "sha256:" + strings.Repeat("d", 64)
 
 	_, err = ver.Verify(context.Background(), imageRef, digest, namespace)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	if got := fetcher.calls.Load(); got != 3 {
 		t.Errorf("expected 1 probe call after cooldown, got %d total", got)
@@ -909,7 +910,7 @@ func TestVerifyConcurrentWithReloadModeSwitch(t *testing.T) {
 	cfg.CacheTTL = config.Duration{Duration: 0}
 
 	ver, err := verifier.New(cfg, metrics.New(), fetcher)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	const (
 		numVerifiers = 20
@@ -973,7 +974,7 @@ func TestVerifyConcurrentWithReload(t *testing.T) {
 	cfg.CacheTTL = config.Duration{Duration: 0}
 
 	ver, err := verifier.New(cfg, metrics.New(), fetcher)
-	assertNoError(t, err)
+	testutil.AssertNoError(t, err)
 
 	const (
 		verifiers = 20

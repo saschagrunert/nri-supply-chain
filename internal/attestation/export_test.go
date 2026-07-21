@@ -127,12 +127,6 @@ func (f *OCIFetcher) CollectAttestations(
 	return f.collectAttestations(ctx, manifests, ref, digest, remoteOpts, opts)
 }
 
-// NewOCIFetcherWithCache creates a fetcher using the real trusted root cache
-// and closure-based verification, for testing the cache integration path.
-func NewOCIFetcherWithCache() *OCIFetcher {
-	return NewOCIFetcher()
-}
-
 // TrustedRootFetchFunc is the type alias for trustedRootFetchFunc.
 type TrustedRootFetchFunc = trustedRootFetchFunc
 
@@ -142,11 +136,12 @@ type TrustedRootCacheForTest = trustedRootCache
 // NewTestTrustedRootCache creates a trustedRootCache with an injectable fetch function for testing.
 func NewTestTrustedRootCache(fetchFn TrustedRootFetchFunc) *trustedRootCache {
 	return &trustedRootCache{
-		mu:        sync.RWMutex{},
-		root:      nil,
-		fetchedAt: time.Time{},
-		fetchRoot: fetchFn,
-		inflight:  singleflight.Group{},
+		mu:         sync.RWMutex{},
+		root:       nil,
+		fetchedAt:  time.Time{},
+		fetchRoot:  fetchFn,
+		inflight:   singleflight.Group{},
+		onStaleHit: nil,
 	}
 }
 
@@ -155,11 +150,12 @@ func NewTestTrustedRootCacheWithRoot(
 	fetchFn TrustedRootFetchFunc, cachedRoot *root.TrustedRoot, fetchedAt time.Time,
 ) *trustedRootCache {
 	return &trustedRootCache{
-		mu:        sync.RWMutex{},
-		root:      cachedRoot,
-		fetchedAt: fetchedAt,
-		fetchRoot: fetchFn,
-		inflight:  singleflight.Group{},
+		mu:         sync.RWMutex{},
+		root:       cachedRoot,
+		fetchedAt:  fetchedAt,
+		fetchRoot:  fetchFn,
+		inflight:   singleflight.Group{},
+		onStaleHit: nil,
 	}
 }
 
@@ -173,15 +169,6 @@ func ExportTrustedRootCacheTTL() time.Duration { return trustedRootCacheTTL }
 
 // ExportTrustedRootMaxStaleness returns the max staleness for testing.
 func ExportTrustedRootMaxStaleness() time.Duration { return trustedRootMaxStaleness }
-
-// ExportVerifyBundleWithCacheNil exposes verifyBundleWithCache with a nil cache
-// for testing the uncached keyless path.
-func ExportVerifyBundleWithCacheNil(
-	ctx context.Context, bundleBytes []byte,
-	opts *FetchOptions,
-) ([]byte, error) {
-	return verifyBundleWithCache(ctx, bundleBytes, opts, nil)
-}
 
 // NewTestOCIFetcher creates a fetcher with injectable dependencies for testing.
 func NewTestOCIFetcher(verifier BundleVerifyFunc, imageFetcher ImageFetchFunc) *OCIFetcher {
