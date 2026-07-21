@@ -15,7 +15,7 @@ data:
     fetch_failure_policy = "warn"
     cache_ttl = "24h"
     policy_dir = "/etc/nri-supply-chain/policies"
-    metrics_addr = "0.0.0.0:9090"
+    metrics_addr = "127.0.0.1:9090"
     circuit_breaker_threshold = 5
     circuit_breaker_cooldown = "30s"
   default.json: |
@@ -68,15 +68,15 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: nri-supply-chain
-          # Pin a specific image version for production instead of using
-          # "latest", for example:
+          # Pin a specific image version for production. Prefer digest
+          # references for immutability, for example:
+          # image: ghcr.io/saschagrunert/nri-supply-chain@sha256:<digest>
+          # Or use a version tag:
           # image: ghcr.io/saschagrunert/nri-supply-chain:v0.1.0
           image: ghcr.io/saschagrunert/nri-supply-chain:latest
           args:
             - --config
             - /etc/nri-supply-chain/config.toml
-            - --metrics-addr
-            - "0.0.0.0:9090"
           ports:
             - name: metrics
               containerPort: 9090

@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/containerd/nri/pkg/api"
 	"github.com/containerd/nri/pkg/stub"
@@ -36,7 +37,10 @@ import (
 // ErrMissingAnnotations indicates that required CRI-O image annotations are absent.
 var ErrMissingAnnotations = errors.New("missing image annotations")
 
-const prewarmConcurrency = 5
+const (
+	prewarmConcurrency = 5
+	prewarmTimeout     = 5 * time.Minute
+)
 
 type prewarmImage struct {
 	imageRef  string
@@ -235,6 +239,9 @@ func (p *Plugin) CreateContainer(
 }
 
 func (p *Plugin) prewarmCache(ctx context.Context, images []prewarmImage) {
+	ctx, cancel := context.WithTimeout(ctx, prewarmTimeout)
+	defer cancel()
+
 	total := len(images)
 	slog.Info("Pre-warming cache", "images", total)
 

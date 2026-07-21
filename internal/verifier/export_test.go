@@ -32,11 +32,6 @@ func ExportHandleMissingAttestation(
 	return handleMissingAttestation(pol, checkType, detail)
 }
 
-// ExportWarnEnforceDefaults exposes warnEnforceDefaults for external tests.
-func ExportWarnEnforceDefaults(cfg *config.Config, policies map[string]*policy.Policy) {
-	warnEnforceDefaults(cfg, policies)
-}
-
 // ExportResultHasFailures exposes resultHasFailures for external tests.
 func ExportResultHasFailures(result *types.Result) bool {
 	return resultHasFailures(result)

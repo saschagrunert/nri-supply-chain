@@ -776,8 +776,13 @@ func verifyBundleWithCache(
 		return nil, fmt.Errorf("creating sigstore verifier: %w", err)
 	}
 
+	artPolicy, artErr := artifactPolicy(opts.Digest)
+	if artErr != nil {
+		return nil, fmt.Errorf("artifact policy: %w", artErr)
+	}
+
 	pol := verify.NewPolicy(
-		artifactPolicy(opts.Digest),
+		artPolicy,
 		policyOpts...,
 	)
 
@@ -1025,29 +1030,24 @@ func extractVerifiedPayload(bndl *bundle.Bundle) ([]byte, error) {
 	return payload, nil
 }
 
-func artifactPolicy(digest string) verify.ArtifactPolicyOption {
+var errMalformedDigest = errors.New("malformed digest")
+
+func artifactPolicy(digest string) (verify.ArtifactPolicyOption, error) {
+	if digest == "" {
+		return verify.WithoutArtifactUnsafe(), nil
+	}
+
 	algo, hashHex := types.ParseDigest(digest)
 	if algo == "" {
-		if digest != "" {
-			slog.Warn("Malformed digest, skipping artifact binding",
-				"digest", digest,
-			)
-		}
-
-		return verify.WithoutArtifactUnsafe()
+		return nil, fmt.Errorf("%w: %q", errMalformedDigest, digest)
 	}
 
 	hashBytes, err := hex.DecodeString(hashHex)
 	if err != nil {
-		slog.Warn("Digest hex decode failed, skipping artifact binding",
-			"digest", digest,
-			"error", err,
-		)
-
-		return verify.WithoutArtifactUnsafe()
+		return nil, fmt.Errorf("%w: %q: %w", errMalformedDigest, digest, err)
 	}
 
-	return verify.WithArtifactDigest(algo, hashBytes)
+	return verify.WithArtifactDigest(algo, hashBytes), nil
 }
 
 // globToRegex converts a glob pattern to a regex string, consistent with

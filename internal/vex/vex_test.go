@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	openvex "github.com/openvex/go-vex/pkg/vex"
@@ -30,6 +31,7 @@ import (
 const (
 	testImageRef      = "docker.io/library/nginx:latest"
 	testDigest        = "sha256:abc123def456"
+	testDigestAlgo    = "sha256"
 	testVEXContext    = "https://openvex.dev/ns/v0.2.0"
 	testInTotoType    = "https://in-toto.io/Statement/v1"
 	testPredicateType = "https://openvex.dev/ns"
@@ -77,7 +79,7 @@ func wrapInToto(t *testing.T, doc any, digest string) []byte {
 		Subject: []inTotoSubj{
 			{
 				Name:   "test-image",
-				Digest: map[string]string{"sha256": digest[len("sha256:"):]},
+				Digest: map[string]string{testDigestAlgo: digest[len(testDigestAlgo)+1:]},
 			},
 		},
 		PredicateType: testPredicateType,
@@ -287,6 +289,469 @@ func TestVerify(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestVerifyMalformedPayloads(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty payload", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := vex.Verify(
+			context.Background(), []byte{},
+			&policy.Policy{}, testImageRef, testDigest,
+		)
+
+		if !errors.Is(err, vex.ErrInvalidVEX) {
+			t.Errorf("expected ErrInvalidVEX, got %v", err)
+		}
+	})
+
+	t.Run("nil payload", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := vex.Verify(
+			context.Background(), nil,
+			&policy.Policy{}, testImageRef, testDigest,
+		)
+
+		if !errors.Is(err, vex.ErrInvalidVEX) {
+			t.Errorf("expected ErrInvalidVEX, got %v", err)
+		}
+	})
+
+	t.Run("truncated JSON", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := vex.Verify(
+			context.Background(), []byte(`{"subject":[`),
+			&policy.Policy{}, testImageRef, testDigest,
+		)
+
+		if !errors.Is(err, vex.ErrInvalidVEX) {
+			t.Errorf("expected ErrInvalidVEX, got %v", err)
+		}
+	})
+
+	t.Run("empty JSON object with digest triggers empty subjects", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := vex.Verify(
+			context.Background(), []byte("{}"),
+			&policy.Policy{}, testImageRef, testDigest,
+		)
+
+		if !errors.Is(err, vex.ErrEmptySubjects) {
+			t.Errorf("expected ErrEmptySubjects, got %v", err)
+		}
+	})
+
+	t.Run("empty JSON object without digest skips subject check", func(t *testing.T) {
+		t.Parallel()
+
+		result, err := vex.Verify(
+			context.Background(), []byte("{}"),
+			&policy.Policy{}, testImageRef, "",
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if !result.Passed {
+			t.Errorf("expected pass with empty doc and no digest, got: %s", result.Detail)
+		}
+	})
+
+	t.Run("predicate is not embedded uses full attestation", func(t *testing.T) {
+		t.Parallel()
+
+		doc := validVEXDoc(openvex.StatusFixed)
+		att := mustMarshal(t, doc)
+
+		result, err := vex.Verify(
+			context.Background(), att,
+			&policy.Policy{}, testImageRef, "",
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if !result.Passed {
+			t.Errorf("expected pass for standalone VEX doc, got: %s", result.Detail)
+		}
+	})
+}
+
+func TestVerifySubjectEdgeCases(t *testing.T) {
+	t.Parallel()
+
+	t.Run("subject with invalid digest format", func(t *testing.T) {
+		t.Parallel()
+
+		doc := validVEXDoc(openvex.StatusNotAffected)
+		att := wrapInToto(t, doc, testDigest)
+
+		_, err := vex.Verify(
+			context.Background(), att,
+			&policy.Policy{}, testImageRef, "nocolon",
+		)
+
+		if !errors.Is(err, vex.ErrSubjectMismatch) {
+			t.Errorf("expected ErrSubjectMismatch for invalid digest format, got %v", err)
+		}
+	})
+
+	t.Run("multiple subjects with one matching", func(t *testing.T) {
+		t.Parallel()
+
+		doc := validVEXDoc(openvex.StatusNotAffected)
+		predBytes := mustMarshal(t, doc)
+
+		wrapper := inTotoWrapper{
+			Type: testInTotoType,
+			Subject: []inTotoSubj{
+				{
+					Name:   "other-image",
+					Digest: map[string]string{testDigestAlgo: "000000"},
+				},
+				{
+					Name:   "test-image",
+					Digest: map[string]string{testDigestAlgo: testDigest[len(testDigestAlgo)+1:]},
+				},
+			},
+			PredicateType: testPredicateType,
+			Predicate:     predBytes,
+		}
+
+		att := mustMarshal(t, wrapper)
+
+		result, err := vex.Verify(
+			context.Background(), att,
+			&policy.Policy{}, testImageRef, testDigest,
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if !result.Passed {
+			t.Errorf("expected pass with one matching subject, got: %s", result.Detail)
+		}
+	})
+
+	t.Run("multiple subjects none matching", func(t *testing.T) {
+		t.Parallel()
+
+		doc := validVEXDoc(openvex.StatusNotAffected)
+		predBytes := mustMarshal(t, doc)
+
+		wrapper := inTotoWrapper{
+			Type: testInTotoType,
+			Subject: []inTotoSubj{
+				{
+					Name:   "image-a",
+					Digest: map[string]string{testDigestAlgo: "aaa111"},
+				},
+				{
+					Name:   "image-b",
+					Digest: map[string]string{testDigestAlgo: "bbb222"},
+				},
+			},
+			PredicateType: testPredicateType,
+			Predicate:     predBytes,
+		}
+
+		att := mustMarshal(t, wrapper)
+
+		_, err := vex.Verify(
+			context.Background(), att,
+			&policy.Policy{}, testImageRef, testDigest,
+		)
+
+		if !errors.Is(err, vex.ErrSubjectMismatch) {
+			t.Errorf("expected ErrSubjectMismatch, got %v", err)
+		}
+	})
+}
+
+// multiStatusVEXDoc builds a VEX document containing statements with the given
+// statuses. Each statement gets a unique CVE name and targets testDigest.
+func multiStatusVEXDoc(statuses ...openvex.Status) openvex.VEX {
+	stmts := make([]openvex.Statement, 0, len(statuses))
+
+	for idx, status := range statuses {
+		stmts = append(stmts, openvex.Statement{
+			Vulnerability: openvex.Vulnerability{
+				Name: openvex.VulnerabilityID(
+					fmt.Sprintf("CVE-2024-%04d", idx),
+				),
+			},
+			Products: []openvex.Product{
+				{Component: openvex.Component{ID: testDigest}},
+			},
+			Status: status,
+		})
+	}
+
+	return openvex.VEX{
+		Metadata: openvex.Metadata{
+			Context: testVEXContext,
+			ID:      "https://openvex.dev/docs/example/vex-multi-status",
+		},
+		Statements: stmts,
+	}
+}
+
+func TestVerifyStatementEdgeCases(t *testing.T) {
+	t.Parallel()
+
+	t.Run("vulnerability without name shows unknown", func(t *testing.T) {
+		t.Parallel()
+
+		doc := openvex.VEX{
+			Metadata: openvex.Metadata{
+				Context: testVEXContext,
+				ID:      "https://openvex.dev/docs/example/vex-noname",
+			},
+			Statements: []openvex.Statement{
+				{
+					Vulnerability: openvex.Vulnerability{},
+					Products: []openvex.Product{
+						{Component: openvex.Component{ID: testDigest}},
+					},
+					Status: openvex.StatusAffected,
+				},
+			},
+		}
+
+		att := wrapInToto(t, doc, testDigest)
+
+		result, err := vex.Verify(
+			context.Background(), att,
+			&policy.Policy{}, testImageRef, testDigest,
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.Passed {
+			t.Error("expected fail for affected status")
+		}
+
+		if result.Status != types.StatusFail {
+			t.Errorf("expected fail status, got %q", result.Status)
+		}
+	})
+
+	t.Run("mixed statuses with affected takes priority", func(t *testing.T) {
+		t.Parallel()
+
+		doc := multiStatusVEXDoc(openvex.StatusNotAffected, openvex.StatusAffected)
+		att := wrapInToto(t, doc, testDigest)
+
+		result, err := vex.Verify(
+			context.Background(), att,
+			&policy.Policy{}, testImageRef, testDigest,
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.Passed {
+			t.Error("expected fail when any statement is affected")
+		}
+	})
+
+	t.Run("affected takes priority over under investigation", func(t *testing.T) {
+		t.Parallel()
+
+		doc := multiStatusVEXDoc(openvex.StatusUnderInvestigation, openvex.StatusAffected)
+		att := wrapInToto(t, doc, testDigest)
+
+		result, err := vex.Verify(
+			context.Background(), att,
+			&policy.Policy{}, testImageRef, testDigest,
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.Passed {
+			t.Error("expected fail: affected should take priority over under_investigation")
+		}
+
+		if result.Status != types.StatusFail {
+			t.Errorf("expected fail status, got %q", result.Status)
+		}
+	})
+
+	t.Run("under investigation with unknown policy action defaults allow", func(t *testing.T) {
+		t.Parallel()
+
+		doc := validVEXDoc(openvex.StatusUnderInvestigation)
+		att := wrapInToto(t, doc, testDigest)
+
+		result, err := vex.Verify(
+			context.Background(), att,
+			&policy.Policy{
+				VEX: &policy.VEXPolicy{UnderInvestigationPolicy: "unknown_action"},
+			},
+			testImageRef, testDigest,
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if !result.Passed {
+			t.Errorf("expected pass for unknown action (defaults to allow), got: %s", result.Detail)
+		}
+	})
+
+	t.Run("multiple affected vulnerabilities", func(t *testing.T) {
+		t.Parallel()
+
+		doc := multiStatusVEXDoc(openvex.StatusAffected, openvex.StatusAffected)
+		att := wrapInToto(t, doc, testDigest)
+
+		result, err := vex.Verify(
+			context.Background(), att,
+			&policy.Policy{}, testImageRef, testDigest,
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.Passed {
+			t.Error("expected fail for multiple affected vulnerabilities")
+		}
+	})
+}
+
+func TestVerifyMultipleEdgeCases(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil attestation slice", func(t *testing.T) {
+		t.Parallel()
+
+		result, err := vex.VerifyMultiple(
+			context.Background(), nil,
+			&policy.Policy{}, testImageRef, testDigest,
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if !result.Passed {
+			t.Errorf("expected pass for nil attestation slice, got: %s", result.Detail)
+		}
+	})
+
+	t.Run("all invalid returns fail with parse errors", func(t *testing.T) {
+		t.Parallel()
+
+		attestations := [][]byte{
+			[]byte("bad json 1"),
+			[]byte("bad json 2"),
+			[]byte("bad json 3"),
+		}
+
+		result, err := vex.VerifyMultiple(
+			context.Background(), attestations,
+			&policy.Policy{}, testImageRef, testDigest,
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.Passed {
+			t.Error("expected fail when all documents are invalid")
+		}
+
+		if result.Status != types.StatusFail {
+			t.Errorf("expected fail status, got %q", result.Status)
+		}
+	})
+
+	t.Run("under investigation across multiple docs", func(t *testing.T) {
+		t.Parallel()
+
+		docs := []openvex.VEX{
+			validVEXDoc(openvex.StatusNotAffected),
+			validVEXDoc(openvex.StatusUnderInvestigation),
+		}
+
+		attestations := make([][]byte, len(docs))
+		for idx := range docs {
+			attestations[idx] = wrapInToto(t, docs[idx], testDigest)
+		}
+
+		result, err := vex.VerifyMultiple(
+			context.Background(), attestations,
+			&policy.Policy{
+				VEX: &policy.VEXPolicy{UnderInvestigationPolicy: policy.ActionWarn},
+			},
+			testImageRef, testDigest,
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if !result.Passed {
+			t.Errorf("expected pass (warn) for under investigation, got: %s", result.Detail)
+		}
+
+		if result.Status != types.StatusWarn {
+			t.Errorf("expected warn status, got %q", result.Status)
+		}
+	})
+
+	t.Run("affected in any doc causes failure", func(t *testing.T) {
+		t.Parallel()
+
+		docs := []openvex.VEX{
+			validVEXDoc(openvex.StatusFixed),
+			validVEXDoc(openvex.StatusAffected),
+			validVEXDoc(openvex.StatusNotAffected),
+		}
+
+		attestations := make([][]byte, len(docs))
+		for idx := range docs {
+			attestations[idx] = wrapInToto(t, docs[idx], testDigest)
+		}
+
+		result, err := vex.VerifyMultiple(
+			context.Background(), attestations,
+			&policy.Policy{}, testImageRef, testDigest,
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.Passed {
+			t.Error("expected fail when any doc has affected status")
+		}
+	})
+
+	t.Run("mix of valid and invalid with valid passing", func(t *testing.T) {
+		t.Parallel()
+
+		attestations := [][]byte{
+			[]byte("invalid 1"),
+			wrapInToto(t, validVEXDoc(openvex.StatusFixed), testDigest),
+			[]byte("invalid 2"),
+		}
+
+		result, err := vex.VerifyMultiple(
+			context.Background(), attestations,
+			&policy.Policy{}, testImageRef, testDigest,
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if !result.Passed {
+			t.Errorf("expected pass when at least one valid doc passes, got: %s", result.Detail)
+		}
+	})
 }
 
 func TestVerifyInvalidJSON(t *testing.T) {

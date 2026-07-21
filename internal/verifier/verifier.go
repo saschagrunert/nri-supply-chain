@@ -132,15 +132,15 @@ func New(cfg *config.Config, met *metrics.Metrics, fetcher attestation.Fetcher) 
 		verif.policies = policies
 		verif.policyHashes = hashes
 
-		warnEnforceDefaults(&cfgCopy, policies)
+		WarnEnforceDefaults(&cfgCopy, policies)
 	}
 
 	return verif, nil
 }
 
-// warnEnforceDefaults logs warnings when enforce mode is used with default
+// WarnEnforceDefaults logs warnings when enforce mode is used with default
 // permissive settings that may allow unverified containers through.
-func warnEnforceDefaults(cfg *config.Config, policies map[string]*policy.Policy) {
+func WarnEnforceDefaults(cfg *config.Config, policies map[string]*policy.Policy) {
 	if cfg.Verification != config.ModeEnforce {
 		return
 	}
@@ -262,6 +262,7 @@ func (v *Verifier) Verify(
 		}
 
 		logResult(ctx, state.auditLogger, imageRef, digest, namespace, cached)
+		recordMetrics(state.metrics, cached, namespace)
 
 		enforced, err := applyEnforcement(ctx, state.config, cached, imageRef)
 

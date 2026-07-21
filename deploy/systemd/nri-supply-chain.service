@@ -16,6 +16,7 @@ ProtectHome=true
 ReadWritePaths=/var/run/nri
 ReadOnlyPaths=/etc/nri-supply-chain
 PrivateTmp=true
+PrivateDevices=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
@@ -25,6 +26,8 @@ LockPersonality=true
 RestrictNamespaces=true
 RestrictRealtime=true
 SystemCallArchitectures=native
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
 
 [Install]
 WantedBy=multi-user.target

@@ -128,7 +128,7 @@ func recordBreakerFailure(
 	ctx context.Context,
 	breaker *attestation.CircuitBreaker,
 	met *metrics.Metrics,
-	imageRef string,
+	host string,
 	fetchFailurePolicy policy.Action,
 ) {
 	if breaker == nil {
@@ -136,23 +136,23 @@ func recordBreakerFailure(
 	}
 
 	if tripped := breaker.RecordFailure(); tripped {
-		met.CircuitBreakerTripsTotal.WithLabelValues(registryHost(imageRef)).Inc()
+		met.CircuitBreakerTripsTotal.WithLabelValues(host).Inc()
 		slog.WarnContext(ctx, "Circuit breaker opened after repeated fetch failures, "+
 			"subsequent requests will use the configured fetch_failure_policy",
-			"registry", registryHost(imageRef),
+			"registry", host,
 			"fetch_failure_policy", fetchFailurePolicy,
 		)
 	}
 }
 
-func registryBreaker(
-	registry *attestation.CircuitBreakerRegistry, imageRef string,
+func registryBreakerByHost(
+	registry *attestation.CircuitBreakerRegistry, host string,
 ) *attestation.CircuitBreaker {
 	if registry == nil {
 		return nil
 	}
 
-	return registry.Get(registryHost(imageRef))
+	return registry.Get(host)
 }
 
 func buildDigestRef(imageRef, digest string) string {
