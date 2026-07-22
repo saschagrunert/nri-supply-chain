@@ -247,13 +247,14 @@ func TestCollectAttestations(t *testing.T) {
 	}
 
 	tests := []struct {
-		name           string
-		manifests      []ociV1.Descriptor
-		imageFetch     attestation.ImageFetchFunc
-		verifyFunc     attestation.BundleVerifyFunc
-		cancelCtx      bool
-		wantCount      int
-		wantHadBundles bool
+		name              string
+		manifests         []ociV1.Descriptor
+		imageFetch        attestation.ImageFetchFunc
+		verifyFunc        attestation.BundleVerifyFunc
+		cancelCtx         bool
+		wantCount         int
+		wantHadBundles    bool
+		wantPredicateType string
 	}{
 		{
 			name:      "canceled context returns empty",
@@ -267,8 +268,9 @@ func TestCollectAttestations(t *testing.T) {
 			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return nil, nil
 			},
-			wantCount:      0,
-			wantHadBundles: false,
+			wantCount:         0,
+			wantHadBundles:    false,
+			wantPredicateType: "",
 		},
 		{
 			name:      "empty manifests",
@@ -279,9 +281,10 @@ func TestCollectAttestations(t *testing.T) {
 			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return nil, nil
 			},
-			cancelCtx:      false,
-			wantCount:      0,
-			wantHadBundles: false,
+			cancelCtx:         false,
+			wantCount:         0,
+			wantHadBundles:    false,
+			wantPredicateType: "",
 		},
 		{
 			name: "non-bundle artifact type skipped",
@@ -294,9 +297,60 @@ func TestCollectAttestations(t *testing.T) {
 			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return nil, nil
 			},
-			cancelCtx:      false,
-			wantCount:      0,
-			wantHadBundles: false,
+			cancelCtx:         false,
+			wantCount:         0,
+			wantHadBundles:    false,
+			wantPredicateType: "",
+		},
+		{
+			name: "OCI empty artifact type accepted",
+			manifests: []ociV1.Descriptor{
+				{
+					ArtifactType: attestation.OCIEmptyMediaType,
+					Digest: ociV1.Hash{
+						Algorithm: testHashAlgorithm,
+						Hex:       testHashHex,
+					},
+					Annotations: map[string]string{
+						attestation.AnnotationPredicateType: attestation.PredicateSLSAProvenanceV1,
+					},
+				},
+			},
+			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+				return fakeImageWithPayload([]byte(`{"bundle": "ok"}`)), nil
+			},
+			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
+				return []byte(`{"slsa": true}`), nil
+			},
+			cancelCtx:         false,
+			wantCount:         1,
+			wantHadBundles:    true,
+			wantPredicateType: "",
+		},
+		{
+			name: "empty artifact type accepted",
+			manifests: []ociV1.Descriptor{
+				{
+					ArtifactType: "",
+					Digest: ociV1.Hash{
+						Algorithm: testHashAlgorithm,
+						Hex:       testHashHex,
+					},
+					Annotations: map[string]string{
+						attestation.AnnotationPredicateType: attestation.PredicateSLSAProvenanceV1,
+					},
+				},
+			},
+			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+				return fakeImageWithPayload([]byte(`{"bundle": "ok"}`)), nil
+			},
+			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
+				return []byte(`{"slsa": true}`), nil
+			},
+			cancelCtx:         false,
+			wantCount:         1,
+			wantHadBundles:    true,
+			wantPredicateType: "",
 		},
 		{
 			name: "missing predicate annotation skipped",
@@ -315,9 +369,10 @@ func TestCollectAttestations(t *testing.T) {
 			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return nil, nil
 			},
-			cancelCtx:      false,
-			wantCount:      0,
-			wantHadBundles: true,
+			cancelCtx:         false,
+			wantCount:         0,
+			wantHadBundles:    true,
+			wantPredicateType: "",
 		},
 		{
 			name: "predicate type resolved from manifest annotations",
@@ -340,9 +395,40 @@ func TestCollectAttestations(t *testing.T) {
 			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return []byte(`{"slsa": true}`), nil
 			},
-			cancelCtx:      false,
-			wantCount:      1,
-			wantHadBundles: true,
+			cancelCtx:         false,
+			wantCount:         1,
+			wantHadBundles:    true,
+			wantPredicateType: "",
+		},
+		{
+			name: "predicate type extracted from payload when annotation is generic",
+			manifests: []ociV1.Descriptor{
+				{
+					ArtifactType: attestation.OCIEmptyMediaType,
+					Digest: ociV1.Hash{
+						Algorithm: testHashAlgorithm,
+						Hex:       testHashHex,
+					},
+				},
+			},
+			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+				annot := map[string]string{
+					attestation.AnnotationPredicateType: "https://sigstore.dev/cosign/sign/v1",
+				}
+
+				return fakeImageWithAnnotations([]byte(`{"bundle": "ok"}`), annot), nil
+			},
+			verifyFunc: func(
+				_ context.Context, _ []byte, _ *attestation.FetchOptions,
+			) ([]byte, error) {
+				return []byte(
+					`{"predicateType":"` + attestation.PredicateSLSAProvenanceV1 + `"}`,
+				), nil
+			},
+			cancelCtx:         false,
+			wantCount:         1,
+			wantHadBundles:    true,
+			wantPredicateType: attestation.PredicateSLSAProvenanceV1,
 		},
 		{
 			name: "successful extraction",
@@ -355,9 +441,10 @@ func TestCollectAttestations(t *testing.T) {
 			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return []byte(`{"slsa": true}`), nil
 			},
-			cancelCtx:      false,
-			wantCount:      1,
-			wantHadBundles: true,
+			cancelCtx:         false,
+			wantCount:         1,
+			wantHadBundles:    true,
+			wantPredicateType: "",
 		},
 		{
 			name: "multiple attestation types",
@@ -371,9 +458,10 @@ func TestCollectAttestations(t *testing.T) {
 			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return []byte(`{"payload": true}`), nil
 			},
-			cancelCtx:      false,
-			wantCount:      2,
-			wantHadBundles: true,
+			cancelCtx:         false,
+			wantCount:         2,
+			wantHadBundles:    true,
+			wantPredicateType: "",
 		},
 		{
 			name: "extraction failure skipped",
@@ -386,9 +474,10 @@ func TestCollectAttestations(t *testing.T) {
 			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return nil, nil
 			},
-			cancelCtx:      false,
-			wantCount:      0,
-			wantHadBundles: true,
+			cancelCtx:         false,
+			wantCount:         0,
+			wantHadBundles:    true,
+			wantPredicateType: "",
 		},
 		{
 			name: "mixed success and failure",
@@ -411,9 +500,10 @@ func TestCollectAttestations(t *testing.T) {
 			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return []byte(`{"payload": true}`), nil
 			},
-			cancelCtx:      false,
-			wantCount:      1,
-			wantHadBundles: true,
+			cancelCtx:         false,
+			wantCount:         1,
+			wantHadBundles:    true,
+			wantPredicateType: "",
 		},
 	}
 
@@ -442,6 +532,15 @@ func TestCollectAttestations(t *testing.T) {
 
 			if hadBundles != tt.wantHadBundles {
 				t.Errorf("expected hadBundles=%v, got %v", tt.wantHadBundles, hadBundles)
+			}
+
+			if tt.wantPredicateType != "" && len(result) > 0 {
+				if result[0].PredicateType != tt.wantPredicateType {
+					t.Errorf(
+						"expected predicate type %q, got %q",
+						tt.wantPredicateType, result[0].PredicateType,
+					)
+				}
 			}
 		})
 	}

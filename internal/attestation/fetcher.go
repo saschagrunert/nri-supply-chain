@@ -604,7 +604,7 @@ func (f *OCIFetcher) collectAttestations(
 
 		desc := &manifests[idx]
 
-		if desc.ArtifactType != BundleMediaType {
+		if !isBundleCandidate(desc.ArtifactType) {
 			continue
 		}
 
@@ -630,6 +630,15 @@ func (f *OCIFetcher) collectAttestations(
 	}
 
 	return attestations, hadBundles
+}
+
+func isBundleCandidate(artifactType string) bool {
+	switch artifactType {
+	case BundleMediaType, OCIEmptyMediaType, "":
+		return true
+	default:
+		return false
+	}
 }
 
 func (f *OCIFetcher) processDescriptor(
@@ -669,6 +678,10 @@ func (f *OCIFetcher) processDescriptor(
 		)
 
 		return VerifiedAttestation{PredicateType: "", Payload: nil, Digest: ""}, false
+	}
+
+	if payloadPredType := extractPredicateType(payload); payloadPredType != "" {
+		predicateType = payloadPredType
 	}
 
 	return VerifiedAttestation{

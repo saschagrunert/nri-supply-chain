@@ -110,6 +110,10 @@ func run() int {
 		return 1
 	}
 
+	if cfg.LogLevel != "" {
+		updateLogLevel(cfg.LogLevel)
+	}
+
 	if opts.validate {
 		return runValidation(cfg)
 	}
