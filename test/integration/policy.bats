@@ -235,12 +235,12 @@ EOF
 	[[ "$output" == *"maxLevel"* ]]
 }
 
-@test "policy with verifier missing key rejected" {
+@test "policy with keyless verifier without issuers rejected" {
 	mkdir -p "$TEST_DIR/policies"
 	cat >"$TEST_DIR/policies/default.json" <<EOF
 {
     "trust": {
-        "verifiers": [{"id": "https://example.com/v", "key": ""}]
+        "verifiers": [{"id": "https://example.com/v"}]
     }
 }
 EOF
@@ -250,7 +250,7 @@ policy_dir = "$TEST_DIR/policies"
 EOF
 	run_binary --config "$TEST_DIR/config.toml"
 	[[ "$status" -ne 0 ]]
-	[[ "$output" == *"key is required"* ]]
+	[[ "$output" == *"keyless verifier requires trust.issuers"* ]]
 }
 
 @test "policy with relative verifier key path rejected" {

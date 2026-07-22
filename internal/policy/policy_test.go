@@ -133,7 +133,7 @@ func TestPolicyValidateVerifiers(t *testing.T) {
 
 	runValidateTests(t, []validateTest{
 		{
-			name: "verifier without key",
+			name: "keyless verifier without issuers",
 			policy: policy.Policy{
 				Trust: &policy.TrustPolicy{
 					Builders: nil,
@@ -145,7 +145,23 @@ func TestPolicyValidateVerifiers(t *testing.T) {
 				Exclude: nil, SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
 			},
 			wantErr:     true,
-			expectedErr: policy.ErrVerifierKeyRequired,
+			expectedErr: policy.ErrKeylessVerifierRequiresIssuers,
+		},
+		{
+			name: "keyless verifier with issuers",
+			policy: policy.Policy{
+				Trust: &policy.TrustPolicy{
+					Builders: nil,
+					Verifiers: []policy.TrustedVerifier{
+						{ID: testBuilderID},
+					},
+					Issuers: []string{"https://token.actions.githubusercontent.com"},
+					Sources: nil, BuildTypes: nil,
+				},
+				Exclude: nil, SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
+			},
+			wantErr:     false,
+			expectedErr: nil,
 		},
 		{
 			name: "verifier with relative key path",
@@ -163,7 +179,7 @@ func TestPolicyValidateVerifiers(t *testing.T) {
 			expectedErr: policy.ErrVerifierKeyNotAbsolute,
 		},
 		{
-			name: "valid verifier",
+			name: "valid verifier with key",
 			policy: policy.Policy{
 				Trust: &policy.TrustPolicy{
 					Builders: nil,

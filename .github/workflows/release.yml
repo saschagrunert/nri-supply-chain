@@ -85,6 +85,29 @@ jobs:
             --type slsaprovenance1 \
             --yes \
             "${IMAGE}@${DIGEST}"
+      - name: Verify container image before VSA
+        env:
+          IMAGE: ghcr.io/saschagrunert/nri-supply-chain
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p /tmp/verify-policies
+          cat > /tmp/verify-policies/default.json <<EOF
+          {
+            "trust": {
+              "issuers": ["https://token.actions.githubusercontent.com"],
+              "sanPatterns": ["https://github.com/${{ github.repository }}/**"],
+              "sources": ["github.com/${{ github.repository_owner }}/*"]
+            },
+            "slsa": { "missingPolicy": "deny" }
+          }
+          EOF
+          cat > /tmp/verify-config.toml <<EOF
+          verification = "enforce"
+          policy_dir = "/tmp/verify-policies"
+          EOF
+          ./dist/nri-supply-chain_linux_amd64_v1/nri-supply-chain \
+            --config /tmp/verify-config.toml \
+            --verify-image "${IMAGE}:${VERSION}"
       - name: Attest container image VSA
         env:
           IMAGE: ghcr.io/saschagrunert/nri-supply-chain

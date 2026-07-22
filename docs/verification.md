@@ -11,6 +11,7 @@ by the nri-supply-chain plugin.
   - [VEX (Vulnerability Exploitability eXchange)](#vex-vulnerability-exploitability-exchange)
   - [VSA (Verification Summary Attestation)](#vsa-verification-summary-attestation)
   - [Signature Verification](#signature-verification)
+- [Other Standards](#other-standards)
 
 <!-- /toc -->
 
@@ -81,6 +82,18 @@ Latency model:
 
 ## Verification Types
 
+The plugin supports three complementary attestation types that cover different
+aspects of the supply chain:
+
+- **SLSA provenance** answers "who built this artifact and how?" by verifying
+  build provenance against trusted builders and sources.
+- **VEX** answers "is this artifact affected by known vulnerabilities?" by
+  evaluating vulnerability exploitability statements.
+- **VSA** is a meta-attestation that records the outcome of a prior SLSA and
+  VEX verification performed by a trusted verifier. It is not a replacement for
+  SLSA or VEX, but a delegation mechanism: when a trusted VSA with result
+  PASSED exists, the plugin skips re-verifying SLSA and VEX individually.
+
 ### SLSA Provenance
 
 Verifies [SLSA](https://slsa.dev) provenance v1 attestations.
@@ -135,8 +148,11 @@ When multiple VEX documents exist, the most restrictive result wins: any
 ### VSA (Verification Summary Attestation)
 
 Verifies [SLSA VSA](https://slsa.dev/spec/v1.0/verification_summary) v1
-attestations. Checks verifier trust, verification result, build level,
-resource URI, SLSA version, policy match, and freshness. See
+attestations. A VSA records the outcome of a prior SLSA and VEX verification
+performed by a trusted verifier. Because the verifier has already checked
+provenance and vulnerability status, a trusted PASSED VSA allows the plugin to
+skip those checks entirely. Checks verifier trust, verification result, build
+level, resource URI, SLSA version, policy match, and freshness. See
 [policy.md](policy.md#vsa-object) for the full field reference.
 
 VSA-first logic:
@@ -151,3 +167,21 @@ VSA-first logic:
 The plugin supports keyless (Fulcio/OIDC) and key-based (PEM public key)
 verification modes, which can be used independently or together. See
 [policy.md](policy.md#signature-verification) for configuration details.
+
+## Other Standards
+
+The supply chain ecosystem includes several related formats and frameworks
+that the plugin does not currently support:
+
+- **[CycloneDX VEX](https://cyclonedx.org/capabilities/vex/)**: an alternative
+  VEX format. The plugin currently supports OpenVEX only.
+- **[SARIF](https://sarifweb.azurewebsites.net/)** (Static Analysis Results
+  Interchange Format): a standardized format for security scanner results that
+  could complement VEX by providing detailed finding data.
+- **[SCAI](https://github.com/in-toto/attestation/blob/main/spec/predicates/scai.md)**
+  (Supply Chain Attribute Integrity): an in-toto predicate type for capturing
+  evidence about build attributes, complementing SLSA provenance.
+- **[GUAC](https://guac.sh/)** (Graph for Understanding Artifact Composition):
+  a framework for aggregating and querying software supply chain metadata. Not
+  an attestation format itself, but a potential integration point for policy
+  decisions.
