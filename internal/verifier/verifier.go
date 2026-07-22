@@ -233,21 +233,23 @@ func (v *Verifier) Verify(
 	}
 
 	slog.DebugContext(ctx, "Verifying image",
-		"image", imageRef,
-		"digest", digest,
-		"namespace", namespace,
-	)
+		"image", imageRef, "digest", digest, "namespace", namespace)
 
 	pol := policyForNamespace(state.policies, namespace)
 
 	if pol == nil {
-		return handleMissingPolicy(
-			ctx, state.auditLogger, state.config,
-			imageRef, digest, namespace,
-		)
+		result, err := handleMissingPolicy(ctx, state.config, imageRef, namespace)
+		if result != nil {
+			logResult(ctx, state.auditLogger, imageRef, digest, namespace, result)
+			recordMetrics(state.metrics, result, namespace)
+		}
+
+		return result, err
 	}
 
 	if isExcluded(ctx, pol.Exclude, imageRef) {
+		state.metrics.VerificationSkippedTotal.WithLabelValues("excluded", namespace).Inc()
+
 		return allowResult(
 			ctx, state.auditLogger, imageRef, digest,
 			namespace, "image is excluded",
@@ -257,16 +259,14 @@ func (v *Verifier) Verify(
 	if cached := state.cache.Get(digest, namespace); cached != nil {
 		state.metrics.CacheHitsTotal.Inc()
 
-		if resultHasFailures(cached) {
+		if resultShouldUseShorterTTL(cached) {
 			state.metrics.CacheFailureHitsTotal.Inc()
 		}
 
 		logResult(ctx, state.auditLogger, imageRef, digest, namespace, cached)
 		recordMetrics(state.metrics, cached, namespace)
 
-		enforced, err := applyEnforcement(ctx, state.config, cached, imageRef)
-
-		return enforced, err
+		return applyEnforcement(ctx, state.config, cached, imageRef)
 	}
 
 	state.metrics.CacheMissesTotal.Inc()
@@ -316,6 +316,8 @@ func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 	if policiesChanged {
 		attestation.ResetSANPatternWarnings()
 	}
+
+	WarnEnforceDefaults(&cfgCopy, policies)
 
 	return nil
 }
@@ -420,7 +422,7 @@ func (v *Verifier) verifyOnce(
 		logResult(checkCtx, state.auditLogger, imageRef, digest, namespace, result)
 		recordMetrics(state.metrics, result, namespace)
 
-		if resultHasFailures(result) && state.config.CacheFailureTTL.Duration > 0 {
+		if resultShouldUseShorterTTL(result) && state.config.CacheFailureTTL.Duration > 0 {
 			state.cache.Set(digest, namespace, result, state.config.CacheFailureTTL.Duration)
 		} else {
 			state.cache.Set(digest, namespace, result)

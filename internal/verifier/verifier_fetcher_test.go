@@ -768,6 +768,7 @@ func TestVerifyCircuitBreakerIntegration(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = dir
 	cfg.CacheTTL = config.Duration{Duration: 0}
+	cfg.CacheFailureTTL = config.Duration{Duration: 0}
 	cfg.CircuitBreakerThreshold = 3
 	cfg.CircuitBreakerCooldown = config.Duration{Duration: 100 * time.Millisecond}
 
