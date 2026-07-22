@@ -117,7 +117,7 @@ $(GOLANGCI_LINT):
 	@mkdir -p $(BUILD_DIR)
 	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/v$(GOLANGCI_LINT_VERSION)/install.sh | sh -s -- -b $(BUILD_DIR) v$(GOLANGCI_LINT_VERSION)
 
-SHELL_FILES := $(wildcard test/integration/*.bash test/integration/*.bats test/e2e/*.bash test/e2e/*.bats)
+SHELL_FILES := $(shell find . -name '*.sh' -o -name '*.bash' -o -name '*.bats' | sort)
 
 .PHONY: verify-shfmt
 verify-shfmt: $(SHFMT) ## Verify shell script formatting

@@ -447,6 +447,10 @@ func (v *Verifier) verifyOnce(
 		}
 
 		result := *shared
+		if len(shared.CheckResults) > 0 {
+			result.CheckResults = make([]types.CheckResult, len(shared.CheckResults))
+			copy(result.CheckResults, shared.CheckResults)
+		}
 
 		return &result, nil
 	}

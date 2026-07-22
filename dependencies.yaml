@@ -1,4 +1,12 @@
 dependencies:
+  - name: golang
+    version: 1.26.5
+    refPaths:
+      - path: Dockerfile
+        match: "FROM golang:"
+      - path: go.mod
+        match: "^go "
+
   - name: golangci-lint
     version: 2.12.2
     refPaths:
