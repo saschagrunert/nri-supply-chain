@@ -44,6 +44,11 @@ const (
 	// BundleMediaType is the OCI artifact type for Sigstore bundles.
 	BundleMediaType = "application/vnd.dev.sigstore.bundle.v0.3+json"
 
+	// OCIEmptyMediaType is the fallback artifact type some registries
+	// (notably GHCR) return for cosign-created attestations instead of
+	// the Sigstore bundle media type.
+	OCIEmptyMediaType = "application/vnd.oci.empty.v1+json"
+
 	// AnnotationPredicateType is the annotation key for the predicate type in Sigstore bundles.
 	AnnotationPredicateType = "dev.sigstore.bundle.predicateType"
 

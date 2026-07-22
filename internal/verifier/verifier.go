@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"sync"
 	"time"
 
@@ -95,10 +94,8 @@ func New(cfg *config.Config, met *metrics.Metrics, fetcher attestation.Fetcher) 
 				cfgCopy.CircuitBreakerThreshold,
 				cfgCopy.CircuitBreakerCooldown.Duration,
 			),
-			fetchSem: semaphore.NewWeighted(maxConcurrentFetches),
-			auditLogger: slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
-				Level: slog.LevelInfo,
-			})),
+			fetchSem:    semaphore.NewWeighted(maxConcurrentFetches),
+			auditLogger: slog.Default(),
 		},
 		policyHashes: nil,
 		inflight:     singleflight.Group{},

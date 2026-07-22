@@ -83,7 +83,24 @@ create_cosign_tag_images() {
 	# Image with no attestation at all
 	COSIGN_TAG_NONE_IMAGE=$(push_test_image "cosign-tag-none:v1")
 
+	# Image with OCI referrer whose artifact type is application/vnd.oci.empty.v1+json
+	# (as GHCR returns for cosign-created attestations)
+	EMPTY_ARTIFACT_TYPE_IMAGE=$(push_test_image "empty-artifact-type:v1")
+
+	write_slsa_predicate "${pred_dir}/empty-art-slsa.json" \
+		"https://test-builder.example.com" \
+		"https://github.com/testorg/repo" \
+		""
+
+	attest_image "$EMPTY_ARTIFACT_TYPE_IMAGE" \
+		"https://slsa.dev/provenance/v1" \
+		"${pred_dir}/empty-art-slsa.json"
+
+	patch_referrer_artifact_type "$EMPTY_ARTIFACT_TYPE_IMAGE" \
+		"application/vnd.oci.empty.v1+json"
+
 	export COSIGN_TAG_ONLY_IMAGE COSIGN_TAG_BOTH_IMAGE COSIGN_TAG_NONE_IMAGE
+	export EMPTY_ARTIFACT_TYPE_IMAGE
 }
 
 # Extract the bundle from OCI referrers and push it to the .att tag,
@@ -155,6 +172,34 @@ copy_referrer_to_att_tag() {
 		-d "$att_manifest" >/dev/null
 }
 
+# Replace the artifact type in a referrer index with a custom value.
+# Simulates registries (like GHCR) that return a different artifact type
+# than the original bundle media type.
+patch_referrer_artifact_type() {
+	local ref="$1"
+	local new_type="$2"
+	local digest
+	digest=$("$CRANE" digest "$ref" --insecure)
+	local repo="${ref%:*}"
+	local api_repo="${repo#*/}"
+
+	local oci_fallback_tag="${digest//:/-}"
+	local referrers_json
+	referrers_json=$(curl -sf \
+		"http://${REGISTRY_HOST}/v2/${api_repo}/manifests/${oci_fallback_tag}" \
+		-H "Accept: application/vnd.oci.image.index.v1+json")
+
+	local patched
+	patched=$(echo "$referrers_json" | jq \
+		--arg t "$new_type" \
+		'.manifests[].artifactType = $t')
+
+	curl -sf -X PUT \
+		"http://${REGISTRY_HOST}/v2/${api_repo}/manifests/${oci_fallback_tag}" \
+		-H "Content-Type: application/vnd.oci.image.index.v1+json" \
+		-d "$patched" >/dev/null
+}
+
 # Delete OCI referrers by removing the tag fallback index and the
 # attestation manifest it points to.
 delete_oci_referrer() {
@@ -194,6 +239,11 @@ delete_oci_referrer() {
 	run_pod "cosign-both" "$COSIGN_TAG_BOTH_IMAGE"
 	wait_for_pod_status "cosign-both" "Running"
 	run ! plugin_log_contains "cosign tag.*cosign-tag-both"
+}
+
+@test "OCI empty artifact type referrer is accepted" {
+	run_pod "empty-art" "$EMPTY_ARTIFACT_TYPE_IMAGE"
+	wait_for_pod_status "empty-art" "Running"
 }
 
 @test "image without any attestation is rejected" {
