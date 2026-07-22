@@ -175,7 +175,9 @@ func buildFetchOpts(
 
 		keys := make([]string, 0, len(pol.Trust.Verifiers))
 		for idx := range pol.Trust.Verifiers {
-			keys = append(keys, pol.Trust.Verifiers[idx].Key)
+			if pol.Trust.Verifiers[idx].Key != "" {
+				keys = append(keys, pol.Trust.Verifiers[idx].Key)
+			}
 		}
 
 		opts.TrustedKeys = keys

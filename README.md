@@ -77,10 +77,43 @@ must pass verification.
    }
    ```
 
-   In `warn` mode the image is allowed even when attestation checks fail,
-   so you can observe what would be blocked before switching to `enforce`.
-   See [docs/verification.md](docs/verification.md) for the full
-   verification flow.
+   To enable VSA-accelerated verification, add a `trust.verifiers` entry.
+   A trusted VSA short-circuits SLSA and VEX checks:
+
+   ```json
+   {
+     "trust": {
+       "issuers": ["https://token.actions.githubusercontent.com"],
+       "sanPatterns": ["https://github.com/saschagrunert/nri-supply-chain/**"],
+       "sources": ["github.com/saschagrunert/*"],
+       "verifiers": [
+         {
+           "id": "https://github.com/saschagrunert/nri-supply-chain/.github/workflows/release.yml"
+         }
+       ]
+     },
+     "slsa": { "missingPolicy": "warn" }
+   }
+   ```
+
+   With this policy the output becomes:
+
+   ```json
+   {
+     "image": "ghcr.io/saschagrunert/nri-supply-chain:0.1.2",
+     "digest": "sha256:...",
+     "namespace": "default",
+     "allowed": true,
+     "checkResults": [
+       { "type": "vsa", "status": "pass", ... }
+     ]
+   }
+   ```
+
+   In `warn` mode the image is allowed even when checks fail, so you can
+   observe what would be blocked before switching to `enforce`. See
+   [docs/verification.md](docs/verification.md) for the full verification
+   flow.
 
 5. Deploy the plugin (see [Deployment](docs/deployment.md) for all options):
 

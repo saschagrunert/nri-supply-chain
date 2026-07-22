@@ -61,8 +61,11 @@ var (
 	// ErrVerifierIDRequired indicates a trusted verifier is missing its ID.
 	ErrVerifierIDRequired = errors.New("verifier id is required")
 
-	// ErrVerifierKeyRequired indicates a trusted verifier is missing its key.
-	ErrVerifierKeyRequired = errors.New("verifier key is required")
+	// ErrKeylessVerifierRequiresIssuers indicates a verifier without a key
+	// needs trust.issuers for keyless bundle verification.
+	ErrKeylessVerifierRequiresIssuers = errors.New(
+		"keyless verifier requires trust.issuers to be configured",
+	)
 
 	// ErrVerifierKeyNotAbsolute indicates a verifier key path is not absolute.
 	ErrVerifierKeyNotAbsolute = errors.New(
@@ -146,8 +149,10 @@ type TrustedVerifier struct {
 	// ID is the verifier identity URI.
 	ID string `json:"id"`
 	// Key is the absolute path to the verifier's public key file (PEM-encoded).
-	// Used both for VSA verifier identity trust and for Sigstore bundle signature verification.
-	Key string `json:"key"`
+	// Used for Sigstore bundle signature verification. Optional for keyless
+	// verification; when empty, trust.issuers must be configured so bundles
+	// can be verified via Fulcio/OIDC.
+	Key string `json:"key,omitempty"`
 }
 
 // SLSAPolicy contains SLSA provenance verification settings.
@@ -357,6 +362,10 @@ func (p *Policy) ValidateRuntime() error {
 	}
 
 	for idx, verif := range p.Trust.Verifiers {
+		if verif.Key == "" {
+			continue
+		}
+
 		info, err := os.Stat(verif.Key)
 		if err != nil {
 			return fmt.Errorf(
@@ -564,10 +573,14 @@ func (p *Policy) validateVerifiers() error {
 		}
 
 		if verif.Key == "" {
-			return fmt.Errorf(
-				"%w: trust.verifiers[%d] %q",
-				ErrVerifierKeyRequired, idx, verif.ID,
-			)
+			if len(p.Trust.Issuers) == 0 {
+				return fmt.Errorf(
+					"%w: trust.verifiers[%d] %q",
+					ErrKeylessVerifierRequiresIssuers, idx, verif.ID,
+				)
+			}
+
+			continue
 		}
 
 		if !filepath.IsAbs(verif.Key) {
