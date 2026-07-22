@@ -248,14 +248,14 @@ func (f *OCIFetcher) Warm(ctx context.Context) error {
 }
 
 // Fetch discovers and returns verified attestations for the given image.
-// The digest parameter is also stored into opts.Digest so that downstream
-// bundle verification can bind against the artifact digest without callers
-// having to set it separately.
+// If opts.Digest is empty, it defaults to the digest parameter.
 func (f *OCIFetcher) Fetch(
 	ctx context.Context, imageRef, digest string,
 	opts *FetchOptions,
 ) ([]VerifiedAttestation, error) {
-	opts.Digest = digest
+	if opts.Digest == "" {
+		opts.Digest = digest
+	}
 
 	if opts.Timeout > 0 {
 		var cancel context.CancelFunc

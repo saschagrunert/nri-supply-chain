@@ -122,7 +122,7 @@ func runChecksWithoutFetcher(
 	met.VerificationDuration.WithLabelValues("slsa_provenance").Observe(0)
 
 	vexResult := handleMissingAttestation(
-		vexMissingPolicy(pol), "vex", detail,
+		pol.VEXMissingPolicy(), "vex", detail,
 	)
 
 	met.VerificationDuration.WithLabelValues("vex").Observe(0)
@@ -137,6 +137,7 @@ func fetchAttestations(
 	opts := &attestation.FetchOptions{
 		RequireTransparencyLog: pol.Signatures != nil && pol.Signatures.RequireTransparencyLog,
 		Timeout:                state.config.FetchTimeout.Duration,
+		Digest:                 digest,
 	}
 
 	if pol.Trust != nil {
@@ -323,7 +324,7 @@ func runVEXCheck(
 		)
 
 		return handleMissingAttestation(
-			vexMissingPolicy(pol),
+			pol.VEXMissingPolicy(),
 			"vex",
 			"no VEX attestation found for image "+imageRef,
 		)
@@ -345,7 +346,7 @@ func runVEXCheck(
 		met.VerificationTotal.WithLabelValues("vex", "error", namespace).Inc()
 
 		return handleMissingAttestation(
-			vexMissingPolicy(pol),
+			pol.VEXMissingPolicy(),
 			"vex",
 			fmt.Sprintf("VEX verification error for %s: %s", imageRef, err),
 		)
@@ -431,14 +432,6 @@ func binAttestations(attestations []attestation.VerifiedAttestation) attestation
 	}
 
 	return bins
-}
-
-func vexMissingPolicy(pol *policy.Policy) policy.Action {
-	if pol.VEX != nil && pol.VEX.MissingPolicy != "" {
-		return pol.VEX.MissingPolicy
-	}
-
-	return policy.ActionAllow
 }
 
 func handleMissingAttestation(

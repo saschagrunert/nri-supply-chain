@@ -48,7 +48,7 @@ func TestCircuitBreakerOpensAfterThreshold(t *testing.T) {
 		t.Error("expected Allow() = false after threshold failures")
 	}
 
-	if !breaker.IsOpen() {
+	if !breaker.ExportIsOpen() {
 		t.Error("expected IsOpen() = true")
 	}
 }
@@ -110,7 +110,7 @@ func TestCircuitBreakerSuccessResetsToClosed(t *testing.T) {
 		t.Error("expected Allow() = true after success reset")
 	}
 
-	if breaker.IsOpen() {
+	if breaker.ExportIsOpen() {
 		t.Error("expected IsOpen() = false after success")
 	}
 }
@@ -159,7 +159,7 @@ func TestCircuitBreakerConcurrent(t *testing.T) {
 
 	// Primary value of this test is the -race detector catching data races.
 	// These assertions just confirm the breaker is in a valid state afterward.
-	_ = breaker.IsOpen()
+	_ = breaker.ExportIsOpen()
 }
 
 func TestCircuitBreakerRegistryPerHost(t *testing.T) {
@@ -177,11 +177,11 @@ func TestCircuitBreakerRegistryPerHost(t *testing.T) {
 	a.RecordFailure()
 	a.RecordFailure()
 
-	if !a.IsOpen() {
+	if !a.ExportIsOpen() {
 		t.Error("expected breaker A to be open after threshold failures")
 	}
 
-	if b.IsOpen() {
+	if b.ExportIsOpen() {
 		t.Error("expected breaker B to remain closed")
 	}
 
@@ -247,11 +247,11 @@ func TestCircuitBreakerRegistryThresholdAndCooldown(t *testing.T) {
 
 	registry := attestation.NewCircuitBreakerRegistry(threshold, cooldown)
 
-	if registry.Threshold() != threshold {
-		t.Errorf("threshold = %d, want %d", registry.Threshold(), threshold)
+	if registry.ExportThreshold() != threshold {
+		t.Errorf("threshold = %d, want %d", registry.ExportThreshold(), threshold)
 	}
 
-	if registry.Cooldown() != cooldown {
-		t.Errorf("cooldown = %v, want %v", registry.Cooldown(), cooldown)
+	if registry.ExportCooldown() != cooldown {
+		t.Errorf("cooldown = %v, want %v", registry.ExportCooldown(), cooldown)
 	}
 }

@@ -41,3 +41,13 @@ func ExportResultHasFailures(result *types.Result) bool {
 func ExportCacheAffectingFieldsChanged(prev, next *config.Config) bool {
 	return cacheAffectingFieldsChanged(prev, next)
 }
+
+// ExportCombineResults exposes combineResults for external tests.
+func ExportCombineResults(slsaResult, vexResult *types.CheckResult) *types.Result {
+	return combineResults(slsaResult, vexResult)
+}
+
+// ExportApplyCheckResult exposes applyCheckResult for external tests.
+func ExportApplyCheckResult(result *types.Result, check *types.CheckResult) {
+	applyCheckResult(result, check)
+}
