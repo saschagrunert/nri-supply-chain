@@ -129,8 +129,7 @@ verify-shellcheck: $(SHELLCHECK) ## Run shellcheck on shell scripts
 
 .PHONY: verify-mdtoc
 verify-mdtoc: $(MDTOC) ## Verify table of contents in docs
-	$(MDTOC) --inplace --dryrun README.md
-	$(MDTOC) --inplace --dryrun docs/policy.md
+	for f in README.md docs/*.md; do $(MDTOC) --inplace --dryrun "$$f"; done
 
 .PHONY: verify-tidy
 verify-tidy: ## Verify go.mod is tidy
