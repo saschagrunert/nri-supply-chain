@@ -269,5 +269,5 @@ func jitter(ttl time.Duration) time.Duration {
 	}
 
 	//nolint:gosec // jitter does not need cryptographic randomness
-	return time.Duration(rand.IntN(int(maxJitter)))
+	return time.Duration(rand.Int64N(maxJitter))
 }

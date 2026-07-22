@@ -253,9 +253,12 @@ func (f *OCIFetcher) Fetch(
 	ctx context.Context, imageRef, digest string,
 	opts *FetchOptions,
 ) ([]VerifiedAttestation, error) {
-	if opts.Digest == "" {
-		opts.Digest = digest
+	fetchOpts := *opts
+	if fetchOpts.Digest == "" {
+		fetchOpts.Digest = digest
 	}
+
+	opts = &fetchOpts
 
 	if opts.Timeout > 0 {
 		var cancel context.CancelFunc

@@ -520,21 +520,25 @@ func runVerify(opts *options, cfg *config.Config) int {
 	result, err := verif.Verify(ctx, imageRef, digest, namespace)
 	if err != nil {
 		slog.Error("Verification failed", "image", imageRef, "error", err)
-
-		outputVerifyResult(imageRef, digest, namespace, false, err.Error(), nil)
-
-		return 1
 	}
 
-	checks := make([]checkEntry, 0, len(result.CheckResults))
+	var checks []checkEntry
 
-	for _, cr := range result.CheckResults {
-		checks = append(checks, checkEntry{
-			Type:   cr.Type,
-			Passed: cr.Passed,
-			Status: cr.Status,
-			Detail: cr.Detail,
-		})
+	if result != nil {
+		for _, cr := range result.CheckResults {
+			checks = append(checks, checkEntry{
+				Type:   cr.Type,
+				Passed: cr.Passed,
+				Status: cr.Status,
+				Detail: cr.Detail,
+			})
+		}
+	}
+
+	if err != nil {
+		outputVerifyResult(imageRef, digest, namespace, false, err.Error(), checks)
+
+		return 1
 	}
 
 	outputVerifyResult(imageRef, digest, namespace, result.Allowed, result.Reason, checks)
