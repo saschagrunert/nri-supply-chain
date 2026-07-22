@@ -6,12 +6,11 @@ setup_file() {
 	mkdir -p "$KUBERNIX_ROOT" "$POLICY_DIR"
 	echo '{}' >"$POLICY_DIR/default.json"
 
-	"$KUBERNIX" --no-shell --root "$KUBERNIX_ROOT" &
-	echo $! >"${BATS_FILE_TMPDIR}/kubernix.pid"
+	start_kubernix
 
 	wait_for_node_ready
 	write_nri_dropin
-	reload_crio
+	reload_runtime
 
 	write_plugin_config "warn"
 	start_plugin

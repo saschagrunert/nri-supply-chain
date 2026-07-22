@@ -6,6 +6,7 @@ BINARY="${BINARY:-build/nri-supply-chain}"
 KUBERNIX="${KUBERNIX:-build/kubernix}"
 COSIGN="${COSIGN:-build/cosign}"
 CRANE="${CRANE:-build/crane}"
+CRI_RUNTIME="${CRI_RUNTIME:-crio}"
 KUBERNIX_ROOT="${BATS_FILE_TMPDIR}/kubernix"
 PLUGIN_PID_FILE="${BATS_FILE_TMPDIR}/plugin.pid"
 PLUGIN_LOG="${BATS_FILE_TMPDIR}/plugin.log"
@@ -16,6 +17,49 @@ NRI_SOCKET="${KUBERNIX_ROOT}/nri/nri.sock"
 
 export KUBECONFIG
 
+is_containerd() {
+	[[ "$CRI_RUNTIME" == "containerd" ]]
+}
+
+start_kubernix() {
+	local patcher_pid=""
+
+	# containerd terminates on SIGHUP so we cannot reload its config
+	# after startup. Patch config_path into the generated config before
+	# containerd reads it by polling in a background process.
+	if is_containerd && [[ -d "/etc/containerd/certs.d" ]]; then
+		_patch_containerd_registry_config &
+		patcher_pid=$!
+	fi
+
+	"$KUBERNIX" --no-shell --cri-runtime "$CRI_RUNTIME" "$@" --root "$KUBERNIX_ROOT" &
+	echo $! >"${BATS_FILE_TMPDIR}/kubernix.pid"
+
+	if [[ -n "$patcher_pid" ]]; then
+		wait "$patcher_pid" 2>/dev/null || true
+	fi
+}
+
+_patch_containerd_registry_config() {
+	local config elapsed=0
+	while [[ $elapsed -lt 3000 ]]; do
+		config=$(find "${KUBERNIX_ROOT}" -name "config.toml" \
+			-path "*/containerd/*" 2>/dev/null | head -1)
+		if [[ -n "$config" ]]; then
+			cat >>"$config" <<-EOF
+
+				[plugins."io.containerd.cri.v1.images".registry]
+				config_path = "/etc/containerd/certs.d"
+			EOF
+			return
+		fi
+		sleep 0.01
+		elapsed=$((elapsed + 1))
+	done
+	echo "ERROR: containerd config.toml not found in ${KUBERNIX_ROOT} after 30s" >&2
+	return 1
+}
+
 export NODE_READY_TIMEOUT=120
 export POD_TIMEOUT=60
 
@@ -24,13 +68,12 @@ setup_file() {
 
 	echo '{}' >"$POLICY_DIR/default.json"
 
-	"$KUBERNIX" --no-shell --log-level debug --root "$KUBERNIX_ROOT" &
-	echo $! >"${BATS_FILE_TMPDIR}/kubernix.pid"
+	start_kubernix --log-level debug
 
 	wait_for_node_ready
 
 	write_nri_dropin
-	reload_crio
+	reload_runtime
 
 	write_plugin_config "warn"
 	start_plugin
@@ -117,6 +160,12 @@ wait_for_service_account() {
 }
 
 write_nri_dropin() {
+	# NRI is enabled by default in containerd v2, nothing to configure.
+	# Registry config_path is handled by start_kubernix.
+	if is_containerd; then
+		return
+	fi
+
 	local crio_conf_dir
 	crio_conf_dir="${KUBERNIX_ROOT}/crio/conf.d"
 	mkdir -p "$crio_conf_dir"
@@ -129,7 +178,12 @@ write_nri_dropin() {
 	EOF
 }
 
-reload_crio() {
+reload_runtime() {
+	# containerd terminates on SIGHUP, config is patched before startup.
+	if is_containerd; then
+		return
+	fi
+
 	local crio_pid
 	crio_pid=$(pgrep -f "crio.*--root.*${KUBERNIX_ROOT}" || true)
 	if [[ -n "$crio_pid" ]]; then
@@ -396,6 +450,20 @@ get_image_digest() {
 }
 
 configure_insecure_registry() {
+	if is_containerd; then
+		local hosts_dir="/etc/containerd/certs.d/${REGISTRY_HOST}"
+		mkdir -p "$hosts_dir"
+		cat >"${hosts_dir}/hosts.toml" <<-EOF
+			server = "http://${REGISTRY_HOST}"
+
+			[host."http://${REGISTRY_HOST}"]
+			  capabilities = ["pull", "resolve", "push"]
+			  skip_verify = true
+		EOF
+
+		return
+	fi
+
 	mkdir -p /etc/containers/registries.conf.d
 	cat >/etc/containers/registries.conf.d/test-insecure-registry.conf <<-EOF
 		[[registry]]
@@ -405,6 +473,12 @@ configure_insecure_registry() {
 }
 
 unconfigure_insecure_registry() {
+	if is_containerd; then
+		rm -rf "/etc/containerd/certs.d/${REGISTRY_HOST}"
+
+		return
+	fi
+
 	rm -f /etc/containers/registries.conf.d/test-insecure-registry.conf
 }
 

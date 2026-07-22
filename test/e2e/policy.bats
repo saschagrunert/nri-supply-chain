@@ -20,12 +20,11 @@ setup_file() {
 	start_registry
 	configure_insecure_registry
 
-	"$KUBERNIX" --no-shell --root "$KUBERNIX_ROOT" &
-	echo $! >"${BATS_FILE_TMPDIR}/kubernix.pid"
+	start_kubernix
 
 	wait_for_node_ready
 	write_nri_dropin
-	reload_crio
+	reload_runtime
 
 	POLICY_IMAGE=$(push_test_image "policy-test:v1")
 	export POLICY_IMAGE

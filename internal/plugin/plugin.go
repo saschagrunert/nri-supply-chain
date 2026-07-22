@@ -26,6 +26,9 @@ import (
 
 	"github.com/containerd/nri/pkg/api"
 	"github.com/containerd/nri/pkg/stub"
+	"github.com/google/go-containerregistry/pkg/authn"
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"golang.org/x/sync/semaphore"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
@@ -34,8 +37,11 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
-// ErrMissingAnnotations indicates that required CRI-O image annotations are absent.
+// ErrMissingAnnotations indicates that required image annotations are absent.
 var ErrMissingAnnotations = errors.New("missing image annotations")
+
+// DigestResolveFunc resolves an image reference to its digest via a registry.
+type DigestResolveFunc func(ctx context.Context, imageRef string) (string, error)
 
 const (
 	prewarmConcurrency = 5
@@ -67,20 +73,43 @@ const (
 // Plugin implements the NRI CreateContainer and Configure hooks
 // for supply chain attestation verification.
 type Plugin struct {
-	verifier   *verifier.Verifier
-	metrics    *metrics.Metrics
-	configPath string
-	connected  atomic.Bool
+	verifier       *verifier.Verifier
+	metrics        *metrics.Metrics
+	configPath     string
+	connected      atomic.Bool
+	digestResolver DigestResolveFunc
+	fetchTimeout   time.Duration
 }
 
 // New creates a new Plugin with the given verifier, metrics, and config file path.
-func New(v *verifier.Verifier, met *metrics.Metrics, configPath string) *Plugin {
+func New(
+	v *verifier.Verifier, met *metrics.Metrics, configPath string, fetchTimeout time.Duration,
+) *Plugin {
 	return &Plugin{
-		verifier:   v,
-		metrics:    met,
-		configPath: configPath,
-		connected:  atomic.Bool{},
+		verifier:       v,
+		metrics:        met,
+		configPath:     configPath,
+		connected:      atomic.Bool{},
+		digestResolver: defaultDigestResolver,
+		fetchTimeout:   fetchTimeout,
 	}
+}
+
+func defaultDigestResolver(ctx context.Context, imageRef string) (string, error) {
+	ref, err := name.ParseReference(imageRef)
+	if err != nil {
+		return "", fmt.Errorf("parsing image reference: %w", err)
+	}
+
+	desc, err := remote.Head(ref,
+		remote.WithAuthFromKeychain(authn.DefaultKeychain),
+		remote.WithContext(ctx),
+	)
+	if err != nil {
+		return "", fmt.Errorf("resolving image digest: %w", err)
+	}
+
+	return desc.Digest.String(), nil
 }
 
 // Connected returns true if the plugin has successfully connected to the NRI runtime.
@@ -138,34 +167,7 @@ func (p *Plugin) Synchronize(
 		podNS[pod.GetId()] = pod.GetNamespace()
 	}
 
-	var images []prewarmImage
-
-	seen := make(map[string]struct{})
-
-	for _, ctr := range containers {
-		annotations := ctr.GetAnnotations()
-		imageRef, digest := resolveImage(annotations)
-
-		if imageRef == "" || digest == "" {
-			continue
-		}
-
-		namespace := podNS[ctr.GetPodSandboxId()]
-
-		key := digest + "\x00" + namespace
-
-		if _, ok := seen[key]; ok {
-			continue
-		}
-
-		seen[key] = struct{}{}
-
-		images = append(images, prewarmImage{
-			imageRef:  imageRef,
-			digest:    digest,
-			namespace: namespace,
-		})
-	}
+	images := p.collectPrewarmImages(ctx, containers, podNS)
 
 	if len(images) == 0 {
 		return nil, nil
@@ -193,6 +195,8 @@ func (p *Plugin) CreateContainer(
 		"annotations", annotations,
 		"labels", ctr.GetLabels(),
 	)
+
+	digest = p.resolveDigestIfMissing(ctx, imageRef, digest, namespace, pod, ctr)
 
 	if imageRef == "" || digest == "" {
 		if p.verifier.Enforcing() {
@@ -236,6 +240,87 @@ func (p *Plugin) CreateContainer(
 	)
 
 	return nil, nil, nil
+}
+
+func (p *Plugin) resolveDigestIfMissing(
+	ctx context.Context,
+	imageRef, digest, namespace string,
+	pod *api.PodSandbox,
+	ctr *api.Container,
+) string {
+	if imageRef == "" || digest != "" {
+		return digest
+	}
+
+	resolveCtx, cancel := context.WithTimeout(ctx, p.fetchTimeout)
+	resolved, err := p.digestResolver(resolveCtx, imageRef)
+
+	cancel()
+
+	if err != nil {
+		slog.WarnContext(ctx, "Failed to resolve image digest",
+			"pod", namespace+"/"+pod.GetName(),
+			"container", ctr.GetName(),
+			"image", imageRef,
+			"error", err,
+		)
+
+		return digest
+	}
+
+	return resolved
+}
+
+func (p *Plugin) collectPrewarmImages(
+	ctx context.Context, containers []*api.Container, podNS map[string]string,
+) []prewarmImage {
+	var images []prewarmImage
+
+	seen := make(map[string]struct{})
+
+	for _, ctr := range containers {
+		annotations := ctr.GetAnnotations()
+		imageRef, digest := resolveImage(annotations)
+
+		if imageRef != "" && digest == "" {
+			resolveCtx, cancel := context.WithTimeout(ctx, p.fetchTimeout)
+			resolved, err := p.digestResolver(resolveCtx, imageRef)
+
+			cancel()
+
+			if err != nil {
+				slog.DebugContext(ctx, "Skipping prewarm, failed to resolve digest",
+					"container", ctr.GetName(),
+					"image", imageRef,
+					"error", err,
+				)
+			} else {
+				digest = resolved
+			}
+		}
+
+		if imageRef == "" || digest == "" {
+			continue
+		}
+
+		namespace := podNS[ctr.GetPodSandboxId()]
+
+		key := digest + "\x00" + namespace
+
+		if _, ok := seen[key]; ok {
+			continue
+		}
+
+		seen[key] = struct{}{}
+
+		images = append(images, prewarmImage{
+			imageRef:  imageRef,
+			digest:    digest,
+			namespace: namespace,
+		})
+	}
+
+	return images
 }
 
 func (p *Plugin) prewarmCache(ctx context.Context, images []prewarmImage) {

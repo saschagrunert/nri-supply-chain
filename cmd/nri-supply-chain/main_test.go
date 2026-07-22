@@ -304,7 +304,7 @@ func TestServeMetricsReadyzVerifierNotReady(t *testing.T) {
 		t.Fatalf("creating verifier: %v", err)
 	}
 
-	testPlug := plugin.New(v, met, "")
+	testPlug := plugin.New(v, met, "", 30*time.Second)
 
 	// Connect the plugin so Connected() returns true.
 	_, configErr := testPlug.Configure(context.Background(), "", "cri-o", "1.32")
@@ -330,7 +330,7 @@ func newDisabledPlugin(t *testing.T) *plugin.Plugin {
 		t.Fatalf("creating verifier: %v", err)
 	}
 
-	return plugin.New(v, met, "")
+	return plugin.New(v, met, "", 30*time.Second)
 }
 
 func startMetricsServer(t *testing.T, plug *plugin.Plugin) string {

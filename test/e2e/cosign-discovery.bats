@@ -9,13 +9,12 @@ setup_file() {
 	generate_signing_key
 	configure_insecure_registry
 
-	"$KUBERNIX" --no-shell --root "$KUBERNIX_ROOT" &
-	echo $! >"${BATS_FILE_TMPDIR}/kubernix.pid"
+	start_kubernix
 
 	wait_for_node_ready
 
 	write_nri_dropin
-	reload_crio
+	reload_runtime
 
 	create_cosign_tag_images
 
@@ -194,7 +193,7 @@ delete_oci_referrer() {
 @test "OCI referrers preferred over cosign tag" {
 	run_pod "cosign-both" "$COSIGN_TAG_BOTH_IMAGE"
 	wait_for_pod_status "cosign-both" "Running"
-	run ! plugin_log_contains "cosign tag-based"
+	run ! plugin_log_contains "cosign tag.*cosign-tag-both"
 }
 
 @test "image without any attestation is rejected" {

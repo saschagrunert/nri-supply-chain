@@ -9,13 +9,12 @@ setup_file() {
 	generate_signing_key
 	configure_insecure_registry
 
-	"$KUBERNIX" --no-shell --root "$KUBERNIX_ROOT" &
-	echo $! >"${BATS_FILE_TMPDIR}/kubernix.pid"
+	start_kubernix
 
 	wait_for_node_ready
 
 	write_nri_dropin
-	reload_crio
+	reload_runtime
 
 	create_sigstore_images
 
