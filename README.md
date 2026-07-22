@@ -86,7 +86,7 @@ must pass verification.
 4. Deploy the plugin (see [Deployment](#deployment) for all options):
 
    ```console
-   kubectl apply -k deploy/kubernetes/
+   kubectl apply -f deploy/kubernetes/
    ```
 
 5. Check the logs and metrics to observe verification decisions, then switch
@@ -297,6 +297,7 @@ start. Remove or comment out any unrecognized keys before upgrading.
 
 ```toml
 verification = "warn"
+log_level = "info"
 fetch_timeout = "30s"
 fetch_failure_policy = "warn"
 cache_ttl = "24h"
@@ -311,6 +312,7 @@ circuit_breaker_cooldown = "30s"
 | Field                       | Default                          | Description                                                        |
 | --------------------------- | -------------------------------- | ------------------------------------------------------------------ |
 | `verification`              | `disabled`                       | Mode: `disabled`, `warn` (log-only), `enforce` (reject on failure) |
+| `log_level`                 | `info`                           | Log verbosity: `debug`, `info`, `warn`, `error`                    |
 | `fetch_timeout`             | `30s`                            | Per-fetch timeout for retrieving attestations from the registry    |
 | `fetch_failure_policy`      | `warn`                           | Behavior when attestation fetch fails: `allow`, `warn`, `deny`     |
 | `cache_ttl`                 | `24h`                            | TTL for cached verification results (`0s` disables caching)        |
@@ -396,7 +398,7 @@ Run as a standalone process that connects to the NRI socket:
 Deploy as a DaemonSet to run the plugin on every node in the cluster:
 
 ```console
-kubectl apply -k deploy/kubernetes/
+kubectl apply -f deploy/kubernetes/
 ```
 
 The manifests in `deploy/kubernetes/` include a Namespace, ConfigMap with
@@ -583,6 +585,8 @@ The plugin exposes Prometheus metrics at the configured address:
 | `nri_supply_chain_fetch_errors_total`            | Counter   | `type`, `registry`            | Attestation fetch errors                |
 | `nri_supply_chain_inflight_dedup_total`          | Counter   |                               | Deduplicated inflight verifications     |
 | `nri_supply_chain_circuit_breaker_trips_total`   | Counter   | `registry`                    | Circuit breaker open events             |
+| `nri_supply_chain_trusted_root_stale_total`      | Counter   |                               | Stale trusted root served from cache    |
+| `nri_supply_chain_cache_failure_hits_total`      | Counter   |                               | Cache hits returning a cached failure   |
 
 ### Health and Readiness Probes
 
@@ -615,8 +619,9 @@ systemctl reload nri-supply-chain
 
 A reload re-reads the TOML config file and all policy files from disk. The
 verification cache is cleared only when cache-affecting config fields changed
-(`verification`, `policy_dir`, `cache_ttl`, `fetch_failure_policy`,
-`fetch_timeout`) or when the content of any policy file changed. If the config
+(`verification`, `policy_dir`, `cache_ttl`, `cache_failure_ttl`,
+`fetch_failure_policy`, `fetch_timeout`) or when the content of any policy file
+changed. If the config
 and policies are identical, the cache is preserved. To force a cache clear when
 nothing else needs to change, temporarily modify `cache_ttl` (for example,
 change it from `24h` to `23h59m`), send SIGHUP, then change it back and send
@@ -646,7 +651,7 @@ detailed verification traces.
 - **Stale cache**: Reduce `cache_ttl` or set to `0s` to disable caching during
   debugging. Send SIGHUP to reload; the cache is cleared only when
   cache-affecting config fields (`verification`, `policy_dir`, `cache_ttl`,
-  `fetch_failure_policy`, `fetch_timeout`) or policy file contents have
+  `cache_failure_ttl`, `fetch_failure_policy`, `fetch_timeout`) or policy file contents have
   changed. A SIGHUP with unchanged config and policies does not clear the
   cache. To force a clear, change `cache_ttl` temporarily before sending
   SIGHUP.
