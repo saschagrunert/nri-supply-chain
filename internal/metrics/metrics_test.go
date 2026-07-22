@@ -117,3 +117,63 @@ func TestMetricsHandler(t *testing.T) {
 		}
 	}
 }
+
+func TestMetricsIncrement(t *testing.T) {
+	t.Parallel()
+
+	met := metrics.New()
+
+	met.CacheHitsTotal.Inc()
+	met.CacheHitsTotal.Inc()
+	met.CacheMissesTotal.Inc()
+	met.CacheEntriesTotal.Set(42)
+	met.InflightDedupTotal.Inc()
+	met.TrustedRootStaleTotal.Inc()
+	met.CacheFailureHitsTotal.Inc()
+	met.FetchErrorsTotal.WithLabelValues("attestation", "ghcr.io").Inc()
+	met.CircuitBreakerTripsTotal.WithLabelValues("ghcr.io").Inc()
+	met.VerificationTotal.WithLabelValues("slsa_provenance", "pass", "default").Inc()
+	met.VerificationTotal.WithLabelValues("vex", "fail", "production").Inc()
+	met.VerificationDuration.WithLabelValues("slsa_provenance").Observe(0.5)
+	met.VerificationSkippedTotal.WithLabelValues("excluded", "default").Inc()
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(
+		context.Background(), http.MethodGet, "/metrics", http.NoBody,
+	)
+	met.Handler().ServeHTTP(recorder, req)
+
+	resp := recorder.Result()
+
+	defer func() {
+		closeErr := resp.Body.Close()
+		if closeErr != nil {
+			t.Fatalf("closing response body: %v", closeErr)
+		}
+	}()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading response body: %v", err)
+	}
+
+	bodyStr := string(body)
+
+	for _, expected := range []string{
+		`nri_supply_chain_cache_hits_total 2`,
+		`nri_supply_chain_cache_misses_total 1`,
+		`nri_supply_chain_cache_entries 42`,
+		`nri_supply_chain_inflight_dedup_total 1`,
+		`nri_supply_chain_trusted_root_stale_total 1`,
+		`nri_supply_chain_cache_failure_hits_total 1`,
+		`nri_supply_chain_fetch_errors_total{registry="ghcr.io",type="attestation"} 1`,
+		`nri_supply_chain_circuit_breaker_trips_total{registry="ghcr.io"} 1`,
+		`nri_supply_chain_verification_total{namespace="default",result="pass",type="slsa_provenance"} 1`,
+		`nri_supply_chain_verification_total{namespace="production",result="fail",type="vex"} 1`,
+		`nri_supply_chain_verification_skipped_total{namespace="default",reason="excluded"} 1`,
+	} {
+		if !strings.Contains(bodyStr, expected) {
+			t.Errorf("expected %q in metrics output", expected)
+		}
+	}
+}

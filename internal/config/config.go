@@ -234,6 +234,10 @@ func (c *Config) validateFetchAndCache() error {
 		return fmt.Errorf("%w: got %s", ErrCacheFailureTTLNegative, c.CacheFailureTTL.Duration)
 	}
 
+	if c.CacheTTL.Duration > 0 && c.CacheFailureTTL.Duration > c.CacheTTL.Duration {
+		c.CacheFailureTTL.Duration = c.CacheTTL.Duration
+	}
+
 	if c.Enabled() {
 		if c.PolicyDir == "" {
 			return ErrPolicyDirEmpty

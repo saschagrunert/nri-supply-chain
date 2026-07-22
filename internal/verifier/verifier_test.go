@@ -982,6 +982,139 @@ func TestHandleMissingAttestationUnknownPolicy(t *testing.T) {
 	}
 }
 
+func TestCombineResults(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		slsa        *types.CheckResult
+		vex         *types.CheckResult
+		wantAllowed bool
+		wantReason  string
+		wantChecks  int
+	}{
+		{
+			name:        "both nil",
+			slsa:        nil,
+			vex:         nil,
+			wantAllowed: true,
+			wantReason:  "",
+			wantChecks:  0,
+		},
+		{
+			name:        "both pass",
+			slsa:        types.PassResult("slsa_provenance", "ok"),
+			vex:         types.PassResult("vex", "ok"),
+			wantAllowed: true,
+			wantReason:  "",
+			wantChecks:  2,
+		},
+		{
+			name:        "slsa fails",
+			slsa:        types.FailResult("slsa_provenance", "missing"),
+			vex:         types.PassResult("vex", "ok"),
+			wantAllowed: false,
+			wantReason:  "missing",
+			wantChecks:  2,
+		},
+		{
+			name:        "both fail",
+			slsa:        types.FailResult("slsa_provenance", "slsa bad"),
+			vex:         types.FailResult("vex", "vex bad"),
+			wantAllowed: false,
+			wantReason:  "slsa bad; vex bad",
+			wantChecks:  2,
+		},
+		{
+			name:        "slsa warn",
+			slsa:        types.WarnResult("slsa_provenance", "slsa warning"),
+			vex:         types.PassResult("vex", "ok"),
+			wantAllowed: true,
+			wantReason:  "slsa warning",
+			wantChecks:  2,
+		},
+		{
+			name:        "only slsa",
+			slsa:        types.PassResult("slsa_provenance", "ok"),
+			vex:         nil,
+			wantAllowed: true,
+			wantReason:  "",
+			wantChecks:  1,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := verifier.ExportCombineResults(test.slsa, test.vex)
+			if result.Allowed != test.wantAllowed {
+				t.Errorf("expected Allowed=%v, got %v", test.wantAllowed, result.Allowed)
+			}
+
+			if result.Reason != test.wantReason {
+				t.Errorf("expected Reason=%q, got %q", test.wantReason, result.Reason)
+			}
+
+			if len(result.CheckResults) != test.wantChecks {
+				t.Errorf("expected %d checks, got %d", test.wantChecks, len(result.CheckResults))
+			}
+		})
+	}
+}
+
+func TestApplyCheckResult(t *testing.T) {
+	t.Parallel()
+
+	t.Run("fail sets allowed false and appends reason", func(t *testing.T) {
+		t.Parallel()
+
+		result := &types.Result{Allowed: true, Reason: "existing", CheckResults: nil}
+		check := types.FailResult("test", "new failure")
+		verifier.ExportApplyCheckResult(result, check)
+
+		if result.Allowed {
+			t.Error("expected Allowed=false")
+		}
+
+		if result.Reason != "existing; new failure" {
+			t.Errorf("expected concatenated reason, got %q", result.Reason)
+		}
+	})
+
+	t.Run("warn appends reason without setting allowed false", func(t *testing.T) {
+		t.Parallel()
+
+		result := &types.Result{Allowed: true, Reason: "", CheckResults: nil}
+		check := types.WarnResult("test", "warning detail")
+		verifier.ExportApplyCheckResult(result, check)
+
+		if !result.Allowed {
+			t.Error("expected Allowed=true")
+		}
+
+		if result.Reason != "warning detail" {
+			t.Errorf("expected warning reason, got %q", result.Reason)
+		}
+	})
+
+	t.Run("pass leaves result unchanged", func(t *testing.T) {
+		t.Parallel()
+
+		result := &types.Result{Allowed: true, Reason: "", CheckResults: nil}
+		check := types.PassResult("test", "ok")
+		verifier.ExportApplyCheckResult(result, check)
+
+		if !result.Allowed {
+			t.Error("expected Allowed=true")
+		}
+
+		if result.Reason != "" {
+			t.Errorf("expected empty reason, got %q", result.Reason)
+		}
+	})
+}
+
 func writePolicy(t *testing.T, dir, name, content string) {
 	t.Helper()
 

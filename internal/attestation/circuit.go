@@ -112,24 +112,11 @@ func (cb *CircuitBreaker) RecordFailure() bool {
 	return false
 }
 
-// IsOpen returns true if the circuit breaker is in the open state.
-func (cb *CircuitBreaker) IsOpen() bool {
+func (cb *CircuitBreaker) isOpen() bool {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
 	return cb.state == circuitOpen
-}
-
-// Threshold returns the configured failure threshold.
-// Safe to call without synchronization: threshold is immutable after construction.
-func (cb *CircuitBreaker) Threshold() int {
-	return cb.threshold
-}
-
-// Cooldown returns the configured cooldown duration.
-// Safe to call without synchronization: cooldown is immutable after construction.
-func (cb *CircuitBreaker) Cooldown() time.Duration {
-	return cb.cooldown
 }
 
 // CircuitBreakerRegistry manages per-host circuit breakers. Each registry host
@@ -182,21 +169,11 @@ func (r *CircuitBreakerRegistry) Get(host string) *CircuitBreaker {
 	return breaker
 }
 
-// Threshold returns the configured failure threshold.
-// Safe to call without synchronization: threshold is immutable after construction.
-func (r *CircuitBreakerRegistry) Threshold() int {
-	return r.threshold
-}
-
-// Cooldown returns the configured cooldown duration.
-// Safe to call without synchronization: cooldown is immutable after construction.
-func (r *CircuitBreakerRegistry) Cooldown() time.Duration {
-	return r.cooldown
-}
-
+// evictNonOpenLocked removes breakers that are not in the open state.
+// Lock ordering: r.mu must be held; acquires breaker.mu via isOpen.
 func (r *CircuitBreakerRegistry) evictNonOpenLocked() {
 	for host, breaker := range r.breakers {
-		if !breaker.IsOpen() {
+		if !breaker.isOpen() {
 			delete(r.breakers, host)
 		}
 	}

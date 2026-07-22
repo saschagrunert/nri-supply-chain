@@ -6,8 +6,9 @@ SHFMT_VERSION = v3.13.1
 SHELLCHECK_VERSION = v0.11.0
 KUBERNIX_VERSION = 0.3.3
 MDTOC_VERSION = v1.4.0
-COSIGN_VERSION = 3.1.1
+COSIGN_VERSION = 3.1.2
 CRANE_VERSION = 0.21.7
+GOVULNCHECK_VERSION = v1.6.0
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.1.0)
 BUILD_DIR := build
@@ -58,7 +59,17 @@ help: ## Display this help
 .PHONY: build
 build: ## Build the nri-supply-chain binary (static)
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-X main.version=$(VERSION)" -o $(BUILD_DIR)/nri-supply-chain ./cmd/nri-supply-chain/
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $(BUILD_DIR)/nri-supply-chain ./cmd/nri-supply-chain/
+
+PREFIX ?= /usr/local
+
+.PHONY: install
+install: build ## Install the binary to $(PREFIX)/bin
+	install -m 0755 $(BUILD_DIR)/nri-supply-chain $(PREFIX)/bin/nri-supply-chain
+
+.PHONY: docker-build
+docker-build: ## Build the container image locally
+	docker build -t nri-supply-chain:$(VERSION) --build-arg VERSION=$(VERSION) .
 
 ##@ Development
 
@@ -96,7 +107,7 @@ e2e: build $(KUBERNIX) $(COSIGN) $(CRANE) ## Run bats e2e tests (requires root a
 ##@ Verification
 
 .PHONY: verify-all
-verify-all: lint verify-shfmt verify-shellcheck verify-mdtoc verify-tidy verify-dependencies ## Run all verification targets
+verify-all: lint verify-shfmt verify-shellcheck verify-mdtoc verify-tidy verify-dependencies govulncheck ## Run all verification targets
 
 .PHONY: lint
 lint: $(GOLANGCI_LINT) ## Run golangci-lint
@@ -172,7 +183,7 @@ $(CRANE):
 
 .PHONY: govulncheck
 govulncheck: ## Run govulncheck
-	$(GO) run golang.org/x/vuln/cmd/govulncheck@latest ./...
+	$(GO) run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
 ##@ Maintenance
 

@@ -180,11 +180,11 @@ func WarnEnforceDefaults(cfg *config.Config, policies map[string]*policy.Policy)
 			)
 		}
 
-		if vexMissingPolicy(pol) == policy.ActionAllow {
+		if pol.VEXMissingPolicy() == policy.ActionAllow {
 			slog.Warn("enforce mode with default VEX missing_policy=allow allows "+
 				"containers without VEX attestations; consider setting vex.missingPolicy=deny",
 				"policy", label,
-				"vex_missing_policy", vexMissingPolicy(pol),
+				"vex_missing_policy", pol.VEXMissingPolicy(),
 			)
 		}
 	}

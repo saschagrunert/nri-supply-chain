@@ -2,6 +2,7 @@
 
 [![ci](https://github.com/saschagrunert/nri-supply-chain/actions/workflows/ci.yml/badge.svg)](https://github.com/saschagrunert/nri-supply-chain/actions/workflows/ci.yml)
 [![deploy](https://github.com/saschagrunert/nri-supply-chain/actions/workflows/deploy.yml/badge.svg)](https://github.com/saschagrunert/nri-supply-chain/actions/workflows/deploy.yml)
+[![GitHub release](https://img.shields.io/github/v/release/saschagrunert/nri-supply-chain)](https://github.com/saschagrunert/nri-supply-chain/releases/latest)
 [![codecov](https://codecov.io/gh/saschagrunert/nri-supply-chain/graph/badge.svg)](https://codecov.io/gh/saschagrunert/nri-supply-chain)
 [![Go Reference](https://pkg.go.dev/badge/github.com/saschagrunert/nri-supply-chain.svg)](https://pkg.go.dev/github.com/saschagrunert/nri-supply-chain)
 
@@ -18,6 +19,8 @@ must pass verification.
 
 <!-- toc -->
 
+- [Quickstart](#quickstart)
+- [Compatibility](#compatibility)
 - [Architecture](#architecture)
 - [Verification Flow](#verification-flow)
 - [Verification Types](#verification-types)
@@ -55,6 +58,52 @@ must pass verification.
 - [License](#license)
 
 <!-- /toc -->
+
+## Quickstart
+
+1. Download the latest release binary or container image from the
+   [releases page](https://github.com/saschagrunert/nri-supply-chain/releases).
+
+2. Create a configuration file (`/etc/nri-supply-chain/config.toml`):
+
+   ```toml
+   verification = "warn"
+   policy_dir = "/etc/nri-supply-chain/policies"
+   ```
+
+3. Create a default policy (`/etc/nri-supply-chain/policies/default.json`):
+
+   ```json
+   {
+     "trust": {
+       "issuers": ["https://token.actions.githubusercontent.com"],
+       "sources": ["github.com/myorg/*"]
+     },
+     "provenance": { "missingPolicy": "warn" }
+   }
+   ```
+
+4. Deploy the plugin (see [Deployment](#deployment) for all options):
+
+   ```console
+   kubectl apply -k deploy/kubernetes/
+   ```
+
+5. Check the logs and metrics to observe verification decisions, then switch
+   to `verification = "enforce"` once confident.
+
+## Compatibility
+
+| Component  | Supported Versions  |
+| ---------- | ------------------- |
+| Kubernetes | 1.26+               |
+| CRI-O      | 1.28+ (NRI enabled) |
+| containerd | 1.7+ (NRI enabled)  |
+| NRI        | 0.6+                |
+| Go (build) | 1.26+               |
+
+NRI must be enabled in the container runtime configuration. See
+[Runtime Requirements](#runtime-requirements) for details.
 
 ## Architecture
 
@@ -707,6 +756,14 @@ To verify a release:
 
    ```console
    sha256sum --check checksums.txt
+   ```
+
+3. Verify the container image signature:
+
+   ```console
+   cosign verify ghcr.io/saschagrunert/nri-supply-chain:latest \
+     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+     --certificate-identity-regexp 'https://github.com/saschagrunert/nri-supply-chain/'
    ```
 
 ## Development

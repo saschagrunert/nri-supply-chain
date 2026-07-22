@@ -267,6 +267,31 @@ func ExportArtifactPolicy(digest string) error {
 // ExportMaxCircuitBreakers exposes maxCircuitBreakers for external tests.
 const ExportMaxCircuitBreakers = maxCircuitBreakers
 
+// ExportIsOpen exposes isOpen for external tests.
+func (cb *CircuitBreaker) ExportIsOpen() bool {
+	return cb.isOpen()
+}
+
+// ExportThreshold exposes threshold for external tests.
+func (cb *CircuitBreaker) ExportThreshold() int {
+	return cb.threshold
+}
+
+// ExportCooldown exposes cooldown for external tests.
+func (cb *CircuitBreaker) ExportCooldown() time.Duration {
+	return cb.cooldown
+}
+
+// ExportRegistryThreshold exposes threshold for external tests.
+func (r *CircuitBreakerRegistry) ExportThreshold() int {
+	return r.threshold
+}
+
+// ExportRegistryCooldown exposes cooldown for external tests.
+func (r *CircuitBreakerRegistry) ExportCooldown() time.Duration {
+	return r.cooldown
+}
+
 // NewTestMessageSignatureBundle creates a bundle with a message signature (no DSSE envelope).
 func NewTestMessageSignatureBundle() *bundle.Bundle {
 	protoBundle := &protobundle.Bundle{

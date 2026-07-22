@@ -196,6 +196,15 @@ func (p *Policy) ProvenanceMissingPolicy() Action {
 	return ActionAllow
 }
 
+// VEXMissingPolicy returns the effective VEX missing policy.
+func (p *Policy) VEXMissingPolicy() Action {
+	if p.VEX != nil && p.VEX.MissingPolicy != "" {
+		return p.VEX.MissingPolicy
+	}
+
+	return ActionAllow
+}
+
 // Builders returns the trusted builders list, or nil if trust is not configured.
 func (p *Policy) Builders() []TrustedBuilder {
 	if p.Trust != nil {
@@ -662,17 +671,19 @@ func (p *Policy) validateVSA() error {
 	}
 
 	if p.VSA.MaxAge != "" {
-		_, err := time.ParseDuration(p.VSA.MaxAge)
+		d, err := time.ParseDuration(p.VSA.MaxAge)
 		if err != nil {
 			return fmt.Errorf("invalid vsa.maxAge %q: %w", p.VSA.MaxAge, err)
 		}
+
+		p.VSA.MaxAgeDuration = d
 	}
 
 	return nil
 }
 
 func (p *Policy) initDerived() {
-	if p.VSA != nil && p.VSA.MaxAge != "" {
+	if p.VSA != nil && p.VSA.MaxAge != "" && p.VSA.MaxAgeDuration == 0 {
 		p.VSA.MaxAgeDuration, _ = time.ParseDuration(p.VSA.MaxAge)
 	}
 }

@@ -4,16 +4,14 @@ dependencies:
     refPaths:
       - path: Makefile
         match: ^GOLANGCI_LINT_VERSION
-      - path: .github/workflows/ci.yml
-        match: "version: v"
 
   - name: syft
-    version: 1.45.1
+    version: 1.49.0
     refPaths:
       - path: .github/workflows/ci.yml
-        match: "syft/"
+        match: syft-version
       - path: .github/workflows/release.yml
-        match: "syft/"
+        match: syft-version
 
   - name: zeitgeist
     version: 0.7.0
@@ -46,7 +44,7 @@ dependencies:
         match: ^MDTOC_VERSION
 
   - name: cosign
-    version: 3.1.1
+    version: 3.1.2
     refPaths:
       - path: Makefile
         match: ^COSIGN_VERSION
@@ -56,3 +54,9 @@ dependencies:
     refPaths:
       - path: Makefile
         match: ^CRANE_VERSION
+
+  - name: govulncheck
+    version: v1.6.0
+    refPaths:
+      - path: Makefile
+        match: ^GOVULNCHECK_VERSION

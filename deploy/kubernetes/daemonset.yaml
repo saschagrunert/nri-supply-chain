@@ -56,6 +56,10 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: nri-supply-chain
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
   template:
     metadata:
       labels:
@@ -66,6 +70,9 @@ spec:
         prometheus.io/path: "/metrics"
     spec:
       automountServiceAccountToken: false
+      priorityClassName: system-node-critical
+      tolerations:
+        - operator: Exists
       containers:
         - name: nri-supply-chain
           # Pin a specific image version for production. Prefer digest
@@ -73,7 +80,7 @@ spec:
           # image: ghcr.io/saschagrunert/nri-supply-chain@sha256:<digest>
           # Or use a version tag:
           # image: ghcr.io/saschagrunert/nri-supply-chain:v0.1.0
-          image: ghcr.io/saschagrunert/nri-supply-chain:latest
+          image: ghcr.io/saschagrunert/nri-supply-chain:v0.1.0
           args:
             - --config
             - /etc/nri-supply-chain/config.toml
@@ -99,7 +106,7 @@ spec:
               memory: 64Mi
             limits:
               cpu: 200m
-              memory: 128Mi
+              memory: 256Mi
           securityContext:
             readOnlyRootFilesystem: true
             runAsNonRoot: true
@@ -128,3 +135,29 @@ spec:
         - name: config
           configMap:
             name: nri-supply-chain-config
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: nri-supply-chain
+  namespace: nri-supply-chain
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: nri-supply-chain
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - port: 9090
+          protocol: TCP
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - ports:
+        - port: 443
+          protocol: TCP
