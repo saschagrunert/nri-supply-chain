@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -28,6 +29,7 @@ import (
 	"github.com/containerd/nri/pkg/stub"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"golang.org/x/sync/semaphore"
 
@@ -39,6 +41,9 @@ import (
 
 // ErrMissingAnnotations indicates that required image annotations are absent.
 var ErrMissingAnnotations = errors.New("missing image annotations")
+
+// ErrNoPlatformMatch indicates that no image in a manifest list matches the current platform.
+var ErrNoPlatformMatch = errors.New("no matching platform image in manifest list")
 
 // DigestResolveFunc resolves an image reference to its digest via a registry.
 type DigestResolveFunc func(ctx context.Context, imageRef string) (string, error)
@@ -101,7 +106,7 @@ func defaultDigestResolver(ctx context.Context, imageRef string) (string, error)
 		return "", fmt.Errorf("parsing image reference: %w", err)
 	}
 
-	desc, err := remote.Head(ref,
+	desc, err := remote.Get(ref,
 		remote.WithAuthFromKeychain(authn.DefaultKeychain),
 		remote.WithContext(ctx),
 	)
@@ -109,7 +114,43 @@ func defaultDigestResolver(ctx context.Context, imageRef string) (string, error)
 		return "", fmt.Errorf("resolving image digest: %w", err)
 	}
 
+	if desc.MediaType.IsIndex() {
+		return resolveIndexDigest(desc)
+	}
+
 	return desc.Digest.String(), nil
+}
+
+func resolveIndexDigest(desc *remote.Descriptor) (string, error) {
+	idx, err := desc.ImageIndex()
+	if err != nil {
+		return "", fmt.Errorf("reading image index: %w", err)
+	}
+
+	manifest, err := idx.IndexManifest()
+	if err != nil {
+		return "", fmt.Errorf("reading index manifest: %w", err)
+	}
+
+	platform := v1.Platform{
+		Architecture: runtime.GOARCH,
+		OS:           runtime.GOOS,
+	}
+
+	for i := range manifest.Manifests {
+		entry := &manifest.Manifests[i]
+
+		if entry.Platform != nil && entry.Platform.Satisfies(platform) {
+			slog.Debug("Resolved manifest list to platform image",
+				"platform", platform.String(),
+				"digest", entry.Digest.String(),
+			)
+
+			return entry.Digest.String(), nil
+		}
+	}
+
+	return "", fmt.Errorf("%w for %s/%s", ErrNoPlatformMatch, runtime.GOOS, runtime.GOARCH)
 }
 
 // Connected returns true if the plugin has successfully connected to the NRI runtime.
@@ -129,9 +170,9 @@ func (p *Plugin) SetDisconnected() {
 
 // Configure is called when the plugin connects to the NRI runtime.
 func (p *Plugin) Configure(
-	ctx context.Context, cfg, runtime, version string,
+	ctx context.Context, cfg, rt, version string,
 ) (stub.EventMask, error) {
-	slog.Info("Connected to runtime", "runtime", runtime, "version", version)
+	slog.Info("Connected to runtime", "runtime", rt, "version", version)
 
 	if p.configPath == "" && cfg != "" {
 		parsed, err := config.LoadFromString(cfg)
