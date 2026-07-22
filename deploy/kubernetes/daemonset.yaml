@@ -86,7 +86,7 @@ spec:
         - name: nri-supply-chain
           # For production, pin to a digest or version tag:
           # image: ghcr.io/saschagrunert/nri-supply-chain@sha256:<digest>
-          # image: ghcr.io/saschagrunert/nri-supply-chain:0.1.1
+          # image: ghcr.io/saschagrunert/nri-supply-chain:0.1.2
           image: ghcr.io/saschagrunert/nri-supply-chain:latest
           args:
             - --config

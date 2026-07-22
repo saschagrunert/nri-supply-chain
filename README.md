@@ -59,14 +59,14 @@ must pass verification.
 
    ```console
    nri-supply-chain --config config.toml \
-     --verify-image ghcr.io/saschagrunert/nri-supply-chain:0.1.1
+     --verify-image ghcr.io/saschagrunert/nri-supply-chain:0.1.2
    ```
 
    The output is JSON with per-check details:
 
    ```json
    {
-     "image": "ghcr.io/saschagrunert/nri-supply-chain:0.1.1",
+     "image": "ghcr.io/saschagrunert/nri-supply-chain:0.1.2",
      "digest": "sha256:...",
      "namespace": "default",
      "allowed": true,
