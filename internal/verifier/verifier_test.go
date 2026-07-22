@@ -244,7 +244,7 @@ func TestVerify(t *testing.T) {
 			testutil.AssertNoError(t, err)
 
 			result, err := verif.Verify(
-				context.Background(), imageRef, "sha256:abc", "default",
+				context.Background(), imageRef, "sha256:abc", "", "default",
 			)
 
 			if test.wantErr != nil {
@@ -280,12 +280,12 @@ func TestVerifyCache(t *testing.T) {
 	testutil.AssertNoError(t, err)
 
 	result1, err := verif.Verify(
-		context.Background(), "nginx:latest", "sha256:abc", "default",
+		context.Background(), "nginx:latest", "sha256:abc", "", "default",
 	)
 	testutil.AssertNoError(t, err)
 
 	result2, err := verif.Verify(
-		context.Background(), "nginx:latest", "sha256:abc", "default",
+		context.Background(), "nginx:latest", "sha256:abc", "", "default",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -316,7 +316,7 @@ func TestVerifyCacheWarnMode(t *testing.T) {
 	testutil.AssertNoError(t, err)
 
 	result1, err := verif.Verify(
-		context.Background(), "nginx:latest", "sha256:warn-cache", "default",
+		context.Background(), "nginx:latest", "sha256:warn-cache", "", "default",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -326,7 +326,7 @@ func TestVerifyCacheWarnMode(t *testing.T) {
 	}
 
 	result2, err := verif.Verify(
-		context.Background(), "nginx:latest", "sha256:warn-cache", "default",
+		context.Background(), "nginx:latest", "sha256:warn-cache", "", "default",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -361,7 +361,7 @@ func TestVerifyCacheEnforceMode(t *testing.T) {
 	testutil.AssertNoError(t, err)
 
 	_, err = verif.Verify(
-		context.Background(), "nginx:latest", "sha256:enforce-cache", "default",
+		context.Background(), "nginx:latest", "sha256:enforce-cache", "", "default",
 	)
 
 	if !errors.Is(err, verifier.ErrVerificationFailed) {
@@ -369,7 +369,7 @@ func TestVerifyCacheEnforceMode(t *testing.T) {
 	}
 
 	_, err = verif.Verify(
-		context.Background(), "nginx:latest", "sha256:enforce-cache", "default",
+		context.Background(), "nginx:latest", "sha256:enforce-cache", "", "default",
 	)
 
 	if !errors.Is(err, verifier.ErrVerificationFailed) {
@@ -399,14 +399,14 @@ func TestVerifyNamespacePolicy(t *testing.T) {
 	testutil.AssertNoError(t, err)
 
 	_, err = verif.Verify(
-		context.Background(), "nginx:latest", "sha256:abc", "default",
+		context.Background(), "nginx:latest", "sha256:abc", "", "default",
 	)
 	if err == nil {
 		t.Error("expected error for default namespace")
 	}
 
 	result, err := verif.Verify(
-		context.Background(), "nginx:latest", "sha256:def", "staging",
+		context.Background(), "nginx:latest", "sha256:def", "", "staging",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -583,7 +583,7 @@ func TestReloadPreservesCacheWhenConfigUnchanged(t *testing.T) {
 	testutil.AssertNoError(t, err)
 
 	result1, err := verif.Verify(
-		context.Background(), "nginx:latest", "sha256:preserve", "default",
+		context.Background(), "nginx:latest", "sha256:preserve", "", "default",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -596,7 +596,7 @@ func TestReloadPreservesCacheWhenConfigUnchanged(t *testing.T) {
 	testutil.AssertNoError(t, err)
 
 	result2, err := verif.Verify(
-		context.Background(), "nginx:latest", "sha256:preserve", "default",
+		context.Background(), "nginx:latest", "sha256:preserve", "", "default",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -660,7 +660,7 @@ func TestReloadClearsCacheWhenPolicyChanges(t *testing.T) {
 	testutil.AssertNoError(t, err)
 
 	result1, err := verif.Verify(
-		context.Background(), "nginx:latest", "sha256:polchange", "default",
+		context.Background(), "nginx:latest", "sha256:polchange", "", "default",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -675,7 +675,7 @@ func TestReloadClearsCacheWhenPolicyChanges(t *testing.T) {
 	testutil.AssertNoError(t, err)
 
 	result2, err := verif.Verify(
-		context.Background(), "nginx:latest", "sha256:polchange", "default",
+		context.Background(), "nginx:latest", "sha256:polchange", "", "default",
 	)
 	testutil.AssertNoError(t, err)
 

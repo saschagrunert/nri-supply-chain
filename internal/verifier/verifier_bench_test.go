@@ -51,7 +51,7 @@ func BenchmarkVerifyCacheHit(b *testing.B) {
 
 	ctx := context.Background()
 
-	_, err = verif.Verify(ctx, "nginx:latest", "sha256:abc123", "default")
+	_, err = verif.Verify(ctx, "nginx:latest", "sha256:abc123", "", "default")
 	if err != nil {
 		b.Fatalf("initial verify: %v", err)
 	}
@@ -59,7 +59,7 @@ func BenchmarkVerifyCacheHit(b *testing.B) {
 	b.ResetTimer()
 
 	for range b.N {
-		_, err = verif.Verify(ctx, "nginx:latest", "sha256:abc123", "default")
+		_, err = verif.Verify(ctx, "nginx:latest", "sha256:abc123", "", "default")
 		if err != nil {
 			b.Fatalf("verify: %v", err)
 		}
@@ -82,7 +82,7 @@ func BenchmarkVerifyCacheHitParallel(b *testing.B) {
 
 	ctx := context.Background()
 
-	_, err = verif.Verify(ctx, "nginx:latest", "sha256:abc123", "default")
+	_, err = verif.Verify(ctx, "nginx:latest", "sha256:abc123", "", "default")
 	if err != nil {
 		b.Fatalf("initial verify: %v", err)
 	}
@@ -91,7 +91,7 @@ func BenchmarkVerifyCacheHitParallel(b *testing.B) {
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_, verifyErr := verif.Verify(ctx, "nginx:latest", "sha256:abc123", "default")
+			_, verifyErr := verif.Verify(ctx, "nginx:latest", "sha256:abc123", "", "default")
 			if verifyErr != nil {
 				b.Errorf("verify: %v", verifyErr)
 
@@ -114,7 +114,7 @@ func BenchmarkVerifyDisabled(b *testing.B) {
 	b.ResetTimer()
 
 	for range b.N {
-		_, err = verif.Verify(ctx, "nginx:latest", "sha256:abc123", "default")
+		_, err = verif.Verify(ctx, "nginx:latest", "sha256:abc123", "", "default")
 		if err != nil {
 			b.Fatalf("verify: %v", err)
 		}

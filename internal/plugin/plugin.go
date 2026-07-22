@@ -45,8 +45,10 @@ var ErrMissingAnnotations = errors.New("missing image annotations")
 // ErrNoPlatformMatch indicates that no image in a manifest list matches the current platform.
 var ErrNoPlatformMatch = errors.New("no matching platform image in manifest list")
 
-// DigestResolveFunc resolves an image reference to its digest via a registry.
-type DigestResolveFunc func(ctx context.Context, imageRef string) (string, error)
+// DigestResolveFunc resolves an image reference to its platform-specific digest
+// via a registry. When the tag points to a manifest list, indexDigest returns
+// the manifest list digest (for attestation lookup); otherwise it is empty.
+type DigestResolveFunc func(ctx context.Context, imageRef string) (digest, indexDigest string, err error)
 
 const (
 	prewarmConcurrency = 5
@@ -54,9 +56,10 @@ const (
 )
 
 type prewarmImage struct {
-	imageRef  string
-	digest    string
-	namespace string
+	imageRef    string
+	digest      string
+	indexDigest string
+	namespace   string
 }
 
 const (
@@ -100,10 +103,12 @@ func New(
 	}
 }
 
-func defaultDigestResolver(ctx context.Context, imageRef string) (string, error) {
+func defaultDigestResolver(
+	ctx context.Context, imageRef string,
+) (digest, indexDigest string, err error) {
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
-		return "", fmt.Errorf("parsing image reference: %w", err)
+		return "", "", fmt.Errorf("parsing image reference: %w", err)
 	}
 
 	desc, err := remote.Get(ref,
@@ -111,14 +116,19 @@ func defaultDigestResolver(ctx context.Context, imageRef string) (string, error)
 		remote.WithContext(ctx),
 	)
 	if err != nil {
-		return "", fmt.Errorf("resolving image digest: %w", err)
+		return "", "", fmt.Errorf("resolving image digest: %w", err)
 	}
 
 	if desc.MediaType.IsIndex() {
-		return resolveIndexDigest(desc)
+		platformDigest, indexErr := resolveIndexDigest(desc)
+		if indexErr != nil {
+			return "", "", indexErr
+		}
+
+		return platformDigest, desc.Digest.String(), nil
 	}
 
-	return desc.Digest.String(), nil
+	return desc.Digest.String(), "", nil
 }
 
 func resolveIndexDigest(desc *remote.Descriptor) (string, error) {
@@ -237,7 +247,7 @@ func (p *Plugin) CreateContainer(
 		"labels", ctr.GetLabels(),
 	)
 
-	digest = p.resolveDigestIfMissing(ctx, imageRef, digest, namespace, pod, ctr)
+	digest, indexDigest := p.resolveDigestIfMissing(ctx, imageRef, digest, namespace, pod, ctr)
 
 	if imageRef == "" || digest == "" {
 		if p.verifier.Enforcing() {
@@ -261,7 +271,7 @@ func (p *Plugin) CreateContainer(
 		return nil, nil, nil
 	}
 
-	result, err := p.verifier.Verify(ctx, imageRef, digest, namespace)
+	result, err := p.verifier.Verify(ctx, imageRef, digest, indexDigest, namespace)
 	if err != nil {
 		slog.ErrorContext(ctx, "Container rejected",
 			"pod", namespace+"/"+pod.GetName(),
@@ -288,13 +298,13 @@ func (p *Plugin) resolveDigestIfMissing(
 	imageRef, digest, namespace string,
 	pod *api.PodSandbox,
 	ctr *api.Container,
-) string {
+) (resolvedDigest, resolvedIndexDigest string) {
 	if imageRef == "" || digest != "" {
-		return digest
+		return digest, ""
 	}
 
 	resolveCtx, cancel := context.WithTimeout(ctx, p.fetchTimeout)
-	resolved, err := p.digestResolver(resolveCtx, imageRef)
+	resolved, indexDigest, err := p.digestResolver(resolveCtx, imageRef)
 
 	cancel()
 
@@ -306,10 +316,10 @@ func (p *Plugin) resolveDigestIfMissing(
 			"error", err,
 		)
 
-		return digest
+		return digest, ""
 	}
 
-	return resolved
+	return resolved, indexDigest
 }
 
 func (p *Plugin) collectPrewarmImages(
@@ -323,9 +333,11 @@ func (p *Plugin) collectPrewarmImages(
 		annotations := ctr.GetAnnotations()
 		imageRef, digest := resolveImage(annotations)
 
+		var indexDigest string
+
 		if imageRef != "" && digest == "" {
 			resolveCtx, cancel := context.WithTimeout(ctx, p.fetchTimeout)
-			resolved, err := p.digestResolver(resolveCtx, imageRef)
+			resolved, idxDig, err := p.digestResolver(resolveCtx, imageRef)
 
 			cancel()
 
@@ -337,6 +349,7 @@ func (p *Plugin) collectPrewarmImages(
 				)
 			} else {
 				digest = resolved
+				indexDigest = idxDig
 			}
 		}
 
@@ -355,9 +368,10 @@ func (p *Plugin) collectPrewarmImages(
 		seen[key] = struct{}{}
 
 		images = append(images, prewarmImage{
-			imageRef:  imageRef,
-			digest:    digest,
-			namespace: namespace,
+			imageRef:    imageRef,
+			digest:      digest,
+			indexDigest: indexDigest,
+			namespace:   namespace,
 		})
 	}
 
@@ -387,7 +401,9 @@ func (p *Plugin) prewarmCache(ctx context.Context, images []prewarmImage) {
 		go func() {
 			defer sem.Release(1)
 
-			_, verifyErr := p.verifier.Verify(ctx, img.imageRef, img.digest, img.namespace)
+			_, verifyErr := p.verifier.Verify(
+				ctx, img.imageRef, img.digest, img.indexDigest, img.namespace,
+			)
 			if verifyErr != nil {
 				slog.Debug("Pre-warm verification failed",
 					"image", img.imageRef,

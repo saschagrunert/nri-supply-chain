@@ -44,6 +44,9 @@ const (
 	testDefaultNamespace  = "default"
 	testInTotoStatementV1 = "https://in-toto.io/Statement/v1"
 	testOpenVEXPredicate  = "https://openvex.dev/ns"
+	testAlgoSHA256        = "sha256"
+	testBuilderRunner     = "https://github.com/actions/runner"
+	testSubjectName       = "nginx"
 	policyTrustRunnerJSON = `{
 	"trust": {"builders": [{"id": "https://github.com/actions/runner", "maxLevel": 2}]}
 }`
@@ -85,8 +88,8 @@ func validSLSAPayload(t *testing.T) []byte {
 		Type: testInTotoStatementV1,
 		Subject: []slsa.Subject{
 			{
-				Name:   "nginx",
-				Digest: map[string]string{"sha256": "abc123"},
+				Name:   testSubjectName,
+				Digest: map[string]string{testAlgoSHA256: "abc123"},
 			},
 		},
 		PredicateType: attestation.PredicateSLSAProvenanceV1,
@@ -100,7 +103,7 @@ func validSLSAPayload(t *testing.T) []byte {
 			},
 			RunDetails: slsa.RunDetails{
 				Builder: slsa.Builder{
-					ID: "https://github.com/actions/runner",
+					ID: testBuilderRunner,
 				},
 				Metadata: slsa.Metadata{
 					InvocationID: "run-123",
@@ -172,8 +175,8 @@ func validVEXPayload(t *testing.T, status openvex.Status) []byte {
 			Digest map[string]string `json:"digest"`
 		}{
 			{
-				Name:   "nginx",
-				Digest: map[string]string{"sha256": testFetchDigest[len("sha256:"):]},
+				Name:   testSubjectName,
+				Digest: map[string]string{testAlgoSHA256: testFetchDigest[len("sha256:"):]},
 			},
 		},
 		PredicateType: testOpenVEXPredicate,
@@ -597,7 +600,7 @@ func TestVerifyWithFetcher(t *testing.T) {
 			testutil.AssertNoError(t, err)
 
 			result, err := verif.Verify(
-				context.Background(), "nginx:latest", testFetchDigest, testDefaultNamespace,
+				context.Background(), "nginx:latest", testFetchDigest, "", testDefaultNamespace,
 			)
 
 			if test.wantErr != nil {
@@ -658,7 +661,7 @@ func TestVerifyCacheFailureTTL(t *testing.T) {
 	// In warn mode it's allowed, but the underlying result has failures,
 	// so it should be cached with the short failure TTL.
 	result1, err := verif.Verify(
-		context.Background(), "nginx:latest", "sha256:failttl", "default",
+		context.Background(), "nginx:latest", "sha256:failttl", "", "default",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -672,7 +675,7 @@ func TestVerifyCacheFailureTTL(t *testing.T) {
 	// Second call: cache should have expired due to the short failure TTL.
 	// The result should still be computed fresh (same outcome in this case).
 	result2, err := verif.Verify(
-		context.Background(), "nginx:latest", "sha256:failttl", "default",
+		context.Background(), "nginx:latest", "sha256:failttl", "", "default",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -741,7 +744,7 @@ func TestVerifyConcurrentSameDigest(t *testing.T) {
 	for range goroutines {
 		waitGroup.Go(func() {
 			_, verifyErr := ver.Verify(
-				context.Background(), imageRef, digest, namespace,
+				context.Background(), imageRef, digest, "", namespace,
 			)
 			if verifyErr != nil {
 				t.Errorf("unexpected error: %v", verifyErr)
@@ -782,7 +785,7 @@ func TestVerifyCircuitBreakerIntegration(t *testing.T) {
 	// Trip the circuit breaker with 3 failures.
 	for call := range 3 {
 		result, verifyErr := ver.Verify(
-			context.Background(), imageRef, digest, namespace,
+			context.Background(), imageRef, digest, "", namespace,
 		)
 		testutil.AssertNoError(t, verifyErr)
 
@@ -797,7 +800,7 @@ func TestVerifyCircuitBreakerIntegration(t *testing.T) {
 
 	// 4th call: circuit breaker is open, fetch should be skipped.
 	result, err := ver.Verify(
-		context.Background(), imageRef, digest, namespace,
+		context.Background(), imageRef, digest, "", namespace,
 	)
 	testutil.AssertNoError(t, err)
 
@@ -817,7 +820,7 @@ func TestVerifyCircuitBreakerIntegration(t *testing.T) {
 	time.Sleep(150 * time.Millisecond)
 
 	_, err = ver.Verify(
-		context.Background(), imageRef, digest, namespace,
+		context.Background(), imageRef, digest, "", namespace,
 	)
 	testutil.AssertNoError(t, err)
 
@@ -853,7 +856,7 @@ func TestVerifyCircuitBreakerMetric(t *testing.T) {
 	for call := range 2 {
 		digest := "sha256:" + strings.Repeat(string("0123456789abcdef"[call%16]), 64)
 
-		_, err := ver.Verify(context.Background(), imageRef, digest, namespace)
+		_, err := ver.Verify(context.Background(), imageRef, digest, "", namespace)
 		testutil.AssertNoError(t, err)
 	}
 
@@ -866,7 +869,7 @@ func TestVerifyCircuitBreakerMetric(t *testing.T) {
 	// 3rd call: circuit breaker is open, fetch should be skipped.
 	digest := "sha256:" + strings.Repeat("c", 64)
 
-	result, err := ver.Verify(context.Background(), imageRef, digest, namespace)
+	result, err := ver.Verify(context.Background(), imageRef, digest, "", namespace)
 	testutil.AssertNoError(t, err)
 
 	if !result.Allowed {
@@ -886,7 +889,7 @@ func TestVerifyCircuitBreakerMetric(t *testing.T) {
 
 	digest = "sha256:" + strings.Repeat("d", 64)
 
-	_, err = ver.Verify(context.Background(), imageRef, digest, namespace)
+	_, err = ver.Verify(context.Background(), imageRef, digest, "", namespace)
 	testutil.AssertNoError(t, err)
 
 	if got := fetcher.calls.Load(); got != 3 {
@@ -928,7 +931,7 @@ func TestVerifyConcurrentWithReloadModeSwitch(t *testing.T) {
 			for range 10 {
 				_, verifyErr := ver.Verify(
 					context.Background(), testDockerNginx,
-					digest, testDefaultNamespace,
+					digest, "", testDefaultNamespace,
 				)
 				if verifyErr != nil && !errors.Is(verifyErr, verifier.ErrVerificationFailed) {
 					t.Errorf("unexpected verify error: %v", verifyErr)
@@ -992,7 +995,7 @@ func TestVerifyConcurrentWithReload(t *testing.T) {
 			for range 10 {
 				_, verifyErr := ver.Verify(
 					context.Background(), testDockerNginx,
-					digest, testDefaultNamespace,
+					digest, "", testDefaultNamespace,
 				)
 				if verifyErr != nil {
 					t.Errorf("unexpected verify error: %v", verifyErr)
@@ -1018,4 +1021,184 @@ func TestVerifyConcurrentWithReload(t *testing.T) {
 	}
 
 	waitGroup.Wait()
+}
+
+type digestAwareFetcher struct {
+	byDigest map[string][]attestation.VerifiedAttestation
+	calls    atomic.Int32
+}
+
+func (f *digestAwareFetcher) Fetch(
+	_ context.Context,
+	_, digest string,
+	_ *attestation.FetchOptions,
+) ([]attestation.VerifiedAttestation, error) {
+	f.calls.Add(1)
+
+	if atts, ok := f.byDigest[digest]; ok {
+		return atts, nil
+	}
+
+	return nil, nil
+}
+
+func TestVerifyIndexDigestFallback(t *testing.T) {
+	t.Parallel()
+
+	const (
+		platformDigest = "sha256:aaaa1111"
+		indexDigest    = "sha256:bbbb2222"
+	)
+
+	makePayload := func(t *testing.T, digest string) []byte {
+		t.Helper()
+
+		hexDigest := digest[len("sha256:"):]
+
+		stmt := slsa.Statement{
+			Type: testInTotoStatementV1,
+			Subject: []slsa.Subject{
+				{
+					Name:   testSubjectName,
+					Digest: map[string]string{testAlgoSHA256: hexDigest},
+				},
+			},
+			PredicateType: attestation.PredicateSLSAProvenanceV1,
+			Predicate: slsa.ProvenancePredicate{
+				BuildDefinition: slsa.BuildDefinition{
+					BuildType: testBuilderRunner,
+					ExternalParameters: map[string]any{
+						"source": "github.com/example/repo",
+					},
+					InternalParameters: map[string]any{},
+				},
+				RunDetails: slsa.RunDetails{
+					Builder: slsa.Builder{
+						ID: testBuilderRunner,
+					},
+					Metadata: slsa.Metadata{
+						InvocationID: "run-123",
+					},
+				},
+			},
+		}
+
+		return marshalJSON(t, stmt)
+	}
+
+	t.Run("attestations on index digest are found", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		writePolicy(t, dir, "default.json", policyTrustRunnerJSON)
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeEnforce
+		cfg.PolicyDir = dir
+
+		fetcher := &digestAwareFetcher{
+			byDigest: map[string][]attestation.VerifiedAttestation{
+				indexDigest: {
+					{
+						PredicateType: attestation.PredicateSLSAProvenanceV1,
+						Payload:       makePayload(t, indexDigest),
+						Digest:        indexDigest,
+					},
+				},
+			},
+			calls: atomic.Int32{},
+		}
+
+		verif, err := verifier.New(cfg, metrics.New(), fetcher)
+		testutil.AssertNoError(t, err)
+
+		result, err := verif.Verify(
+			context.Background(), "nginx:latest", platformDigest, indexDigest, testDefaultNamespace,
+		)
+		testutil.AssertNoError(t, err)
+
+		if !result.Allowed {
+			t.Errorf("expected allowed=true, got false")
+		}
+	})
+
+	t.Run("falls back to platform digest when index has no attestations", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		writePolicy(t, dir, "default.json", policyTrustRunnerJSON)
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeEnforce
+		cfg.PolicyDir = dir
+
+		fetcher := &digestAwareFetcher{
+			byDigest: map[string][]attestation.VerifiedAttestation{
+				platformDigest: {
+					{
+						PredicateType: attestation.PredicateSLSAProvenanceV1,
+						Payload:       makePayload(t, platformDigest),
+						Digest:        platformDigest,
+					},
+				},
+			},
+			calls: atomic.Int32{},
+		}
+
+		verif, err := verifier.New(cfg, metrics.New(), fetcher)
+		testutil.AssertNoError(t, err)
+
+		result, err := verif.Verify(
+			context.Background(), "nginx:latest", platformDigest, indexDigest, testDefaultNamespace,
+		)
+		testutil.AssertNoError(t, err)
+
+		if !result.Allowed {
+			t.Errorf("expected allowed=true, got false")
+		}
+
+		if fetcher.calls.Load() != 2 {
+			t.Errorf("expected 2 fetch calls (index then platform), got %d", fetcher.calls.Load())
+		}
+	})
+
+	t.Run("empty index digest skips index lookup", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		writePolicy(t, dir, "default.json", policyTrustRunnerJSON)
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeEnforce
+		cfg.PolicyDir = dir
+
+		fetcher := &digestAwareFetcher{
+			byDigest: map[string][]attestation.VerifiedAttestation{
+				platformDigest: {
+					{
+						PredicateType: attestation.PredicateSLSAProvenanceV1,
+						Payload:       makePayload(t, platformDigest),
+						Digest:        platformDigest,
+					},
+				},
+			},
+			calls: atomic.Int32{},
+		}
+
+		verif, err := verifier.New(cfg, metrics.New(), fetcher)
+		testutil.AssertNoError(t, err)
+
+		result, err := verif.Verify(
+			context.Background(), "nginx:latest", platformDigest, "", testDefaultNamespace,
+		)
+		testutil.AssertNoError(t, err)
+
+		if !result.Allowed {
+			t.Errorf("expected allowed=true, got false")
+		}
+
+		if fetcher.calls.Load() != 1 {
+			t.Errorf("expected 1 fetch call (platform only), got %d", fetcher.calls.Load())
+		}
+	})
 }

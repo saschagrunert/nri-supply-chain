@@ -59,7 +59,7 @@ func applyEnforcement(
 
 func runChecks(
 	ctx context.Context, state *snapshot,
-	pol *policy.Policy, imageRef, digest, namespace string,
+	pol *policy.Policy, imageRef, digest, indexDigest, namespace string,
 ) *types.Result {
 	if state.fetcher == nil {
 		return runChecksWithoutFetcher(pol, state.metrics, imageRef)
@@ -89,7 +89,9 @@ func runChecks(
 		defer state.fetchSem.Release(1)
 	}
 
-	attestations, fetchErr := fetchAttestations(ctx, state, imageRef, digest, pol)
+	attestations, attestDigest, fetchErr := fetchAttestations(
+		ctx, state, imageRef, digest, indexDigest, pol,
+	)
 	if fetchErr != nil {
 		recordBreakerFailure(ctx, breaker, state.metrics, host, state.config.FetchFailurePolicy)
 
@@ -102,12 +104,12 @@ func runChecks(
 
 	bins := binAttestations(attestations)
 
-	vsaResult := checkVSA(ctx, bins.vsa, pol, imageRef, digest, state.metrics)
+	vsaResult := checkVSA(ctx, bins.vsa, pol, imageRef, attestDigest, state.metrics)
 	if vsaResult != nil {
 		return vsaResult
 	}
 
-	return runParallelChecks(ctx, &bins, pol, state.metrics, imageRef, digest, namespace)
+	return runParallelChecks(ctx, &bins, pol, state.metrics, imageRef, attestDigest, namespace)
 }
 
 func runChecksWithoutFetcher(
@@ -132,11 +134,38 @@ func runChecksWithoutFetcher(
 
 func fetchAttestations(
 	ctx context.Context, state *snapshot,
-	imageRef, digest string, pol *policy.Policy,
-) ([]attestation.VerifiedAttestation, error) {
+	imageRef, digest, indexDigest string, pol *policy.Policy,
+) ([]attestation.VerifiedAttestation, string, error) {
+	opts := buildFetchOpts(pol, digest, state.config.FetchTimeout.Duration)
+
+	// When the image resolved from a manifest list, try the index digest
+	// first: cosign attaches attestations to the manifest list digest.
+	if indexDigest != "" {
+		indexOpts := buildFetchOpts(pol, indexDigest, state.config.FetchTimeout.Duration)
+
+		atts, err := state.fetcher.Fetch(ctx, imageRef, indexDigest, indexOpts)
+		if err == nil && len(atts) > 0 {
+			return atts, indexDigest, nil
+		}
+
+		slog.DebugContext(ctx, "No attestations on index digest, falling back to platform digest",
+			"indexDigest", indexDigest, "platformDigest", digest)
+	}
+
+	attestations, err := state.fetcher.Fetch(ctx, imageRef, digest, opts)
+	if err != nil {
+		return nil, digest, fmt.Errorf("fetching attestations: %w", err)
+	}
+
+	return attestations, digest, nil
+}
+
+func buildFetchOpts(
+	pol *policy.Policy, digest string, timeout time.Duration,
+) *attestation.FetchOptions {
 	opts := &attestation.FetchOptions{
 		RequireTransparencyLog: pol.Signatures != nil && pol.Signatures.RequireTransparencyLog,
-		Timeout:                state.config.FetchTimeout.Duration,
+		Timeout:                timeout,
 		Digest:                 digest,
 	}
 
@@ -152,12 +181,7 @@ func fetchAttestations(
 		opts.TrustedKeys = keys
 	}
 
-	attestations, err := state.fetcher.Fetch(ctx, imageRef, digest, opts)
-	if err != nil {
-		return nil, fmt.Errorf("fetching attestations: %w", err)
-	}
-
-	return attestations, nil
+	return opts
 }
 
 func handleFetchError(
