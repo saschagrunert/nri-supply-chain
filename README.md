@@ -59,14 +59,14 @@ must pass verification.
 
    ```console
    nri-supply-chain --config config.toml \
-     --verify-image ghcr.io/saschagrunert/nri-supply-chain:0.1.3
+     --verify-image ghcr.io/saschagrunert/nri-supply-chain:0.1.4
    ```
 
    The output is JSON with per-check details:
 
    ```json
    {
-     "image": "ghcr.io/saschagrunert/nri-supply-chain:0.1.3",
+     "image": "ghcr.io/saschagrunert/nri-supply-chain:0.1.4",
      "digest": "sha256:...",
      "namespace": "default",
      "allowed": true,
@@ -100,7 +100,7 @@ must pass verification.
 
    ```json
    {
-     "image": "ghcr.io/saschagrunert/nri-supply-chain:0.1.3",
+     "image": "ghcr.io/saschagrunert/nri-supply-chain:0.1.4",
      "digest": "sha256:...",
      "namespace": "default",
      "allowed": true,

@@ -46,7 +46,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
-var version = "0.1.3"
+var version = "0.1.4"
 
 // ErrNoPlatformMatch indicates that no image in a manifest list matches the current platform.
 var ErrNoPlatformMatch = errors.New("no matching platform image in manifest list")
