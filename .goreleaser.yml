@@ -36,21 +36,7 @@ sboms:
   - artifacts: binary
 
 changelog:
-  sort: asc
-  filters:
-    exclude:
-      - "^chore"
-      - "^ci"
-      - "^docs"
-      - "^style"
-      - Merge pull request
-  groups:
-    - title: Features
-      regexp: "^.*feat[(:].*$"
-    - title: Bug Fixes
-      regexp: "^.*fix[(:].*$"
-    - title: Other
-      order: 999
+  use: github-native
 
 dockers_v2:
   - images:
