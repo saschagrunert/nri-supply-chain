@@ -968,7 +968,17 @@ func TestResolveDigestSuccess(t *testing.T) {
 func TestRunVerifyResolveDigestFails(t *testing.T) {
 	t.Parallel()
 
+	dir := t.TempDir()
+
+	err := os.WriteFile(filepath.Join(dir, "default.json"), []byte(`{}`), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+
 	opts := &options{
 		configPath:      "",
 		metricsAddr:     "",

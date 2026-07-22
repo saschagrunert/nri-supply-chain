@@ -570,6 +570,32 @@ already attested the image.
 --verify-namespace    Namespace for verification (default: default)
 ```
 
+To verify a single image without running the plugin:
+
+```console
+nri-supply-chain --config config.toml --verify-image ghcr.io/myorg/myimage:v1.0
+```
+
+The output is JSON with per-check details:
+
+```json
+{
+  "image": "ghcr.io/myorg/myimage:v1.0",
+  "digest": "sha256:abc123...",
+  "namespace": "default",
+  "allowed": true,
+  "checkResults": [
+    {
+      "type": "slsa_provenance",
+      "passed": true,
+      "status": "pass",
+      "detail": "..."
+    },
+    { "type": "vex", "passed": true, "status": "pass", "detail": "..." }
+  ]
+}
+```
+
 ## Metrics
 
 The plugin exposes Prometheus metrics at the configured address:
@@ -769,6 +795,20 @@ To verify a release:
    cosign verify ghcr.io/saschagrunert/nri-supply-chain:latest \
      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
      --certificate-identity-regexp 'https://github.com/saschagrunert/nri-supply-chain/'
+   ```
+
+4. Verify build provenance attestation:
+
+   ```console
+   gh attestation verify nri-supply-chain_<version>_linux_amd64 \
+     --repo saschagrunert/nri-supply-chain
+   ```
+
+5. Inspect the SBOM (generated with syft, integrity covered by the signed
+   checksum file from step 1):
+
+   ```console
+   cat nri-supply-chain_<version>_linux_amd64.sbom.json | jq .
    ```
 
 ## Development

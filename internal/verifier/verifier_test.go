@@ -684,7 +684,11 @@ func TestReloadClearsCacheWhenPolicyChanges(t *testing.T) {
 	}
 }
 
-const testDockerNginx = "docker.io/library/nginx:latest"
+const (
+	testDockerNginx    = "docker.io/library/nginx:latest"
+	testCheckTypeSlsa  = "slsa"
+	testCheckTypeFetch = "fetch"
+)
 
 func TestBuildDigestRef(t *testing.T) {
 	t.Parallel()
@@ -823,9 +827,10 @@ func TestResultHasFailures(t *testing.T) {
 			result: &types.Result{
 				Allowed: true,
 				Reason:  "partial",
-				CheckResults: []types.CheckResult{
-					{Type: "slsa", Passed: false, Status: types.StatusFail, Detail: "err"},
-				},
+				CheckResults: []types.CheckResult{{
+					Type: testCheckTypeSlsa, Passed: false,
+					Status: types.StatusFail, Detail: "err",
+				}},
 			},
 			expected: true,
 		},
@@ -834,9 +839,10 @@ func TestResultHasFailures(t *testing.T) {
 			result: &types.Result{
 				Allowed: true,
 				Reason:  "ok",
-				CheckResults: []types.CheckResult{
-					{Type: "slsa", Passed: true, Status: types.StatusPass, Detail: "ok"},
-				},
+				CheckResults: []types.CheckResult{{
+					Type: testCheckTypeSlsa, Passed: true,
+					Status: types.StatusPass, Detail: "ok",
+				}},
 			},
 			expected: false,
 		},
@@ -847,6 +853,61 @@ func TestResultHasFailures(t *testing.T) {
 			t.Parallel()
 
 			got := verifier.ExportResultHasFailures(test.result)
+			if got != test.expected {
+				t.Errorf("expected %v, got %v", test.expected, got)
+			}
+		})
+	}
+}
+
+func TestResultShouldUseShorterTTL(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		result   *types.Result
+		expected bool
+	}{
+		{
+			name: "failed result uses shorter TTL",
+			result: &types.Result{
+				Allowed:      false,
+				Reason:       "denied",
+				CheckResults: nil,
+			},
+			expected: true,
+		},
+		{
+			name: "fetch type with passing check uses shorter TTL",
+			result: &types.Result{
+				Allowed: true,
+				Reason:  "ok",
+				CheckResults: []types.CheckResult{{
+					Type: testCheckTypeFetch, Passed: true,
+					Status: types.StatusWarn, Detail: "fetch failed",
+				}},
+			},
+			expected: true,
+		},
+		{
+			name: "non-fetch passing result does not use shorter TTL",
+			result: &types.Result{
+				Allowed: true,
+				Reason:  "ok",
+				CheckResults: []types.CheckResult{{
+					Type: testCheckTypeSlsa, Passed: true,
+					Status: types.StatusPass, Detail: "ok",
+				}},
+			},
+			expected: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := verifier.ExportResultShouldUseShorterTTL(test.result)
 			if got != test.expected {
 				t.Errorf("expected %v, got %v", test.expected, got)
 			}

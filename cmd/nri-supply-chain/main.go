@@ -40,6 +40,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/plugin"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
+	"github.com/saschagrunert/nri-supply-chain/internal/types"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
@@ -491,12 +492,17 @@ func updatePolicyDirWatch(watcher *fsnotify.Watcher, configPath, newPolicyDir st
 }
 
 func runVerify(opts *options, cfg *config.Config) int {
-	met := metrics.New()
+	imageRef := opts.verifyImage
+	namespace := opts.verifyNamespace
 
-	var fetcher attestation.Fetcher
-	if cfg.Enabled() {
-		fetcher = verifier.NewFetcher(cfg)
+	if !cfg.Enabled() {
+		outputVerifyResult(imageRef, "", namespace, true, "verification disabled", nil)
+
+		return 0
 	}
+
+	met := metrics.New()
+	fetcher := verifier.NewFetcher(cfg)
 
 	verif, err := verifier.New(cfg, met, fetcher)
 	if err != nil {
@@ -505,9 +511,6 @@ func runVerify(opts *options, cfg *config.Config) int {
 		return 1
 	}
 
-	imageRef := opts.verifyImage
-	namespace := opts.verifyNamespace
-
 	digest, err := resolveDigest(imageRef, cfg.FetchTimeout.Duration)
 	if err != nil {
 		slog.Error("Failed to resolve image digest", "image", imageRef, "error", err)
@@ -515,25 +518,12 @@ func runVerify(opts *options, cfg *config.Config) int {
 		return 1
 	}
 
-	ctx := context.Background()
-
-	result, err := verif.Verify(ctx, imageRef, digest, namespace)
+	result, err := verif.Verify(context.Background(), imageRef, digest, namespace)
 	if err != nil {
 		slog.Error("Verification failed", "image", imageRef, "error", err)
 	}
 
-	var checks []checkEntry
-
-	if result != nil {
-		for _, cr := range result.CheckResults {
-			checks = append(checks, checkEntry{
-				Type:   cr.Type,
-				Passed: cr.Passed,
-				Status: cr.Status,
-				Detail: cr.Detail,
-			})
-		}
-	}
+	checks := convertCheckResults(result)
 
 	if err != nil {
 		outputVerifyResult(imageRef, digest, namespace, false, err.Error(), checks)
@@ -548,6 +538,25 @@ func runVerify(opts *options, cfg *config.Config) int {
 	}
 
 	return 0
+}
+
+func convertCheckResults(result *types.Result) []checkEntry {
+	if result == nil {
+		return nil
+	}
+
+	checks := make([]checkEntry, 0, len(result.CheckResults))
+
+	for _, cr := range result.CheckResults {
+		checks = append(checks, checkEntry{
+			Type:   cr.Type,
+			Passed: cr.Passed,
+			Status: cr.Status,
+			Detail: cr.Detail,
+		})
+	}
+
+	return checks
 }
 
 func resolveDigest(imageRef string, timeout time.Duration) (string, error) {

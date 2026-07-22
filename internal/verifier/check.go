@@ -369,6 +369,20 @@ func resultHasFailures(result *types.Result) bool {
 	return false
 }
 
+func resultShouldUseShorterTTL(result *types.Result) bool {
+	if resultHasFailures(result) {
+		return true
+	}
+
+	for idx := range result.CheckResults {
+		if result.CheckResults[idx].Type == "fetch" {
+			return true
+		}
+	}
+
+	return false
+}
+
 func combineResults(slsaResult, vexResult *types.CheckResult) *types.Result {
 	result := &types.Result{
 		Allowed:      true,

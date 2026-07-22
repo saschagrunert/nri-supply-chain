@@ -83,14 +83,12 @@ func recordMetrics(met *metrics.Metrics, result *types.Result, namespace string)
 }
 
 func handleMissingPolicy(
-	ctx context.Context, logger *slog.Logger, cfg *config.Config,
-	imageRef, digest, namespace string,
+	ctx context.Context, cfg *config.Config,
+	imageRef, namespace string,
 ) (*types.Result, error) {
 	reason := fmt.Sprintf(
 		"no policy found for namespace %q and no default policy configured", namespace,
 	)
-
-	logAuditDecision(ctx, logger, imageRef, digest, namespace, "denied", reason)
 
 	return applyEnforcement(ctx, cfg, &types.Result{
 		Allowed: false,

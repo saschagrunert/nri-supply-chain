@@ -51,3 +51,8 @@ func ExportCombineResults(slsaResult, vexResult *types.CheckResult) *types.Resul
 func ExportApplyCheckResult(result *types.Result, check *types.CheckResult) {
 	applyCheckResult(result, check)
 }
+
+// ExportResultShouldUseShorterTTL exposes resultShouldUseShorterTTL for external tests.
+func ExportResultShouldUseShorterTTL(result *types.Result) bool {
+	return resultShouldUseShorterTTL(result)
+}

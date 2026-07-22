@@ -10,6 +10,7 @@
       "https://accounts.google.com",
       "https://token.actions.githubusercontent.com"
     ],
+    "sanPatterns": ["*@myorg.com", "https://github.com/myorg/*"],
     "sources": ["github.com/myorg/*"]
   },
   "exclude": ["gcr.io/distroless/*"],
