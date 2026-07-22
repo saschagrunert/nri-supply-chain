@@ -3,7 +3,7 @@
 [![ci](https://github.com/saschagrunert/nri-supply-chain/actions/workflows/ci.yml/badge.svg)](https://github.com/saschagrunert/nri-supply-chain/actions/workflows/ci.yml)
 [![deploy](https://github.com/saschagrunert/nri-supply-chain/actions/workflows/deploy.yml/badge.svg)](https://github.com/saschagrunert/nri-supply-chain/actions/workflows/deploy.yml)
 [![GitHub release](https://img.shields.io/github/v/release/saschagrunert/nri-supply-chain)](https://github.com/saschagrunert/nri-supply-chain/releases/latest)
-[![codecov](https://codecov.io/gh/saschagrunert/nri-supply-chain/graph/badge.svg)](https://codecov.io/gh/saschagrunert/nri-supply-chain)
+[![codecov](https://codecov.io/gh/saschagrunert/nri-supply-chain/graph/badge.svg?token=xIALlTOulw)](https://codecov.io/gh/saschagrunert/nri-supply-chain)
 [![Go Reference](https://pkg.go.dev/badge/github.com/saschagrunert/nri-supply-chain.svg)](https://pkg.go.dev/github.com/saschagrunert/nri-supply-chain)
 
 An [NRI](https://github.com/containerd/nri) plugin for supply chain attestation
@@ -152,7 +152,9 @@ SIGHUP.
 
 At startup, the NRI Synchronize callback delivers the list of pods and
 containers already running on the node. The plugin collects their image
-references, deduplicates by digest and namespace, and spawns a background
+references, resolving missing digests via registry `HEAD` requests when
+needed (for example, on containerd where NRI annotations may omit the
+digest). It deduplicates by digest and namespace, then spawns a background
 goroutine that pre-verifies each image. This warms the cache so that
 verification results are immediately available if those containers are
 restarted, avoiding a cold-cache fetch penalty.
@@ -174,7 +176,13 @@ When a container is created, the plugin performs verification in this order:
    used. If neither runtime provides a complete pair, available annotations
    from either source are combined. Malformed digests from CRI-O annotations
    are validated and rejected; only well-formed `algorithm:hex` digests are
-   accepted.
+   accepted. When an image reference is present but the digest is missing
+   (common with containerd, which does not always provide
+   `io.kubernetes.cri.image-ref`), the plugin resolves the digest by
+   performing a `HEAD` request against the registry using the configured
+   `fetch_timeout`. If resolution fails, the container is handled according
+   to the current verification mode (rejected in `enforce`, skipped with a
+   warning in `warn`).
 
 2. **Policy resolution**: Looks up `<namespace>.json` in the policy directory.
    Falls back to `default.json` if no namespace-specific policy exists.
@@ -314,7 +322,7 @@ circuit_breaker_cooldown = "30s"
 | --------------------------- | -------------------------------- | ------------------------------------------------------------------ |
 | `verification`              | `disabled`                       | Mode: `disabled`, `warn` (log-only), `enforce` (reject on failure) |
 | `log_level`                 | (CLI flag)                       | Log verbosity override: `debug`, `info`, `warn`, `error`           |
-| `fetch_timeout`             | `30s`                            | Per-fetch timeout for retrieving attestations from the registry    |
+| `fetch_timeout`             | `30s`                            | Per-request timeout for attestation fetches and digest resolution  |
 | `fetch_failure_policy`      | `warn`                           | Behavior when attestation fetch fails: `allow`, `warn`, `deny`     |
 | `cache_ttl`                 | `24h`                            | TTL for cached verification results (`0s` disables caching)        |
 | `cache_failure_ttl`         | `5m`                             | TTL for cached failure results, so transient errors retry sooner   |
@@ -467,10 +475,12 @@ inline NRI configuration is ignored.
 
 ### Runtime Requirements
 
-- CRI-O with NRI enabled (`enable_nri = true` in CRI-O config) or containerd
-  with NRI enabled.
+- CRI-O with NRI enabled (`enable_nri = true` in CRI-O config), or
+  containerd v2 (NRI is enabled by default; v1.7+ requires explicit NRI
+  configuration).
 - NRI socket at `/var/run/nri/nri.sock` (for external plugins).
-- Registry access from the node to fetch OCI Referrers.
+- Registry access from the node to fetch OCI Referrers and to resolve image
+  digests (required on containerd where NRI annotations may omit the digest).
 
 ## Examples
 

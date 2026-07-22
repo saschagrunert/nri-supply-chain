@@ -83,11 +83,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: find
         run: |
-          matrix=$(find test/e2e -name '*.bats' -exec basename {} .bats \; | sort | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          matrix=$(find test/e2e -name '*.bats' -exec basename {} .bats \; | sort | jq -R -s -c 'split("\n") | map(select(length > 0)) | map({file: ., display: gsub("-"; " / ")})')
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   test-e2e:
-    name: test / e2e / ${{ matrix.test }}
+    name: test / e2e / ${{ matrix.runtime }} / ${{ matrix.test.display }}
     needs: [build, test-e2e-prepare]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -95,6 +95,7 @@ jobs:
       fail-fast: false
       matrix:
         test: ${{ fromJSON(needs.test-e2e-prepare.outputs.matrix) }}
+        runtime: [crio, containerd]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -119,7 +120,7 @@ jobs:
           sudo sysctl -w net.bridge.bridge-nf-call-iptables=1
           sudo sysctl -w net.bridge.bridge-nf-call-ip6tables=1
           sudo sysctl -w net.ipv4.ip_forward=1
-      - run: sudo -E env "PATH=$PATH" "$(which bats)" test/e2e/${{ matrix.test }}.bats
+      - run: sudo -E env "PATH=$PATH" CRI_RUNTIME=${{ matrix.runtime }} "$(which bats)" test/e2e/${{ matrix.test.file }}.bats
 
   test-fuzz:
     name: fuzz / ${{ matrix.name }}

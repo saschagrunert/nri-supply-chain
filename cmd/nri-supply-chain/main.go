@@ -132,7 +132,7 @@ func run() int {
 		return 1
 	}
 
-	plug := plugin.New(verif, met, opts.configPath)
+	plug := plugin.New(verif, met, opts.configPath, cfg.FetchTimeout.Duration)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	defer cancel()

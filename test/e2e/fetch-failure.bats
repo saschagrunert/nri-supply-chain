@@ -2,7 +2,14 @@
 
 load helpers
 
+# This test requires the image digest from CRI annotations after the
+# registry is stopped. containerd NRI annotations do not include the
+# digest, so the plugin cannot resolve it without a running registry.
 setup_file() {
+	if is_containerd; then
+		return
+	fi
+
 	mkdir -p "$KUBERNIX_ROOT" "$POLICY_DIR"
 
 	cat >"$POLICY_DIR/default.json" <<-'EOF'
@@ -20,12 +27,11 @@ setup_file() {
 	start_registry
 	configure_insecure_registry
 
-	"$KUBERNIX" --no-shell --log-level debug --root "$KUBERNIX_ROOT" &
-	echo $! >"${BATS_FILE_TMPDIR}/kubernix.pid"
+	start_kubernix --log-level debug
 
 	wait_for_node_ready
 	write_nri_dropin
-	reload_crio
+	reload_runtime
 
 	FETCH_IMAGE=$(push_test_image "fetch-test:v1")
 	export FETCH_IMAGE
@@ -41,7 +47,30 @@ setup_file() {
 	stop_registry
 }
 
+setup() {
+	if is_containerd; then
+		skip "requires CRI-provided digest annotations"
+	fi
+
+	# Replicate the default setup from helpers.bash since overriding
+	# setup() prevents it from running.
+	TEST_NS="test-$(date +%s)-${BATS_TEST_NUMBER}"
+	export TEST_NS
+	kubectl create namespace "$TEST_NS" 2>/dev/null || true
+	wait_for_service_account "$TEST_NS"
+	if [[ -f "$PLUGIN_LOG" ]]; then
+		export LOG_OFFSET
+		LOG_OFFSET=$(wc -c <"$PLUGIN_LOG")
+	else
+		export LOG_OFFSET=0
+	fi
+}
+
 teardown_file() {
+	if is_containerd; then
+		return
+	fi
+
 	stop_plugin
 	stop_registry
 	unconfigure_insecure_registry

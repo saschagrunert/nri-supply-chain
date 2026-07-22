@@ -37,3 +37,8 @@ func NewExportPrewarmImage(imageRef, digest, namespace string) ExportPrewarmImag
 func (p *Plugin) ExportPrewarmCache(ctx context.Context, images []ExportPrewarmImage) {
 	p.prewarmCache(ctx, images)
 }
+
+// ExportSetDigestResolver replaces the digest resolver for testing.
+func (p *Plugin) ExportSetDigestResolver(fn DigestResolveFunc) {
+	p.digestResolver = fn
+}
