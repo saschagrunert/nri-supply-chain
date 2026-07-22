@@ -2,14 +2,7 @@
 
 load helpers
 
-# This test requires the image digest from CRI annotations after the
-# registry is stopped. containerd NRI annotations do not include the
-# digest, so the plugin cannot resolve it without a running registry.
 setup_file() {
-	if is_containerd; then
-		return
-	fi
-
 	mkdir -p "$KUBERNIX_ROOT" "$POLICY_DIR"
 
 	cat >"$POLICY_DIR/default.json" <<-'EOF'
@@ -34,7 +27,8 @@ setup_file() {
 	reload_runtime
 
 	FETCH_IMAGE=$(push_test_image "fetch-test:v1")
-	export FETCH_IMAGE
+	FETCH_DIGEST=$(get_image_digest "$FETCH_IMAGE")
+	export FETCH_IMAGE FETCH_DIGEST
 
 	write_plugin_config_with_fetch_policy "disabled" "allow"
 	start_plugin
@@ -48,12 +42,6 @@ setup_file() {
 }
 
 setup() {
-	if is_containerd; then
-		skip "requires CRI-provided digest annotations"
-	fi
-
-	# Replicate the default setup from helpers.bash since overriding
-	# setup() prevents it from running.
 	TEST_NS="test-$(date +%s)-${BATS_TEST_NUMBER}"
 	export TEST_NS
 	kubectl create namespace "$TEST_NS" 2>/dev/null || true
@@ -67,14 +55,18 @@ setup() {
 }
 
 teardown_file() {
-	if is_containerd; then
-		return
-	fi
-
 	stop_plugin
 	stop_registry
 	unconfigure_insecure_registry
 	stop_kubernix
+}
+
+# Use digest references so containerd NRI annotations include the
+# digest even after the registry is stopped.
+fetch_image_ref() {
+	local repo
+	repo="${FETCH_IMAGE%:*}"
+	echo "${repo}@${FETCH_DIGEST}"
 }
 
 write_plugin_config_with_fetch_policy() {
@@ -86,6 +78,7 @@ write_plugin_config_with_fetch_policy() {
 		fetch_timeout = "30s"
 		fetch_failure_policy = "${fetch_policy}"
 		cache_ttl = "0s"
+		cache_failure_ttl = "0s"
 		metrics_addr = ":9090"
 	EOF
 }
@@ -95,9 +88,12 @@ write_plugin_config_with_fetch_policy() {
 	write_plugin_config_with_fetch_policy "enforce" "allow"
 	start_plugin
 
-	run_pod "fetch-allow" "$FETCH_IMAGE"
+	local ref
+	ref=$(fetch_image_ref)
+
+	run_pod "fetch-allow" "$ref" --image-pull-policy=IfNotPresent
 	wait_for_pod_status "fetch-allow" "Running"
-	assert_log_contains "Container verified"
+	assert_pod_verdict "fetch-allow" "verified"
 }
 
 @test "fetch_failure_policy warn admits pod with warning on network error" {
@@ -105,9 +101,12 @@ write_plugin_config_with_fetch_policy() {
 	write_plugin_config_with_fetch_policy "enforce" "warn"
 	start_plugin
 
-	run_pod "fetch-warn" "$FETCH_IMAGE"
+	local ref
+	ref=$(fetch_image_ref)
+
+	run_pod "fetch-warn" "$ref" --image-pull-policy=IfNotPresent
 	wait_for_pod_status "fetch-warn" "Running"
-	assert_log_contains "Container verified"
+	assert_pod_verdict "fetch-warn" "verified"
 	assert_log_contains "Supply chain audit"
 }
 
@@ -116,7 +115,10 @@ write_plugin_config_with_fetch_policy() {
 	write_plugin_config_with_fetch_policy "enforce" "deny"
 	start_plugin
 
-	run_pod "fetch-deny" "$FETCH_IMAGE" || true
+	local ref
+	ref=$(fetch_image_ref)
+
+	run_pod "fetch-deny" "$ref" --image-pull-policy=IfNotPresent || true
 	assert_log_contains "Container rejected"
 }
 
@@ -128,11 +130,15 @@ write_plugin_config_with_fetch_policy() {
 		fetch_timeout = "1s"
 		fetch_failure_policy = "deny"
 		cache_ttl = "0s"
+		cache_failure_ttl = "0s"
 		metrics_addr = ":9090"
 	EOF
 	start_plugin
 
-	run_pod "fetch-timeout" "$FETCH_IMAGE" || true
+	local ref
+	ref=$(fetch_image_ref)
+
+	run_pod "fetch-timeout" "$ref" --image-pull-policy=IfNotPresent || true
 	assert_log_contains "Container rejected"
 }
 
@@ -141,7 +147,10 @@ write_plugin_config_with_fetch_policy() {
 	write_plugin_config_with_fetch_policy "enforce" "allow"
 	start_plugin
 
-	run_pod "fetch-metric" "$FETCH_IMAGE"
+	local ref
+	ref=$(fetch_image_ref)
+
+	run_pod "fetch-metric" "$ref" --image-pull-policy=IfNotPresent
 	wait_for_pod_status "fetch-metric" "Running"
 	wait_for_metrics 'nri_supply_chain_fetch_errors_total'
 

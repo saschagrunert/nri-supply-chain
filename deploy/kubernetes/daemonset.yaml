@@ -84,12 +84,10 @@ spec:
         - operator: Exists
       containers:
         - name: nri-supply-chain
-          # Pin a specific image version for production. Prefer digest
-          # references for immutability, for example:
+          # For production, pin to a digest or version tag:
           # image: ghcr.io/saschagrunert/nri-supply-chain@sha256:<digest>
-          # Or use a version tag:
           # image: ghcr.io/saschagrunert/nri-supply-chain:v0.1.0
-          image: ghcr.io/saschagrunert/nri-supply-chain:v0.1.0
+          image: ghcr.io/saschagrunert/nri-supply-chain:latest
           args:
             - --config
             - /etc/nri-supply-chain/config.toml

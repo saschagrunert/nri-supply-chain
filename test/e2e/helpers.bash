@@ -129,8 +129,17 @@ teardown() {
 }
 
 wait_for_node_ready() {
+	local kubernix_pid=""
+	if [[ -f "${BATS_FILE_TMPDIR}/kubernix.pid" ]]; then
+		kubernix_pid=$(cat "${BATS_FILE_TMPDIR}/kubernix.pid")
+	fi
+
 	local elapsed=0
 	while [[ $elapsed -lt $NODE_READY_TIMEOUT ]]; do
+		if [[ -n "$kubernix_pid" ]] && ! kill -0 "$kubernix_pid" 2>/dev/null; then
+			echo "ERROR: kubernix process (PID $kubernix_pid) died during startup" >&2
+			return 1
+		fi
 		if kubectl get nodes 2>/dev/null | grep -q " Ready"; then
 			return 0
 		fi

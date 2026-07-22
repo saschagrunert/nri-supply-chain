@@ -176,11 +176,13 @@ When a container is created, the plugin performs verification in this order:
    used. If neither runtime provides a complete pair, available annotations
    from either source are combined. Malformed digests from CRI-O annotations
    are validated and rejected; only well-formed `algorithm:hex` digests are
-   accepted. When an image reference is present but the digest is missing
-   (common with containerd, which does not always provide
-   `io.kubernetes.cri.image-ref`), the plugin resolves the digest by
-   performing a `HEAD` request against the registry using the configured
-   `fetch_timeout`. If resolution fails, the container is handled according
+   accepted. When the containerd image name contains a digest reference
+   (e.g. `image@sha256:abc...`), the digest is extracted directly from the
+   annotation without a network call. Otherwise, when an image reference is
+   present but the digest is missing (common with containerd, which does not
+   always provide `io.kubernetes.cri.image-ref`), the plugin resolves the
+   digest by performing a `HEAD` request against the registry using the
+   configured `fetch_timeout`. If resolution fails, the container is handled according
    to the current verification mode (rejected in `enforce`, skipped with a
    warning in `warn`).
 
@@ -355,7 +357,8 @@ default for that namespace. By default this is a full replacement; set
   "exclude": ["test-*", "dev-*"],
   "provenance": {
     "missingPolicy": "deny",
-    "rejectUnknownParameters": true
+    "rejectUnknownParameters": true,
+    "knownParameters": ["source", "repository"]
   },
   "vex": {
     "missingPolicy": "allow",
@@ -411,8 +414,8 @@ Deploy as a DaemonSet to run the plugin on every node in the cluster:
 kubectl apply -f deploy/kubernetes/
 ```
 
-The manifests in `deploy/kubernetes/` include a Namespace, ConfigMap with
-example config and policy, and the DaemonSet itself. Edit the ConfigMap to
+The manifests in `deploy/kubernetes/` include a Namespace, ServiceAccount,
+ConfigMap with example config and policy, NetworkPolicy, and the DaemonSet. Edit the ConfigMap to
 match your environment before deploying.
 
 ### Systemd Service
@@ -484,7 +487,7 @@ inline NRI configuration is ignored.
 
 ## Examples
 
-See [`examples/policies/`](examples/policies/) for ready-to-use policy files
+See [`deploy/examples/policies/`](deploy/examples/policies/) for ready-to-use policy files
 covering keyless, key-based, VEX-strict, VSA-accelerated, and other scenarios.
 
 ### Gradual Rollout

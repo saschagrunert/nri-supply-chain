@@ -16,6 +16,7 @@ package plugin_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -30,6 +31,8 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
+
+var errRegistryUnavailable = errors.New("registry unavailable")
 
 const (
 	testNamespace = "default"
@@ -444,6 +447,24 @@ func TestResolveImageContainerdInvalidDigest(t *testing.T) {
 	}
 }
 
+func TestResolveImageContainerdDigestFromImageName(t *testing.T) {
+	t.Parallel()
+
+	digestRef := "localhost:5050/test/cb-test@" + testContainerdDigest
+
+	imageRef, digest := plugin.ExportResolveImage(map[string]string{
+		plugin.AnnotationContainerdImage: digestRef,
+	})
+
+	if imageRef != digestRef {
+		t.Errorf("imageRef = %q, want %q", imageRef, digestRef)
+	}
+
+	if digest != testContainerdDigest {
+		t.Errorf("digest = %q, want %q", digest, testContainerdDigest)
+	}
+}
+
 func TestSynchronizePrewarm(t *testing.T) {
 	t.Parallel()
 
@@ -704,4 +725,173 @@ func TestPrewarmCacheDirectCancel(t *testing.T) {
 	cancel()
 
 	plug.ExportPrewarmCache(ctx, images)
+}
+
+func TestCreateContainerResolvesDigestWhenMissing(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writePolicy(t, dir, "default.json", `{
+		"provenance": {"missingPolicy": "allow"},
+		"vex": {"missingPolicy": "allow"}
+	}`)
+
+	plug := newTestPlugin(t, config.ModeWarn, dir)
+	plug.ExportSetDigestResolver(func(_ context.Context, _ string) (string, error) {
+		return testDigest, nil
+	})
+
+	pod := &api.PodSandbox{
+		Namespace: testNamespace,
+		Name:      testPodName,
+	}
+	ctr := &api.Container{
+		Name: testCtrName,
+		Annotations: map[string]string{
+			plugin.AnnotationContainerdImage: testImage,
+		},
+	}
+
+	_, _, err := plug.CreateContainer(context.Background(), pod, ctr)
+	testutil.AssertNoError(t, err)
+}
+
+func TestCreateContainerResolveDigestFailureEnforce(t *testing.T) {
+	t.Parallel()
+
+	plug := newTestPlugin(t, config.ModeEnforce, "")
+	plug.ExportSetDigestResolver(func(_ context.Context, _ string) (string, error) {
+		return "", errRegistryUnavailable
+	})
+
+	pod := &api.PodSandbox{
+		Namespace: testNamespace,
+		Name:      testPodName,
+	}
+	ctr := &api.Container{
+		Name: testCtrName,
+		Annotations: map[string]string{
+			plugin.AnnotationContainerdImage: testImage,
+		},
+	}
+
+	_, _, err := plug.CreateContainer(context.Background(), pod, ctr)
+	if err == nil {
+		t.Fatal("expected error for resolve failure in enforce mode")
+	}
+}
+
+func TestCreateContainerResolveDigestFailureWarn(t *testing.T) {
+	t.Parallel()
+
+	plug := newTestPlugin(t, config.ModeWarn, "")
+	plug.ExportSetDigestResolver(func(_ context.Context, _ string) (string, error) {
+		return "", errRegistryUnavailable
+	})
+
+	pod := &api.PodSandbox{
+		Namespace: testNamespace,
+		Name:      testPodName,
+	}
+	ctr := &api.Container{
+		Name: testCtrName,
+		Annotations: map[string]string{
+			plugin.AnnotationContainerdImage: testImage,
+		},
+	}
+
+	_, _, err := plug.CreateContainer(context.Background(), pod, ctr)
+	testutil.AssertNoError(t, err)
+}
+
+func TestCreateContainerSkipsResolveWhenDigestPresent(t *testing.T) {
+	t.Parallel()
+
+	plug := newTestPlugin(t, config.ModeWarn, "")
+	plug.ExportSetDigestResolver(func(_ context.Context, _ string) (string, error) {
+		t.Fatal("digest resolver should not be called when digest is present")
+
+		return "", nil
+	})
+
+	pod := &api.PodSandbox{
+		Namespace: testNamespace,
+		Name:      testPodName,
+	}
+	ctr := &api.Container{
+		Name: testCtrName,
+		Annotations: map[string]string{
+			plugin.AnnotationImage:    testImage,
+			plugin.AnnotationImageRef: testDigest,
+		},
+	}
+
+	_, _, err := plug.CreateContainer(context.Background(), pod, ctr)
+	testutil.AssertNoError(t, err)
+}
+
+func TestSynchronizeResolvesDigestForPrewarm(t *testing.T) {
+	t.Parallel()
+
+	plug := newTestPlugin(t, config.ModeDisabled, "")
+	plug.ExportSetDigestResolver(func(_ context.Context, _ string) (string, error) {
+		return testDigest, nil
+	})
+
+	pods := []*api.PodSandbox{
+		{Id: testPodID, Namespace: testNamespace, Name: testPodName},
+	}
+
+	containers := []*api.Container{
+		{
+			Id:           "ctr-resolve-1",
+			PodSandboxId: testPodID,
+			Name:         "resolve-container",
+			Annotations: map[string]string{
+				plugin.AnnotationContainerdImage: testImage,
+			},
+		},
+	}
+
+	updates, err := plug.Synchronize(context.Background(), pods, containers)
+	testutil.AssertNoError(t, err)
+
+	if updates != nil {
+		t.Error("expected nil updates")
+	}
+
+	time.Sleep(100 * time.Millisecond)
+}
+
+func TestSynchronizeResolveDigestFailureSkipsContainer(t *testing.T) {
+	t.Parallel()
+
+	plug := newTestPlugin(t, config.ModeDisabled, "")
+	plug.ExportSetDigestResolver(func(_ context.Context, _ string) (string, error) {
+		return "", errRegistryUnavailable
+	})
+
+	pods := []*api.PodSandbox{
+		{Id: testPodID, Namespace: testNamespace, Name: testPodName},
+	}
+
+	containers := []*api.Container{
+		{
+			Id:           "ctr-fail-resolve",
+			PodSandboxId: testPodID,
+			Name:         "fail-resolve-container",
+			Annotations: map[string]string{
+				plugin.AnnotationContainerdImage: testImage,
+			},
+		},
+	}
+
+	updates, err := plug.Synchronize(context.Background(), pods, containers)
+	testutil.AssertNoError(t, err)
+
+	if updates != nil {
+		t.Error("expected nil updates")
+	}
+
+	time.Sleep(100 * time.Millisecond)
 }
