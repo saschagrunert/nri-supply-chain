@@ -997,26 +997,8 @@ func TestRunVerifyResolveDigestFails(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // captures os.Stdout
-func TestRunVerifyDisabledAllowed(t *testing.T) {
-	// Push image to in-memory registry, then verify with disabled mode.
-	regHandler := registry.New()
-	server := httptest.NewServer(regHandler)
-
-	t.Cleanup(server.Close)
-
-	addr := strings.TrimPrefix(server.URL, "http://")
-	imgRef := addr + "/verify-test:latest"
-
-	img, err := mutate.ConfigFile(empty.Image, nil)
-	if err != nil {
-		t.Fatalf("creating test image: %v", err)
-	}
-
-	err = crane.Push(img, imgRef, crane.Insecure)
-	if err != nil {
-		t.Fatalf("pushing test image: %v", err)
-	}
+func TestRunVerifyDisabledErrors(t *testing.T) {
+	t.Parallel()
 
 	cfg := config.DefaultConfig()
 	opts := &options{
@@ -1025,20 +1007,15 @@ func TestRunVerifyDisabledAllowed(t *testing.T) {
 		pluginName:      "",
 		pluginIdx:       "",
 		logLevel:        "",
-		verifyImage:     imgRef,
+		verifyImage:     "example.com/test:latest",
 		verifyNamespace: testNamespaceMain,
 		showVersion:     false,
 		validate:        false,
 	}
 
-	out := captureRunVerify(t, opts, cfg)
-
-	if !out.Allowed {
-		t.Error("expected Allowed = true for disabled mode")
-	}
-
-	if out.Image != imgRef {
-		t.Errorf("Image = %q, want %q", out.Image, imgRef)
+	code := runVerify(opts, cfg)
+	if code != 1 {
+		t.Errorf("expected exit code 1 for disabled verification, got %d", code)
 	}
 }
 
