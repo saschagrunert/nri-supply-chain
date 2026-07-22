@@ -109,11 +109,12 @@ examples, see [policy.md](policy.md).
 --log-level           Log level: debug, info, warn, error (default: info)
 --version             Print version and exit
 --validate            Validate config and policies, then exit
---verify-image        Verify a specific image and exit
+--verify-image        Verify a specific image and exit (requires --config)
 --verify-namespace    Namespace for verification (default: default)
 ```
 
-To verify a single image without running the plugin:
+To verify a single image without running the plugin (requires `--config` with
+verification enabled):
 
 ```console
 nri-supply-chain --config config.toml --verify-image ghcr.io/myorg/myimage:v1.0

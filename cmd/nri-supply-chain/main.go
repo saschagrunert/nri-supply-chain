@@ -183,7 +183,7 @@ func parseFlags() options {
 	logLevel := flag.String("log-level", logLevelInfo, "log level (debug, info, warn, error)")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	validate := flag.Bool("validate", false, "validate config and policies, then exit")
-	verifyImage := flag.String("verify-image", "", "verify a specific image and exit")
+	verifyImage := flag.String("verify-image", "", "verify an image and exit")
 	verifyNamespace := flag.String("verify-namespace", "default", "namespace for verification")
 
 	flag.Parse()
@@ -496,9 +496,9 @@ func runVerify(opts *options, cfg *config.Config) int {
 	namespace := opts.verifyNamespace
 
 	if !cfg.Enabled() {
-		outputVerifyResult(imageRef, "", namespace, true, "verification disabled", nil)
+		slog.Error("--verify-image requires verification to be enabled")
 
-		return 0
+		return 1
 	}
 
 	met := metrics.New()

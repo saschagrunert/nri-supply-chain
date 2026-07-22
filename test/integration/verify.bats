@@ -13,10 +13,10 @@ EOF
 	[[ "$status" -ne 0 ]]
 }
 
-@test "verify-image uses default config when no config flag" {
+@test "verify-image without config fails" {
 	run_binary --verify-image "localhost:1/nonexistent:latest"
-	[[ "$status" -eq 0 ]]
-	[[ "$output" == *"verification disabled"* ]]
+	[[ "$status" -ne 0 ]]
+	[[ "$output" == *"verification to be enabled"* ]]
 }
 
 @test "verify-image with unreachable registry fails" {
@@ -30,8 +30,8 @@ EOF
 	[[ "$status" -ne 0 ]]
 }
 
-@test "verify-namespace flag is accepted" {
+@test "verify-namespace flag without config fails" {
 	run_binary --verify-image "localhost:1/nonexistent:latest" --verify-namespace "kube-system"
-	[[ "$status" -eq 0 ]]
-	[[ "$output" == *"verification disabled"* ]]
+	[[ "$status" -ne 0 ]]
+	[[ "$output" == *"verification to be enabled"* ]]
 }

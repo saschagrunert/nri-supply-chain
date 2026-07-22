@@ -35,7 +35,7 @@ must pass verification.
 1. Download the latest release binary or container image from the
    [releases page](https://github.com/saschagrunert/nri-supply-chain/releases).
 
-2. Create a configuration file (`/etc/nri-supply-chain/config.toml`):
+2. Create a configuration file (`config.toml`):
 
    ```toml
    verification = "warn"
@@ -48,20 +48,44 @@ must pass verification.
    {
      "trust": {
        "issuers": ["https://token.actions.githubusercontent.com"],
-       "sanPatterns": ["https://github.com/myorg/*"],
-       "sources": ["github.com/myorg/*"]
+       "sanPatterns": ["https://github.com/saschagrunert/nri-supply-chain/*"],
+       "sources": ["github.com/saschagrunert/*"]
      },
      "provenance": { "missingPolicy": "warn" }
    }
    ```
 
-4. Deploy the plugin (see [Deployment](docs/deployment.md) for all options):
+4. Verify a single image to test the configuration:
+
+   ```console
+   nri-supply-chain --config config.toml \
+     --verify-image ghcr.io/saschagrunert/nri-supply-chain:v0.1.0
+   ```
+
+   The output is JSON with per-check details:
+
+   ```json
+   {
+     "image": "ghcr.io/saschagrunert/nri-supply-chain:v0.1.0",
+     "digest": "sha256:10ef5bda...",
+     "namespace": "default",
+     "allowed": true,
+     "checkResults": [{ "type": "fetch", "status": "warn", ... }]
+   }
+   ```
+
+   In `warn` mode the image is allowed even when attestation checks fail,
+   so you can observe what would be blocked before switching to `enforce`.
+   See [docs/verification.md](docs/verification.md) for the full
+   verification flow.
+
+5. Deploy the plugin (see [Deployment](docs/deployment.md) for all options):
 
    ```console
    kubectl apply -f deploy/kubernetes/
    ```
 
-5. Check the logs and metrics to observe verification decisions, then switch
+6. Check the logs and metrics to observe verification decisions, then switch
    to `verification = "enforce"` once confident.
 
 ## Compatibility
