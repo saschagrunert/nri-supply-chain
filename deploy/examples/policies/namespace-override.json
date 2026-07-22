@@ -1,6 +1,6 @@
 {
   "inherits": true,
-  "provenance": {
+  "slsa": {
     "missingPolicy": "allow"
   },
   "vex": {

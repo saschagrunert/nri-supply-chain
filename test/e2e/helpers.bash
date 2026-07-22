@@ -353,7 +353,7 @@ restore_default_keybased_policy() {
 			  "trust": {
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
 			  },
-			  "provenance": {"missingPolicy": "deny"},
+			  "slsa": {"missingPolicy": "deny"},
 			  "vex": {"missingPolicy": "allow"},
 			  "signatures": {"requireTransparencyLog": false}
 			}

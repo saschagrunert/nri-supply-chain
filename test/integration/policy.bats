@@ -9,7 +9,7 @@ load helpers
     "trust": {
         "builders": [{"id": "https://github.com/actions/runner", "maxLevel": 3}]
     },
-    "provenance": {"missingPolicy": "deny"}
+    "slsa": {"missingPolicy": "deny"}
 }
 EOF
 	cat >"$TEST_DIR/config.toml" <<EOF
@@ -30,7 +30,7 @@ EOF
         "sources": ["github.com/myorg/*"],
         "buildTypes": ["https://actions.github.io/buildtypes/workflow/v1"]
     },
-    "provenance": {
+    "slsa": {
         "missingPolicy": "deny",
         "rejectUnknownParameters": true
     },
@@ -60,18 +60,18 @@ EOF
 @test "multiple namespace policies coexist" {
 	mkdir -p "$TEST_DIR/policies"
 	cat >"$TEST_DIR/policies/default.json" <<EOF
-{"provenance": {"missingPolicy": "allow"}}
+{"slsa": {"missingPolicy": "allow"}}
 EOF
 	cat >"$TEST_DIR/policies/production.json" <<EOF
 {
     "trust": {
         "builders": [{"id": "https://github.com/actions/runner", "maxLevel": 3}]
     },
-    "provenance": {"missingPolicy": "deny"}
+    "slsa": {"missingPolicy": "deny"}
 }
 EOF
 	cat >"$TEST_DIR/policies/staging.json" <<EOF
-{"provenance": {"missingPolicy": "warn"}}
+{"slsa": {"missingPolicy": "warn"}}
 EOF
 	cat >"$TEST_DIR/config.toml" <<EOF
 verification = "enforce"
@@ -86,7 +86,7 @@ EOF
 	cat >"$TEST_DIR/policies/default.json" <<EOF
 {
     "exclude": ["kube-system", "istio-*", "test-*"],
-    "provenance": {"missingPolicy": "deny"}
+    "slsa": {"missingPolicy": "deny"}
 }
 EOF
 	cat >"$TEST_DIR/config.toml" <<EOF
@@ -131,7 +131,7 @@ EOF
 	cat >"$TEST_DIR/policies/default.json" <<EOF
 {
     "unknownField": "value",
-    "provenance": {"missingPolicy": "allow"}
+    "slsa": {"missingPolicy": "allow"}
 }
 EOF
 	cat >"$TEST_DIR/config.toml" <<EOF
@@ -291,7 +291,7 @@ EOF
 
 @test "policy with trailing JSON content rejected" {
 	mkdir -p "$TEST_DIR/policies"
-	printf '{"provenance": {"missingPolicy": "allow"}} {"extra": true}' >"$TEST_DIR/policies/default.json"
+	printf '{"slsa": {"missingPolicy": "allow"}} {"extra": true}' >"$TEST_DIR/policies/default.json"
 	cat >"$TEST_DIR/config.toml" <<EOF
 verification = "enforce"
 policy_dir = "$TEST_DIR/policies"

@@ -12,7 +12,7 @@ setup_file() {
 		      {"id": "https://github.com/actions/runner", "maxLevel": 3}
 		    ]
 		  },
-		  "provenance": {"missingPolicy": "deny"},
+		  "slsa": {"missingPolicy": "deny"},
 		  "vex": {"missingPolicy": "allow"}
 		}
 	EOF
@@ -51,7 +51,7 @@ teardown_file() {
 	wait_for_service_account "$ns"
 
 	write_policy "$ns" '{
-		"provenance": {"missingPolicy": "allow"},
+		"slsa": {"missingPolicy": "allow"},
 		"vex": {"missingPolicy": "allow"}
 	}'
 	reload_plugin
@@ -68,7 +68,7 @@ teardown_file() {
 @test "excluded image pattern skips verification" {
 	write_policy "default" '{
 		"exclude": ["localhost:5050/test/policy-test:*"],
-		"provenance": {"missingPolicy": "deny"}
+		"slsa": {"missingPolicy": "deny"}
 	}'
 	reload_plugin
 
@@ -80,7 +80,7 @@ teardown_file() {
 		"trust": {
 			"builders": [{"id": "https://github.com/actions/runner", "maxLevel": 3}]
 		},
-		"provenance": {"missingPolicy": "deny"},
+		"slsa": {"missingPolicy": "deny"},
 		"vex": {"missingPolicy": "allow"}
 	}'
 	reload_plugin
@@ -89,7 +89,7 @@ teardown_file() {
 @test "exclude pattern with wildcard matches broadly" {
 	write_policy "default" '{
 		"exclude": ["localhost:5050/test/*"],
-		"provenance": {"missingPolicy": "deny"}
+		"slsa": {"missingPolicy": "deny"}
 	}'
 	reload_plugin
 
@@ -101,7 +101,7 @@ teardown_file() {
 		"trust": {
 			"builders": [{"id": "https://github.com/actions/runner", "maxLevel": 3}]
 		},
-		"provenance": {"missingPolicy": "deny"},
+		"slsa": {"missingPolicy": "deny"},
 		"vex": {"missingPolicy": "allow"}
 	}'
 	reload_plugin
@@ -133,15 +133,15 @@ teardown_file() {
 		"trust": {
 			"builders": [{"id": "https://github.com/actions/runner", "maxLevel": 3}]
 		},
-		"provenance": {"missingPolicy": "deny"},
+		"slsa": {"missingPolicy": "deny"},
 		"vex": {"missingPolicy": "allow"}
 	}'
 	reload_plugin
 }
 
-@test "provenance missingPolicy deny rejects unsigned images" {
+@test "slsa missingPolicy deny rejects unsigned images" {
 	write_policy "default" '{
-		"provenance": {"missingPolicy": "deny"}
+		"slsa": {"missingPolicy": "deny"}
 	}'
 	reload_plugin
 
@@ -152,15 +152,15 @@ teardown_file() {
 		"trust": {
 			"builders": [{"id": "https://github.com/actions/runner", "maxLevel": 3}]
 		},
-		"provenance": {"missingPolicy": "deny"},
+		"slsa": {"missingPolicy": "deny"},
 		"vex": {"missingPolicy": "allow"}
 	}'
 	reload_plugin
 }
 
-@test "provenance missingPolicy allow passes unsigned images" {
+@test "slsa missingPolicy allow passes unsigned images" {
 	write_policy "default" '{
-		"provenance": {"missingPolicy": "allow"}
+		"slsa": {"missingPolicy": "allow"}
 	}'
 	reload_plugin
 
@@ -171,7 +171,7 @@ teardown_file() {
 		"trust": {
 			"builders": [{"id": "https://github.com/actions/runner", "maxLevel": 3}]
 		},
-		"provenance": {"missingPolicy": "deny"},
+		"slsa": {"missingPolicy": "deny"},
 		"vex": {"missingPolicy": "allow"}
 	}'
 	reload_plugin
@@ -179,7 +179,7 @@ teardown_file() {
 
 @test "vex missingPolicy deny rejects images without VEX" {
 	write_policy "default" '{
-		"provenance": {"missingPolicy": "allow"},
+		"slsa": {"missingPolicy": "allow"},
 		"vex": {"missingPolicy": "deny"}
 	}'
 	reload_plugin
@@ -191,7 +191,7 @@ teardown_file() {
 		"trust": {
 			"builders": [{"id": "https://github.com/actions/runner", "maxLevel": 3}]
 		},
-		"provenance": {"missingPolicy": "deny"},
+		"slsa": {"missingPolicy": "deny"},
 		"vex": {"missingPolicy": "allow"}
 	}'
 	reload_plugin
@@ -199,7 +199,7 @@ teardown_file() {
 
 @test "vex missingPolicy warn logs warning for missing VEX but allows" {
 	write_policy "default" '{
-		"provenance": {"missingPolicy": "allow"},
+		"slsa": {"missingPolicy": "allow"},
 		"vex": {"missingPolicy": "warn"}
 	}'
 	reload_plugin
@@ -212,7 +212,7 @@ teardown_file() {
 		"trust": {
 			"builders": [{"id": "https://github.com/actions/runner", "maxLevel": 3}]
 		},
-		"provenance": {"missingPolicy": "deny"},
+		"slsa": {"missingPolicy": "deny"},
 		"vex": {"missingPolicy": "allow"}
 	}'
 	reload_plugin
@@ -225,7 +225,7 @@ teardown_file() {
 
 	write_policy "$ns" '{
 		"inherits": true,
-		"provenance": {"missingPolicy": "allow"}
+		"slsa": {"missingPolicy": "allow"}
 	}'
 	reload_plugin
 

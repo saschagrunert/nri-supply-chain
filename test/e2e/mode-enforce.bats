@@ -12,7 +12,7 @@ setup_file() {
 		      {"id": "https://github.com/actions/runner", "maxLevel": 3}
 		    ]
 		  },
-		  "provenance": {"missingPolicy": "deny"},
+		  "slsa": {"missingPolicy": "deny"},
 		  "vex": {"missingPolicy": "allow"}
 		}
 	EOF
@@ -63,7 +63,7 @@ create_enforce_images() {
 			    "builders": [{"id": "https://test-builder.example.com", "maxLevel": 3}],
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
 			  },
-			  "provenance": {"missingPolicy": "deny"},
+			  "slsa": {"missingPolicy": "deny"},
 			  "vex": {"missingPolicy": "allow"},
 			  "signatures": {"requireTransparencyLog": false}
 			}
@@ -81,7 +81,7 @@ create_enforce_images() {
 		"trust": {
 			"builders": [{"id": "https://github.com/actions/runner", "maxLevel": 3}]
 		},
-		"provenance": {"missingPolicy": "deny"},
+		"slsa": {"missingPolicy": "deny"},
 		"vex": {"missingPolicy": "allow"}
 	}'
 	write_plugin_config "enforce"

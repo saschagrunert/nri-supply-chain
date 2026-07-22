@@ -28,7 +28,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
-const checkType = "slsa_provenance"
+const checkType = "slsa"
 
 var (
 	// ErrSubjectDigestMismatch indicates the provenance subject does not match the image digest.
@@ -263,11 +263,11 @@ func verifySources(params map[string]any, pol *policy.Policy) error {
 // when rejectUnknownParameters is enabled. Uses the policy's KnownParameters
 // list if configured, otherwise falls back to the GitHub Actions parameter set.
 func verifyParameters(params map[string]any, pol *policy.Policy) error {
-	if pol.Provenance == nil || !pol.Provenance.RejectUnknownParameters {
+	if pol.SLSA == nil || !pol.SLSA.RejectUnknownParameters {
 		return nil
 	}
 
-	known := pol.Provenance.KnownParameters
+	known := pol.SLSA.KnownParameters
 	if len(known) == 0 {
 		known = defaultKnownParameters()
 	}

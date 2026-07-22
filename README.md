@@ -51,7 +51,7 @@ must pass verification.
        "sanPatterns": ["https://github.com/saschagrunert/nri-supply-chain/**"],
        "sources": ["github.com/saschagrunert/*"]
      },
-     "provenance": { "missingPolicy": "warn" }
+     "slsa": { "missingPolicy": "warn" }
    }
    ```
 
@@ -71,7 +71,7 @@ must pass verification.
      "namespace": "default",
      "allowed": true,
      "checkResults": [
-       { "type": "slsa_provenance", "status": "pass", ... },
+       { "type": "slsa", "status": "pass", ... },
        { "type": "vex", "status": "pass", ... }
      ]
    }

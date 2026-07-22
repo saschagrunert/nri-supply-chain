@@ -69,7 +69,7 @@ default for that namespace. By default this is a full replacement; set
     "buildTypes": ["https://actions.github.io/buildtypes/workflow/v1"]
   },
   "exclude": ["test-*", "dev-*"],
-  "provenance": {
+  "slsa": {
     "missingPolicy": "deny",
     "rejectUnknownParameters": true,
     "knownParameters": ["source", "repository"]
@@ -130,7 +130,7 @@ The output is JSON with per-check details:
   "allowed": true,
   "checkResults": [
     {
-      "type": "slsa_provenance",
+      "type": "slsa",
       "passed": true,
       "status": "pass",
       "detail": "..."

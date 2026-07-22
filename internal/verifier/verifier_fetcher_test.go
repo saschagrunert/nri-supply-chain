@@ -225,7 +225,7 @@ func TestVerifyWithFetcher(t *testing.T) {
 			name: "SLSA missing deny",
 			policyJSON: `{
 				"trust": {"builders": [{"id": "https://github.com/actions/runner", "maxLevel": 2}]},
-				"provenance": {"missingPolicy": "deny"}
+				"slsa": {"missingPolicy": "deny"}
 			}`,
 			mode: config.ModeEnforce,
 			fetcher: &mockFetcher{
@@ -245,7 +245,7 @@ func TestVerifyWithFetcher(t *testing.T) {
 					"builders": [{"id": "https://github.com/actions/runner", "maxLevel": 2}],
 					"verifiers": [{"id": "https://example.com/verifier", "key": "/etc/keys/v.pub"}]
 				},
-				"provenance": {"missingPolicy": "deny"}
+				"slsa": {"missingPolicy": "deny"}
 			}`,
 			mode: config.ModeEnforce,
 			fetcher: &mockFetcher{
@@ -409,7 +409,7 @@ func TestVerifyWithFetcher(t *testing.T) {
 			name: "empty attestations deny policies",
 			policyJSON: `{
 				"trust": {"builders": [{"id": "test", "maxLevel": 2}]},
-				"provenance": {"missingPolicy": "deny"},
+				"slsa": {"missingPolicy": "deny"},
 				"vex": {"missingPolicy": "deny"}
 			}`,
 			mode: config.ModeEnforce,
@@ -426,7 +426,7 @@ func TestVerifyWithFetcher(t *testing.T) {
 		{
 			name: "no fetcher nil fallback",
 			policyJSON: `{
-				"provenance": {"missingPolicy": "allow"}
+				"slsa": {"missingPolicy": "allow"}
 			}`,
 			mode:               config.ModeEnforce,
 			fetcher:            nil,
@@ -642,7 +642,7 @@ func TestVerifyCacheFailureTTL(t *testing.T) {
 	dir := t.TempDir()
 	writePolicy(t, dir, "default.json", `{
 		"trust": {"builders": [{"id": "test", "maxLevel": 2}]},
-		"provenance": {"missingPolicy": "deny"}
+		"slsa": {"missingPolicy": "deny"}
 	}`)
 
 	cfg := config.DefaultConfig()

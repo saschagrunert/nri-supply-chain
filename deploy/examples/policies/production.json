@@ -16,7 +16,7 @@
     "sanPatterns": ["*@myorg.com", "https://github.com/myorg/*"],
     "sources": ["github.com/myorg/production-*"]
   },
-  "provenance": {
+  "slsa": {
     "missingPolicy": "deny",
     "rejectUnknownParameters": true
   },

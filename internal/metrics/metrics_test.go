@@ -75,7 +75,7 @@ func TestMetricsHandler(t *testing.T) {
 
 	met.CacheHitsTotal.Inc()
 	met.CacheMissesTotal.Inc()
-	met.VerificationTotal.WithLabelValues("slsa_provenance", "pass", "default").Inc()
+	met.VerificationTotal.WithLabelValues("slsa", "pass", "default").Inc()
 
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequestWithContext(
@@ -132,9 +132,9 @@ func TestMetricsIncrement(t *testing.T) {
 	met.CacheFailureHitsTotal.Inc()
 	met.FetchErrorsTotal.WithLabelValues("attestation", "ghcr.io").Inc()
 	met.CircuitBreakerTripsTotal.WithLabelValues("ghcr.io").Inc()
-	met.VerificationTotal.WithLabelValues("slsa_provenance", "pass", "default").Inc()
+	met.VerificationTotal.WithLabelValues("slsa", "pass", "default").Inc()
 	met.VerificationTotal.WithLabelValues("vex", "fail", "production").Inc()
-	met.VerificationDuration.WithLabelValues("slsa_provenance").Observe(0.5)
+	met.VerificationDuration.WithLabelValues("slsa").Observe(0.5)
 	met.VerificationSkippedTotal.WithLabelValues("excluded", "default").Inc()
 
 	recorder := httptest.NewRecorder()
@@ -168,7 +168,7 @@ func TestMetricsIncrement(t *testing.T) {
 		`nri_supply_chain_cache_failure_hits_total 1`,
 		`nri_supply_chain_fetch_errors_total{registry="ghcr.io",type="attestation"} 1`,
 		`nri_supply_chain_circuit_breaker_trips_total{registry="ghcr.io"} 1`,
-		`nri_supply_chain_verification_total{namespace="default",result="pass",type="slsa_provenance"} 1`,
+		`nri_supply_chain_verification_total{namespace="default",result="pass",type="slsa"} 1`,
 		`nri_supply_chain_verification_total{namespace="production",result="fail",type="vex"} 1`,
 		`nri_supply_chain_verification_skipped_total{namespace="default",reason="excluded"} 1`,
 	} {

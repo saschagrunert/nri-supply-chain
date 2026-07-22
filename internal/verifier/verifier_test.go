@@ -71,7 +71,7 @@ func TestVerify(t *testing.T) {
 				dir := t.TempDir()
 				writePolicy(t, dir, "default.json", `{
 					"trust": {"builders": [{"id": "test", "maxLevel": 2}]},
-					"provenance": {"missingPolicy": "deny"}
+					"slsa": {"missingPolicy": "deny"}
 				}`)
 
 				return dir
@@ -89,7 +89,7 @@ func TestVerify(t *testing.T) {
 				dir := t.TempDir()
 				writePolicy(t, dir, "default.json", `{
 					"trust": {"builders": [{"id": "test", "maxLevel": 2}]},
-					"provenance": {"missingPolicy": "deny"}
+					"slsa": {"missingPolicy": "deny"}
 				}`)
 
 				return dir
@@ -108,7 +108,7 @@ func TestVerify(t *testing.T) {
 				writePolicy(t, dir, "default.json", `{
 					"exclude": ["gcr.io/internal/*"],
 					"trust": {"builders": [{"id": "test", "maxLevel": 3}]},
-					"provenance": {"missingPolicy": "deny"}
+					"slsa": {"missingPolicy": "deny"}
 				}`)
 
 				return dir
@@ -141,7 +141,7 @@ func TestVerify(t *testing.T) {
 				dir := t.TempDir()
 				writePolicy(t, dir, "default.json", `{
 					"trust": {"builders": [{"id": "test", "maxLevel": 3}]},
-					"provenance": {"missingPolicy": "allow"}
+					"slsa": {"missingPolicy": "allow"}
 				}`)
 
 				return dir
@@ -159,7 +159,7 @@ func TestVerify(t *testing.T) {
 				dir := t.TempDir()
 				writePolicy(t, dir, "default.json", `{
 					"trust": {"builders": [{"id": "test", "maxLevel": 3}]},
-					"provenance": {"missingPolicy": "warn"}
+					"slsa": {"missingPolicy": "warn"}
 				}`)
 
 				return dir
@@ -200,7 +200,7 @@ func TestVerify(t *testing.T) {
 
 				dir := t.TempDir()
 				writePolicy(t, dir, "default.json", `{
-					"provenance": {"missingPolicy": "allow"},
+					"slsa": {"missingPolicy": "allow"},
 					"vex": {"missingPolicy": "deny"}
 				}`)
 
@@ -304,7 +304,7 @@ func TestVerifyCacheWarnMode(t *testing.T) {
 	dir := t.TempDir()
 	writePolicy(t, dir, "default.json", `{
 		"trust": {"builders": [{"id": "test", "maxLevel": 2}]},
-		"provenance": {"missingPolicy": "deny"}
+		"slsa": {"missingPolicy": "deny"}
 	}`)
 
 	cfg := config.DefaultConfig()
@@ -349,7 +349,7 @@ func TestVerifyCacheEnforceMode(t *testing.T) {
 	dir := t.TempDir()
 	writePolicy(t, dir, "default.json", `{
 		"trust": {"builders": [{"id": "test", "maxLevel": 2}]},
-		"provenance": {"missingPolicy": "deny"}
+		"slsa": {"missingPolicy": "deny"}
 	}`)
 
 	cfg := config.DefaultConfig()
@@ -385,10 +385,10 @@ func TestVerifyNamespacePolicy(t *testing.T) {
 	dir := t.TempDir()
 	writePolicy(t, dir, "default.json", `{
 		"trust": {"builders": [{"id": "test", "maxLevel": 3}]},
-		"provenance": {"missingPolicy": "deny"}
+		"slsa": {"missingPolicy": "deny"}
 	}`)
 	writePolicy(t, dir, "staging.json", `{
-		"provenance": {"missingPolicy": "allow"}
+		"slsa": {"missingPolicy": "allow"}
 	}`)
 
 	cfg := config.DefaultConfig()
@@ -664,7 +664,7 @@ func TestReloadClearsCacheWhenPolicyChanges(t *testing.T) {
 	)
 	testutil.AssertNoError(t, err)
 
-	writePolicy(t, dir, "default.json", `{"provenance":{"missingPolicy":"deny"}}`)
+	writePolicy(t, dir, "default.json", `{"slsa":{"missingPolicy":"deny"}}`)
 
 	reloadCfg := config.DefaultConfig()
 	reloadCfg.Verification = config.ModeWarn
@@ -1064,7 +1064,7 @@ func TestCombineResults(t *testing.T) {
 		},
 		{
 			name:        "both pass",
-			slsa:        types.PassResult("slsa_provenance", "ok"),
+			slsa:        types.PassResult("slsa", "ok"),
 			vex:         types.PassResult("vex", "ok"),
 			wantAllowed: true,
 			wantReason:  "",
@@ -1072,7 +1072,7 @@ func TestCombineResults(t *testing.T) {
 		},
 		{
 			name:        "slsa fails",
-			slsa:        types.FailResult("slsa_provenance", "missing"),
+			slsa:        types.FailResult("slsa", "missing"),
 			vex:         types.PassResult("vex", "ok"),
 			wantAllowed: false,
 			wantReason:  "missing",
@@ -1080,7 +1080,7 @@ func TestCombineResults(t *testing.T) {
 		},
 		{
 			name:        "both fail",
-			slsa:        types.FailResult("slsa_provenance", "slsa bad"),
+			slsa:        types.FailResult("slsa", "slsa bad"),
 			vex:         types.FailResult("vex", "vex bad"),
 			wantAllowed: false,
 			wantReason:  "slsa bad; vex bad",
@@ -1088,7 +1088,7 @@ func TestCombineResults(t *testing.T) {
 		},
 		{
 			name:        "slsa warn",
-			slsa:        types.WarnResult("slsa_provenance", "slsa warning"),
+			slsa:        types.WarnResult("slsa", "slsa warning"),
 			vex:         types.PassResult("vex", "ok"),
 			wantAllowed: true,
 			wantReason:  "slsa warning",
@@ -1096,7 +1096,7 @@ func TestCombineResults(t *testing.T) {
 		},
 		{
 			name:        "only slsa",
-			slsa:        types.PassResult("slsa_provenance", "ok"),
+			slsa:        types.PassResult("slsa", "ok"),
 			vex:         nil,
 			wantAllowed: true,
 			wantReason:  "",

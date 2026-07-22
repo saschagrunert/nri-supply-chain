@@ -15,7 +15,7 @@
     "issuers": ["https://token.actions.githubusercontent.com"],
     "sanPatterns": ["*@myorg.com", "https://github.com/myorg/*"]
   },
-  "provenance": {
+  "slsa": {
     "missingPolicy": "deny"
   },
   "vex": {

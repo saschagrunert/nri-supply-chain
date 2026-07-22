@@ -7,7 +7,7 @@ setup_file() {
 
 	cat >"$POLICY_DIR/default.json" <<-'EOF'
 		{
-		  "provenance": {"missingPolicy": "deny"},
+		  "slsa": {"missingPolicy": "deny"},
 		  "vex": {"missingPolicy": "allow"}
 		}
 	EOF
@@ -51,7 +51,7 @@ teardown_file() {
 	reload_plugin
 
 	write_policy "$ns" '{
-		"provenance": {"missingPolicy": "allow"},
+		"slsa": {"missingPolicy": "allow"},
 		"vex": {"missingPolicy": "allow"}
 	}'
 	reload_plugin
@@ -109,7 +109,7 @@ teardown_file() {
 
 	cat >"${POLICY_DIR}/default.json" <<-'EOF'
 		{
-		  "provenance": {"missingPolicy": "deny"},
+		  "slsa": {"missingPolicy": "deny"},
 		  "vex": {"missingPolicy": "allow"}
 		}
 	EOF

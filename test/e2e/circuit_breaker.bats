@@ -11,7 +11,7 @@ setup_file() {
 		    "issuers": ["https://token.actions.githubusercontent.com"],
 		    "sanPatterns": ["*"]
 		  },
-		  "provenance": {"missingPolicy": "deny"},
+		  "slsa": {"missingPolicy": "deny"},
 		  "vex": {"missingPolicy": "allow"},
 		  "signatures": {"requireTransparencyLog": true}
 		}

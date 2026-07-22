@@ -144,7 +144,7 @@ func TestCreateContainerEnforceReject(t *testing.T) {
 		"trust": {
 			"builders": [{"id": "test", "maxLevel": 3}]
 		},
-		"provenance": {"missingPolicy": "deny"}
+		"slsa": {"missingPolicy": "deny"}
 	}`)
 
 	plug := newTestPlugin(t, config.ModeEnforce, dir)
@@ -175,7 +175,7 @@ func TestCreateContainerWarnAllow(t *testing.T) {
 		"trust": {
 			"builders": [{"id": "test", "maxLevel": 3}]
 		},
-		"provenance": {"missingPolicy": "deny"}
+		"slsa": {"missingPolicy": "deny"}
 	}`)
 
 	plug := newTestPlugin(t, config.ModeWarn, dir)
@@ -602,7 +602,7 @@ func TestSynchronizePrewarmVerifyError(t *testing.T) {
 		"trust": {
 			"builders": [{"id": "test", "maxLevel": 3}]
 		},
-		"provenance": {"missingPolicy": "deny"}
+		"slsa": {"missingPolicy": "deny"}
 	}`)
 
 	plug := newTestPlugin(t, config.ModeEnforce, dir)
@@ -747,7 +747,7 @@ func TestCreateContainerResolvesDigestWhenMissing(t *testing.T) {
 
 	dir := t.TempDir()
 	writePolicy(t, dir, "default.json", `{
-		"provenance": {"missingPolicy": "allow"},
+		"slsa": {"missingPolicy": "allow"},
 		"vex": {"missingPolicy": "allow"}
 	}`)
 

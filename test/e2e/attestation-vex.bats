@@ -94,7 +94,7 @@ create_vex_images() {
 			  "trust": {
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
 			  },
-			  "provenance": {"missingPolicy": "allow"},
+			  "slsa": {"missingPolicy": "allow"},
 			  "vex": {"missingPolicy": "deny"},
 			  "signatures": {"requireTransparencyLog": false}
 			}
@@ -115,7 +115,7 @@ create_vex_images() {
 			  "trust": {
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
 			  },
-			  "provenance": {"missingPolicy": "allow"},
+			  "slsa": {"missingPolicy": "allow"},
 			  "vex": {"missingPolicy": "deny"},
 			  "signatures": {"requireTransparencyLog": false}
 			}
@@ -136,7 +136,7 @@ create_vex_images() {
 			  "trust": {
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
 			  },
-			  "provenance": {"missingPolicy": "allow"},
+			  "slsa": {"missingPolicy": "allow"},
 			  "vex": {"missingPolicy": "deny"},
 			  "signatures": {"requireTransparencyLog": false}
 			}
@@ -157,7 +157,7 @@ create_vex_images() {
 			  "trust": {
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
 			  },
-			  "provenance": {"missingPolicy": "allow"},
+			  "slsa": {"missingPolicy": "allow"},
 			  "vex": {"missingPolicy": "deny", "underInvestigationPolicy": "allow"},
 			  "signatures": {"requireTransparencyLog": false}
 			}
@@ -178,7 +178,7 @@ create_vex_images() {
 			  "trust": {
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
 			  },
-			  "provenance": {"missingPolicy": "allow"},
+			  "slsa": {"missingPolicy": "allow"},
 			  "vex": {"missingPolicy": "deny", "underInvestigationPolicy": "warn"},
 			  "signatures": {"requireTransparencyLog": false}
 			}
@@ -200,7 +200,7 @@ create_vex_images() {
 			  "trust": {
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
 			  },
-			  "provenance": {"missingPolicy": "allow"},
+			  "slsa": {"missingPolicy": "allow"},
 			  "vex": {"missingPolicy": "deny", "underInvestigationPolicy": "deny"},
 			  "signatures": {"requireTransparencyLog": false}
 			}
@@ -221,7 +221,7 @@ create_vex_images() {
 			  "trust": {
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
 			  },
-			  "provenance": {"missingPolicy": "allow"},
+			  "slsa": {"missingPolicy": "allow"},
 			  "vex": {"missingPolicy": "allow"},
 			  "signatures": {"requireTransparencyLog": false}
 			}
@@ -242,7 +242,7 @@ create_vex_images() {
 			  "trust": {
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
 			  },
-			  "provenance": {"missingPolicy": "allow"},
+			  "slsa": {"missingPolicy": "allow"},
 			  "vex": {"missingPolicy": "deny"},
 			  "signatures": {"requireTransparencyLog": false}
 			}
@@ -263,7 +263,7 @@ create_vex_images() {
 			  "trust": {
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
 			  },
-			  "provenance": {"missingPolicy": "allow"},
+			  "slsa": {"missingPolicy": "allow"},
 			  "vex": {"missingPolicy": "deny"},
 			  "signatures": {"requireTransparencyLog": false}
 			}

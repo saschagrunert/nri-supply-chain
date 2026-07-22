@@ -169,11 +169,11 @@ func WarnEnforceDefaults(cfg *config.Config, policies map[string]*policy.Policy)
 			label = defaultPolicyLabel
 		}
 
-		if pol.ProvenanceMissingPolicy() == policy.ActionAllow {
-			slog.Warn("enforce mode with default provenance missing_policy=allow allows "+
-				"containers without provenance attestations; consider setting missingPolicy=deny",
+		if pol.SLSAMissingPolicy() == policy.ActionAllow {
+			slog.Warn("enforce mode with default SLSA missing_policy=allow allows "+
+				"containers without SLSA provenance attestations; consider setting missingPolicy=deny",
 				"policy", label,
-				"provenance_missing_policy", pol.ProvenanceMissingPolicy(),
+				"slsa_missing_policy", pol.SLSAMissingPolicy(),
 			)
 		}
 

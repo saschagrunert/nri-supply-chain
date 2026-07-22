@@ -44,7 +44,7 @@ type Result struct {
 //
 // Always use the constructor functions to keep Passed and Status consistent.
 type CheckResult struct {
-	// Type is the check type (e.g., "slsa_provenance", "vex", "vsa").
+	// Type is the check type (e.g., "slsa", "vex", "vsa").
 	Type string
 	// Passed indicates whether this check passed.
 	Passed bool
