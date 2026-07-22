@@ -49,3 +49,36 @@ jobs:
           subject-path: |
             dist/nri-supply-chain_*
             dist/checksums.txt
+      - name: Attest container image provenance
+        env:
+          IMAGE: ghcr.io/saschagrunert/nri-supply-chain
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cat > /tmp/slsa-provenance.json <<EOF
+          {
+            "buildDefinition": {
+              "buildType": "https://github.com/${{ github.repository }}/.github/workflows/release.yml",
+              "externalParameters": {
+                "source": "github.com/${{ github.repository }}"
+              },
+              "resolvedDependencies": [
+                {
+                  "uri": "git+https://github.com/${{ github.repository }}@${{ github.ref }}",
+                  "digest": { "sha1": "${{ github.sha }}" }
+                }
+              ]
+            },
+            "runDetails": {
+              "builder": {
+                "id": "https://github.com/${{ github.repository }}/.github/workflows/release.yml"
+              },
+              "metadata": {
+                "invocationId": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+              }
+            }
+          }
+          EOF
+          cosign attest --predicate /tmp/slsa-provenance.json \
+            --type slsaprovenance1 \
+            --yes \
+            "${IMAGE}:${VERSION}"

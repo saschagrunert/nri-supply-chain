@@ -1058,10 +1058,11 @@ func artifactPolicy(digest string) (verify.ArtifactPolicyOption, error) {
 }
 
 // globToRegex converts a glob pattern to a regex string, consistent with
-// path.Match semantics: '*' matches non-'/' characters, '?' matches a single
-// non-'/' character, and '[...]' character classes have backslash escapes
-// consumed to prevent glob/regex semantic divergence (e.g. [\d] in glob
-// matches only 'd', not the regex digit class).
+// path.Match semantics: '*' matches non-'/' characters, '**' matches any
+// characters including '/', '?' matches a single non-'/' character, and
+// '[...]' character classes have backslash escapes consumed to prevent
+// glob/regex semantic divergence (e.g. [\d] in glob matches only 'd', not
+// the regex digit class).
 func globToRegex(pattern string) string {
 	var builder strings.Builder
 
@@ -1077,7 +1078,10 @@ func globToRegex(pattern string) string {
 				builder.WriteString(regexp.QuoteMeta(`\`))
 			}
 		case '*':
-			builder.WriteString("[^/]*")
+			var starExpr string
+
+			starExpr, idx = expandStar(runes, idx)
+			builder.WriteString(starExpr)
 		case '?':
 			builder.WriteString("[^/]")
 		case '[':
@@ -1093,6 +1097,14 @@ func globToRegex(pattern string) string {
 	}
 
 	return builder.String()
+}
+
+func expandStar(runes []rune, idx int) (expr string, newIdx int) {
+	if idx+1 < len(runes) && runes[idx+1] == '*' {
+		return ".*", idx + 1
+	}
+
+	return "[^/]*", idx
 }
 
 func convertBracketExpr(runes []rune, idx int) (converted string, end int) {
