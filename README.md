@@ -201,7 +201,9 @@ Release binaries are published with a SHA-256 checksum file that is signed
 using [cosign](https://github.com/sigstore/cosign). An SBOM (Software Bill of
 Materials) is generated with [syft](https://github.com/anchore/syft) for each
 release. Build provenance attestations are generated via GitHub's
-`actions/attest-build-provenance` action.
+`actions/attest-build-provenance` action. Container images also include a
+[VSA](https://slsa.dev/spec/v1.0/verification_summary) attestation that
+records the verification result from the release pipeline.
 
 To verify a release:
 
@@ -232,7 +234,16 @@ To verify a release:
      --repo saschagrunert/nri-supply-chain
    ```
 
-5. Inspect the SBOM (generated with syft, integrity covered by the signed
+5. Verify the VSA (Verification Summary Attestation) on the container image:
+
+   ```console
+   cosign verify-attestation ghcr.io/saschagrunert/nri-supply-chain:latest \
+     --type https://slsa.dev/verification_summary/v1 \
+     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+     --certificate-identity-regexp 'https://github.com/saschagrunert/nri-supply-chain/'
+   ```
+
+6. Inspect the SBOM (generated with syft, integrity covered by the signed
    checksum file from step 1):
 
    ```console
