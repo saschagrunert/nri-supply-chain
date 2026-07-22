@@ -15,7 +15,7 @@ data:
     fetch_failure_policy = "warn"
     cache_ttl = "24h"
     policy_dir = "/etc/nri-supply-chain/policies"
-    metrics_addr = "127.0.0.1:9090"
+    metrics_addr = ":9090"
     circuit_breaker_threshold = 5
     circuit_breaker_cooldown = "30s"
   default.json: |
@@ -45,6 +45,12 @@ data:
       }
     }
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nri-supply-chain
+  namespace: nri-supply-chain
+---
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -69,6 +75,7 @@ spec:
         prometheus.io/port: "9090"
         prometheus.io/path: "/metrics"
     spec:
+      serviceAccountName: nri-supply-chain
       automountServiceAccountToken: false
       priorityClassName: system-node-critical
       tolerations:

@@ -337,7 +337,10 @@ func (v *Verifier) updateFetcherLocked(ctx context.Context, cfg *config.Config) 
 	}
 
 	if v.fetcher == nil {
-		v.fetcher = createAndWarmFetcher(ctx, cfg)
+		fetcher := createAndWarmFetcher(ctx, cfg)
+		fetcher.SetStaleRootCallback(v.metrics.TrustedRootStaleTotal.Inc)
+
+		v.fetcher = fetcher
 	} else if ociFetcher, ok := v.fetcher.(*attestation.OCIFetcher); ok {
 		ociFetcher.SetRateLimit(cfg.FetchRateLimit)
 	}
