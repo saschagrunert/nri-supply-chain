@@ -37,7 +37,7 @@ restore_default_keybased_policy() {
 			  "trust": {
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
 			  },
-			  "provenance": {"missingPolicy": "allow"},
+			  "slsa": {"missingPolicy": "allow"},
 			  "vex": {"missingPolicy": "allow"},
 			  "signatures": {"requireTransparencyLog": false}
 			}
@@ -253,7 +253,7 @@ delete_oci_referrer() {
 			  "trust": {
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
 			  },
-			  "provenance": {"missingPolicy": "deny"},
+			  "slsa": {"missingPolicy": "deny"},
 			  "vex": {"missingPolicy": "allow"},
 			  "signatures": {"requireTransparencyLog": false}
 			}

@@ -63,7 +63,7 @@ func runValidateTests(t *testing.T, tests []validateTest) {
 
 func emptyPolicy() policy.Policy {
 	return policy.Policy{
-		Trust: nil, Exclude: nil, Provenance: nil,
+		Trust: nil, Exclude: nil, SLSA: nil,
 		VEX: nil, VSA: nil, Signatures: nil,
 	}
 }
@@ -94,7 +94,7 @@ func TestPolicyValidateBuilders(t *testing.T) {
 					},
 					Verifiers: nil, Issuers: nil, Sources: nil, BuildTypes: nil,
 				},
-				Exclude: nil, Provenance: nil, VEX: nil, VSA: nil, Signatures: nil,
+				Exclude: nil, SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
 			},
 			wantErr:     false,
 			expectedErr: nil,
@@ -106,7 +106,7 @@ func TestPolicyValidateBuilders(t *testing.T) {
 					Builders:  []policy.TrustedBuilder{{ID: "", MaxLevel: 2}},
 					Verifiers: nil, Issuers: nil, Sources: nil, BuildTypes: nil,
 				},
-				Exclude: nil, Provenance: nil, VEX: nil, VSA: nil, Signatures: nil,
+				Exclude: nil, SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
 			},
 			wantErr:     true,
 			expectedErr: policy.ErrBuilderIDRequired,
@@ -120,7 +120,7 @@ func TestPolicyValidateBuilders(t *testing.T) {
 					},
 					Verifiers: nil, Issuers: nil, Sources: nil, BuildTypes: nil,
 				},
-				Exclude: nil, Provenance: nil, VEX: nil, VSA: nil, Signatures: nil,
+				Exclude: nil, SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
 			},
 			wantErr:     true,
 			expectedErr: policy.ErrBuilderMaxLevel,
@@ -142,7 +142,7 @@ func TestPolicyValidateVerifiers(t *testing.T) {
 					},
 					Issuers: nil, Sources: nil, BuildTypes: nil,
 				},
-				Exclude: nil, Provenance: nil, VEX: nil, VSA: nil, Signatures: nil,
+				Exclude: nil, SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
 			},
 			wantErr:     true,
 			expectedErr: policy.ErrVerifierKeyRequired,
@@ -157,7 +157,7 @@ func TestPolicyValidateVerifiers(t *testing.T) {
 					},
 					Issuers: nil, Sources: nil, BuildTypes: nil,
 				},
-				Exclude: nil, Provenance: nil, VEX: nil, VSA: nil, Signatures: nil,
+				Exclude: nil, SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
 			},
 			wantErr:     true,
 			expectedErr: policy.ErrVerifierKeyNotAbsolute,
@@ -172,7 +172,7 @@ func TestPolicyValidateVerifiers(t *testing.T) {
 					},
 					Issuers: nil, Sources: nil, BuildTypes: nil,
 				},
-				Exclude: nil, Provenance: nil, VEX: nil, VSA: nil, Signatures: nil,
+				Exclude: nil, SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
 			},
 			wantErr:     false,
 			expectedErr: nil,
@@ -187,7 +187,7 @@ func TestPolicyValidateExclude(t *testing.T) {
 		{
 			name: "invalid exclude pattern",
 			policy: policy.Policy{
-				Trust: nil, Exclude: []string{"[invalid"}, Provenance: nil,
+				Trust: nil, Exclude: []string{"[invalid"}, SLSA: nil,
 				VEX: nil, VSA: nil, Signatures: nil,
 			},
 			wantErr:     true,
@@ -196,7 +196,7 @@ func TestPolicyValidateExclude(t *testing.T) {
 		{
 			name: "valid exclude pattern",
 			policy: policy.Policy{
-				Trust: nil, Exclude: []string{"gcr.io/org/*"}, Provenance: nil,
+				Trust: nil, Exclude: []string{"gcr.io/org/*"}, SLSA: nil,
 				VEX: nil, VSA: nil, Signatures: nil,
 			},
 			wantErr:     false,
@@ -205,15 +205,15 @@ func TestPolicyValidateExclude(t *testing.T) {
 	})
 }
 
-func TestPolicyValidateProvenance(t *testing.T) {
+func TestPolicyValidateSLSA(t *testing.T) {
 	t.Parallel()
 
 	runValidateTests(t, []validateTest{
 		{
-			name: "invalid provenance missing policy",
+			name: "invalid slsa missing policy",
 			policy: policy.Policy{
 				Trust: nil, Exclude: nil,
-				Provenance: &policy.ProvenancePolicy{
+				SLSA: &policy.SLSAPolicy{
 					MissingPolicy: testInvalidValue, RejectUnknownParameters: false,
 				},
 				VEX: nil, VSA: nil, Signatures: nil,
@@ -231,7 +231,7 @@ func TestPolicyValidateVEX(t *testing.T) {
 		{
 			name: "valid VEX config",
 			policy: policy.Policy{
-				Trust: nil, Exclude: nil, Provenance: nil,
+				Trust: nil, Exclude: nil, SLSA: nil,
 				VEX: &policy.VEXPolicy{
 					MissingPolicy:            policy.ActionWarn,
 					UnderInvestigationPolicy: policy.ActionAllow,
@@ -251,7 +251,7 @@ func TestPolicyValidateVSA(t *testing.T) {
 		{
 			name: "invalid VSA minimum level",
 			policy: policy.Policy{
-				Trust: nil, Exclude: nil, Provenance: nil, VEX: nil,
+				Trust: nil, Exclude: nil, SLSA: nil, VEX: nil,
 				VSA:        &policy.VSAPolicy{MinimumLevel: 5, MaxAge: "", Policy: ""},
 				Signatures: nil,
 			},
@@ -261,7 +261,7 @@ func TestPolicyValidateVSA(t *testing.T) {
 		{
 			name: "invalid VSA max age",
 			policy: policy.Policy{
-				Trust: nil, Exclude: nil, Provenance: nil, VEX: nil,
+				Trust: nil, Exclude: nil, SLSA: nil, VEX: nil,
 				VSA: &policy.VSAPolicy{
 					MinimumLevel: 0, MaxAge: "not-a-duration", Policy: "",
 				},
@@ -273,7 +273,7 @@ func TestPolicyValidateVSA(t *testing.T) {
 	})
 }
 
-func TestProvenanceMissingPolicy(t *testing.T) {
+func TestSLSAMissingPolicy(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -282,7 +282,7 @@ func TestProvenanceMissingPolicy(t *testing.T) {
 		expected policy.Action
 	}{
 		{
-			name:     "nil provenance defaults to allow",
+			name:     "nil slsa defaults to allow",
 			policy:   emptyPolicy(),
 			expected: policy.ActionAllow,
 		},
@@ -290,7 +290,7 @@ func TestProvenanceMissingPolicy(t *testing.T) {
 			name: "empty missing policy defaults to allow",
 			policy: policy.Policy{
 				Trust: nil, Exclude: nil,
-				Provenance: &policy.ProvenancePolicy{
+				SLSA: &policy.SLSAPolicy{
 					MissingPolicy: "", RejectUnknownParameters: false,
 				},
 				VEX: nil, VSA: nil, Signatures: nil,
@@ -301,7 +301,7 @@ func TestProvenanceMissingPolicy(t *testing.T) {
 			name: "explicit deny",
 			policy: policy.Policy{
 				Trust: nil, Exclude: nil,
-				Provenance: &policy.ProvenancePolicy{
+				SLSA: &policy.SLSAPolicy{
 					MissingPolicy: policy.ActionDeny, RejectUnknownParameters: false,
 				},
 				VEX: nil, VSA: nil, Signatures: nil,
@@ -314,7 +314,7 @@ func TestProvenanceMissingPolicy(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := test.policy.ProvenanceMissingPolicy(); got != test.expected {
+			if got := test.policy.SLSAMissingPolicy(); got != test.expected {
 				t.Errorf("expected %q, got %q", test.expected, got)
 			}
 		})
@@ -337,7 +337,7 @@ func TestVEXMissingPolicy(t *testing.T) {
 		{
 			name: "empty missing policy defaults to allow",
 			policy: policy.Policy{
-				Trust: nil, Exclude: nil, Provenance: nil,
+				Trust: nil, Exclude: nil, SLSA: nil,
 				VEX: &policy.VEXPolicy{
 					MissingPolicy:            "",
 					UnderInvestigationPolicy: "",
@@ -349,7 +349,7 @@ func TestVEXMissingPolicy(t *testing.T) {
 		{
 			name: "explicit deny",
 			policy: policy.Policy{
-				Trust: nil, Exclude: nil, Provenance: nil,
+				Trust: nil, Exclude: nil, SLSA: nil,
 				VEX: &policy.VEXPolicy{
 					MissingPolicy:            policy.ActionDeny,
 					UnderInvestigationPolicy: "",
@@ -381,7 +381,7 @@ func TestLoadPolicyValid(t *testing.T) {
 		"trust": {
 			"builders": [{"id": "https://example.com/builder", "maxLevel": 2}]
 		},
-		"provenance": {"missingPolicy": "warn"}
+		"slsa": {"missingPolicy": "warn"}
 	}`
 	writeFile(t, policyPath, content)
 
@@ -396,8 +396,8 @@ func TestLoadPolicyValid(t *testing.T) {
 		t.Errorf("unexpected builder ID: %s", pol.Builders()[0].ID)
 	}
 
-	if pol.ProvenanceMissingPolicy() != policy.ActionWarn {
-		t.Errorf("expected warn, got %s", pol.ProvenanceMissingPolicy())
+	if pol.SLSAMissingPolicy() != policy.ActionWarn {
+		t.Errorf("expected warn, got %s", pol.SLSAMissingPolicy())
 	}
 }
 
@@ -446,9 +446,9 @@ func TestLoadAllNamespaces(t *testing.T) {
 	dir := t.TempDir()
 
 	writeFile(t, filepath.Join(dir, "default.json"),
-		`{"provenance":{"missingPolicy":"allow"}}`)
+		`{"slsa":{"missingPolicy":"allow"}}`)
 	writeFile(t, filepath.Join(dir, "production.json"),
-		`{"provenance":{"missingPolicy":"deny"}}`)
+		`{"slsa":{"missingPolicy":"deny"}}`)
 
 	policies, err := policy.LoadAll(dir)
 	testutil.AssertNoError(t, err)
@@ -462,9 +462,9 @@ func TestLoadAllNamespaces(t *testing.T) {
 		t.Fatal("expected default policy")
 	}
 
-	if defaultPolicy.ProvenanceMissingPolicy() != policy.ActionAllow {
+	if defaultPolicy.SLSAMissingPolicy() != policy.ActionAllow {
 		t.Errorf(
-			"expected allow, got %s", defaultPolicy.ProvenanceMissingPolicy(),
+			"expected allow, got %s", defaultPolicy.SLSAMissingPolicy(),
 		)
 	}
 
@@ -473,9 +473,9 @@ func TestLoadAllNamespaces(t *testing.T) {
 		t.Fatal("expected production policy")
 	}
 
-	if prodPolicy.ProvenanceMissingPolicy() != policy.ActionDeny {
+	if prodPolicy.SLSAMissingPolicy() != policy.ActionDeny {
 		t.Errorf(
-			"expected deny, got %s", prodPolicy.ProvenanceMissingPolicy(),
+			"expected deny, got %s", prodPolicy.SLSAMissingPolicy(),
 		)
 	}
 }
@@ -504,7 +504,7 @@ func TestPolicyValidateVerifierWithoutID(t *testing.T) {
 					},
 					Issuers: nil, Sources: nil, BuildTypes: nil,
 				},
-				Exclude: nil, Provenance: nil, VEX: nil, VSA: nil, Signatures: nil,
+				Exclude: nil, SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
 			},
 			wantErr:     true,
 			expectedErr: policy.ErrVerifierIDRequired,
@@ -519,7 +519,7 @@ func TestPolicyValidateVEXPolicies(t *testing.T) {
 		{
 			name: "invalid VEX missing policy",
 			policy: policy.Policy{
-				Trust: nil, Exclude: nil, Provenance: nil,
+				Trust: nil, Exclude: nil, SLSA: nil,
 				VEX: &policy.VEXPolicy{
 					MissingPolicy:            testInvalidValue,
 					UnderInvestigationPolicy: "",
@@ -532,7 +532,7 @@ func TestPolicyValidateVEXPolicies(t *testing.T) {
 		{
 			name: "invalid VEX under investigation policy",
 			policy: policy.Policy{
-				Trust: nil, Exclude: nil, Provenance: nil,
+				Trust: nil, Exclude: nil, SLSA: nil,
 				VEX: &policy.VEXPolicy{
 					MissingPolicy:            "",
 					UnderInvestigationPolicy: testInvalidValue,
@@ -552,7 +552,7 @@ func TestPolicyValidateVSAValid(t *testing.T) {
 		{
 			name: "valid VSA",
 			policy: policy.Policy{
-				Trust: nil, Exclude: nil, Provenance: nil, VEX: nil,
+				Trust: nil, Exclude: nil, SLSA: nil, VEX: nil,
 				VSA: &policy.VSAPolicy{
 					MinimumLevel: 2, MaxAge: "168h", Policy: "https://example.com/policy",
 				},
@@ -662,7 +662,7 @@ func defaultTestPolicy() *policy.Policy {
 			BuildTypes:  nil,
 		},
 		Exclude: []string{"gcr.io/default/*"},
-		Provenance: &policy.ProvenancePolicy{
+		SLSA: &policy.SLSAPolicy{
 			MissingPolicy:           policy.ActionDeny,
 			RejectUnknownParameters: false,
 			KnownParameters:         nil,
@@ -685,7 +685,7 @@ func defaultTestPolicy() *policy.Policy {
 
 func mergedEmptyNamespace() *policy.Policy {
 	nsPol := &policy.Policy{
-		Inherits: nil, Trust: nil, Exclude: nil, Provenance: nil,
+		Inherits: nil, Trust: nil, Exclude: nil, SLSA: nil,
 		VEX: nil, VSA: nil, Signatures: nil,
 	}
 
@@ -720,13 +720,13 @@ func TestMergeWithDefaultInheritsExclude(t *testing.T) {
 	}
 }
 
-func TestMergeWithDefaultInheritsProvenance(t *testing.T) {
+func TestMergeWithDefaultInheritsSLSA(t *testing.T) {
 	t.Parallel()
 
 	merged := mergedEmptyNamespace()
-	if merged.Provenance == nil ||
-		merged.Provenance.MissingPolicy != policy.ActionDeny {
-		t.Error("expected default Provenance to be inherited")
+	if merged.SLSA == nil ||
+		merged.SLSA.MissingPolicy != policy.ActionDeny {
+		t.Error("expected default SLSA to be inherited")
 	}
 }
 
@@ -774,7 +774,7 @@ func TestMergeWithDefaultTrustOverride(t *testing.T) {
 	}
 	nsPol := &policy.Policy{
 		Inherits: nil, Trust: nsTrust, Exclude: nil,
-		Provenance: nil, VEX: nil, VSA: nil, Signatures: nil,
+		SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
 	}
 
 	merged := policy.MergeWithDefault(nsPol, defaultTestPolicy())
@@ -784,8 +784,8 @@ func TestMergeWithDefaultTrustOverride(t *testing.T) {
 			merged.Trust.Builders[0].ID)
 	}
 
-	if merged.Provenance.MissingPolicy != policy.ActionDeny {
-		t.Error("expected default Provenance to be preserved")
+	if merged.SLSA.MissingPolicy != policy.ActionDeny {
+		t.Error("expected default SLSA to be preserved")
 	}
 }
 
@@ -794,8 +794,8 @@ func TestMergeWithDefaultExcludeOverride(t *testing.T) {
 
 	nsPol := &policy.Policy{
 		Inherits: nil, Trust: nil,
-		Exclude:    []string{"ns-exclude/*"},
-		Provenance: nil, VEX: nil, VSA: nil, Signatures: nil,
+		Exclude: []string{"ns-exclude/*"},
+		SLSA:    nil, VEX: nil, VSA: nil, Signatures: nil,
 	}
 
 	merged := policy.MergeWithDefault(nsPol, defaultTestPolicy())
@@ -806,12 +806,12 @@ func TestMergeWithDefaultExcludeOverride(t *testing.T) {
 	}
 }
 
-func TestMergeWithDefaultProvenanceOverride(t *testing.T) {
+func TestMergeWithDefaultSLSAOverride(t *testing.T) {
 	t.Parallel()
 
 	nsPol := &policy.Policy{
 		Inherits: nil, Trust: nil, Exclude: nil,
-		Provenance: &policy.ProvenancePolicy{
+		SLSA: &policy.SLSAPolicy{
 			MissingPolicy:           policy.ActionAllow,
 			RejectUnknownParameters: false,
 			KnownParameters:         nil,
@@ -821,8 +821,8 @@ func TestMergeWithDefaultProvenanceOverride(t *testing.T) {
 
 	merged := policy.MergeWithDefault(nsPol, defaultTestPolicy())
 
-	if merged.Provenance.MissingPolicy != policy.ActionAllow {
-		t.Error("expected namespace Provenance to override default")
+	if merged.SLSA.MissingPolicy != policy.ActionAllow {
+		t.Error("expected namespace SLSA to override default")
 	}
 }
 
@@ -830,7 +830,7 @@ func TestMergeWithDefaultVEXOverride(t *testing.T) {
 	t.Parallel()
 
 	nsPol := &policy.Policy{
-		Inherits: nil, Trust: nil, Exclude: nil, Provenance: nil,
+		Inherits: nil, Trust: nil, Exclude: nil, SLSA: nil,
 		VEX: &policy.VEXPolicy{
 			MissingPolicy:            policy.ActionDeny,
 			UnderInvestigationPolicy: "",
@@ -849,7 +849,7 @@ func TestMergeWithDefaultVSAOverride(t *testing.T) {
 	t.Parallel()
 
 	nsPol := &policy.Policy{
-		Inherits: nil, Trust: nil, Exclude: nil, Provenance: nil,
+		Inherits: nil, Trust: nil, Exclude: nil, SLSA: nil,
 		VEX: nil,
 		VSA: &policy.VSAPolicy{
 			MinimumLevel:   1,
@@ -872,7 +872,7 @@ func TestMergeWithDefaultSignaturesOverride(t *testing.T) {
 	t.Parallel()
 
 	nsPol := &policy.Policy{
-		Inherits: nil, Trust: nil, Exclude: nil, Provenance: nil,
+		Inherits: nil, Trust: nil, Exclude: nil, SLSA: nil,
 		VEX:        nil,
 		VSA:        nil,
 		Signatures: &policy.SignaturesPolicy{RequireTransparencyLog: false},
@@ -891,21 +891,21 @@ func TestLoadAllInheritsMergesWithDefault(t *testing.T) {
 	dir := t.TempDir()
 
 	writeFile(t, filepath.Join(dir, "default.json"), `{
-		"provenance": {"missingPolicy": "deny"},
+		"slsa": {"missingPolicy": "deny"},
 		"exclude": ["default-exclude/*"]
 	}`)
 	writeFile(t, filepath.Join(dir, "staging.json"), `{
 		"inherits": true,
-		"provenance": {"missingPolicy": "allow"}
+		"slsa": {"missingPolicy": "allow"}
 	}`)
 
 	policies, err := policy.LoadAll(dir)
 	testutil.AssertNoError(t, err)
 
 	staging := policies["staging"]
-	if staging.ProvenanceMissingPolicy() != policy.ActionAllow {
+	if staging.SLSAMissingPolicy() != policy.ActionAllow {
 		t.Errorf("expected allow (overridden), got %s",
-			staging.ProvenanceMissingPolicy())
+			staging.SLSAMissingPolicy())
 	}
 
 	if len(staging.Exclude) != 1 ||
@@ -1119,12 +1119,12 @@ func TestHash(t *testing.T) {
 		t.Parallel()
 
 		pol1 := &policy.Policy{
-			Provenance: &policy.ProvenancePolicy{
+			SLSA: &policy.SLSAPolicy{
 				MissingPolicy: policy.ActionDeny,
 			},
 		}
 		pol2 := &policy.Policy{
-			Provenance: &policy.ProvenancePolicy{
+			SLSA: &policy.SLSAPolicy{
 				MissingPolicy: policy.ActionDeny,
 			},
 		}
@@ -1145,12 +1145,12 @@ func TestHash(t *testing.T) {
 		t.Parallel()
 
 		pol1 := &policy.Policy{
-			Provenance: &policy.ProvenancePolicy{
+			SLSA: &policy.SLSAPolicy{
 				MissingPolicy: policy.ActionDeny,
 			},
 		}
 		pol2 := &policy.Policy{
-			Provenance: &policy.ProvenancePolicy{
+			SLSA: &policy.SLSAPolicy{
 				MissingPolicy: policy.ActionAllow,
 			},
 		}
@@ -1175,7 +1175,7 @@ func TestHash(t *testing.T) {
 					{ID: "https://example.com/builder", MaxLevel: 3},
 				},
 			},
-			Provenance: &policy.ProvenancePolicy{
+			SLSA: &policy.SLSAPolicy{
 				MissingPolicy: policy.ActionWarn,
 			},
 		}

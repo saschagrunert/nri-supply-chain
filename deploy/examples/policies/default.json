@@ -14,7 +14,7 @@
     "sources": ["github.com/myorg/*"]
   },
   "exclude": ["gcr.io/distroless/*"],
-  "provenance": {
+  "slsa": {
     "missingPolicy": "warn"
   },
   "vex": {

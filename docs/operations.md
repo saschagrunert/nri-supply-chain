@@ -177,7 +177,7 @@ your threat model.
 **Enforce-mode startup warnings.** When running in `enforce` mode, the plugin
 logs warnings at startup if permissive defaults are still in place. It warns
 when `fetch_failure_policy` is `warn` or `allow` (since fetch failures would let
-containers through), and when any policy has `provenance.missingPolicy` or
+containers through), and when any policy has `slsa.missingPolicy` or
 `vex.missingPolicy` set to `allow`. Review these warnings and tighten the
 settings before relying on enforce mode in production.
 

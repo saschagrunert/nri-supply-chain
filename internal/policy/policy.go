@@ -103,8 +103,8 @@ type Policy struct {
 	Trust *TrustPolicy `json:"trust,omitempty"`
 	// Exclude is a list of glob patterns for images that skip verification.
 	Exclude []string `json:"exclude,omitempty"`
-	// Provenance contains SLSA provenance verification settings.
-	Provenance *ProvenancePolicy `json:"provenance,omitempty"`
+	// SLSA contains SLSA provenance verification settings.
+	SLSA *SLSAPolicy `json:"slsa,omitempty"`
 	// VEX contains VEX verification settings.
 	VEX *VEXPolicy `json:"vex,omitempty"`
 	// VSA contains Verification Summary Attestation settings.
@@ -150,8 +150,8 @@ type TrustedVerifier struct {
 	Key string `json:"key"`
 }
 
-// ProvenancePolicy contains SLSA provenance verification settings.
-type ProvenancePolicy struct {
+// SLSAPolicy contains SLSA provenance verification settings.
+type SLSAPolicy struct {
 	// MissingPolicy controls behavior when no provenance attestation is found.
 	MissingPolicy Action `json:"missingPolicy,omitempty"`
 	// RejectUnknownParameters rejects provenance with unrecognized externalParameters fields.
@@ -188,10 +188,10 @@ type SignaturesPolicy struct {
 	RequireTransparencyLog bool `json:"requireTransparencyLog,omitempty"`
 }
 
-// ProvenanceMissingPolicy returns the effective provenance missing policy.
-func (p *Policy) ProvenanceMissingPolicy() Action {
-	if p.Provenance != nil && p.Provenance.MissingPolicy != "" {
-		return p.Provenance.MissingPolicy
+// SLSAMissingPolicy returns the effective SLSA missing policy.
+func (p *Policy) SLSAMissingPolicy() Action {
+	if p.SLSA != nil && p.SLSA.MissingPolicy != "" {
+		return p.SLSA.MissingPolicy
 	}
 
 	return ActionAllow
@@ -229,7 +229,7 @@ func (p *Policy) Hash() (string, error) {
 
 // MergeWithDefault creates a new policy by starting from a copy of the default
 // policy and overriding fields that are set in the namespace policy. Each
-// top-level section (Trust, Exclude, Provenance, VEX, VSA, Signatures) is
+// top-level section (Trust, Exclude, SLSA, VEX, VSA, Signatures) is
 // replaced entirely if set in the namespace policy. The Inherits field is
 // cleared on the result. Inherited structs are shallow-copied to prevent
 // mutations (e.g. Validate writing MaxAgeDuration) from affecting the default.
@@ -244,8 +244,8 @@ func MergeWithDefault(namespace, defaultPol *Policy) *Policy {
 		merged.Exclude = namespace.Exclude
 	}
 
-	if namespace.Provenance != nil {
-		merged.Provenance = namespace.Provenance
+	if namespace.SLSA != nil {
+		merged.SLSA = namespace.SLSA
 	}
 
 	if namespace.VEX != nil {
@@ -274,10 +274,10 @@ func clonePolicy(pol *Policy) *Policy {
 		clone.Trust = cloneTrust(pol.Trust)
 	}
 
-	if pol.Provenance != nil {
-		prov := *pol.Provenance
-		prov.KnownParameters = slices.Clone(prov.KnownParameters)
-		clone.Provenance = &prov
+	if pol.SLSA != nil {
+		sp := *pol.SLSA
+		sp.KnownParameters = slices.Clone(sp.KnownParameters)
+		clone.SLSA = &sp
 	}
 
 	if pol.VEX != nil {
@@ -322,7 +322,7 @@ func (p *Policy) Validate() error {
 		return err
 	}
 
-	err = p.validateProvenance()
+	err = p.validateSLSA()
 	if err != nil {
 		return err
 	}
@@ -608,22 +608,22 @@ func (p *Policy) validateExclude() error {
 	return validateGlobPatterns("exclude", p.Exclude)
 }
 
-func (p *Policy) validateProvenance() error {
-	if p.Provenance == nil {
+func (p *Policy) validateSLSA() error {
+	if p.SLSA == nil {
 		return nil
 	}
 
-	if p.Provenance.MissingPolicy != "" {
+	if p.SLSA.MissingPolicy != "" {
 		err := ValidateAction(
-			"provenance.missingPolicy", p.Provenance.MissingPolicy,
+			"slsa.missingPolicy", p.SLSA.MissingPolicy,
 		)
 		if err != nil {
-			return fmt.Errorf("validating provenance policy: %w", err)
+			return fmt.Errorf("validating slsa policy: %w", err)
 		}
 	}
 
 	err := validateNonEmpty(
-		"provenance.knownParameters", p.Provenance.KnownParameters,
+		"slsa.knownParameters", p.SLSA.KnownParameters,
 	)
 	if err != nil {
 		return err

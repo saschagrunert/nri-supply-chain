@@ -7,7 +7,7 @@ setup_file() {
 
 	cat >"$POLICY_DIR/default.json" <<-'EOF'
 		{
-		  "provenance": {"missingPolicy": "allow"},
+		  "slsa": {"missingPolicy": "allow"},
 		  "vex": {"missingPolicy": "allow"}
 		}
 	EOF

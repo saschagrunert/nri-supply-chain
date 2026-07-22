@@ -39,7 +39,7 @@ restore_default_keyless_policy() {
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}],
 			    "sources": ["https://github.com/testorg/*"]
 			  },
-			  "provenance": {"missingPolicy": "deny"},
+			  "slsa": {"missingPolicy": "deny"},
 			  "vex": {"missingPolicy": "allow"},
 			  "signatures": {"requireTransparencyLog": false}
 			}
@@ -98,7 +98,7 @@ create_slsa_images() {
 			    "builders": [{"id": "https://builder.example.com/untrusted", "maxLevel": 3}],
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
 			  },
-			  "provenance": {"missingPolicy": "deny"},
+			  "slsa": {"missingPolicy": "deny"},
 			  "vex": {"missingPolicy": "allow"},
 			  "signatures": {"requireTransparencyLog": false}
 			}
@@ -126,7 +126,7 @@ create_slsa_images() {
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}],
 			    "sources": ["https://github.com/myorg/*"]
 			  },
-			  "provenance": {"missingPolicy": "deny"},
+			  "slsa": {"missingPolicy": "deny"},
 			  "vex": {"missingPolicy": "allow"},
 			  "signatures": {"requireTransparencyLog": false}
 			}
@@ -149,7 +149,7 @@ create_slsa_images() {
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}],
 			    "buildTypes": ["https://example.com/CustomBuildType"]
 			  },
-			  "provenance": {"missingPolicy": "deny"},
+			  "slsa": {"missingPolicy": "deny"},
 			  "vex": {"missingPolicy": "allow"},
 			  "signatures": {"requireTransparencyLog": false}
 			}
@@ -172,7 +172,7 @@ create_slsa_images() {
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}],
 			    "buildTypes": ["https://example.com/WrongBuildType"]
 			  },
-			  "provenance": {"missingPolicy": "deny"},
+			  "slsa": {"missingPolicy": "deny"},
 			  "vex": {"missingPolicy": "allow"},
 			  "signatures": {"requireTransparencyLog": false}
 			}
@@ -193,7 +193,7 @@ create_slsa_images() {
 			  "trust": {
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
 			  },
-			  "provenance": {"missingPolicy": "deny", "rejectUnknownParameters": true},
+			  "slsa": {"missingPolicy": "deny", "rejectUnknownParameters": true},
 			  "vex": {"missingPolicy": "allow"},
 			  "signatures": {"requireTransparencyLog": false}
 			}
@@ -215,7 +215,7 @@ create_slsa_images() {
 			    "builders": [{"id": "https://test-builder.example.com", "maxLevel": 3}],
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
 			  },
-			  "provenance": {"missingPolicy": "deny", "rejectUnknownParameters": false},
+			  "slsa": {"missingPolicy": "deny", "rejectUnknownParameters": false},
 			  "vex": {"missingPolicy": "allow"},
 			  "signatures": {"requireTransparencyLog": false}
 			}
@@ -242,7 +242,7 @@ create_slsa_images() {
 			  "trust": {
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
 			  },
-			  "provenance": {"missingPolicy": "deny"},
+			  "slsa": {"missingPolicy": "deny"},
 			  "vex": {"missingPolicy": "allow"},
 			  "signatures": {"requireTransparencyLog": false}
 			}
@@ -256,7 +256,7 @@ create_slsa_images() {
 	restore_default_keyless_policy
 }
 
-@test "image without provenance rejected when missingPolicy is deny" {
+@test "image without SLSA attestation rejected when missingPolicy is deny" {
 	run_pod "no-prov" "registry.k8s.io/pause:3.10" || true
 	assert_log_contains "Container rejected"
 }

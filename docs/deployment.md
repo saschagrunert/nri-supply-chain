@@ -139,7 +139,7 @@ policy_dir = "/etc/nri-supply-chain/policies"
 
 ```json
 {
-  "provenance": { "missingPolicy": "warn" },
+  "slsa": { "missingPolicy": "warn" },
   "vex": { "missingPolicy": "allow" }
 }
 ```
@@ -164,7 +164,7 @@ policy_dir = "/etc/nri-supply-chain/policies"
     ],
     "sources": ["github.com/myorg/*"]
   },
-  "provenance": {
+  "slsa": {
     "missingPolicy": "deny",
     "rejectUnknownParameters": true
   },
@@ -198,7 +198,7 @@ already attested the image.
       }
     ]
   },
-  "provenance": { "missingPolicy": "deny" },
+  "slsa": { "missingPolicy": "deny" },
   "vsa": {
     "minimumLevel": 2,
     "maxAge": "12h",

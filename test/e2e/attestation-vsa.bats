@@ -153,7 +153,7 @@ create_vsa_images() {
 			  "trust": {
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
 			  },
-			  "provenance": {"missingPolicy": "deny"},
+			  "slsa": {"missingPolicy": "deny"},
 			  "vex": {"missingPolicy": "deny"},
 			  "vsa": {"minimumLevel": 2},
 			  "signatures": {"requireTransparencyLog": false}
@@ -176,7 +176,7 @@ create_vsa_images() {
 			  "trust": {
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
 			  },
-			  "provenance": {"missingPolicy": "allow"},
+			  "slsa": {"missingPolicy": "allow"},
 			  "vex": {"missingPolicy": "allow"},
 			  "vsa": {"minimumLevel": 3},
 			  "signatures": {"requireTransparencyLog": false}
@@ -199,7 +199,7 @@ create_vsa_images() {
 			  "trust": {
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
 			  },
-			  "provenance": {"missingPolicy": "allow"},
+			  "slsa": {"missingPolicy": "allow"},
 			  "vex": {"missingPolicy": "allow"},
 			  "vsa": {"minimumLevel": 1},
 			  "signatures": {"requireTransparencyLog": false}
@@ -221,7 +221,7 @@ create_vsa_images() {
 			  "trust": {
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
 			  },
-			  "provenance": {"missingPolicy": "allow"},
+			  "slsa": {"missingPolicy": "allow"},
 			  "vex": {"missingPolicy": "allow"},
 			  "vsa": {"minimumLevel": 1},
 			  "signatures": {"requireTransparencyLog": false}
@@ -243,7 +243,7 @@ create_vsa_images() {
 			  "trust": {
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
 			  },
-			  "provenance": {"missingPolicy": "deny"},
+			  "slsa": {"missingPolicy": "deny"},
 			  "vex": {"missingPolicy": "allow"},
 			  "vsa": {"minimumLevel": 1},
 			  "signatures": {"requireTransparencyLog": false}
@@ -265,7 +265,7 @@ create_vsa_images() {
 			  "trust": {
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
 			  },
-			  "provenance": {"missingPolicy": "deny"},
+			  "slsa": {"missingPolicy": "deny"},
 			  "vex": {"missingPolicy": "allow"},
 			  "vsa": {"minimumLevel": 1, "policy": "https://correct-policy.example.com"},
 			  "signatures": {"requireTransparencyLog": false}
@@ -287,7 +287,7 @@ create_vsa_images() {
 			  "trust": {
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
 			  },
-			  "provenance": {"missingPolicy": "allow"},
+			  "slsa": {"missingPolicy": "allow"},
 			  "vex": {"missingPolicy": "allow"},
 			  "vsa": {"minimumLevel": 1, "maxAge": "1h"},
 			  "signatures": {"requireTransparencyLog": false}
@@ -310,7 +310,7 @@ create_vsa_images() {
 			  "trust": {
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
 			  },
-			  "provenance": {"missingPolicy": "deny"},
+			  "slsa": {"missingPolicy": "deny"},
 			  "vex": {"missingPolicy": "allow"},
 			  "vsa": {"minimumLevel": 1},
 			  "signatures": {"requireTransparencyLog": false}
@@ -332,7 +332,7 @@ create_vsa_images() {
 			  "trust": {
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
 			  },
-			  "provenance": {"missingPolicy": "deny"},
+			  "slsa": {"missingPolicy": "deny"},
 			  "vex": {"missingPolicy": "allow"},
 			  "vsa": {"minimumLevel": 1},
 			  "signatures": {"requireTransparencyLog": false}

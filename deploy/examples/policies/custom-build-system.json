@@ -14,7 +14,7 @@
     ],
     "buildTypes": ["https://tekton.dev/chains/v2"]
   },
-  "provenance": {
+  "slsa": {
     "missingPolicy": "deny",
     "rejectUnknownParameters": true,
     "knownParameters": ["git-url", "git-commit", "pipeline-name"]

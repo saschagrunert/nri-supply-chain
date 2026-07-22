@@ -116,10 +116,10 @@ func runChecksWithoutFetcher(
 	detail := "no attestation fetcher configured for image " + imageRef
 
 	slsaResult := handleMissingAttestation(
-		pol.ProvenanceMissingPolicy(), "slsa_provenance", detail,
+		pol.SLSAMissingPolicy(), "slsa", detail,
 	)
 
-	met.VerificationDuration.WithLabelValues("slsa_provenance").Observe(0)
+	met.VerificationDuration.WithLabelValues("slsa").Observe(0)
 
 	vexResult := handleMissingAttestation(
 		pol.VEXMissingPolicy(), "vex", detail,
@@ -244,7 +244,7 @@ func runParallelChecks(
 	go func() {
 		defer waitGroup.Done()
 
-		slsaResult = runSLSACheck(ctx, bins.provenance, pol, met, imageRef, digest, namespace)
+		slsaResult = runSLSACheck(ctx, bins.slsa, pol, met, imageRef, digest, namespace)
 	}()
 
 	go func() {
@@ -260,31 +260,31 @@ func runParallelChecks(
 
 func runSLSACheck(
 	ctx context.Context,
-	provenanceAtts []attestation.VerifiedAttestation,
+	slsaAtts []attestation.VerifiedAttestation,
 	pol *policy.Policy, met *metrics.Metrics, imageRef, digest, namespace string,
 ) *types.CheckResult {
 	start := time.Now()
 
 	defer func() {
-		met.VerificationDuration.WithLabelValues("slsa_provenance").Observe(
+		met.VerificationDuration.WithLabelValues("slsa").Observe(
 			time.Since(start).Seconds(),
 		)
 	}()
 
-	if len(provenanceAtts) == 0 {
+	if len(slsaAtts) == 0 {
 		slog.WarnContext(ctx, "No provenance attestation found",
 			"reason", "missing_attestation",
 			"image", imageRef,
 		)
 
 		return handleMissingAttestation(
-			pol.ProvenanceMissingPolicy(),
-			"slsa_provenance",
+			pol.SLSAMissingPolicy(),
+			"slsa",
 			"no provenance attestation found for image "+imageRef,
 		)
 	}
 
-	result, err := slsa.VerifyMultiple(provenanceAtts, pol, digest)
+	result, err := slsa.VerifyMultiple(slsaAtts, pol, digest)
 	if err != nil {
 		slog.ErrorContext(ctx, "SLSA verification error",
 			"error", err,
@@ -292,11 +292,11 @@ func runSLSACheck(
 			"image", imageRef,
 		)
 
-		met.VerificationTotal.WithLabelValues("slsa_provenance", "error", namespace).Inc()
+		met.VerificationTotal.WithLabelValues("slsa", "error", namespace).Inc()
 
 		return handleMissingAttestation(
-			pol.ProvenanceMissingPolicy(),
-			"slsa_provenance",
+			pol.SLSAMissingPolicy(),
+			"slsa",
 			fmt.Sprintf("SLSA verification error for %s: %s", imageRef, err),
 		)
 	}
@@ -426,9 +426,9 @@ func applyCheckResult(result *types.Result, check *types.CheckResult) {
 }
 
 type attestationBins struct {
-	vsa        []attestation.VerifiedAttestation
-	provenance []attestation.VerifiedAttestation
-	vex        []attestation.VerifiedAttestation
+	vsa  []attestation.VerifiedAttestation
+	slsa []attestation.VerifiedAttestation
+	vex  []attestation.VerifiedAttestation
 }
 
 func binAttestations(attestations []attestation.VerifiedAttestation) attestationBins {
@@ -439,7 +439,7 @@ func binAttestations(attestations []attestation.VerifiedAttestation) attestation
 		case attestation.PredicateVSA:
 			bins.vsa = append(bins.vsa, attestations[idx])
 		case attestation.PredicateSLSAProvenanceV1:
-			bins.provenance = append(bins.provenance, attestations[idx])
+			bins.slsa = append(bins.slsa, attestations[idx])
 		case attestation.PredicateOpenVEX:
 			bins.vex = append(bins.vex, attestations[idx])
 		}

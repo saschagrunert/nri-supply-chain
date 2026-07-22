@@ -14,7 +14,7 @@ patterns for the nri-supply-chain plugin.
 - [Field Reference](#field-reference)
   - [<code>trust</code> (object)](#trust-object)
   - [<code>exclude</code> (array of strings)](#exclude-array-of-strings)
-  - [<code>provenance</code> (object)](#provenance-object)
+  - [<code>slsa</code> (object)](#slsa-object)
   - [<code>vex</code> (object)](#vex-object)
   - [<code>vsa</code> (object)](#vsa-object)
   - [<code>signatures</code> (object)](#signatures-object)
@@ -115,7 +115,7 @@ provenance:
     "issuers": ["https://token.actions.githubusercontent.com"],
     "sanPatterns": ["https://github.com/myorg/*"]
   },
-  "provenance": {
+  "slsa": {
     "missingPolicy": "deny"
   },
   "vex": {
@@ -141,7 +141,7 @@ Skip verification for known base images or internal tooling:
     "issuers": ["https://token.actions.githubusercontent.com"],
     "sanPatterns": ["https://github.com/myorg/*"]
   },
-  "provenance": {
+  "slsa": {
     "missingPolicy": "deny"
   }
 }
@@ -167,7 +167,7 @@ Trust roots for verification. All sub-fields are optional.
 Glob patterns for images that skip verification entirely. Uses Go `path.Match`
 semantics where `*` matches any non-`/` sequence.
 
-### `provenance` (object)
+### `slsa` (object)
 
 SLSA provenance verification settings.
 
@@ -219,10 +219,10 @@ performed:
   `buildDefinition.buildType` must match one of the allowed types.
 - **Source repository**: If `trust.sources` is configured, the `source` in
   `externalParameters` must match an allowed glob pattern.
-- **Unknown parameters**: If `provenance.rejectUnknownParameters` is enabled,
+- **Unknown parameters**: If `slsa.rejectUnknownParameters` is enabled,
   unrecognized `externalParameters` fields cause rejection. The recognized set
   defaults to GitHub Actions parameters (`source`, `repository`, `ref`,
-  `workflow`, `buildType`) but can be overridden with `provenance.knownParameters`.
+  `workflow`, `buildType`) but can be overridden with `slsa.knownParameters`.
 
 Note: `trust.builders[].maxLevel` is not checked during provenance
 verification. SLSA provenance does not declare a build level; levels are a
@@ -248,7 +248,7 @@ list the expected `externalParameters` keys:
     ],
     "buildTypes": ["https://tekton.dev/chains/v2"]
   },
-  "provenance": {
+  "slsa": {
     "rejectUnknownParameters": true,
     "knownParameters": ["git-url", "git-commit", "pipeline-name"]
   }
@@ -358,7 +358,7 @@ A file named `<namespace>.json` in the policy directory overrides
 `default.json` for pods in that namespace.
 
 By default, the override is a full replacement. If a namespace policy sets
-`"inherits": true`, unset top-level fields (`trust`, `exclude`, `provenance`,
+`"inherits": true`, unset top-level fields (`trust`, `exclude`, `slsa`,
 `vex`, `vsa`, `signatures`) are inherited from the default policy. Each
 top-level section that is set in the namespace policy replaces the default's
 section entirely. The default policy itself cannot set `inherits`.
@@ -384,7 +384,7 @@ Example: `default.json` requires provenance, but `dev.json` allows everything:
       }
     ]
   },
-  "provenance": {
+  "slsa": {
     "missingPolicy": "deny"
   }
 }
@@ -395,7 +395,7 @@ Example: `default.json` requires provenance, but `dev.json` allows everything:
 
 ```json
 {
-  "provenance": {
+  "slsa": {
     "missingPolicy": "allow"
   },
   "vex": {
@@ -416,7 +416,7 @@ Example: `default.json` requires provenance, but `dev.json` allows everything:
 }
 ```
 
-In this example, `staging.json` inherits `trust`, `exclude`, `provenance`,
+In this example, `staging.json` inherits `trust`, `exclude`, `slsa`,
 `vsa`, and `signatures` from `default.json` but replaces the `vex` section.
 
 ## Deployment Patterns
@@ -433,7 +433,7 @@ fetch_failure_policy = "allow"
 
 ```json
 {
-  "provenance": {
+  "slsa": {
     "missingPolicy": "warn"
   },
   "vex": {
@@ -467,7 +467,7 @@ verifying SLSA + VEX individually:
       }
     ]
   },
-  "provenance": {
+  "slsa": {
     "missingPolicy": "deny"
   },
   "vsa": {
@@ -496,7 +496,7 @@ The plugin tries both modes; either can satisfy the policy:
     "sanPatterns": ["https://github.com/myorg/*"],
     "sources": ["github.com/myorg/*"]
   },
-  "provenance": {
+  "slsa": {
     "missingPolicy": "deny"
   },
   "signatures": {

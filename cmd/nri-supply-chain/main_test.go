@@ -478,7 +478,7 @@ func TestRunValidationValid(t *testing.T) {
 	}
 
 	writeValidationPolicy(t, policyDir, "default.json",
-		`{"provenance": {"missingPolicy": "warn"}}`)
+		`{"slsa": {"missingPolicy": "warn"}}`)
 
 	cfg := config.DefaultConfig()
 	cfg.Verification = config.ModeWarn
@@ -543,7 +543,7 @@ func TestRunValidationEnforceValid(t *testing.T) {
 	}
 
 	writeValidationPolicy(t, policyDir, "default.json",
-		`{"provenance": {"missingPolicy": "allow"}}`)
+		`{"slsa": {"missingPolicy": "allow"}}`)
 
 	cfg := config.DefaultConfig()
 	cfg.Verification = config.ModeEnforce
@@ -596,7 +596,7 @@ func TestWarnValidationEnforceDefaults(t *testing.T) {
 			policies: map[string]*policy.Policy{},
 		},
 		{
-			name: "provenance missing policy allow with default namespace",
+			name: "slsa missing policy allow with default namespace",
 			cfg: func() *config.Config {
 				c := config.DefaultConfig()
 				c.Verification = config.ModeEnforce
@@ -606,14 +606,14 @@ func TestWarnValidationEnforceDefaults(t *testing.T) {
 			}(),
 			policies: map[string]*policy.Policy{
 				"": {
-					Provenance: &policy.ProvenancePolicy{
+					SLSA: &policy.SLSAPolicy{
 						MissingPolicy: policy.ActionAllow,
 					},
 				},
 			},
 		},
 		{
-			name: "provenance missing policy deny",
+			name: "slsa missing policy deny",
 			cfg: func() *config.Config {
 				c := config.DefaultConfig()
 				c.Verification = config.ModeEnforce
@@ -623,7 +623,7 @@ func TestWarnValidationEnforceDefaults(t *testing.T) {
 			}(),
 			policies: map[string]*policy.Policy{
 				"prod": {
-					Provenance: &policy.ProvenancePolicy{
+					SLSA: &policy.SLSAPolicy{
 						MissingPolicy: policy.ActionDeny,
 					},
 				},
@@ -640,7 +640,7 @@ func TestWarnValidationEnforceDefaults(t *testing.T) {
 			}(),
 			policies: map[string]*policy.Policy{
 				"": {
-					Provenance: &policy.ProvenancePolicy{
+					SLSA: &policy.SLSAPolicy{
 						MissingPolicy: policy.ActionDeny,
 					},
 				},
@@ -657,7 +657,7 @@ func TestWarnValidationEnforceDefaults(t *testing.T) {
 			}(),
 			policies: map[string]*policy.Policy{
 				"secure": {
-					Provenance: &policy.ProvenancePolicy{
+					SLSA: &policy.SLSAPolicy{
 						MissingPolicy: policy.ActionDeny,
 					},
 					VEX: &policy.VEXPolicy{
@@ -802,7 +802,7 @@ func writeValidationPolicy(t *testing.T, dir, name, content string) {
 //nolint:paralleltest // captures os.Stdout
 func TestOutputVerifyResultAllowed(t *testing.T) {
 	checks := []checkEntry{
-		{Type: "slsa_provenance", Passed: true, Status: "pass", Detail: "verified"},
+		{Type: "slsa", Passed: true, Status: "pass", Detail: "verified"},
 	}
 
 	out := captureVerifyOutput(
@@ -833,8 +833,8 @@ func TestOutputVerifyResultAllowed(t *testing.T) {
 		t.Fatalf("CheckResults length = %d, want 1", len(out.CheckResults))
 	}
 
-	if out.CheckResults[0].Type != "slsa_provenance" {
-		t.Errorf("CheckResults[0].Type = %q, want %q", out.CheckResults[0].Type, "slsa_provenance")
+	if out.CheckResults[0].Type != "slsa" {
+		t.Errorf("CheckResults[0].Type = %q, want %q", out.CheckResults[0].Type, "slsa")
 	}
 }
 
@@ -1042,7 +1042,7 @@ func TestRunVerifyEnforceDenied(t *testing.T) {
 
 	policyDir := t.TempDir()
 	writeValidationPolicy(t, policyDir, "default.json",
-		`{"provenance": {"missingPolicy": "deny"}}`)
+		`{"slsa": {"missingPolicy": "deny"}}`)
 
 	cfg := config.DefaultConfig()
 	cfg.Verification = config.ModeEnforce
@@ -1121,7 +1121,7 @@ func TestRunVerifyWarnModeWithChecks(t *testing.T) {
 
 	policyDir := t.TempDir()
 	writeValidationPolicy(t, policyDir, "default.json",
-		`{"provenance": {"missingPolicy": "deny"}}`)
+		`{"slsa": {"missingPolicy": "deny"}}`)
 
 	cfg := config.DefaultConfig()
 	cfg.Verification = config.ModeWarn

@@ -61,7 +61,7 @@ create_sigstore_images() {
 			  "trust": {
 			    "verifiers": [{"id": "wrong-verifier", "key": "${wrong_key}.pub"}]
 			  },
-			  "provenance": {"missingPolicy": "deny"},
+			  "slsa": {"missingPolicy": "deny"},
 			  "vex": {"missingPolicy": "allow"},
 			  "signatures": {"requireTransparencyLog": false}
 			}
@@ -82,7 +82,7 @@ create_sigstore_images() {
 			  "trust": {
 			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
 			  },
-			  "provenance": {"missingPolicy": "deny"},
+			  "slsa": {"missingPolicy": "deny"},
 			  "vex": {"missingPolicy": "allow"},
 			  "signatures": {"requireTransparencyLog": true}
 			}
@@ -109,7 +109,7 @@ create_sigstore_images() {
 			      {"id": "correct-verifier", "key": "${COSIGN_PUB}"}
 			    ]
 			  },
-			  "provenance": {"missingPolicy": "deny"},
+			  "slsa": {"missingPolicy": "deny"},
 			  "vex": {"missingPolicy": "allow"},
 			  "signatures": {"requireTransparencyLog": false}
 			}
@@ -126,7 +126,7 @@ create_sigstore_images() {
 @test "empty trust block rejects attested image" {
 	write_policy "default" '{
 		"trust": {},
-		"provenance": {"missingPolicy": "deny"},
+		"slsa": {"missingPolicy": "deny"},
 		"vex": {"missingPolicy": "allow"},
 		"signatures": {"requireTransparencyLog": false}
 	}'

@@ -117,7 +117,7 @@ func TestVerify(t *testing.T) {
 			digest:     testDigest,
 			wantErr:    nil,
 			wantPass:   true,
-			wantType:   "slsa_provenance",
+			wantType:   "slsa",
 			wantStatus: types.StatusPass,
 		},
 		{
@@ -388,7 +388,7 @@ func TestVerify(t *testing.T) {
 						{ID: testBuilderID, MaxLevel: 2},
 					},
 				},
-				Provenance: &policy.ProvenancePolicy{
+				SLSA: &policy.SLSAPolicy{
 					RejectUnknownParameters: true,
 				},
 			},
@@ -414,7 +414,7 @@ func TestVerify(t *testing.T) {
 						{ID: testBuilderID, MaxLevel: 2},
 					},
 				},
-				Provenance: &policy.ProvenancePolicy{
+				SLSA: &policy.SLSAPolicy{
 					RejectUnknownParameters: false,
 				},
 			},
@@ -446,7 +446,7 @@ func TestVerify(t *testing.T) {
 						{ID: testBuilderID, MaxLevel: 2},
 					},
 				},
-				Provenance: &policy.ProvenancePolicy{
+				SLSA: &policy.SLSAPolicy{
 					RejectUnknownParameters: true,
 				},
 			},
@@ -474,7 +474,7 @@ func TestVerify(t *testing.T) {
 						{ID: testBuilderID, MaxLevel: 2},
 					},
 				},
-				Provenance: &policy.ProvenancePolicy{
+				SLSA: &policy.SLSAPolicy{
 					RejectUnknownParameters: true,
 					KnownParameters:         []string{testCustomParamKey},
 				},
@@ -504,7 +504,7 @@ func TestVerify(t *testing.T) {
 						{ID: testBuilderID, MaxLevel: 2},
 					},
 				},
-				Provenance: &policy.ProvenancePolicy{
+				SLSA: &policy.SLSAPolicy{
 					RejectUnknownParameters: true,
 					KnownParameters:         []string{testCustomParamKey},
 				},
@@ -686,7 +686,7 @@ func TestVerifyEdgeCases(t *testing.T) {
 		stmt.Predicate.BuildDefinition.ExternalParameters = map[string]any{}
 
 		result, err := slsa.Verify(mustMarshal(t, stmt), &policy.Policy{
-			Provenance: &policy.ProvenancePolicy{
+			SLSA: &policy.SLSAPolicy{
 				RejectUnknownParameters: true,
 			},
 		}, testDigest)
@@ -694,7 +694,7 @@ func TestVerifyEdgeCases(t *testing.T) {
 		testutil.AssertEqual(t, true, result.Passed)
 	})
 
-	t.Run("nil provenance policy allows unknown parameters", func(t *testing.T) {
+	t.Run("nil slsa policy allows unknown parameters", func(t *testing.T) {
 		t.Parallel()
 
 		stmt := validStatement()

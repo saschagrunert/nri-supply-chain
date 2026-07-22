@@ -92,10 +92,10 @@ Checks performed:
   `buildDefinition.buildType` must match one of the allowed types.
 - **Source repository**: If `trust.sources` is configured, the `source` in
   `externalParameters` must match an allowed glob pattern.
-- **Unknown parameters**: If `provenance.rejectUnknownParameters` is enabled,
+- **Unknown parameters**: If `slsa.rejectUnknownParameters` is enabled,
   unrecognized `externalParameters` fields cause rejection.
 
-See [policy.md](policy.md#provenance-object) for the full field reference.
+See [policy.md](policy.md#slsa-object) for the full field reference.
 
 Note: `trust.builders[].maxLevel` is not checked during provenance
 verification because provenance attestations do not declare a build level.

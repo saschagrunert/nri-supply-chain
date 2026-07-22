@@ -23,10 +23,10 @@ import (
 func TestPassResult(t *testing.T) {
 	t.Parallel()
 
-	result := types.PassResult("slsa_provenance", "verified")
+	result := types.PassResult("slsa", "verified")
 
-	if result.Type != "slsa_provenance" {
-		t.Errorf("expected type slsa_provenance, got %q", result.Type)
+	if result.Type != "slsa" {
+		t.Errorf("expected type slsa, got %q", result.Type)
 	}
 
 	if !result.Passed {

@@ -10,7 +10,7 @@
     "sanPatterns": ["https://github.com/myorg/*"],
     "sources": ["github.com/myorg/*"]
   },
-  "provenance": {
+  "slsa": {
     "missingPolicy": "deny",
     "rejectUnknownParameters": true
   },

@@ -7,7 +7,7 @@
       }
     ]
   },
-  "provenance": {
+  "slsa": {
     "missingPolicy": "deny"
   },
   "vex": {
