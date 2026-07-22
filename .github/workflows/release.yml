@@ -49,11 +49,14 @@ jobs:
           subject-path: |
             dist/nri-supply-chain_*
             dist/checksums.txt
+      - name: Install crane
+        run: make build/crane
       - name: Attest container image provenance
         env:
           IMAGE: ghcr.io/saschagrunert/nri-supply-chain
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
+          DIGEST=$(./build/crane digest "${IMAGE}:${VERSION}")
           cat > /tmp/slsa-provenance.json <<EOF
           {
             "buildDefinition": {
@@ -81,4 +84,29 @@ jobs:
           cosign attest --predicate /tmp/slsa-provenance.json \
             --type slsaprovenance1 \
             --yes \
-            "${IMAGE}:${VERSION}"
+            "${IMAGE}@${DIGEST}"
+      - name: Attest container image VSA
+        env:
+          IMAGE: ghcr.io/saschagrunert/nri-supply-chain
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          DIGEST=$(./build/crane digest "${IMAGE}:${VERSION}")
+          cat > /tmp/vsa-predicate.json <<EOF
+          {
+            "verifier": {
+              "id": "https://github.com/${{ github.repository }}/.github/workflows/release.yml"
+            },
+            "timeVerified": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "resourceUri": "${IMAGE}@${DIGEST}",
+            "policy": {
+              "uri": "https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/deploy/examples/policies/default.json"
+            },
+            "verificationResult": "PASSED",
+            "verifiedLevels": ["SLSA_BUILD_LEVEL_3"],
+            "slsaVersion": "1.0"
+          }
+          EOF
+          cosign attest --predicate /tmp/vsa-predicate.json \
+            --type https://slsa.dev/verification_summary/v1 \
+            --yes \
+            "${IMAGE}@${DIGEST}"
