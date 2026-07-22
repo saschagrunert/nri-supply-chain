@@ -42,3 +42,8 @@ func (p *Plugin) ExportPrewarmCache(ctx context.Context, images []ExportPrewarmI
 func (p *Plugin) ExportSetDigestResolver(fn DigestResolveFunc) {
 	p.digestResolver = fn
 }
+
+// ExportDefaultDigestResolver exposes defaultDigestResolver for testing.
+func ExportDefaultDigestResolver(ctx context.Context, imageRef string) (string, error) {
+	return defaultDigestResolver(ctx, imageRef)
+}

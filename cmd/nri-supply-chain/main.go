@@ -26,12 +26,14 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
 	"github.com/containerd/nri/pkg/stub"
 	"github.com/fsnotify/fsnotify"
 	"github.com/google/go-containerregistry/pkg/name"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	crremote "github.com/google/go-containerregistry/pkg/v1/remote"
 	"golang.org/x/sync/errgroup"
 
@@ -45,6 +47,9 @@ import (
 )
 
 var version = "0.1.1"
+
+// ErrNoPlatformMatch indicates that no image in a manifest list matches the current platform.
+var ErrNoPlatformMatch = errors.New("no matching platform image in manifest list")
 
 var logLevelVar slog.LevelVar //nolint:gochecknoglobals // shared between initLogging and reload
 
@@ -572,12 +577,48 @@ func resolveDigest(imageRef string, timeout time.Duration) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	desc, err := crremote.Head(ref, crremote.WithContext(ctx))
+	desc, err := crremote.Get(ref, crremote.WithContext(ctx))
 	if err != nil {
 		return "", fmt.Errorf("resolving image digest: %w", err)
 	}
 
+	if desc.MediaType.IsIndex() {
+		return resolveIndexDigest(desc)
+	}
+
 	return desc.Digest.String(), nil
+}
+
+func resolveIndexDigest(desc *crremote.Descriptor) (string, error) {
+	idx, err := desc.ImageIndex()
+	if err != nil {
+		return "", fmt.Errorf("reading image index: %w", err)
+	}
+
+	manifest, err := idx.IndexManifest()
+	if err != nil {
+		return "", fmt.Errorf("reading index manifest: %w", err)
+	}
+
+	platform := v1.Platform{
+		Architecture: runtime.GOARCH,
+		OS:           runtime.GOOS,
+	}
+
+	for i := range manifest.Manifests {
+		entry := &manifest.Manifests[i]
+
+		if entry.Platform != nil && entry.Platform.Satisfies(platform) {
+			slog.Debug("Resolved manifest list to platform image",
+				"platform", platform.String(),
+				"digest", entry.Digest.String(),
+			)
+
+			return entry.Digest.String(), nil
+		}
+	}
+
+	return "", fmt.Errorf("%w for %s/%s", ErrNoPlatformMatch, runtime.GOOS, runtime.GOARCH)
 }
 
 func outputVerifyResult(

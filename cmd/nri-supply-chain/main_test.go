@@ -33,9 +33,13 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/google/go-containerregistry/pkg/crane"
+	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/registry"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/types"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
@@ -48,6 +52,11 @@ import (
 const (
 	testConfigFile    = "test.toml"
 	testNamespaceMain = "default"
+	testArchAmd64     = "amd64"
+	testArchArm64     = "arm64"
+	testArchS390x     = "s390x"
+	testOSLinux       = "linux"
+	testOSZos         = "zos"
 )
 
 //nolint:paralleltest // modifies package-level logLevelVar
@@ -786,11 +795,11 @@ func TestIsReloadEvent(t *testing.T) {
 	}
 }
 
-func writeValidationPolicy(t *testing.T, dir, name, content string) {
+func writeValidationPolicy(t *testing.T, dir, filename, content string) {
 	t.Helper()
 
 	err := os.WriteFile(
-		filepath.Join(dir, name), []byte(content), 0o600,
+		filepath.Join(dir, filename), []byte(content), 0o600,
 	)
 	if err != nil {
 		t.Fatalf("writing policy: %v", err)
@@ -960,6 +969,195 @@ func TestResolveDigestSuccess(t *testing.T) {
 
 	if !strings.HasPrefix(digest, "sha256:") {
 		t.Errorf("digest = %q, expected sha256: prefix", digest)
+	}
+}
+
+func TestResolveDigestManifestList(t *testing.T) {
+	t.Parallel()
+
+	regHandler := registry.New()
+	server := httptest.NewServer(regHandler)
+
+	t.Cleanup(server.Close)
+
+	addr := strings.TrimPrefix(server.URL, "http://")
+	imgRef := addr + "/multiarch:latest"
+
+	// Create two platform-specific images.
+	amdImg, err := mutate.ConfigFile(empty.Image, &v1.ConfigFile{
+		Architecture: testArchAmd64,
+		OS:           testOSLinux,
+	})
+	if err != nil {
+		t.Fatalf("creating amd64 image: %v", err)
+	}
+
+	armImg, err := mutate.ConfigFile(empty.Image, &v1.ConfigFile{
+		Architecture: testArchArm64,
+		OS:           testOSLinux,
+	})
+	if err != nil {
+		t.Fatalf("creating arm64 image: %v", err)
+	}
+
+	// Build an image index (manifest list) containing both images.
+	idx := mutate.AppendManifests(empty.Index,
+		mutate.IndexAddendum{
+			Add: amdImg,
+			Descriptor: v1.Descriptor{
+				Platform: &v1.Platform{
+					Architecture: testArchAmd64,
+					OS:           testOSLinux,
+				},
+			},
+		},
+		mutate.IndexAddendum{
+			Add: armImg,
+			Descriptor: v1.Descriptor{
+				Platform: &v1.Platform{
+					Architecture: testArchArm64,
+					OS:           testOSLinux,
+				},
+			},
+		},
+	)
+
+	ref, err := name.ParseReference(imgRef)
+	if err != nil {
+		t.Fatalf("parsing reference: %v", err)
+	}
+
+	err = remote.WriteIndex(ref, idx, remote.WithTransport(server.Client().Transport))
+	if err != nil {
+		t.Fatalf("pushing index: %v", err)
+	}
+
+	// resolveDigest should return a platform-specific image digest, not the
+	// index digest.
+	digest, err := resolveDigest(imgRef, 30*time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.HasPrefix(digest, "sha256:") {
+		t.Errorf("digest = %q, expected sha256: prefix", digest)
+	}
+
+	// Verify it resolved to an actual image digest, not the index digest.
+	idxDigest, err := idx.Digest()
+	if err != nil {
+		t.Fatalf("getting index digest: %v", err)
+	}
+
+	if digest == idxDigest.String() {
+		t.Errorf("digest should be a platform image digest, not the index digest %s", digest)
+	}
+}
+
+func TestResolveDigestManifestListDockerMediaType(t *testing.T) {
+	t.Parallel()
+
+	regHandler := registry.New()
+	server := httptest.NewServer(regHandler)
+
+	t.Cleanup(server.Close)
+
+	addr := strings.TrimPrefix(server.URL, "http://")
+	imgRef := addr + "/docker-multiarch:latest"
+
+	img, err := mutate.ConfigFile(empty.Image, &v1.ConfigFile{
+		Architecture: testArchAmd64,
+		OS:           testOSLinux,
+	})
+	if err != nil {
+		t.Fatalf("creating image: %v", err)
+	}
+
+	// Use Docker manifest list media type.
+	idx := mutate.IndexMediaType(
+		mutate.AppendManifests(empty.Index,
+			mutate.IndexAddendum{
+				Add: img,
+				Descriptor: v1.Descriptor{
+					Platform: &v1.Platform{
+						Architecture: testArchAmd64,
+						OS:           testOSLinux,
+					},
+				},
+			},
+		),
+		types.DockerManifestList,
+	)
+
+	ref, err := name.ParseReference(imgRef)
+	if err != nil {
+		t.Fatalf("parsing reference: %v", err)
+	}
+
+	err = remote.WriteIndex(ref, idx, remote.WithTransport(server.Client().Transport))
+	if err != nil {
+		t.Fatalf("pushing index: %v", err)
+	}
+
+	digest, err := resolveDigest(imgRef, 30*time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.HasPrefix(digest, "sha256:") {
+		t.Errorf("digest = %q, expected sha256: prefix", digest)
+	}
+}
+
+func TestResolveDigestManifestListNoPlatformMatch(t *testing.T) {
+	t.Parallel()
+
+	regHandler := registry.New()
+	server := httptest.NewServer(regHandler)
+
+	t.Cleanup(server.Close)
+
+	addr := strings.TrimPrefix(server.URL, "http://")
+	imgRef := addr + "/no-match:latest"
+
+	img, err := mutate.ConfigFile(empty.Image, &v1.ConfigFile{
+		Architecture: testArchS390x,
+		OS:           testOSLinux,
+	})
+	if err != nil {
+		t.Fatalf("creating image: %v", err)
+	}
+
+	// Create an index with only a platform that won't match the test host.
+	idx := mutate.AppendManifests(empty.Index,
+		mutate.IndexAddendum{
+			Add: img,
+			Descriptor: v1.Descriptor{
+				Platform: &v1.Platform{
+					Architecture: testArchS390x,
+					OS:           testOSZos,
+				},
+			},
+		},
+	)
+
+	ref, err := name.ParseReference(imgRef)
+	if err != nil {
+		t.Fatalf("parsing reference: %v", err)
+	}
+
+	err = remote.WriteIndex(ref, idx, remote.WithTransport(server.Client().Transport))
+	if err != nil {
+		t.Fatalf("pushing index: %v", err)
+	}
+
+	_, err = resolveDigest(imgRef, 30*time.Second)
+	if err == nil {
+		t.Fatal("expected error for no matching platform")
+	}
+
+	if !strings.Contains(err.Error(), "no matching platform") {
+		t.Errorf("error = %q, expected to contain 'no matching platform'", err)
 	}
 }
 
