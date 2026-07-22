@@ -924,6 +924,32 @@ func TestNewOCIFetcherWithCacheInvalidBundle(t *testing.T) {
 	}
 }
 
+func TestArtifactPolicyEmptyDigest(t *testing.T) {
+	t.Parallel()
+
+	err := attestation.ExportArtifactPolicy("")
+	if err == nil {
+		t.Fatal("expected error for empty digest")
+	}
+
+	if !strings.Contains(err.Error(), "empty digest") {
+		t.Errorf("expected empty digest error, got: %v", err)
+	}
+}
+
+func TestArtifactPolicyMalformedDigest(t *testing.T) {
+	t.Parallel()
+
+	err := attestation.ExportArtifactPolicy("not-a-digest")
+	if err == nil {
+		t.Fatal("expected error for malformed digest")
+	}
+
+	if !strings.Contains(err.Error(), "malformed digest") {
+		t.Errorf("expected malformed digest error, got: %v", err)
+	}
+}
+
 func TestNewTestOCIFetcherInjectsBoth(t *testing.T) {
 	t.Parallel()
 

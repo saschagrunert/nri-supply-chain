@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
@@ -1202,4 +1203,53 @@ func TestHash(t *testing.T) {
 			t.Error("expected non-empty hash for empty policy")
 		}
 	})
+}
+
+func TestInitDerivedInvalidMaxAge(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{
+		VSA: &policy.VSAPolicy{
+			MaxAge: "not-a-duration",
+		},
+	}
+
+	pol.ExportInitDerived()
+
+	if pol.VSA.MaxAgeDuration != 0 {
+		t.Errorf("expected MaxAgeDuration=0 for invalid MaxAge, got %v", pol.VSA.MaxAgeDuration)
+	}
+}
+
+func TestInitDerivedValidMaxAge(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{
+		VSA: &policy.VSAPolicy{
+			MaxAge: "24h",
+		},
+	}
+
+	pol.ExportInitDerived()
+
+	if pol.VSA.MaxAgeDuration != 24*time.Hour {
+		t.Errorf("expected MaxAgeDuration=24h, got %v", pol.VSA.MaxAgeDuration)
+	}
+}
+
+func TestInitDerivedSkipsWhenAlreadySet(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{
+		VSA: &policy.VSAPolicy{
+			MaxAge:         "1h",
+			MaxAgeDuration: 48 * time.Hour,
+		},
+	}
+
+	pol.ExportInitDerived()
+
+	if pol.VSA.MaxAgeDuration != 48*time.Hour {
+		t.Errorf("expected MaxAgeDuration=48h (unchanged), got %v", pol.VSA.MaxAgeDuration)
+	}
 }

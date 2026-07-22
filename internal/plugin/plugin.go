@@ -386,6 +386,12 @@ func resolveImage(annotations map[string]string) (imageRef, digest string) {
 	cImg := annotations[AnnotationContainerdImage]
 	cRef := validDigestOrEmpty(annotations[AnnotationContainerdImageRef])
 
+	if cRef == "" && cImg != "" {
+		if _, d, ok := strings.Cut(cImg, "@"); ok {
+			cRef = validDigestOrEmpty(d)
+		}
+	}
+
 	if cImg != "" && cRef != "" {
 		return cImg, cRef
 	}

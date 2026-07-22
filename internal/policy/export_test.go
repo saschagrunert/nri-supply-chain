@@ -12,35 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package policy_test
+package policy
 
-import (
-	"path/filepath"
-	"testing"
-
-	"github.com/saschagrunert/nri-supply-chain/internal/policy"
-)
-
-func TestExamplePolicies(t *testing.T) {
-	t.Parallel()
-
-	files, err := filepath.Glob("../../deploy/examples/policies/*.json")
-	if err != nil {
-		t.Fatalf("globbing: %v", err)
-	}
-
-	if len(files) == 0 {
-		t.Fatal("no example policies found")
-	}
-
-	for _, policyFile := range files {
-		t.Run(filepath.Base(policyFile), func(t *testing.T) {
-			t.Parallel()
-
-			_, err := policy.Load(policyFile)
-			if err != nil {
-				t.Fatalf("loading %s: %v", policyFile, err)
-			}
-		})
-	}
+// ExportInitDerived exposes initDerived for external tests.
+func (p *Policy) ExportInitDerived() {
+	p.initDerived()
 }

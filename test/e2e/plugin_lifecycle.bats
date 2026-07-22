@@ -116,6 +116,16 @@ teardown_file() {
 	assert_log_contains "Connected to runtime"
 }
 
+@test "healthz probe returns 200" {
+	run curl -sf http://localhost:9090/healthz
+	[[ "$status" -eq 0 ]]
+}
+
+@test "readyz probe returns 200 when connected" {
+	run curl -sf http://localhost:9090/readyz
+	[[ "$status" -eq 0 ]]
+}
+
 @test "log output is structured JSON" {
 	stop_plugin
 	write_plugin_config "warn"

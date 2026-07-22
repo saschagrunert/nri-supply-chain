@@ -117,7 +117,7 @@ teardown_file() {
 		verification = "warn"
 		policy_dir = "${POLICY_DIR}"
 		fetch_timeout = "30s"
-		cache_ttl = "2s"
+		cache_ttl = "3s"
 		metrics_addr = ":9090"
 	EOF
 	start_plugin
@@ -130,7 +130,7 @@ teardown_file() {
 	misses_before=$(curl_metrics | awk '/nri_supply_chain_cache_misses_total/ && !/^#/ {print $2; exit}')
 
 	# Cache eviction is lazy (only on Get), so wait for TTL + jitter to expire
-	sleep 3
+	sleep 5
 
 	run_pod "ttl-second" "registry.k8s.io/pause:3.10"
 	wait_for_pod_status "ttl-second" "Running"

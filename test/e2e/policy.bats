@@ -217,3 +217,28 @@ teardown_file() {
 	}'
 	reload_plugin
 }
+
+@test "namespace policy with inherits merges with default" {
+	local ns="inherit-ns"
+	kubectl create namespace "$ns" 2>/dev/null || true
+	wait_for_service_account "$ns"
+
+	write_policy "$ns" '{
+		"inherits": true,
+		"provenance": {"missingPolicy": "allow"}
+	}'
+	reload_plugin
+
+	kubectl run "inherit-pod" \
+		--namespace "$ns" \
+		--image "$POLICY_IMAGE" \
+		--restart=Never
+	wait_for_pod_status "inherit-pod" "Running" 60 "$ns"
+
+	# Default policy still denies in the default namespace.
+	run_pod "inherit-default-pod" "$POLICY_IMAGE" || true
+	assert_log_contains "Container rejected"
+
+	kubectl delete pod "inherit-pod" -n "$ns" --force --grace-period=0 2>/dev/null || true
+	kubectl delete namespace "$ns" 2>/dev/null || true
+}

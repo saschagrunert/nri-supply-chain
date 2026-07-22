@@ -83,7 +83,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: find
         run: |
-          matrix=$(find test/e2e -name '*.bats' -exec basename {} .bats \; | sort | jq -R -s -c 'split("\n") | map(select(length > 0)) | map({file: ., display: gsub("-"; " / ")})')
+          matrix=$(find test/e2e -name '*.bats' -exec basename {} .bats \; | sort | jq -R -s -c 'split("\n") | map(select(length > 0)) | map({file: ., display: (gsub("_"; " ") | gsub("-"; " / "))})')
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   test-e2e:
