@@ -210,6 +210,7 @@ func NewOCIFetcherWithVerifier(verifier BundleVerifyFunc) *OCIFetcher {
 
 // SetStaleRootCallback sets a function to be called each time the fetcher
 // serves a stale trusted root from cache after a refresh failure.
+// Must be called during initialization, before any concurrent Fetch calls.
 func (f *OCIFetcher) SetStaleRootCallback(fn func()) {
 	if f.rootCache != nil {
 		f.rootCache.onStaleHit = fn
@@ -1033,11 +1034,14 @@ func extractVerifiedPayload(bndl *bundle.Bundle) ([]byte, error) {
 	return payload, nil
 }
 
-var errMalformedDigest = errors.New("malformed digest")
+var (
+	errMalformedDigest = errors.New("malformed digest")
+	errEmptyDigest     = errors.New("empty digest")
+)
 
 func artifactPolicy(digest string) (verify.ArtifactPolicyOption, error) {
 	if digest == "" {
-		return verify.WithoutArtifactUnsafe(), nil
+		return nil, errEmptyDigest
 	}
 
 	algo, hashHex := types.ParseDigest(digest)

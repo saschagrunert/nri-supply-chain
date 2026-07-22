@@ -320,6 +320,56 @@ func TestProvenanceMissingPolicy(t *testing.T) {
 	}
 }
 
+func TestVEXMissingPolicy(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		policy   policy.Policy
+		expected policy.Action
+	}{
+		{
+			name:     "nil vex defaults to allow",
+			policy:   emptyPolicy(),
+			expected: policy.ActionAllow,
+		},
+		{
+			name: "empty missing policy defaults to allow",
+			policy: policy.Policy{
+				Trust: nil, Exclude: nil, Provenance: nil,
+				VEX: &policy.VEXPolicy{
+					MissingPolicy:            "",
+					UnderInvestigationPolicy: "",
+				},
+				VSA: nil, Signatures: nil,
+			},
+			expected: policy.ActionAllow,
+		},
+		{
+			name: "explicit deny",
+			policy: policy.Policy{
+				Trust: nil, Exclude: nil, Provenance: nil,
+				VEX: &policy.VEXPolicy{
+					MissingPolicy:            policy.ActionDeny,
+					UnderInvestigationPolicy: "",
+				},
+				VSA: nil, Signatures: nil,
+			},
+			expected: policy.ActionDeny,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := test.policy.VEXMissingPolicy(); got != test.expected {
+				t.Errorf("expected %q, got %q", test.expected, got)
+			}
+		})
+	}
+}
+
 func TestLoadPolicyValid(t *testing.T) {
 	t.Parallel()
 

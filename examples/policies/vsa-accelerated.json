@@ -12,7 +12,8 @@
         "key": "/etc/nri-supply-chain/keys/verifier.pub"
       }
     ],
-    "issuers": ["https://token.actions.githubusercontent.com"]
+    "issuers": ["https://token.actions.githubusercontent.com"],
+    "sanPatterns": ["*@myorg.com", "https://github.com/myorg/*"]
   },
   "provenance": {
     "missingPolicy": "deny"

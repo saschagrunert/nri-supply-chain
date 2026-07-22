@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
@@ -684,7 +685,16 @@ func (p *Policy) validateVSA() error {
 
 func (p *Policy) initDerived() {
 	if p.VSA != nil && p.VSA.MaxAge != "" && p.VSA.MaxAgeDuration == 0 {
-		p.VSA.MaxAgeDuration, _ = time.ParseDuration(p.VSA.MaxAge)
+		duration, err := time.ParseDuration(p.VSA.MaxAge)
+		if err != nil {
+			slog.Warn("invalid vsa.maxAge in policy, ignoring",
+				"maxAge", p.VSA.MaxAge, "error", err,
+			)
+
+			return
+		}
+
+		p.VSA.MaxAgeDuration = duration
 	}
 }
 

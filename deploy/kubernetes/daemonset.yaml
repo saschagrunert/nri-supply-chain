@@ -14,6 +14,7 @@ data:
     fetch_timeout = "30s"
     fetch_failure_policy = "warn"
     cache_ttl = "24h"
+    cache_failure_ttl = "5m"
     policy_dir = "/etc/nri-supply-chain/policies"
     metrics_addr = ":9090"
     circuit_breaker_threshold = 5
@@ -31,6 +32,7 @@ data:
           "https://accounts.google.com",
           "https://token.actions.githubusercontent.com"
         ],
+        "sanPatterns": ["*@myorg.com", "https://github.com/myorg/*"],
         "sources": ["github.com/myorg/*"]
       },
       "exclude": ["gcr.io/distroless/*"],

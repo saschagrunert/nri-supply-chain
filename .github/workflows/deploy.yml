@@ -12,12 +12,7 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.workflow_run.head_sha || github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: read
-  packages: write
-  id-token: write
-  deployments: write
-  attestations: write
+permissions: {}
 
 env:
   IMAGE: ghcr.io/saschagrunert/nri-supply-chain
@@ -25,6 +20,9 @@ env:
 jobs:
   build:
     name: build (${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }})
+    permissions:
+      contents: read
+      packages: write
     if: >-
       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
       github.event_name == 'pull_request'
@@ -81,6 +79,12 @@ jobs:
           retention-days: 1
 
   deploy:
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      deployments: write
+      attestations: write
     if: github.event_name == 'workflow_run'
     runs-on: ubuntu-latest
     timeout-minutes: 15
