@@ -10,7 +10,7 @@ COSIGN_VERSION = 3.1.2
 CRANE_VERSION = 0.21.7
 GOVULNCHECK_VERSION = v1.6.0
 
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.1.0)
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || sed -n 's/^var version = "\(.*\)"/\1/p' cmd/nri-supply-chain/main.go)
 BUILD_DIR := build
 GOLANGCI_LINT := $(BUILD_DIR)/golangci-lint
 ZEITGEIST := $(BUILD_DIR)/zeitgeist

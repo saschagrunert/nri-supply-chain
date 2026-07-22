@@ -1,4 +1,16 @@
 dependencies:
+  - name: nri-supply-chain
+    version: 0.1.1
+    refPaths:
+      - path: cmd/nri-supply-chain/main.go
+        match: ^var version
+      - path: README.md
+        match: verify-image.*nri-supply-chain
+      - path: README.md
+        match: '"image".*nri-supply-chain:'
+      - path: deploy/kubernetes/daemonset.yaml
+        match: "# image.*nri-supply-chain:"
+
   - name: golang
     version: 1.26.5
     refPaths:

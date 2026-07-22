@@ -876,6 +876,18 @@ func TestGlobToRegex(t *testing.T) {
 			match:   `\foo`,
 			noMatch: "foo",
 		},
+		{
+			name:    "double star matches across slashes",
+			pattern: "https://github.com/org/repo/**",
+			match:   "https://github.com/org/repo/.github/workflows/release.yml@refs/tags/v1.0.0",
+			noMatch: "https://github.com/org/other/.github/workflows/release.yml",
+		},
+		{
+			name:    "double star in middle",
+			pattern: "https://github.com/**/release.yml",
+			match:   "https://github.com/org/repo/.github/workflows/release.yml",
+			noMatch: "https://github.com/org/repo/.github/workflows/ci.yml",
+		},
 	}
 
 	for _, test := range tests {

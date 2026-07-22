@@ -48,7 +48,7 @@ must pass verification.
    {
      "trust": {
        "issuers": ["https://token.actions.githubusercontent.com"],
-       "sanPatterns": ["https://github.com/saschagrunert/nri-supply-chain/*"],
+       "sanPatterns": ["https://github.com/saschagrunert/nri-supply-chain/**"],
        "sources": ["github.com/saschagrunert/*"]
      },
      "provenance": { "missingPolicy": "warn" }
@@ -59,19 +59,19 @@ must pass verification.
 
    ```console
    nri-supply-chain --config config.toml \
-     --verify-image ghcr.io/saschagrunert/nri-supply-chain:0.1.0
+     --verify-image ghcr.io/saschagrunert/nri-supply-chain:0.1.1
    ```
 
    The output is JSON with per-check details:
 
    ```json
    {
-     "image": "ghcr.io/saschagrunert/nri-supply-chain:0.1.0",
-     "digest": "sha256:6eccc4a3...",
+     "image": "ghcr.io/saschagrunert/nri-supply-chain:0.1.1",
+     "digest": "sha256:...",
      "namespace": "default",
      "allowed": true,
      "checkResults": [
-       { "type": "slsa_provenance", "status": "warn", ... },
+       { "type": "slsa_provenance", "status": "pass", ... },
        { "type": "vex", "status": "pass", ... }
      ]
    }
