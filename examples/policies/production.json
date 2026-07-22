@@ -13,6 +13,7 @@
       }
     ],
     "issuers": ["https://token.actions.githubusercontent.com"],
+    "sanPatterns": ["*@myorg.com", "https://github.com/myorg/*"],
     "sources": ["github.com/myorg/production-*"]
   },
   "provenance": {

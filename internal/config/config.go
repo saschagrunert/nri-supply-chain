@@ -18,6 +18,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -235,6 +236,11 @@ func (c *Config) validateFetchAndCache() error {
 	}
 
 	if c.CacheTTL.Duration > 0 && c.CacheFailureTTL.Duration > c.CacheTTL.Duration {
+		slog.Warn("cache_failure_ttl exceeds cache_ttl, clamping to cache_ttl",
+			"cache_failure_ttl", c.CacheFailureTTL.Duration,
+			"cache_ttl", c.CacheTTL.Duration,
+		)
+
 		c.CacheFailureTTL.Duration = c.CacheTTL.Duration
 	}
 

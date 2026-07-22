@@ -77,6 +77,7 @@ must pass verification.
    {
      "trust": {
        "issuers": ["https://token.actions.githubusercontent.com"],
+       "sanPatterns": ["https://github.com/myorg/*"],
        "sources": ["github.com/myorg/*"]
      },
      "provenance": { "missingPolicy": "warn" }
@@ -312,7 +313,7 @@ circuit_breaker_cooldown = "30s"
 | Field                       | Default                          | Description                                                        |
 | --------------------------- | -------------------------------- | ------------------------------------------------------------------ |
 | `verification`              | `disabled`                       | Mode: `disabled`, `warn` (log-only), `enforce` (reject on failure) |
-| `log_level`                 | `info`                           | Log verbosity: `debug`, `info`, `warn`, `error`                    |
+| `log_level`                 | (CLI flag)                       | Log verbosity override: `debug`, `info`, `warn`, `error`           |
 | `fetch_timeout`             | `30s`                            | Per-fetch timeout for retrieving attestations from the registry    |
 | `fetch_failure_policy`      | `warn`                           | Behavior when attestation fetch fails: `allow`, `warn`, `deny`     |
 | `cache_ttl`                 | `24h`                            | TTL for cached verification results (`0s` disables caching)        |
@@ -339,6 +340,7 @@ default for that namespace. By default this is a full replacement; set
       { "id": "https://example.com/verifier", "key": "/etc/keys/verifier.pub" }
     ],
     "issuers": ["https://accounts.google.com"],
+    "sanPatterns": ["*@myorg.com", "https://github.com/myorg/*"],
     "sources": ["github.com/myorg/*"],
     "buildTypes": ["https://actions.github.io/buildtypes/workflow/v1"]
   },
@@ -600,19 +602,19 @@ The output is JSON with per-check details:
 
 The plugin exposes Prometheus metrics at the configured address:
 
-| Metric                                           | Type      | Labels                        | Description                             |
-| ------------------------------------------------ | --------- | ----------------------------- | --------------------------------------- |
-| `nri_supply_chain_verification_total`            | Counter   | `type`, `result`, `namespace` | Total verification attempts             |
-| `nri_supply_chain_verification_duration_seconds` | Histogram | `type`                        | Verification latency                    |
-| `nri_supply_chain_cache_hits_total`              | Counter   |                               | Cache hits                              |
-| `nri_supply_chain_cache_misses_total`            | Counter   |                               | Cache misses                            |
-| `nri_supply_chain_cache_entries`                 | Gauge     |                               | Current number of cached entries        |
-| `nri_supply_chain_verification_skipped_total`    | Counter   | `reason`, `namespace`         | Containers allowed without verification |
-| `nri_supply_chain_fetch_errors_total`            | Counter   | `type`, `registry`            | Attestation fetch errors                |
-| `nri_supply_chain_inflight_dedup_total`          | Counter   |                               | Deduplicated inflight verifications     |
-| `nri_supply_chain_circuit_breaker_trips_total`   | Counter   | `registry`                    | Circuit breaker open events             |
-| `nri_supply_chain_trusted_root_stale_total`      | Counter   |                               | Stale trusted root served from cache    |
-| `nri_supply_chain_cache_failure_hits_total`      | Counter   |                               | Cache hits returning a cached failure   |
+| Metric                                           | Type      | Labels                        | Description                                                                          |
+| ------------------------------------------------ | --------- | ----------------------------- | ------------------------------------------------------------------------------------ |
+| `nri_supply_chain_verification_total`            | Counter   | `type`, `result`, `namespace` | Total verification attempts. `result`: `pass`, `warn`, `fail`                        |
+| `nri_supply_chain_verification_duration_seconds` | Histogram | `type`                        | Verification latency                                                                 |
+| `nri_supply_chain_cache_hits_total`              | Counter   |                               | Cache hits                                                                           |
+| `nri_supply_chain_cache_misses_total`            | Counter   |                               | Cache misses                                                                         |
+| `nri_supply_chain_cache_entries`                 | Gauge     |                               | Current number of cached entries                                                     |
+| `nri_supply_chain_verification_skipped_total`    | Counter   | `reason`, `namespace`         | Containers allowed without verification. `reason`: `excluded`, `missing_annotations` |
+| `nri_supply_chain_fetch_errors_total`            | Counter   | `type`, `registry`            | Attestation fetch errors                                                             |
+| `nri_supply_chain_inflight_dedup_total`          | Counter   |                               | Deduplicated inflight verifications                                                  |
+| `nri_supply_chain_circuit_breaker_trips_total`   | Counter   | `registry`                    | Circuit breaker open events                                                          |
+| `nri_supply_chain_trusted_root_stale_total`      | Counter   |                               | Stale trusted root served from cache                                                 |
+| `nri_supply_chain_cache_failure_hits_total`      | Counter   |                               | Cache hits returning a cached failure                                                |
 
 ### Health and Readiness Probes
 
@@ -624,8 +626,10 @@ liveness and readiness probes.
 - **`/readyz`** (readiness): Returns HTTP 200 only when both conditions are
   met: (1) the plugin is connected to the NRI runtime, and (2) at least one
   policy is loaded (when verification is enabled). Returns HTTP 503 with a
-  reason string otherwise. Before the NRI runtime connects, or if no policies
-  are loaded in `warn` or `enforce` mode, the readiness probe fails.
+  reason string otherwise. The NRI connection is required regardless of
+  verification mode, since the plugin must receive container events to
+  function. Before the NRI runtime connects, or if no policies are loaded in
+  `warn` or `enforce` mode, the readiness probe fails.
 
 ## Operations
 

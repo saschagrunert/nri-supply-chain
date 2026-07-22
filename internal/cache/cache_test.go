@@ -260,12 +260,9 @@ func TestCacheCapacityEvictsExpired(t *testing.T) {
 		Allowed: true, Reason: "fresh", CheckResults: nil,
 	})
 
-	got := testCache.Get("sha256:new", "default")
-	if got == nil {
+	if got := testCache.Get("sha256:new", "default"); got == nil {
 		t.Fatal("expected new entry after expired eviction")
-	}
-
-	if got.Reason != "fresh" {
+	} else if got.Reason != "fresh" {
 		t.Errorf("expected reason 'fresh', got %q", got.Reason)
 	}
 }

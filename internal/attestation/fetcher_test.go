@@ -1333,7 +1333,6 @@ func TestArtifactPolicy(t *testing.T) {
 
 	validDigests := []string{
 		"sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abcd",
-		"",
 		"sha512:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789" +
 			"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
 	}
@@ -1346,6 +1345,7 @@ func TestArtifactPolicy(t *testing.T) {
 	}
 
 	invalidDigests := []string{
+		"",
 		"sha256abc123",
 		"sha256:xyz123",
 		"SHA256:abc123",
