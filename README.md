@@ -44,6 +44,8 @@ must pass verification.
 
 3. Create a default policy (`/etc/nri-supply-chain/policies/default.json`):
 
+   <!-- quickstart-policy-basic -->
+
    ```json
    {
      "trust": {
@@ -54,6 +56,8 @@ must pass verification.
      "slsa": { "missingPolicy": "warn" }
    }
    ```
+
+   <!-- /quickstart-policy-basic -->
 
 4. Verify a single image to test the configuration:
 
@@ -80,6 +84,8 @@ must pass verification.
    To enable VSA-accelerated verification, add a `trust.verifiers` entry.
    A trusted VSA short-circuits SLSA and VEX checks:
 
+   <!-- quickstart-policy-vsa -->
+
    ```json
    {
      "trust": {
@@ -95,6 +101,8 @@ must pass verification.
      "slsa": { "missingPolicy": "warn" }
    }
    ```
+
+   <!-- /quickstart-policy-vsa -->
 
    With this policy the output becomes:
 
