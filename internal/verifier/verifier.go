@@ -216,9 +216,12 @@ func (v *Verifier) Ready() (ready bool, reason string) {
 	return true, ""
 }
 
-// Verify performs supply chain verification for the given image.
+// Verify performs supply chain verification for the given image. When the image
+// was resolved from a manifest list, indexDigest should be the manifest list
+// digest so attestation lookup can find cosign-attached attestations. Pass ""
+// when the image is not a manifest list or the index digest is unknown.
 func (v *Verifier) Verify(
-	ctx context.Context, imageRef, digest, namespace string,
+	ctx context.Context, imageRef, digest, indexDigest, namespace string,
 ) (*types.Result, error) {
 	state := v.snap()
 
@@ -268,7 +271,7 @@ func (v *Verifier) Verify(
 
 	state.metrics.CacheMissesTotal.Inc()
 
-	result, err := v.verifyOnce(ctx, &state, pol, imageRef, digest, namespace)
+	result, err := v.verifyOnce(ctx, &state, pol, imageRef, digest, indexDigest, namespace)
 	if err != nil {
 		return nil, fmt.Errorf("verification: %w", err)
 	}
@@ -400,7 +403,7 @@ func cacheAffectingFieldsChanged(prev, next *config.Config) bool {
 
 func (v *Verifier) verifyOnce(
 	ctx context.Context, state *snapshot, pol *policy.Policy,
-	imageRef, digest, namespace string,
+	imageRef, digest, indexDigest, namespace string,
 ) (*types.Result, error) {
 	flightKey := digest + "\x00" + namespace
 
@@ -414,7 +417,7 @@ func (v *Verifier) verifyOnce(
 		// should not inherit this caller's cancellation.
 		checkCtx := context.WithoutCancel(ctx)
 
-		result := runChecks(checkCtx, state, pol, imageRef, digest, namespace)
+		result := runChecks(checkCtx, state, pol, imageRef, digest, indexDigest, namespace)
 
 		logResult(checkCtx, state.auditLogger, imageRef, digest, namespace, result)
 		recordMetrics(state.metrics, result, namespace)

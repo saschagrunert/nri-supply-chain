@@ -962,13 +962,17 @@ func TestResolveDigestSuccess(t *testing.T) {
 		t.Fatalf("pushing test image: %v", err)
 	}
 
-	digest, err := resolveDigest(imgRef, 30*time.Second)
+	resolved, err := resolveDigest(imgRef, 30*time.Second)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.HasPrefix(digest, "sha256:") {
-		t.Errorf("digest = %q, expected sha256: prefix", digest)
+	if !strings.HasPrefix(resolved.digest, "sha256:") {
+		t.Errorf("digest = %q, expected sha256: prefix", resolved.digest)
+	}
+
+	if resolved.indexDigest != "" {
+		t.Errorf("indexDigest = %q, expected empty for single manifest", resolved.indexDigest)
 	}
 }
 
@@ -1034,13 +1038,13 @@ func TestResolveDigestManifestList(t *testing.T) {
 
 	// resolveDigest should return a platform-specific image digest, not the
 	// index digest.
-	digest, err := resolveDigest(imgRef, 30*time.Second)
+	resolved, err := resolveDigest(imgRef, 30*time.Second)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.HasPrefix(digest, "sha256:") {
-		t.Errorf("digest = %q, expected sha256: prefix", digest)
+	if !strings.HasPrefix(resolved.digest, "sha256:") {
+		t.Errorf("digest = %q, expected sha256: prefix", resolved.digest)
 	}
 
 	// Verify it resolved to an actual image digest, not the index digest.
@@ -1049,8 +1053,16 @@ func TestResolveDigestManifestList(t *testing.T) {
 		t.Fatalf("getting index digest: %v", err)
 	}
 
-	if digest == idxDigest.String() {
-		t.Errorf("digest should be a platform image digest, not the index digest %s", digest)
+	if resolved.digest == idxDigest.String() {
+		t.Errorf(
+			"digest should be a platform image digest, not the index digest %s",
+			resolved.digest,
+		)
+	}
+
+	// The index digest should be populated for manifest lists.
+	if resolved.indexDigest != idxDigest.String() {
+		t.Errorf("indexDigest = %q, expected %q", resolved.indexDigest, idxDigest.String())
 	}
 }
 
@@ -1099,13 +1111,17 @@ func TestResolveDigestManifestListDockerMediaType(t *testing.T) {
 		t.Fatalf("pushing index: %v", err)
 	}
 
-	digest, err := resolveDigest(imgRef, 30*time.Second)
+	resolved, err := resolveDigest(imgRef, 30*time.Second)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.HasPrefix(digest, "sha256:") {
-		t.Errorf("digest = %q, expected sha256: prefix", digest)
+	if !strings.HasPrefix(resolved.digest, "sha256:") {
+		t.Errorf("digest = %q, expected sha256: prefix", resolved.digest)
+	}
+
+	if resolved.indexDigest == "" {
+		t.Error("indexDigest should be set for manifest list")
 	}
 }
 

@@ -729,6 +729,7 @@ func TestPrewarmCacheDirectCancel(t *testing.T) {
 		images[i] = plugin.NewExportPrewarmImage(
 			"image-"+idx+":latest",
 			"sha256:"+idx+hexPad[:64-len(idx)],
+			"",
 			testNamespace,
 		)
 	}
@@ -752,8 +753,8 @@ func TestCreateContainerResolvesDigestWhenMissing(t *testing.T) {
 	}`)
 
 	plug := newTestPlugin(t, config.ModeWarn, dir)
-	plug.ExportSetDigestResolver(func(_ context.Context, _ string) (string, error) {
-		return testDigest, nil
+	plug.ExportSetDigestResolver(func(_ context.Context, _ string) (string, string, error) {
+		return testDigest, "", nil
 	})
 
 	pod := &api.PodSandbox{
@@ -775,8 +776,8 @@ func TestCreateContainerResolveDigestFailureEnforce(t *testing.T) {
 	t.Parallel()
 
 	plug := newTestPlugin(t, config.ModeEnforce, "")
-	plug.ExportSetDigestResolver(func(_ context.Context, _ string) (string, error) {
-		return "", errRegistryUnavailable
+	plug.ExportSetDigestResolver(func(_ context.Context, _ string) (string, string, error) {
+		return "", "", errRegistryUnavailable
 	})
 
 	pod := &api.PodSandbox{
@@ -800,8 +801,8 @@ func TestCreateContainerResolveDigestFailureWarn(t *testing.T) {
 	t.Parallel()
 
 	plug := newTestPlugin(t, config.ModeWarn, "")
-	plug.ExportSetDigestResolver(func(_ context.Context, _ string) (string, error) {
-		return "", errRegistryUnavailable
+	plug.ExportSetDigestResolver(func(_ context.Context, _ string) (string, string, error) {
+		return "", "", errRegistryUnavailable
 	})
 
 	pod := &api.PodSandbox{
@@ -823,10 +824,10 @@ func TestCreateContainerSkipsResolveWhenDigestPresent(t *testing.T) {
 	t.Parallel()
 
 	plug := newTestPlugin(t, config.ModeWarn, "")
-	plug.ExportSetDigestResolver(func(_ context.Context, _ string) (string, error) {
+	plug.ExportSetDigestResolver(func(_ context.Context, _ string) (string, string, error) {
 		t.Fatal("digest resolver should not be called when digest is present")
 
-		return "", nil
+		return "", "", nil
 	})
 
 	pod := &api.PodSandbox{
@@ -849,8 +850,8 @@ func TestSynchronizeResolvesDigestForPrewarm(t *testing.T) {
 	t.Parallel()
 
 	plug := newTestPlugin(t, config.ModeDisabled, "")
-	plug.ExportSetDigestResolver(func(_ context.Context, _ string) (string, error) {
-		return testDigest, nil
+	plug.ExportSetDigestResolver(func(_ context.Context, _ string) (string, string, error) {
+		return testDigest, "", nil
 	})
 
 	pods := []*api.PodSandbox{
@@ -882,8 +883,8 @@ func TestSynchronizeResolveDigestFailureSkipsContainer(t *testing.T) {
 	t.Parallel()
 
 	plug := newTestPlugin(t, config.ModeDisabled, "")
-	plug.ExportSetDigestResolver(func(_ context.Context, _ string) (string, error) {
-		return "", errRegistryUnavailable
+	plug.ExportSetDigestResolver(func(_ context.Context, _ string) (string, string, error) {
+		return "", "", errRegistryUnavailable
 	})
 
 	pods := []*api.PodSandbox{
@@ -932,11 +933,15 @@ func TestDefaultDigestResolverSingleImage(t *testing.T) {
 		t.Fatalf("pushing test image: %v", err)
 	}
 
-	digest, err := plugin.ExportDefaultDigestResolver(context.Background(), imgRef)
+	digest, indexDigest, err := plugin.ExportDefaultDigestResolver(context.Background(), imgRef)
 	testutil.AssertNoError(t, err)
 
 	if !strings.HasPrefix(digest, "sha256:") {
 		t.Errorf("digest = %q, expected sha256: prefix", digest)
+	}
+
+	if indexDigest != "" {
+		t.Errorf("indexDigest = %q, expected empty for single manifest", indexDigest)
 	}
 }
 
@@ -998,7 +1003,7 @@ func TestDefaultDigestResolverManifestList(t *testing.T) {
 		t.Fatalf("pushing index: %v", err)
 	}
 
-	digest, err := plugin.ExportDefaultDigestResolver(context.Background(), imgRef)
+	digest, indexDigest, err := plugin.ExportDefaultDigestResolver(context.Background(), imgRef)
 	testutil.AssertNoError(t, err)
 
 	if !strings.HasPrefix(digest, "sha256:") {
@@ -1013,6 +1018,10 @@ func TestDefaultDigestResolverManifestList(t *testing.T) {
 
 	if digest == idxDigest.String() {
 		t.Errorf("digest should be a platform image digest, not the index digest %s", digest)
+	}
+
+	if indexDigest != idxDigest.String() {
+		t.Errorf("indexDigest = %q, expected %q", indexDigest, idxDigest.String())
 	}
 }
 
@@ -1060,11 +1069,20 @@ func TestDefaultDigestResolverDockerManifestList(t *testing.T) {
 		t.Fatalf("pushing index: %v", err)
 	}
 
-	digest, err := plugin.ExportDefaultDigestResolver(context.Background(), imgRef)
+	digest, indexDigest, err := plugin.ExportDefaultDigestResolver(context.Background(), imgRef)
 	testutil.AssertNoError(t, err)
 
 	if !strings.HasPrefix(digest, "sha256:") {
 		t.Errorf("digest = %q, expected sha256: prefix", digest)
+	}
+
+	idxDigest, err := idx.Digest()
+	if err != nil {
+		t.Fatalf("getting index digest: %v", err)
+	}
+
+	if indexDigest != idxDigest.String() {
+		t.Errorf("indexDigest = %q, expected %q", indexDigest, idxDigest.String())
 	}
 }
 
@@ -1109,7 +1127,7 @@ func TestDefaultDigestResolverManifestListNoPlatformMatch(t *testing.T) {
 		t.Fatalf("pushing index: %v", err)
 	}
 
-	_, err = plugin.ExportDefaultDigestResolver(context.Background(), imgRef)
+	_, _, err = plugin.ExportDefaultDigestResolver(context.Background(), imgRef)
 	if err == nil {
 		t.Fatal("expected error for no matching platform")
 	}
@@ -1122,7 +1140,7 @@ func TestDefaultDigestResolverManifestListNoPlatformMatch(t *testing.T) {
 func TestDefaultDigestResolverInvalidRef(t *testing.T) {
 	t.Parallel()
 
-	_, err := plugin.ExportDefaultDigestResolver(context.Background(), ":::invalid")
+	_, _, err := plugin.ExportDefaultDigestResolver(context.Background(), ":::invalid")
 	if err == nil {
 		t.Fatal("expected error for invalid image reference")
 	}

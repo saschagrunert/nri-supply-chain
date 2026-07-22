@@ -52,10 +52,13 @@ When a container is created, the plugin performs verification in this order:
    within the configured TTL, returns it immediately.
 
 5. **Attestation fetch**: Discovers attestations via the OCI Referrers API.
-   Filters for DSSE-enveloped attestation bundles and extracts payloads. If
-   the Referrers API returns no attestations, the plugin falls back to
-   cosign's tag-based discovery scheme, looking for an image tagged
-   `sha256-<digest>.att` in the same repository.
+   Filters for DSSE-enveloped Sigstore bundles, verifies each bundle's
+   signature (keyless or key-based), and extracts payloads. Unsigned or
+   incorrectly signed bundles are discarded. If the Referrers API returns no
+   attestations, the plugin falls back to cosign's tag-based discovery
+   scheme, looking for an image tagged `sha256-<digest>.att` in the same
+   repository. The same signature verification applies to cosign tag
+   attestations.
 
 6. **VSA-first evaluation**:
    - If a trusted PASSED VSA is found, skip SLSA and VEX checks entirely.

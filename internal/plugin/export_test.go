@@ -25,11 +25,12 @@ func ExportResolveImage(annotations map[string]string) (imageRef, digest string)
 type ExportPrewarmImage = prewarmImage
 
 // NewExportPrewarmImage creates a prewarmImage for external tests.
-func NewExportPrewarmImage(imageRef, digest, namespace string) ExportPrewarmImage {
+func NewExportPrewarmImage(imageRef, digest, indexDigest, namespace string) ExportPrewarmImage {
 	return prewarmImage{
-		imageRef:  imageRef,
-		digest:    digest,
-		namespace: namespace,
+		imageRef:    imageRef,
+		digest:      digest,
+		indexDigest: indexDigest,
+		namespace:   namespace,
 	}
 }
 
@@ -44,6 +45,8 @@ func (p *Plugin) ExportSetDigestResolver(fn DigestResolveFunc) {
 }
 
 // ExportDefaultDigestResolver exposes defaultDigestResolver for testing.
-func ExportDefaultDigestResolver(ctx context.Context, imageRef string) (string, error) {
+func ExportDefaultDigestResolver(
+	ctx context.Context, imageRef string,
+) (digest, indexDigest string, err error) {
 	return defaultDigestResolver(ctx, imageRef)
 }

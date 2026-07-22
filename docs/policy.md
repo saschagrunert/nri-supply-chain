@@ -198,7 +198,11 @@ Verification Summary Attestation settings.
 
 ### `signatures` (object)
 
-Attestation signature verification settings.
+Attestation signature verification settings. All attestations require a valid
+Sigstore bundle signature regardless of these settings. Unsigned attestations
+are dropped during the fetch phase. If all bundles fail verification, the
+result is governed by `fetch_failure_policy`. If no verified attestation of a
+given type remains, the per-type `missingPolicy` applies.
 
 | Field                    | Type | Default | Description                                                         |
 | ------------------------ | ---- | ------- | ------------------------------------------------------------------- |
@@ -294,6 +298,14 @@ VSA-first logic:
   verification.
 
 ### Signature Verification
+
+All attestations must be valid [Sigstore](https://sigstore.dev) bundles with a
+verified signature. Unsigned or incorrectly signed attestations are dropped
+during the fetch phase and never reach SLSA, VEX, or VSA verification. If all
+discovered bundles fail signature verification, the fetch is treated as a
+failure and handled according to the `fetch_failure_policy` in the
+[operational config](config.md). If some bundles verify and others do not, only
+the verified ones are used (invalid bundles are logged and discarded).
 
 The plugin supports two verification modes that can be used independently or
 together:

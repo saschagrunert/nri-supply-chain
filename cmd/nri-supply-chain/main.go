@@ -520,14 +520,18 @@ func runVerify(opts *options, cfg *config.Config) int {
 		return 1
 	}
 
-	digest, err := resolveDigest(imageRef, cfg.FetchTimeout.Duration)
+	resolved, err := resolveDigest(imageRef, cfg.FetchTimeout.Duration)
 	if err != nil {
 		slog.Error("Failed to resolve image digest", "image", imageRef, "error", err)
 
 		return 1
 	}
 
-	result, err := verif.Verify(context.Background(), imageRef, digest, namespace)
+	digest := resolved.digest
+
+	result, err := verif.Verify(
+		context.Background(), imageRef, digest, resolved.indexDigest, namespace,
+	)
 	if err != nil {
 		slog.Error("Verification failed", "image", imageRef, "error", err)
 	}
@@ -568,10 +572,15 @@ func convertCheckResults(result *types.Result) []checkEntry {
 	return checks
 }
 
-func resolveDigest(imageRef string, timeout time.Duration) (string, error) {
+type resolvedDigest struct {
+	digest      string
+	indexDigest string
+}
+
+func resolveDigest(imageRef string, timeout time.Duration) (resolvedDigest, error) {
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
-		return "", fmt.Errorf("parsing image reference: %w", err)
+		return resolvedDigest{}, fmt.Errorf("parsing image reference: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -579,14 +588,22 @@ func resolveDigest(imageRef string, timeout time.Duration) (string, error) {
 
 	desc, err := crremote.Get(ref, crremote.WithContext(ctx))
 	if err != nil {
-		return "", fmt.Errorf("resolving image digest: %w", err)
+		return resolvedDigest{}, fmt.Errorf("resolving image digest: %w", err)
 	}
 
 	if desc.MediaType.IsIndex() {
-		return resolveIndexDigest(desc)
+		platformDigest, indexErr := resolveIndexDigest(desc)
+		if indexErr != nil {
+			return resolvedDigest{}, indexErr
+		}
+
+		return resolvedDigest{
+			digest:      platformDigest,
+			indexDigest: desc.Digest.String(),
+		}, nil
 	}
 
-	return desc.Digest.String(), nil
+	return resolvedDigest{digest: desc.Digest.String(), indexDigest: ""}, nil
 }
 
 func resolveIndexDigest(desc *crremote.Descriptor) (string, error) {
