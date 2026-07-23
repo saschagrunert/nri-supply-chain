@@ -1,6 +1,6 @@
 dependencies:
   - name: nri-supply-chain
-    version: 0.1.4
+    version: 0.1.5
     refPaths:
       - path: cmd/nri-supply-chain/main.go
         match: ^var version
@@ -10,6 +10,14 @@ dependencies:
         match: '"image".*nri-supply-chain:'
       - path: deploy/kubernetes/daemonset.yaml
         match: "image.*nri-supply-chain:"
+
+  - name: distroless
+    version: debian13
+    refPaths:
+      - path: Dockerfile
+        match: "FROM gcr.io/distroless/static-"
+      - path: Dockerfile.goreleaser
+        match: "FROM gcr.io/distroless/static-"
 
   - name: golang
     version: 1.26.5

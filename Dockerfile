@@ -8,7 +8,7 @@ RUN CGO_ENABLED=0 go build -trimpath \
     -ldflags "-s -w -X main.version=${VERSION}" \
     -o /nri-supply-chain ./cmd/nri-supply-chain/
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian13:nonroot
 LABEL org.opencontainers.image.title="nri-supply-chain" \
       org.opencontainers.image.description="NRI plugin for container supply chain attestation verification" \
       org.opencontainers.image.source="https://github.com/saschagrunert/nri-supply-chain" \

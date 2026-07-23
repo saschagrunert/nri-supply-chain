@@ -84,7 +84,7 @@ spec:
         - operator: Exists
       containers:
         - name: nri-supply-chain
-          image: ghcr.io/saschagrunert/nri-supply-chain:0.1.4
+          image: ghcr.io/saschagrunert/nri-supply-chain:0.1.5
           args:
             - --config
             - /etc/nri-supply-chain/config.toml

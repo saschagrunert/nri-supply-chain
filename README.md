@@ -38,7 +38,7 @@ must pass verification.
 2. Create a configuration file (`config.toml`):
 
    ```toml
-   verification = "warn"
+   verification = "enforce"
    policy_dir = "/etc/nri-supply-chain/policies"
    ```
 
@@ -53,7 +53,8 @@ must pass verification.
        "sanPatterns": ["https://github.com/saschagrunert/nri-supply-chain/**"],
        "sources": ["github.com/saschagrunert/*"]
      },
-     "slsa": { "missingPolicy": "warn" }
+     "slsa": { "missingPolicy": "deny" },
+     "vex": { "missingPolicy": "deny" }
    }
    ```
 
@@ -63,14 +64,14 @@ must pass verification.
 
    ```console
    nri-supply-chain --config config.toml \
-     --verify-image ghcr.io/saschagrunert/nri-supply-chain:0.1.4
+     --verify-image ghcr.io/saschagrunert/nri-supply-chain:0.1.5
    ```
 
    The output is JSON with per-check details:
 
    ```json
    {
-     "image": "ghcr.io/saschagrunert/nri-supply-chain:0.1.4",
+     "image": "ghcr.io/saschagrunert/nri-supply-chain:0.1.5",
      "digest": "sha256:...",
      "namespace": "default",
      "allowed": true,
@@ -98,7 +99,8 @@ must pass verification.
          }
        ]
      },
-     "slsa": { "missingPolicy": "warn" }
+     "slsa": { "missingPolicy": "deny" },
+     "vex": { "missingPolicy": "deny" }
    }
    ```
 
@@ -108,7 +110,7 @@ must pass verification.
 
    ```json
    {
-     "image": "ghcr.io/saschagrunert/nri-supply-chain:0.1.4",
+     "image": "ghcr.io/saschagrunert/nri-supply-chain:0.1.5",
      "digest": "sha256:...",
      "namespace": "default",
      "allowed": true,
@@ -118,10 +120,10 @@ must pass verification.
    }
    ```
 
-   In `warn` mode the image is allowed even when checks fail, so you can
-   observe what would be blocked before switching to `enforce`. See
-   [docs/verification.md](docs/verification.md) for the full verification
-   flow.
+   In `enforce` mode images that fail verification are rejected. Use
+   `verification = "warn"` to observe what would be blocked without
+   rejecting. See [docs/verification.md](docs/verification.md) for the
+   full verification flow.
 
 5. Deploy the plugin (see [Deployment](docs/deployment.md) for all options):
 
@@ -129,8 +131,7 @@ must pass verification.
    kubectl apply -f deploy/kubernetes/
    ```
 
-6. Check the logs and metrics to observe verification decisions, then switch
-   to `verification = "enforce"` once confident.
+6. Check the logs and metrics to observe verification decisions.
 
 ## Compatibility
 

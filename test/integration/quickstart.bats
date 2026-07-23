@@ -12,6 +12,7 @@ extract_quickstart_policy() {
 
 @test "quickstart verification without VSA succeeds" {
 	skip_if_network_unavailable
+	skip_if_image_unavailable "$QUICKSTART_IMAGE"
 	mkdir -p "$TEST_DIR/policies"
 	extract_quickstart_policy "quickstart-policy-basic" \
 		>"$TEST_DIR/policies/default.json"
@@ -28,6 +29,7 @@ EOF
 
 @test "quickstart verification with VSA succeeds" {
 	skip_if_network_unavailable
+	skip_if_image_unavailable "$QUICKSTART_IMAGE"
 	mkdir -p "$TEST_DIR/policies"
 	extract_quickstart_policy "quickstart-policy-vsa" \
 		>"$TEST_DIR/policies/default.json"
