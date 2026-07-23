@@ -17,14 +17,17 @@ extract_quickstart_policy() {
 	extract_quickstart_policy "quickstart-policy-basic" \
 		>"$TEST_DIR/policies/default.json"
 	cat >"$TEST_DIR/config.toml" <<EOF
-verification = "warn"
+verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 EOF
 	run_binary --config "$TEST_DIR/config.toml" --verify-image "$QUICKSTART_IMAGE"
 	[[ "$status" -eq 0 ]]
 	[[ "$output" == *'"allowed": true'* ]]
 	[[ "$output" == *'"type": "slsa"'* ]]
+	[[ "$output" == *'"passed": true'* ]]
+	[[ "$output" == *'"detail": "SLSA provenance verified"'* ]]
 	[[ "$output" == *'"type": "vex"'* ]]
+	[[ "$output" == *'"detail": "VEX verification passed"'* ]]
 }
 
 @test "quickstart verification with VSA succeeds" {
@@ -34,12 +37,15 @@ EOF
 	extract_quickstart_policy "quickstart-policy-vsa" \
 		>"$TEST_DIR/policies/default.json"
 	cat >"$TEST_DIR/config.toml" <<EOF
-verification = "warn"
+verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 EOF
 	run_binary --config "$TEST_DIR/config.toml" --verify-image "$QUICKSTART_IMAGE"
 	[[ "$status" -eq 0 ]]
 	[[ "$output" == *'"allowed": true'* ]]
 	[[ "$output" == *'"type": "vsa"'* ]]
+	[[ "$output" == *'"passed": true'* ]]
+	[[ "$output" == *'"detail": "VSA verification passed"'* ]]
+	[[ "$output" == *'"reason": "VSA verification passed, skipping direct verification"'* ]]
 	[[ "$output" != *'"type": "slsa"'* ]]
 }
