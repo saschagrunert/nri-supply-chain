@@ -187,3 +187,48 @@ startup and reload if this requirement is not met. In `warn` mode, omitting
 `sanPatterns` accepts any certificate issued by the trusted OIDC provider (with a
 log warning). Always pair `issuers` with `sanPatterns` (for example,
 `["*@example.com"]`) to restrict accepted identities.
+
+**Annotation trust model.** The plugin reads image identity from container
+annotations set by the container runtime (CRI-O or containerd), not from
+Kubernetes pod annotations. CRI-O generates `io.kubernetes.cri-o.*` annotations
+from the actual image pull result, and containerd generates
+`io.kubernetes.cri.*` annotations from its CRI plugin. A Kubernetes user cannot
+override these values through pod spec annotations because the runtime writes
+them after processing the CRI request, overwriting any user-supplied keys with
+the same name. Additionally, digests are validated for strict `algorithm:hex`
+format, and Sigstore bundle verification cryptographically binds each
+attestation to the image digest, so forged annotation values would fail
+signature verification. The primary risk is not annotation injection but
+annotation absence: a runtime version that does not set the expected annotations
+causes the plugin to skip verification in `warn` mode (logged and counted via
+the `missing_annotations` metric) or reject the container in `enforce` mode.
+
+**Digest resolution TOCTOU.** When the container runtime does not provide an
+image digest in annotations (common with containerd), the plugin resolves the
+digest via a registry HEAD request. Between this resolution and the subsequent
+attestation fetch, a registry could update the tag to point to a different image.
+The container runtime may pull the new image while the plugin verifies
+attestations for the old one. A compromised or malicious registry could also
+intentionally serve a different digest for the HEAD request than the content it
+serves to the container runtime, causing the plugin to verify attestations for
+one image while a different image runs. CRI-O is not affected because it always
+provides the digest in annotations. For containerd deployments in enforce mode,
+consider pinning images by digest (`image@sha256:...`) rather than by tag to
+eliminate this window entirely.
+
+**Cached fetch failures.** When attestation fetches fail and `fetch_failure_policy`
+is `allow` or `warn`, the result is cached for `cache_failure_ttl` (default 5
+minutes). During that window, subsequent containers with the same digest are
+admitted without contacting the registry. If a registry outage is short-lived,
+containers may pass verification for up to 5 minutes after the registry recovers,
+because the cached "allowed" result has not yet expired. Set
+`fetch_failure_policy = "deny"` to prevent this, or reduce `cache_failure_ttl`
+to shorten the window.
+
+**Metrics exposure.** The default `metrics_addr` binds to `127.0.0.1:9090`
+(loopback only). Changing this to a non-loopback address (for example,
+`0.0.0.0:9090`) exposes metrics externally. Prometheus metrics include image
+references, namespace labels, and verification outcomes, which could aid
+reconnaissance. The plugin logs a warning at startup when `metrics_addr` is not
+a loopback address. Use a NetworkPolicy or firewall rule to restrict access when
+exposing the metrics endpoint to a Prometheus scraper on another host.
