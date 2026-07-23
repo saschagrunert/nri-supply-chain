@@ -184,14 +184,12 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	if c.MetricsAddr != "" {
-		_, _, err := net.SplitHostPort(c.MetricsAddr)
-		if err != nil {
-			return fmt.Errorf("%w: %q: %w", ErrInvalidMetricsAddr, c.MetricsAddr, err)
-		}
+	err := c.validateMetricsAddr()
+	if err != nil {
+		return err
 	}
 
-	err := c.validateFetchAndCache()
+	err = c.validateFetchAndCache()
 	if err != nil {
 		return err
 	}
@@ -212,6 +210,28 @@ func (c *Config) ValidateRuntime() error {
 
 	if !info.IsDir() {
 		return fmt.Errorf("%w: %q", ErrPolicyDirNotDirectory, c.PolicyDir)
+	}
+
+	return nil
+}
+
+func (c *Config) validateMetricsAddr() error {
+	if c.MetricsAddr == "" {
+		return nil
+	}
+
+	host, _, err := net.SplitHostPort(c.MetricsAddr)
+	if err != nil {
+		return fmt.Errorf("%w: %q: %w", ErrInvalidMetricsAddr, c.MetricsAddr, err)
+	}
+
+	if host != "127.0.0.1" && host != "::1" && host != "localhost" && host != "" {
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsLoopback() {
+			slog.Warn("Metrics address is not loopback, metrics will be exposed externally",
+				"metrics_addr", c.MetricsAddr,
+			)
+		}
 	}
 
 	return nil

@@ -250,25 +250,9 @@ func (p *Plugin) CreateContainer(
 	digest, indexDigest := p.resolveDigestIfMissing(ctx, imageRef, digest, namespace, pod, ctr)
 
 	if imageRef == "" || digest == "" {
-		if p.verifier.Enforcing() {
-			slog.ErrorContext(ctx, "Missing image annotations in enforce mode",
-				"pod", namespace+"/"+pod.GetName(),
-				"container", ctr.GetName(),
-			)
-
-			return nil, nil, fmt.Errorf(
-				"%w for container %s", ErrMissingAnnotations, ctr.GetName(),
-			)
-		}
-
-		slog.WarnContext(ctx, "Missing image annotations, skipping verification",
-			"pod", namespace+"/"+pod.GetName(),
-			"container", ctr.GetName(),
+		return p.handleMissingAnnotations(
+			ctx, namespace, pod, ctr, imageRef, digest, len(annotations),
 		)
-
-		p.metrics.VerificationSkippedTotal.WithLabelValues("missing_annotations", namespace).Inc()
-
-		return nil, nil, nil
 	}
 
 	result, err := p.verifier.Verify(ctx, imageRef, digest, indexDigest, namespace)
@@ -289,6 +273,38 @@ func (p *Plugin) CreateContainer(
 		"image", imageRef,
 		"allowed", result.Allowed,
 	)
+
+	return nil, nil, nil
+}
+
+func (p *Plugin) handleMissingAnnotations(
+	ctx context.Context, namespace string,
+	pod *api.PodSandbox, ctr *api.Container,
+	imageRef, digest string, annotationCount int,
+) (*api.ContainerAdjustment, []*api.ContainerUpdate, error) {
+	if p.verifier.Enforcing() {
+		slog.ErrorContext(ctx, "Missing image annotations in enforce mode",
+			"pod", namespace+"/"+pod.GetName(),
+			"container", ctr.GetName(),
+			"image_ref", imageRef,
+			"digest", digest,
+			"annotation_count", annotationCount,
+		)
+
+		return nil, nil, fmt.Errorf(
+			"%w for container %s", ErrMissingAnnotations, ctr.GetName(),
+		)
+	}
+
+	slog.WarnContext(ctx, "Missing image annotations, skipping verification",
+		"pod", namespace+"/"+pod.GetName(),
+		"container", ctr.GetName(),
+		"image_ref", imageRef,
+		"digest", digest,
+		"annotation_count", annotationCount,
+	)
+
+	p.metrics.VerificationSkippedTotal.WithLabelValues("missing_annotations", namespace).Inc()
 
 	return nil, nil, nil
 }

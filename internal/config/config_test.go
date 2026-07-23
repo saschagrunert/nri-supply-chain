@@ -420,6 +420,31 @@ func TestConfigValidateMetricsAddr(t *testing.T) {
 	}
 }
 
+func TestConfigValidateMetricsAddrNonLoopbackWarning(t *testing.T) {
+	t.Parallel()
+
+	nonLoopbackAddrs := []string{
+		"0.0.0.0:9090",
+		"10.0.0.1:9090",
+		"[::]:9090",
+		"metrics.example.com:9090",
+	}
+
+	for _, addr := range nonLoopbackAddrs {
+		t.Run(addr, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := config.DefaultConfig()
+			cfg.MetricsAddr = addr
+
+			err := cfg.Validate()
+			if err != nil {
+				t.Errorf("expected no error for %q, got %v", addr, err)
+			}
+		})
+	}
+}
+
 func TestConfigValidateCircuitBreakerThreshold(t *testing.T) {
 	t.Parallel()
 
