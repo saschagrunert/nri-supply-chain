@@ -72,12 +72,22 @@ must pass verification.
    ```json
    {
      "image": "ghcr.io/saschagrunert/nri-supply-chain:0.1.5",
-     "digest": "sha256:...",
+     "digest": "sha256:1a8b39eeff74b8bb3e20c7f9fa773d4a9935241f7cc4e1217067c8186c2cee3c",
      "namespace": "default",
      "allowed": true,
      "checkResults": [
-       { "type": "slsa", "status": "pass", ... },
-       { "type": "vex", "status": "pass", ... }
+       {
+         "type": "slsa",
+         "passed": true,
+         "status": "pass",
+         "detail": "SLSA provenance verified"
+       },
+       {
+         "type": "vex",
+         "passed": true,
+         "status": "pass",
+         "detail": "VEX verification passed"
+       }
      ]
    }
    ```
@@ -111,11 +121,17 @@ must pass verification.
    ```json
    {
      "image": "ghcr.io/saschagrunert/nri-supply-chain:0.1.5",
-     "digest": "sha256:...",
+     "digest": "sha256:1a8b39eeff74b8bb3e20c7f9fa773d4a9935241f7cc4e1217067c8186c2cee3c",
      "namespace": "default",
      "allowed": true,
+     "reason": "VSA verification passed, skipping direct verification",
      "checkResults": [
-       { "type": "vsa", "status": "pass", ... }
+       {
+         "type": "vsa",
+         "passed": true,
+         "status": "pass",
+         "detail": "VSA verification passed"
+       }
      ]
    }
    ```
