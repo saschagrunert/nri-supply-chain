@@ -15,7 +15,11 @@
 // Package testutil provides shared test assertion helpers.
 package testutil
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 // AssertEqual asserts that expected and actual are equal.
 func AssertEqual[T comparable](t *testing.T, expected, actual T) {
@@ -41,5 +45,17 @@ func AssertError(t *testing.T, err error) {
 
 	if err == nil {
 		t.Fatal("expected error, got nil")
+	}
+}
+
+const policyFileMode = 0o600
+
+// WritePolicy writes a policy file to dir for use in tests.
+func WritePolicy(t *testing.T, dir, name, content string) {
+	t.Helper()
+
+	err := os.WriteFile(filepath.Join(dir, name), []byte(content), policyFileMode)
+	if err != nil {
+		t.Fatalf("writing policy: %v", err)
 	}
 }

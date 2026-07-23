@@ -15,13 +15,32 @@
 // Package types provides shared data types for supply chain verification results.
 package types
 
+// CheckStatus represents the outcome status of a verification check.
+type CheckStatus string
+
 const (
 	// StatusPass indicates a check passed.
-	StatusPass = "pass"
+	StatusPass CheckStatus = "pass"
 	// StatusWarn indicates a check passed with a warning.
-	StatusWarn = "warn"
+	StatusWarn CheckStatus = "warn"
 	// StatusFail indicates a check failed.
-	StatusFail = "fail"
+	StatusFail CheckStatus = "fail"
+)
+
+// CheckType identifies the kind of verification check performed.
+type CheckType string
+
+const (
+	// CheckTypeSLSA is the SLSA provenance check type.
+	CheckTypeSLSA CheckType = "slsa"
+	// CheckTypeVEX is the VEX attestation check type.
+	CheckTypeVEX CheckType = "vex"
+	// CheckTypeVSA is the VSA attestation check type.
+	CheckTypeVSA CheckType = "vsa"
+	// CheckTypeFetch is the attestation fetch result type.
+	CheckTypeFetch CheckType = "fetch"
+	// CheckTypePolicy is the policy lookup result type.
+	CheckTypePolicy CheckType = "policy"
 )
 
 // Result represents the outcome of a supply chain verification.
@@ -44,18 +63,18 @@ type Result struct {
 //
 // Always use the constructor functions to keep Passed and Status consistent.
 type CheckResult struct {
-	// Type is the check type (e.g., "slsa", "vex", "vsa").
-	Type string
+	// Type is the check type (e.g., CheckTypeSLSA, CheckTypeVEX, CheckTypeVSA).
+	Type CheckType
 	// Passed indicates whether this check passed.
 	Passed bool
-	// Status is the check outcome: "pass", "warn", or "fail".
-	Status string
+	// Status is the check outcome: StatusPass, StatusWarn, or StatusFail.
+	Status CheckStatus
 	// Detail provides additional information about the check result.
 	Detail string
 }
 
 // PassResult returns a passing CheckResult.
-func PassResult(checkType, detail string) *CheckResult {
+func PassResult(checkType CheckType, detail string) *CheckResult {
 	return &CheckResult{
 		Type:   checkType,
 		Passed: true,
@@ -65,7 +84,7 @@ func PassResult(checkType, detail string) *CheckResult {
 }
 
 // WarnResult returns a warning CheckResult that allows with a warning.
-func WarnResult(checkType, detail string) *CheckResult {
+func WarnResult(checkType CheckType, detail string) *CheckResult {
 	return &CheckResult{
 		Type:   checkType,
 		Passed: true,
@@ -75,7 +94,7 @@ func WarnResult(checkType, detail string) *CheckResult {
 }
 
 // FailResult returns a failing CheckResult.
-func FailResult(checkType, detail string) *CheckResult {
+func FailResult(checkType CheckType, detail string) *CheckResult {
 	return &CheckResult{
 		Type:   checkType,
 		Passed: false,
@@ -87,7 +106,7 @@ func FailResult(checkType, detail string) *CheckResult {
 // SoftFailResult returns a CheckResult that did not pass but is only a warning.
 // Used for inconclusive checks (e.g., untrusted or stale VSA verifier results)
 // that should not block container creation but are not counted as passing.
-func SoftFailResult(checkType, detail string) *CheckResult {
+func SoftFailResult(checkType CheckType, detail string) *CheckResult {
 	return &CheckResult{
 		Type:   checkType,
 		Passed: false,

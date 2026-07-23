@@ -77,7 +77,7 @@ func allowResult(
 func recordMetrics(met *metrics.Metrics, result *types.Result, namespace string) {
 	for _, checkResult := range result.CheckResults {
 		met.VerificationTotal.WithLabelValues(
-			checkResult.Type, checkResult.Status, namespace,
+			string(checkResult.Type), string(checkResult.Status), namespace,
 		).Inc()
 	}
 }
@@ -94,7 +94,7 @@ func handleMissingPolicy(
 		Allowed: false,
 		Reason:  reason,
 		CheckResults: []types.CheckResult{
-			*types.FailResult("policy", "no matching policy found"),
+			*types.FailResult(types.CheckTypePolicy, "no matching policy found"),
 		},
 	}, imageRef)
 }

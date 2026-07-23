@@ -566,6 +566,234 @@ write_vex_predicate() {
 	EOF
 }
 
+# --- DaemonSet deployment helpers ---
+
+DAEMONSET_MANIFEST="${BATS_FILE_TMPDIR}/daemonset.yaml"
+DAEMONSET_NS="nri-supply-chain"
+METRICS_PORTFORWARD_PID_FILE="${BATS_FILE_TMPDIR}/metrics-portforward.pid"
+DAEMONSET_METRICS_PORT=9091
+
+build_daemonset_image() {
+	local image_ref="$1"
+	local layer_dir
+	layer_dir=$(mktemp -d)
+	mkdir -p "${layer_dir}/usr/local/bin"
+	cp "$BINARY" "${layer_dir}/usr/local/bin/nri-supply-chain"
+	chmod 755 "${layer_dir}/usr/local/bin/nri-supply-chain"
+
+	local layer_tar="${BATS_FILE_TMPDIR}/layer.tar"
+	tar -cf "$layer_tar" -C "$layer_dir" usr
+
+	local base_ref="${image_ref%:*}:base"
+	"$CRANE" pull gcr.io/distroless/static-debian12:latest "$BATS_FILE_TMPDIR/base.tar"
+	"$CRANE" push "$BATS_FILE_TMPDIR/base.tar" "$base_ref" --insecure
+	"$CRANE" append -b "$base_ref" -f "$layer_tar" -t "$image_ref" --insecure
+	"$CRANE" mutate "$image_ref" \
+		--entrypoint "/usr/local/bin/nri-supply-chain" \
+		--insecure
+
+	rm -rf "$layer_dir" "$layer_tar"
+}
+
+deploy_daemonset() {
+	local image_ref="$1"
+	local src_manifest="${2:-deploy/kubernetes/daemonset.yaml}"
+
+	cp "$src_manifest" "$DAEMONSET_MANIFEST"
+
+	sed -i "s|ghcr.io/saschagrunert/nri-supply-chain:[^ ]*|${image_ref}|g" "$DAEMONSET_MANIFEST"
+
+	# Remove security constraints so the plugin can access the
+	# NRI socket owned by root and write its sigstore TUF cache.
+	sed -i '/runAsNonRoot:/d' "$DAEMONSET_MANIFEST"
+	sed -i '/runAsUser:/d' "$DAEMONSET_MANIFEST"
+	sed -i '/runAsGroup:/d' "$DAEMONSET_MANIFEST"
+	sed -i '/readOnlyRootFilesystem:/d' "$DAEMONSET_MANIFEST"
+
+	# Enable debug logging for easier CI diagnosis.
+	sed -i '/- \/etc\/nri-supply-chain\/config.toml$/a\            - --log-level\n            - debug' "$DAEMONSET_MANIFEST"
+
+	# Use host networking so the plugin can reach the local insecure
+	# registry on localhost and resolve image digests/referrers.
+	sed -i '/serviceAccountName:/a\      hostNetwork: true\n      dnsPolicy: ClusterFirstWithHostNet' "$DAEMONSET_MANIFEST"
+
+	# Exclude registry.k8s.io system images from verification so that
+	# CreateContainer callbacks for coredns/kube-proxy etc. return
+	# immediately and don't block past the ttrpc request timeout.
+	sed -i 's|"gcr.io/distroless/\*"|"gcr.io/distroless/*", "registry.k8s.io/**"|' "$DAEMONSET_MANIFEST"
+
+	# Remove the NetworkPolicy resource so the pod can reach the
+	# local insecure registry without egress restrictions.
+	awk '
+		BEGIN { doc="" }
+		/^---$/ {
+			if (doc !~ /kind: NetworkPolicy/) printf "%s", doc
+			doc = "---\n"
+			next
+		}
+		{ doc = doc $0 "\n" }
+		END { if (doc !~ /kind: NetworkPolicy/) printf "%s", doc }
+	' "$DAEMONSET_MANIFEST" >"${DAEMONSET_MANIFEST}.tmp"
+	mv "${DAEMONSET_MANIFEST}.tmp" "$DAEMONSET_MANIFEST"
+
+	kubectl apply -f "$DAEMONSET_MANIFEST"
+}
+
+wait_for_daemonset_ready() {
+	local timeout="${1:-180}"
+	local elapsed=0
+	local stable=0
+	while [[ $elapsed -lt $timeout ]]; do
+		local desired ready
+		desired=$(kubectl get daemonset nri-supply-chain -n "$DAEMONSET_NS" \
+			-o jsonpath='{.status.desiredNumberScheduled}' 2>/dev/null || echo "0")
+		ready=$(kubectl get daemonset nri-supply-chain -n "$DAEMONSET_NS" \
+			-o jsonpath='{.status.numberReady}' 2>/dev/null || echo "0")
+		if [[ "$desired" -gt 0 && "$ready" -eq "$desired" ]]; then
+			local pod
+			pod=$(get_daemonset_pod_name 2>/dev/null || true)
+			if [[ -n "$pod" ]]; then
+				local container_ready
+				container_ready=$(kubectl get pod "$pod" -n "$DAEMONSET_NS" \
+					-o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null || echo "false")
+				if [[ "$container_ready" == "true" ]]; then
+					stable=$((stable + 1))
+					if [[ $stable -ge 3 ]]; then
+						break
+					fi
+					sleep 2
+					elapsed=$((elapsed + 2))
+					continue
+				fi
+			fi
+		fi
+		stable=0
+		sleep 2
+		elapsed=$((elapsed + 2))
+	done
+
+	if [[ $stable -lt 3 ]]; then
+		echo "ERROR: DaemonSet not ready after ${timeout}s (desired=${desired:-?}, ready=${ready:-?})" >&2
+		kubectl describe daemonset nri-supply-chain -n "$DAEMONSET_NS" 2>&1 >&2 || true
+		kubectl get pods -n "$DAEMONSET_NS" -o wide 2>&1 >&2 || true
+		local pod
+		pod=$(get_daemonset_pod_name 2>/dev/null || true)
+		if [[ -n "$pod" ]]; then
+			kubectl describe pod "$pod" -n "$DAEMONSET_NS" 2>&1 >&2 || true
+			kubectl logs "$pod" -n "$DAEMONSET_NS" --tail=50 2>&1 >&2 || true
+			kubectl logs "$pod" -n "$DAEMONSET_NS" --previous --tail=50 2>&1 >&2 || true
+		fi
+		return 1
+	fi
+
+	# Verify the container has been running for at least 15 seconds.
+	# The container may briefly appear ready before an NRI connection
+	# drop causes it to exit, so this catches that race.
+	local pod
+	pod=$(get_daemonset_pod_name)
+	while [[ $elapsed -lt $timeout ]]; do
+		local started_at
+		started_at=$(kubectl get pod "$pod" -n "$DAEMONSET_NS" \
+			-o jsonpath='{.status.containerStatuses[0].state.running.startedAt}' 2>/dev/null || true)
+		if [[ -n "$started_at" ]]; then
+			local started_epoch now_epoch running_for
+			started_epoch=$(date -d "$started_at" +%s 2>/dev/null || echo "0")
+			now_epoch=$(date +%s)
+			running_for=$((now_epoch - started_epoch))
+			if [[ $running_for -ge 15 ]]; then
+				return 0
+			fi
+		fi
+		sleep 3
+		elapsed=$((elapsed + 3))
+	done
+	echo "ERROR: DaemonSet container not stable after ${timeout}s" >&2
+	kubectl describe pod "$pod" -n "$DAEMONSET_NS" 2>&1 >&2 || true
+	kubectl logs "$pod" -n "$DAEMONSET_NS" --tail=50 2>&1 >&2 || true
+	return 1
+}
+
+get_daemonset_pod_name() {
+	kubectl get pods -n "$DAEMONSET_NS" \
+		-l app.kubernetes.io/name=nri-supply-chain \
+		-o jsonpath='{.items[0].metadata.name}' 2>/dev/null
+}
+
+daemonset_log_contains() {
+	local pattern="$1"
+	local pod
+	pod=$(get_daemonset_pod_name)
+	kubectl logs "$pod" -n "$DAEMONSET_NS" 2>/dev/null | grep -q "$pattern"
+}
+
+assert_daemonset_log_contains() {
+	local pattern="$1"
+	local timeout="${2:-30}"
+	local elapsed=0
+	while [[ $elapsed -lt $timeout ]]; do
+		if daemonset_log_contains "$pattern"; then
+			return 0
+		fi
+		sleep 1
+		elapsed=$((elapsed + 1))
+	done
+	local pod
+	pod=$(get_daemonset_pod_name 2>/dev/null || echo "unknown")
+	echo "ASSERTION FAILED: DaemonSet pod log does not contain '$pattern' after ${timeout}s" >&2
+	echo "=== DaemonSet pod log tail ===" >&2
+	kubectl logs "$pod" -n "$DAEMONSET_NS" --tail=30 2>&1 >&2 || true
+	echo "=== End DaemonSet pod log ===" >&2
+	return 1
+}
+
+start_metrics_portforward() {
+	local pod
+	pod=$(get_daemonset_pod_name)
+	kubectl port-forward "pod/${pod}" -n "$DAEMONSET_NS" \
+		"${DAEMONSET_METRICS_PORT}:9090" &
+	echo $! >"$METRICS_PORTFORWARD_PID_FILE"
+	local elapsed=0
+	while [[ $elapsed -lt 60 ]]; do
+		if curl -sf "http://localhost:${DAEMONSET_METRICS_PORT}/healthz" >/dev/null 2>&1; then
+			return 0
+		fi
+		sleep 1
+		elapsed=$((elapsed + 1))
+	done
+	echo "ERROR: port-forward not ready after 60s" >&2
+	echo "=== Pod status ===" >&2
+	kubectl get pod "$pod" -n "$DAEMONSET_NS" -o wide 2>&1 >&2 || true
+	echo "=== Pod describe ===" >&2
+	kubectl describe pod "$pod" -n "$DAEMONSET_NS" 2>&1 >&2 || true
+	echo "=== Pod logs ===" >&2
+	kubectl logs "$pod" -n "$DAEMONSET_NS" --tail=50 2>&1 >&2 || true
+	echo "=== Previous pod logs ===" >&2
+	kubectl logs "$pod" -n "$DAEMONSET_NS" --previous --tail=50 2>&1 >&2 || true
+	return 1
+}
+
+ensure_metrics_portforward() {
+	if [[ -f "$METRICS_PORTFORWARD_PID_FILE" ]]; then
+		local pid
+		pid=$(cat "$METRICS_PORTFORWARD_PID_FILE")
+		if kill -0 "$pid" 2>/dev/null; then
+			if curl -sf "http://localhost:${DAEMONSET_METRICS_PORT}/healthz" >/dev/null 2>&1; then
+				return 0
+			fi
+		fi
+		stop_metrics_portforward
+	fi
+	start_metrics_portforward
+}
+
+stop_metrics_portforward() {
+	if [[ -f "$METRICS_PORTFORWARD_PID_FILE" ]]; then
+		kill "$(cat "$METRICS_PORTFORWARD_PID_FILE")" 2>/dev/null || true
+		wait "$(cat "$METRICS_PORTFORWARD_PID_FILE")" 2>/dev/null || true
+		rm -f "$METRICS_PORTFORWARD_PID_FILE"
+	fi
+}
+
 write_vsa_predicate() {
 	local file="$1"
 	local verifier_id="$2"

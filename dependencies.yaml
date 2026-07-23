@@ -9,7 +9,7 @@ dependencies:
       - path: README.md
         match: '"image".*nri-supply-chain:'
       - path: deploy/kubernetes/daemonset.yaml
-        match: "# image.*nri-supply-chain:"
+        match: "image.*nri-supply-chain:"
 
   - name: golang
     version: 1.26.5

@@ -108,7 +108,7 @@ func TestVerify(t *testing.T) {
 		doc        openvex.VEX
 		pol        *policy.Policy
 		wantPassed bool
-		wantStatus string
+		wantStatus types.CheckStatus
 	}{
 		{
 			name:       "not affected passes",
@@ -831,7 +831,7 @@ func TestVerifyMultiple(t *testing.T) {
 		docs       []openvex.VEX
 		pol        *policy.Policy
 		wantPassed bool
-		wantStatus string
+		wantStatus types.CheckStatus
 	}{
 		{
 			name: "most restrictive wins",

@@ -84,10 +84,7 @@ spec:
         - operator: Exists
       containers:
         - name: nri-supply-chain
-          # For production, pin to a digest or version tag:
-          # image: ghcr.io/saschagrunert/nri-supply-chain@sha256:<digest>
-          # image: ghcr.io/saschagrunert/nri-supply-chain:0.1.4
-          image: ghcr.io/saschagrunert/nri-supply-chain:latest
+          image: ghcr.io/saschagrunert/nri-supply-chain:0.1.4
           args:
             - --config
             - /etc/nri-supply-chain/config.toml
@@ -95,17 +92,21 @@ spec:
             - name: metrics
               containerPort: 9090
               protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            failureThreshold: 30
+            periodSeconds: 2
           livenessProbe:
             httpGet:
               path: /healthz
               port: metrics
-            initialDelaySeconds: 5
             periodSeconds: 10
           readinessProbe:
             httpGet:
               path: /readyz
               port: metrics
-            initialDelaySeconds: 5
             periodSeconds: 10
           resources:
             requests:
@@ -117,6 +118,8 @@ spec:
           securityContext:
             readOnlyRootFilesystem: true
             runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
             allowPrivilegeEscalation: false
             seccompProfile:
               type: RuntimeDefault

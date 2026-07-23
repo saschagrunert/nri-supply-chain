@@ -118,16 +118,16 @@ func runChecksWithoutFetcher(
 	detail := "no attestation fetcher configured for image " + imageRef
 
 	slsaResult := handleMissingAttestation(
-		pol.SLSAMissingPolicy(), "slsa", detail,
+		pol.SLSAMissingPolicy(), types.CheckTypeSLSA, detail,
 	)
 
-	met.VerificationDuration.WithLabelValues("slsa").Observe(0)
+	met.VerificationDuration.WithLabelValues(string(types.CheckTypeSLSA)).Observe(0)
 
 	vexResult := handleMissingAttestation(
-		pol.VEXMissingPolicy(), "vex", detail,
+		pol.VEXMissingPolicy(), types.CheckTypeVEX, detail,
 	)
 
-	met.VerificationDuration.WithLabelValues("vex").Observe(0)
+	met.VerificationDuration.WithLabelValues(string(types.CheckTypeVEX)).Observe(0)
 
 	return combineResults(slsaResult, vexResult)
 }
@@ -194,7 +194,7 @@ func handleFetchError(
 
 	detail := fmt.Sprintf("attestation fetch failed for %s: %s", imageRef, fetchErr)
 
-	checkResult := handleMissingAttestation(cfg.FetchFailurePolicy, "fetch", detail)
+	checkResult := handleMissingAttestation(cfg.FetchFailurePolicy, types.CheckTypeFetch, detail)
 
 	return &types.Result{
 		Allowed:      checkResult.Passed,
@@ -214,7 +214,8 @@ func checkVSA(
 	start := time.Now()
 
 	defer func() {
-		met.VerificationDuration.WithLabelValues("vsa").Observe(time.Since(start).Seconds())
+		met.VerificationDuration.WithLabelValues(string(types.CheckTypeVSA)).
+			Observe(time.Since(start).Seconds())
 	}()
 
 	digestRef := buildDigestRef(imageRef, digest)
@@ -292,7 +293,7 @@ func runSLSACheck(
 	start := time.Now()
 
 	defer func() {
-		met.VerificationDuration.WithLabelValues("slsa").Observe(
+		met.VerificationDuration.WithLabelValues(string(types.CheckTypeSLSA)).Observe(
 			time.Since(start).Seconds(),
 		)
 	}()
@@ -305,7 +306,7 @@ func runSLSACheck(
 
 		return handleMissingAttestation(
 			pol.SLSAMissingPolicy(),
-			"slsa",
+			types.CheckTypeSLSA,
 			"no provenance attestation found for image "+imageRef,
 		)
 	}
@@ -318,11 +319,11 @@ func runSLSACheck(
 			"image", imageRef,
 		)
 
-		met.VerificationTotal.WithLabelValues("slsa", "error", namespace).Inc()
+		met.VerificationTotal.WithLabelValues(string(types.CheckTypeSLSA), "error", namespace).Inc()
 
 		return handleMissingAttestation(
 			pol.SLSAMissingPolicy(),
-			"slsa",
+			types.CheckTypeSLSA,
 			fmt.Sprintf("SLSA verification error for %s: %s", imageRef, err),
 		)
 	}
@@ -338,7 +339,7 @@ func runVEXCheck(
 	start := time.Now()
 
 	defer func() {
-		met.VerificationDuration.WithLabelValues("vex").Observe(
+		met.VerificationDuration.WithLabelValues(string(types.CheckTypeVEX)).Observe(
 			time.Since(start).Seconds(),
 		)
 	}()
@@ -351,7 +352,7 @@ func runVEXCheck(
 
 		return handleMissingAttestation(
 			pol.VEXMissingPolicy(),
-			"vex",
+			types.CheckTypeVEX,
 			"no VEX attestation found for image "+imageRef,
 		)
 	}
@@ -369,11 +370,11 @@ func runVEXCheck(
 			"image", imageRef,
 		)
 
-		met.VerificationTotal.WithLabelValues("vex", "error", namespace).Inc()
+		met.VerificationTotal.WithLabelValues(string(types.CheckTypeVEX), "error", namespace).Inc()
 
 		return handleMissingAttestation(
 			pol.VEXMissingPolicy(),
-			"vex",
+			types.CheckTypeVEX,
 			fmt.Sprintf("VEX verification error for %s: %s", imageRef, err),
 		)
 	}
@@ -401,7 +402,7 @@ func resultShouldUseShorterTTL(result *types.Result) bool {
 	}
 
 	for idx := range result.CheckResults {
-		if result.CheckResults[idx].Type == "fetch" {
+		if result.CheckResults[idx].Type == types.CheckTypeFetch {
 			return true
 		}
 	}
@@ -409,21 +410,20 @@ func resultShouldUseShorterTTL(result *types.Result) bool {
 	return false
 }
 
-func combineResults(slsaResult, vexResult *types.CheckResult) *types.Result {
+func combineResults(checks ...*types.CheckResult) *types.Result {
 	result := &types.Result{
 		Allowed:      true,
 		Reason:       "",
 		CheckResults: nil,
 	}
 
-	if slsaResult != nil {
-		result.CheckResults = append(result.CheckResults, *slsaResult)
-		applyCheckResult(result, slsaResult)
-	}
+	for _, check := range checks {
+		if check == nil {
+			continue
+		}
 
-	if vexResult != nil {
-		result.CheckResults = append(result.CheckResults, *vexResult)
-		applyCheckResult(result, vexResult)
+		result.CheckResults = append(result.CheckResults, *check)
+		applyCheckResult(result, check)
 	}
 
 	return result
@@ -475,7 +475,7 @@ func binAttestations(attestations []attestation.VerifiedAttestation) attestation
 }
 
 func handleMissingAttestation(
-	pol policy.Action, checkType, detail string,
+	pol policy.Action, checkType types.CheckType, detail string,
 ) *types.CheckResult {
 	switch pol {
 	case policy.ActionDeny:

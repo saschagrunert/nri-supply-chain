@@ -31,7 +31,7 @@ import (
 )
 
 const (
-	checkType = "vsa"
+	checkType = types.CheckTypeVSA
 
 	// ResultPassed indicates the VSA verification passed.
 	ResultPassed = "PASSED"

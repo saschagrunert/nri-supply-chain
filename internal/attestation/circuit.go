@@ -34,7 +34,7 @@ const (
 // After a configurable number of consecutive failures, it short-circuits to the
 // configured failure policy for a cooldown period before allowing a probe request.
 type CircuitBreaker struct {
-	mu                  sync.Mutex
+	mu                  sync.RWMutex
 	state               circuitState
 	consecutiveFailures int
 	lastFailureTime     time.Time
@@ -46,7 +46,7 @@ type CircuitBreaker struct {
 // consecutive failures and stays open for the cooldown duration.
 func NewCircuitBreaker(threshold int, cooldown time.Duration) *CircuitBreaker {
 	return &CircuitBreaker{
-		mu:                  sync.Mutex{},
+		mu:                  sync.RWMutex{},
 		state:               circuitClosed,
 		consecutiveFailures: 0,
 		lastFailureTime:     time.Time{},
@@ -113,8 +113,8 @@ func (cb *CircuitBreaker) RecordFailure() bool {
 }
 
 func (cb *CircuitBreaker) isOpen() bool {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
+	cb.mu.RLock()
+	defer cb.mu.RUnlock()
 
 	return cb.state == circuitOpen
 }

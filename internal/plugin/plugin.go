@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -29,21 +28,18 @@ import (
 	"github.com/containerd/nri/pkg/stub"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
-	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"golang.org/x/sync/semaphore"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
+	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
 // ErrMissingAnnotations indicates that required image annotations are absent.
 var ErrMissingAnnotations = errors.New("missing image annotations")
-
-// ErrNoPlatformMatch indicates that no image in a manifest list matches the current platform.
-var ErrNoPlatformMatch = errors.New("no matching platform image in manifest list")
 
 // DigestResolveFunc resolves an image reference to its platform-specific digest
 // via a registry. When the tag points to a manifest list, indexDigest returns
@@ -53,6 +49,8 @@ type DigestResolveFunc func(ctx context.Context, imageRef string) (digest, index
 const (
 	prewarmConcurrency = 5
 	prewarmTimeout     = 5 * time.Minute
+	// Must stay well under containerd's ~2s ttrpc timeout for NRI callbacks.
+	digestResolveTimeout = time.Second
 )
 
 type prewarmImage struct {
@@ -60,6 +58,7 @@ type prewarmImage struct {
 	digest      string
 	indexDigest string
 	namespace   string
+	container   string
 }
 
 const (
@@ -87,6 +86,7 @@ type Plugin struct {
 	connected      atomic.Bool
 	digestResolver DigestResolveFunc
 	fetchTimeout   time.Duration
+	prewarmDone    func()
 }
 
 // New creates a new Plugin with the given verifier, metrics, and config file path.
@@ -100,6 +100,7 @@ func New(
 		connected:      atomic.Bool{},
 		digestResolver: defaultDigestResolver,
 		fetchTimeout:   fetchTimeout,
+		prewarmDone:    nil,
 	}
 }
 
@@ -120,47 +121,15 @@ func defaultDigestResolver(
 	}
 
 	if desc.MediaType.IsIndex() {
-		platformDigest, indexErr := resolveIndexDigest(desc)
+		platformDigest, indexErr := registry.ResolveIndexDigest(desc)
 		if indexErr != nil {
-			return "", "", indexErr
+			return "", "", fmt.Errorf("resolving index digest: %w", indexErr)
 		}
 
 		return platformDigest, desc.Digest.String(), nil
 	}
 
 	return desc.Digest.String(), "", nil
-}
-
-func resolveIndexDigest(desc *remote.Descriptor) (string, error) {
-	idx, err := desc.ImageIndex()
-	if err != nil {
-		return "", fmt.Errorf("reading image index: %w", err)
-	}
-
-	manifest, err := idx.IndexManifest()
-	if err != nil {
-		return "", fmt.Errorf("reading index manifest: %w", err)
-	}
-
-	platform := v1.Platform{
-		Architecture: runtime.GOARCH,
-		OS:           runtime.GOOS,
-	}
-
-	for i := range manifest.Manifests {
-		entry := &manifest.Manifests[i]
-
-		if entry.Platform != nil && entry.Platform.Satisfies(platform) {
-			slog.Debug("Resolved manifest list to platform image",
-				"platform", platform.String(),
-				"digest", entry.Digest.String(),
-			)
-
-			return entry.Digest.String(), nil
-		}
-	}
-
-	return "", fmt.Errorf("%w for %s/%s", ErrNoPlatformMatch, runtime.GOOS, runtime.GOARCH)
 }
 
 // Connected returns true if the plugin has successfully connected to the NRI runtime.
@@ -218,7 +187,7 @@ func (p *Plugin) Synchronize(
 		podNS[pod.GetId()] = pod.GetNamespace()
 	}
 
-	images := p.collectPrewarmImages(ctx, containers, podNS)
+	images := p.collectPrewarmImages(containers, podNS)
 
 	if len(images) == 0 {
 		return nil, nil
@@ -303,7 +272,7 @@ func (p *Plugin) resolveDigestIfMissing(
 		return digest, ""
 	}
 
-	resolveCtx, cancel := context.WithTimeout(ctx, p.fetchTimeout)
+	resolveCtx, cancel := context.WithTimeout(ctx, digestResolveTimeout)
 	resolved, indexDigest, err := p.digestResolver(resolveCtx, imageRef)
 
 	cancel()
@@ -323,7 +292,7 @@ func (p *Plugin) resolveDigestIfMissing(
 }
 
 func (p *Plugin) collectPrewarmImages(
-	ctx context.Context, containers []*api.Container, podNS map[string]string,
+	containers []*api.Container, podNS map[string]string,
 ) []prewarmImage {
 	var images []prewarmImage
 
@@ -333,33 +302,13 @@ func (p *Plugin) collectPrewarmImages(
 		annotations := ctr.GetAnnotations()
 		imageRef, digest := resolveImage(annotations)
 
-		var indexDigest string
-
-		if imageRef != "" && digest == "" {
-			resolveCtx, cancel := context.WithTimeout(ctx, p.fetchTimeout)
-			resolved, idxDig, err := p.digestResolver(resolveCtx, imageRef)
-
-			cancel()
-
-			if err != nil {
-				slog.DebugContext(ctx, "Skipping prewarm, failed to resolve digest",
-					"container", ctr.GetName(),
-					"image", imageRef,
-					"error", err,
-				)
-			} else {
-				digest = resolved
-				indexDigest = idxDig
-			}
-		}
-
-		if imageRef == "" || digest == "" {
+		if imageRef == "" {
 			continue
 		}
 
 		namespace := podNS[ctr.GetPodSandboxId()]
 
-		key := digest + "\x00" + namespace
+		key := imageRef + "\x00" + namespace
 
 		if _, ok := seen[key]; ok {
 			continue
@@ -370,18 +319,60 @@ func (p *Plugin) collectPrewarmImages(
 		images = append(images, prewarmImage{
 			imageRef:    imageRef,
 			digest:      digest,
-			indexDigest: indexDigest,
+			indexDigest: "",
 			namespace:   namespace,
+			container:   ctr.GetName(),
 		})
 	}
 
 	return images
 }
 
+func (p *Plugin) resolvePrewarmDigests(
+	ctx context.Context, images []prewarmImage,
+) []prewarmImage {
+	resolved := make([]prewarmImage, 0, len(images))
+
+	for idx := range images {
+		img := images[idx]
+
+		if img.digest == "" {
+			resolveCtx, resolveCancel := context.WithTimeout(ctx, p.fetchTimeout)
+			dig, idxDig, resolveErr := p.digestResolver(resolveCtx, img.imageRef)
+
+			resolveCancel()
+
+			if resolveErr != nil {
+				slog.DebugContext(ctx, "Skipping prewarm, failed to resolve digest",
+					"container", img.container,
+					"image", img.imageRef,
+					"error", resolveErr,
+				)
+
+				continue
+			}
+
+			img.digest = dig
+			img.indexDigest = idxDig
+		}
+
+		resolved = append(resolved, img)
+	}
+
+	return resolved
+}
+
 func (p *Plugin) prewarmCache(ctx context.Context, images []prewarmImage) {
+	defer func() {
+		if p.prewarmDone != nil {
+			p.prewarmDone()
+		}
+	}()
+
 	ctx, cancel := context.WithTimeout(ctx, prewarmTimeout)
 	defer cancel()
 
+	images = p.resolvePrewarmDigests(ctx, images)
 	total := len(images)
 	slog.Info("Pre-warming cache", "images", total)
 

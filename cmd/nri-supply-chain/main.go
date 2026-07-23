@@ -33,7 +33,6 @@ import (
 	"github.com/containerd/nri/pkg/stub"
 	"github.com/fsnotify/fsnotify"
 	"github.com/google/go-containerregistry/pkg/name"
-	v1 "github.com/google/go-containerregistry/pkg/v1"
 	crremote "github.com/google/go-containerregistry/pkg/v1/remote"
 	"golang.org/x/sync/errgroup"
 
@@ -42,14 +41,12 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/plugin"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
+	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
 var version = "0.1.4"
-
-// ErrNoPlatformMatch indicates that no image in a manifest list matches the current platform.
-var ErrNoPlatformMatch = errors.New("no matching platform image in manifest list")
 
 var logLevelVar slog.LevelVar //nolint:gochecknoglobals // shared between initLogging and reload
 
@@ -128,6 +125,7 @@ func run() int {
 	}
 
 	met := metrics.New()
+	met.SetBuildInfo(version, runtime.Version())
 
 	var fetcher attestation.Fetcher
 	if cfg.Enabled() {
@@ -146,7 +144,7 @@ func run() int {
 
 	defer cancel()
 
-	cleanupSignals := setupSignals(ctx, cancel, opts.configPath, verif, cfg)
+	cleanupSignals := setupSignals(ctx, cancel, opts.configPath, verif, met, cfg)
 	defer cleanupSignals()
 
 	err = runPlugin(ctx, plug, met, cfg.MetricsAddr, &opts, cancel)
@@ -162,7 +160,7 @@ func run() int {
 func setupSignals(
 	ctx context.Context, cancel context.CancelFunc,
 	configPath string, verif *verifier.Verifier,
-	cfg *config.Config,
+	met *metrics.Metrics, cfg *config.Config,
 ) func() {
 	sighup := make(chan os.Signal, 1)
 	signal.Notify(sighup, syscall.SIGHUP)
@@ -172,8 +170,8 @@ func setupSignals(
 
 	done := make(chan struct{})
 
-	cleanupWatch, watcher := setupFileWatch(ctx, configPath, cfg.PolicyDir, verif)
-	setupReload(ctx, configPath, verif, sighup, watcher)
+	cleanupWatch, watcher := setupFileWatch(ctx, configPath, cfg.PolicyDir, verif, met)
+	setupReload(ctx, configPath, verif, met, sighup, watcher)
 	handleShutdown(ctx, cancel, sigterm, done)
 
 	return func() {
@@ -386,7 +384,7 @@ func runPlugin(
 
 func setupReload(
 	ctx context.Context, configPath string, verif *verifier.Verifier,
-	sigCh <-chan os.Signal, watcher *fsnotify.Watcher,
+	met *metrics.Metrics, sigCh <-chan os.Signal, watcher *fsnotify.Watcher,
 ) {
 	go func() {
 		for {
@@ -396,14 +394,15 @@ func setupReload(
 			case <-sigCh:
 			}
 
-			handleReload(ctx, configPath, verif, watcher)
+			handleReload(ctx, configPath, verif, met, watcher)
 		}
 	}()
 }
 
 func handleReload(
 	ctx context.Context, configPath string,
-	verif *verifier.Verifier, watcher *fsnotify.Watcher,
+	verif *verifier.Verifier, met *metrics.Metrics,
+	watcher *fsnotify.Watcher,
 ) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -421,6 +420,7 @@ func handleReload(
 
 	newCfg, err := config.LoadFromFile(configPath)
 	if err != nil {
+		met.ConfigReloadErrorsTotal.Inc()
 		slog.Error("Config reload failed", "error", err)
 
 		return
@@ -429,6 +429,7 @@ func handleReload(
 	if newCfg.Enabled() {
 		err = newCfg.ValidateRuntime()
 		if err != nil {
+			met.ConfigReloadErrorsTotal.Inc()
 			slog.Error("Config reload validation failed", "error", err)
 
 			return
@@ -448,8 +449,10 @@ func handleReload(
 
 	reloadErr := verif.Reload(ctx, newCfg)
 	if reloadErr != nil {
+		met.ConfigReloadErrorsTotal.Inc()
 		slog.Error("Verifier reload failed", "error", reloadErr)
 	} else {
+		met.ConfigReloadsTotal.Inc()
 		slog.Info("Config reloaded successfully")
 		updatePolicyDirWatch(watcher, configPath, newCfg.PolicyDir)
 	}
@@ -562,9 +565,9 @@ func convertCheckResults(result *types.Result) []checkEntry {
 
 	for _, cr := range result.CheckResults {
 		checks = append(checks, checkEntry{
-			Type:   cr.Type,
+			Type:   string(cr.Type),
 			Passed: cr.Passed,
-			Status: cr.Status,
+			Status: string(cr.Status),
 			Detail: cr.Detail,
 		})
 	}
@@ -592,9 +595,9 @@ func resolveDigest(imageRef string, timeout time.Duration) (resolvedDigest, erro
 	}
 
 	if desc.MediaType.IsIndex() {
-		platformDigest, indexErr := resolveIndexDigest(desc)
+		platformDigest, indexErr := registry.ResolveIndexDigest(desc)
 		if indexErr != nil {
-			return resolvedDigest{}, indexErr
+			return resolvedDigest{}, fmt.Errorf("resolving index digest: %w", indexErr)
 		}
 
 		return resolvedDigest{
@@ -604,38 +607,6 @@ func resolveDigest(imageRef string, timeout time.Duration) (resolvedDigest, erro
 	}
 
 	return resolvedDigest{digest: desc.Digest.String(), indexDigest: ""}, nil
-}
-
-func resolveIndexDigest(desc *crremote.Descriptor) (string, error) {
-	idx, err := desc.ImageIndex()
-	if err != nil {
-		return "", fmt.Errorf("reading image index: %w", err)
-	}
-
-	manifest, err := idx.IndexManifest()
-	if err != nil {
-		return "", fmt.Errorf("reading index manifest: %w", err)
-	}
-
-	platform := v1.Platform{
-		Architecture: runtime.GOARCH,
-		OS:           runtime.GOOS,
-	}
-
-	for i := range manifest.Manifests {
-		entry := &manifest.Manifests[i]
-
-		if entry.Platform != nil && entry.Platform.Satisfies(platform) {
-			slog.Debug("Resolved manifest list to platform image",
-				"platform", platform.String(),
-				"digest", entry.Digest.String(),
-			)
-
-			return entry.Digest.String(), nil
-		}
-	}
-
-	return "", fmt.Errorf("%w for %s/%s", ErrNoPlatformMatch, runtime.GOOS, runtime.GOARCH)
 }
 
 func outputVerifyResult(
@@ -662,7 +633,7 @@ func outputVerifyResult(
 
 func setupFileWatch(
 	ctx context.Context, configPath, policyDir string,
-	verif *verifier.Verifier,
+	verif *verifier.Verifier, met *metrics.Metrics,
 ) (func(), *fsnotify.Watcher) {
 	if configPath == "" {
 		return func() {}, nil
@@ -693,7 +664,7 @@ func setupFileWatch(
 		}
 	}
 
-	go runFileWatch(ctx, watcher, configPath, verif)
+	go runFileWatch(ctx, watcher, configPath, verif, met)
 
 	return func() {
 		closeErr := watcher.Close()
@@ -706,6 +677,7 @@ func setupFileWatch(
 func runFileWatch(
 	ctx context.Context, watcher *fsnotify.Watcher,
 	configPath string, verif *verifier.Verifier,
+	met *metrics.Metrics,
 ) {
 	var debounce *time.Timer
 
@@ -723,7 +695,7 @@ func runFileWatch(
 				return
 			}
 
-			debounce = handleFileEvent(ctx, event, debounce, configPath, verif, watcher)
+			debounce = handleFileEvent(ctx, event, debounce, configPath, verif, met, watcher)
 
 		case watchErr, ok := <-watcher.Errors:
 			if !ok {
@@ -738,7 +710,8 @@ func runFileWatch(
 func handleFileEvent(
 	ctx context.Context, event fsnotify.Event,
 	debounce *time.Timer, configPath string,
-	verif *verifier.Verifier, watcher *fsnotify.Watcher,
+	verif *verifier.Verifier, met *metrics.Metrics,
+	watcher *fsnotify.Watcher,
 ) *time.Timer {
 	if !isReloadEvent(event) {
 		return debounce
@@ -751,7 +724,7 @@ func handleFileEvent(
 	}
 
 	return time.AfterFunc(fileWatchDebounce, func() {
-		handleReload(ctx, configPath, verif, watcher)
+		handleReload(ctx, configPath, verif, met, watcher)
 	})
 }
 
