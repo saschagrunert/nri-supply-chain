@@ -85,6 +85,42 @@ jobs:
             --type slsaprovenance1 \
             --yes \
             "${IMAGE}@${DIGEST}"
+      - name: Compute release version
+        id: release
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Scan container image for vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ghcr.io/saschagrunert/nri-supply-chain:${{ steps.release.outputs.version }}
+          exit-code: "1"
+      - name: Attest container image VEX
+        env:
+          IMAGE: ghcr.io/saschagrunert/nri-supply-chain
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          DIGEST=$(./build/crane digest "${IMAGE}:${VERSION}")
+          PRODUCT="pkg:oci/nri-supply-chain@${DIGEST}"
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          cat > /tmp/vex-predicate.json <<EOF
+          {
+            "@context": "https://openvex.dev/ns/v0.2.0",
+            "@id": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/vex",
+            "author": "https://github.com/${{ github.repository }}/.github/workflows/release.yml",
+            "timestamp": "${TIMESTAMP}",
+            "statements": [
+              {
+                "vulnerability": {"name": "trivy-scan-clean"},
+                "products": [{"@id": "${PRODUCT}"}],
+                "status": "not_affected",
+                "justification": "vulnerable_code_not_present"
+              }
+            ]
+          }
+          EOF
+          cosign attest --predicate /tmp/vex-predicate.json \
+            --type https://openvex.dev/ns \
+            --yes \
+            "${IMAGE}@${DIGEST}"
       - name: Verify container image before VSA
         env:
           IMAGE: ghcr.io/saschagrunert/nri-supply-chain
@@ -98,7 +134,8 @@ jobs:
               "sanPatterns": ["https://github.com/${{ github.repository }}/**"],
               "sources": ["github.com/${{ github.repository_owner }}/*"]
             },
-            "slsa": { "missingPolicy": "deny" }
+            "slsa": { "missingPolicy": "deny" },
+            "vex": { "missingPolicy": "deny" }
           }
           EOF
           cat > /tmp/verify-config.toml <<EOF

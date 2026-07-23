@@ -1,0 +1,4 @@
+# golang.org/x/crypto/openpgp deprecation notice (no fix version).
+# We don't use openpgp; it's a transitive dependency.
+# govulncheck confirms no reachable vulnerable code paths.
+GO-2026-5932

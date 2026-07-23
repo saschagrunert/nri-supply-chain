@@ -22,3 +22,10 @@ skip_if_network_unavailable() {
 		skip "SKIP_NETWORK_TESTS is set"
 	fi
 }
+
+skip_if_image_unavailable() {
+	local image="$1"
+	if ! docker manifest inspect "$image" &>/dev/null; then
+		skip "image $image not available"
+	fi
+}
