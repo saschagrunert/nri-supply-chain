@@ -193,7 +193,9 @@ func TestSetupReload(t *testing.T) {
 		t.Fatalf("loading config: %v", err)
 	}
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	met := metrics.New()
+
+	verif, err := verifier.New(cfg, met, nil)
 	if err != nil {
 		t.Fatalf("creating verifier: %v", err)
 	}
@@ -205,7 +207,7 @@ func TestSetupReload(t *testing.T) {
 	ctx := t.Context()
 
 	sigCh := make(chan os.Signal, 1)
-	setupReload(ctx, configPath, verif, sigCh, nil)
+	setupReload(ctx, configPath, verif, met, sigCh, nil)
 
 	writeTestConfig(t, configPath, policyDir, "enforce")
 
@@ -227,8 +229,9 @@ func TestSetupReloadNoConfig(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.DefaultConfig()
+	met := metrics.New()
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(cfg, met, nil)
 	if err != nil {
 		t.Fatalf("creating verifier: %v", err)
 	}
@@ -236,7 +239,7 @@ func TestSetupReloadNoConfig(t *testing.T) {
 	ctx := t.Context()
 
 	sigCh := make(chan os.Signal, 1)
-	setupReload(ctx, "", verif, sigCh, nil)
+	setupReload(ctx, "", verif, met, sigCh, nil)
 
 	sigCh <- syscall.SIGHUP
 
@@ -718,7 +721,9 @@ func TestSetupFileWatch(t *testing.T) {
 		t.Fatalf("loading config: %v", err)
 	}
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	met := metrics.New()
+
+	verif, err := verifier.New(cfg, met, nil)
 	if err != nil {
 		t.Fatalf("creating verifier: %v", err)
 	}
@@ -729,7 +734,7 @@ func TestSetupFileWatch(t *testing.T) {
 
 	ctx := t.Context()
 
-	cleanup, _ := setupFileWatch(ctx, configPath, policyDir, verif)
+	cleanup, _ := setupFileWatch(ctx, configPath, policyDir, verif, met)
 	defer cleanup()
 
 	writeTestConfig(t, configPath, policyDir, "enforce")
@@ -750,13 +755,14 @@ func TestSetupFileWatchNoConfig(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.DefaultConfig()
+	met := metrics.New()
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(cfg, met, nil)
 	if err != nil {
 		t.Fatalf("creating verifier: %v", err)
 	}
 
-	cleanup, _ := setupFileWatch(t.Context(), "", "", verif)
+	cleanup, _ := setupFileWatch(t.Context(), "", "", verif, met)
 	defer cleanup()
 
 	if verif.Enforcing() {
@@ -1436,8 +1442,9 @@ func TestSetupSignals(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.DefaultConfig()
+	met := metrics.New()
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(cfg, met, nil)
 	if err != nil {
 		t.Fatalf("creating verifier: %v", err)
 	}
@@ -1445,7 +1452,7 @@ func TestSetupSignals(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	cleanup := setupSignals(ctx, cancel, "", verif, cfg)
+	cleanup := setupSignals(ctx, cancel, "", verif, met, cfg)
 	cleanup()
 }
 
@@ -1468,7 +1475,9 @@ func TestSetupSignalsWithConfig(t *testing.T) {
 		t.Fatalf("loading config: %v", err)
 	}
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	met := metrics.New()
+
+	verif, err := verifier.New(cfg, met, nil)
 	if err != nil {
 		t.Fatalf("creating verifier: %v", err)
 	}
@@ -1476,7 +1485,7 @@ func TestSetupSignalsWithConfig(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	cleanup := setupSignals(ctx, cancel, configPath, verif, cfg)
+	cleanup := setupSignals(ctx, cancel, configPath, verif, met, cfg)
 	cleanup()
 }
 
@@ -1499,15 +1508,14 @@ func TestSetupFileWatchNonexistentConfigPath(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.DefaultConfig()
+	met := metrics.New()
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(cfg, met, nil)
 	if err != nil {
 		t.Fatalf("creating verifier: %v", err)
 	}
 
-	// Passing a nonexistent config path causes watcher.Add to fail,
-	// exercising the "Failed to watch config file" warning path.
-	cleanup, _ := setupFileWatch(t.Context(), "/nonexistent/config.toml", "", verif)
+	cleanup, _ := setupFileWatch(t.Context(), "/nonexistent/config.toml", "", verif, met)
 	cleanup()
 }
 
@@ -1523,15 +1531,14 @@ func TestSetupFileWatchPolicyDirWatchFailure(t *testing.T) {
 	}
 
 	cfg := config.DefaultConfig()
+	met := metrics.New()
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(cfg, met, nil)
 	if err != nil {
 		t.Fatalf("creating verifier: %v", err)
 	}
 
-	// Config path exists (watcher.Add succeeds), but policy dir does not,
-	// exercising the "Failed to watch policy directory" warning path.
-	cleanup, _ := setupFileWatch(t.Context(), configPath, "/nonexistent/policies", verif)
+	cleanup, _ := setupFileWatch(t.Context(), configPath, "/nonexistent/policies", verif, met)
 	cleanup()
 }
 
@@ -1558,7 +1565,15 @@ func TestHandleFileEventChmodIgnored(t *testing.T) {
 
 	defer existingTimer.Stop()
 
-	result := handleFileEvent(context.Background(), event, existingTimer, testConfigFile, nil, nil)
+	result := handleFileEvent(
+		context.Background(),
+		event,
+		existingTimer,
+		testConfigFile,
+		nil,
+		nil,
+		nil,
+	)
 
 	if result != existingTimer {
 		t.Error("expected chmod event to return same debounce timer unchanged")
@@ -1584,7 +1599,9 @@ func TestHandleFileEventDebounceReplacement(t *testing.T) {
 		t.Fatalf("loading config: %v", err)
 	}
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	met := metrics.New()
+
+	verif, err := verifier.New(cfg, met, nil)
 	if err != nil {
 		t.Fatalf("creating verifier: %v", err)
 	}
@@ -1594,7 +1611,7 @@ func TestHandleFileEventDebounceReplacement(t *testing.T) {
 	defer oldTimer.Stop()
 
 	event := fsnotify.Event{Name: configPath, Op: fsnotify.Write}
-	newTimer := handleFileEvent(context.Background(), event, oldTimer, configPath, verif, nil)
+	newTimer := handleFileEvent(context.Background(), event, oldTimer, configPath, verif, met, nil)
 
 	if newTimer == nil {
 		t.Fatal("expected new timer, got nil")
@@ -1611,7 +1628,7 @@ func TestHandleFileEventNilDebounce(t *testing.T) {
 	t.Parallel()
 
 	event := fsnotify.Event{Name: testConfigFile, Op: fsnotify.Write}
-	result := handleFileEvent(context.Background(), event, nil, testConfigFile, nil, nil)
+	result := handleFileEvent(context.Background(), event, nil, testConfigFile, nil, nil, nil)
 
 	if result == nil {
 		t.Fatal("expected new timer, got nil")
@@ -1650,7 +1667,7 @@ func TestRunFileWatchContextCancel(t *testing.T) {
 	done := make(chan struct{})
 
 	go func() {
-		runFileWatch(ctx, watcher, configPath, nil)
+		runFileWatch(ctx, watcher, configPath, nil, nil)
 		close(done)
 	}()
 
@@ -1683,7 +1700,7 @@ func TestRunFileWatchChannelClosed(t *testing.T) {
 	done := make(chan struct{})
 
 	go func() {
-		runFileWatch(context.Background(), watcher, testConfigFile, nil)
+		runFileWatch(context.Background(), watcher, testConfigFile, nil, nil)
 		close(done)
 	}()
 
@@ -1726,7 +1743,7 @@ func TestRunFileWatchErrorChannel(t *testing.T) {
 	done := make(chan struct{})
 
 	go func() {
-		runFileWatch(ctx, watcher, configPath, nil)
+		runFileWatch(ctx, watcher, configPath, nil, nil)
 		close(done)
 	}()
 
@@ -1829,12 +1846,14 @@ func TestHandleReloadLogLevel(t *testing.T) {
 		t.Fatalf("loading config: %v", err)
 	}
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	met := metrics.New()
+
+	verif, err := verifier.New(cfg, met, nil)
 	if err != nil {
 		t.Fatalf("creating verifier: %v", err)
 	}
 
-	handleReload(context.Background(), configPath, verif, nil)
+	handleReload(context.Background(), configPath, verif, met, nil)
 
 	if logLevelVar.Level() != slog.LevelDebug {
 		t.Errorf("expected log level DEBUG after reload, got %v", logLevelVar.Level())
@@ -1863,12 +1882,14 @@ func TestHandleReloadNoLogLevel(t *testing.T) {
 		t.Fatalf("loading config: %v", err)
 	}
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	met := metrics.New()
+
+	verif, err := verifier.New(cfg, met, nil)
 	if err != nil {
 		t.Fatalf("creating verifier: %v", err)
 	}
 
-	handleReload(context.Background(), configPath, verif, nil)
+	handleReload(context.Background(), configPath, verif, met, nil)
 
 	// Without log_level in config, the level should remain unchanged.
 	if logLevelVar.Level() != slog.LevelDebug {

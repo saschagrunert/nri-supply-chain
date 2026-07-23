@@ -91,7 +91,7 @@ func TestVerify(t *testing.T) {
 		pol        *policy.Policy
 		wantPassed bool
 		wantReject bool
-		wantStatus string
+		wantStatus types.CheckStatus
 		wantErr    error
 	}{
 		{

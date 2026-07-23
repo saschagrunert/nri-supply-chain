@@ -27,6 +27,7 @@ import (
 const (
 	namespace      = "nri_supply_chain"
 	labelType      = "type"
+	labelResult    = "result"
 	labelNamespace = "namespace"
 	labelRegistry  = "registry"
 
@@ -58,7 +59,13 @@ type Metrics struct {
 	TrustedRootStaleTotal prometheus.Counter
 	// CacheFailureHitsTotal counts cache hits that returned a previously cached failure result.
 	CacheFailureHitsTotal prometheus.Counter
-	registry              *prometheus.Registry
+	// BuildInfo exposes version and Go metadata as a constant gauge.
+	BuildInfo *prometheus.GaugeVec
+	// ConfigReloadsTotal counts successful configuration reloads.
+	ConfigReloadsTotal prometheus.Counter
+	// ConfigReloadErrorsTotal counts failed configuration reloads.
+	ConfigReloadErrorsTotal prometheus.Counter
+	registry                *prometheus.Registry
 }
 
 // New creates and registers all supply chain verification metrics.
@@ -67,58 +74,101 @@ func New() *Metrics {
 		VerificationTotal:        newVerificationTotal(),
 		VerificationDuration:     newVerificationDuration(),
 		VerificationSkippedTotal: newVerificationSkipped(),
-		CacheHitsTotal: prometheus.NewCounter(prometheus.CounterOpts{
-			Namespace: namespace,
-			Name:      "cache_hits_total",
-			Help:      "Total number of verification cache hits.",
-		}),
-		CacheMissesTotal: prometheus.NewCounter(prometheus.CounterOpts{
-			Namespace: namespace,
-			Name:      "cache_misses_total",
-			Help:      "Total number of verification cache misses.",
-		}),
-		CacheEntriesTotal: prometheus.NewGauge(prometheus.GaugeOpts{
-			Namespace: namespace,
-			Name:      "cache_entries",
-			Help:      "Current number of entries in the verification cache.",
-		}),
-		FetchErrorsTotal: prometheus.NewCounterVec(
-			prometheus.CounterOpts{
-				Namespace: namespace,
-				Name:      "fetch_errors_total",
-				Help:      "Total number of attestation fetch errors.",
-			},
-			[]string{labelType, labelRegistry},
+		CacheHitsTotal: newCounter(
+			"cache_hits_total",
+			"Total number of verification cache hits.",
 		),
-		InflightDedupTotal: prometheus.NewCounter(prometheus.CounterOpts{
-			Namespace: namespace,
-			Name:      "inflight_dedup_total",
-			Help:      "Total number of deduplicated inflight verifications.",
-		}),
-		CircuitBreakerTripsTotal: prometheus.NewCounterVec(
-			prometheus.CounterOpts{
-				Namespace: namespace,
-				Name:      "circuit_breaker_trips_total",
-				Help:      "Total number of times the fetch circuit breaker opened.",
-			},
-			[]string{labelRegistry},
+		CacheMissesTotal: newCounter(
+			"cache_misses_total",
+			"Total number of verification cache misses.",
 		),
-		TrustedRootStaleTotal: prometheus.NewCounter(prometheus.CounterOpts{
-			Namespace: namespace,
-			Name:      "trusted_root_stale_total",
-			Help:      "Total number of times a stale trusted root was served from cache.",
-		}),
-		CacheFailureHitsTotal: prometheus.NewCounter(prometheus.CounterOpts{
-			Namespace: namespace,
-			Name:      "cache_failure_hits_total",
-			Help:      "Total number of cache hits that returned a previously cached failure result.",
-		}),
+		CacheEntriesTotal: newGauge(
+			"cache_entries",
+			"Current number of entries in the verification cache.",
+		),
+		FetchErrorsTotal: newCounterVec(
+			"fetch_errors_total",
+			"Total number of attestation fetch errors.",
+			labelType,
+			labelRegistry,
+		),
+		InflightDedupTotal: newCounter(
+			"inflight_dedup_total",
+			"Total number of deduplicated inflight verifications.",
+		),
+		CircuitBreakerTripsTotal: newCounterVec(
+			"circuit_breaker_trips_total",
+			"Total number of times the fetch circuit breaker opened.",
+			labelRegistry,
+		),
+		TrustedRootStaleTotal: newCounter(
+			"trusted_root_stale_total",
+			"Total number of times a stale trusted root was served from cache.",
+		),
+		CacheFailureHitsTotal: newCounter(
+			"cache_failure_hits_total",
+			"Total number of cache hits that returned a previously cached failure result.",
+		),
+		BuildInfo: newGaugeVec(
+			"build_info",
+			"Build and version information.",
+			"version",
+			"goversion",
+		),
+		ConfigReloadsTotal: newCounter(
+			"config_reloads_total",
+			"Total number of successful configuration reloads.",
+		),
+		ConfigReloadErrorsTotal: newCounter(
+			"config_reload_errors_total",
+			"Total number of failed configuration reloads.",
+		),
 		registry: prometheus.NewRegistry(),
 	}
 
 	met.register()
 
 	return met
+}
+
+//nolint:ireturn // prometheus API returns interface
+func newCounter(name, help string) prometheus.Counter {
+	return prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: namespace,
+		Name:      name,
+		Help:      help,
+	})
+}
+
+func newCounterVec(name, help string, labels ...string) *prometheus.CounterVec {
+	return prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      name,
+			Help:      help,
+		},
+		labels,
+	)
+}
+
+//nolint:ireturn // prometheus API returns interface
+func newGauge(name, help string) prometheus.Gauge {
+	return prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Name:      name,
+		Help:      help,
+	})
+}
+
+func newGaugeVec(name, help string, labels ...string) *prometheus.GaugeVec {
+	return prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      name,
+			Help:      help,
+		},
+		labels,
+	)
 }
 
 func newVerificationTotal() *prometheus.CounterVec {
@@ -128,7 +178,7 @@ func newVerificationTotal() *prometheus.CounterVec {
 			Name:      "verification_total",
 			Help:      "Total number of supply chain verification attempts.",
 		},
-		[]string{labelType, "result", labelNamespace},
+		[]string{labelType, labelResult, labelNamespace},
 	)
 }
 
@@ -158,6 +208,11 @@ func newVerificationSkipped() *prometheus.CounterVec {
 	)
 }
 
+// SetBuildInfo sets the build info gauge with the given version and Go version.
+func (m *Metrics) SetBuildInfo(version, goVersion string) {
+	m.BuildInfo.WithLabelValues(version, goVersion).Set(1)
+}
+
 // Handler returns the Prometheus HTTP handler for the registered metrics.
 func (m *Metrics) Handler() http.Handler {
 	return promhttp.HandlerFor(m.registry, promhttp.HandlerOpts{})
@@ -183,6 +238,9 @@ func (m *Metrics) register() {
 		m.CircuitBreakerTripsTotal,
 		m.TrustedRootStaleTotal,
 		m.CacheFailureHitsTotal,
+		m.BuildInfo,
+		m.ConfigReloadsTotal,
+		m.ConfigReloadErrorsTotal,
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{
 			PidFn:        nil,
 			Namespace:    "",

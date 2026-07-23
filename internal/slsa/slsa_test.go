@@ -97,8 +97,8 @@ func TestVerify(t *testing.T) {
 		digest     string
 		wantErr    error
 		wantPass   bool
-		wantType   string
-		wantStatus string
+		wantType   types.CheckType
+		wantStatus types.CheckStatus
 	}{
 		{
 			name: "valid statement",

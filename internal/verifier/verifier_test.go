@@ -17,8 +17,6 @@ package verifier_test
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -69,7 +67,7 @@ func TestVerify(t *testing.T) {
 				t.Helper()
 
 				dir := t.TempDir()
-				writePolicy(t, dir, "default.json", `{
+				testutil.WritePolicy(t, dir, "default.json", `{
 					"trust": {"builders": [{"id": "test", "maxLevel": 2}]},
 					"slsa": {"missingPolicy": "deny"}
 				}`)
@@ -87,7 +85,7 @@ func TestVerify(t *testing.T) {
 				t.Helper()
 
 				dir := t.TempDir()
-				writePolicy(t, dir, "default.json", `{
+				testutil.WritePolicy(t, dir, "default.json", `{
 					"trust": {"builders": [{"id": "test", "maxLevel": 2}]},
 					"slsa": {"missingPolicy": "deny"}
 				}`)
@@ -105,7 +103,7 @@ func TestVerify(t *testing.T) {
 				t.Helper()
 
 				dir := t.TempDir()
-				writePolicy(t, dir, "default.json", `{
+				testutil.WritePolicy(t, dir, "default.json", `{
 					"exclude": ["gcr.io/internal/*"],
 					"trust": {"builders": [{"id": "test", "maxLevel": 3}]},
 					"slsa": {"missingPolicy": "deny"}
@@ -124,7 +122,7 @@ func TestVerify(t *testing.T) {
 				t.Helper()
 
 				dir := t.TempDir()
-				writePolicy(t, dir, "default.json", `{}`)
+				testutil.WritePolicy(t, dir, "default.json", `{}`)
 
 				return dir
 			},
@@ -139,7 +137,7 @@ func TestVerify(t *testing.T) {
 				t.Helper()
 
 				dir := t.TempDir()
-				writePolicy(t, dir, "default.json", `{
+				testutil.WritePolicy(t, dir, "default.json", `{
 					"trust": {"builders": [{"id": "test", "maxLevel": 3}]},
 					"slsa": {"missingPolicy": "allow"}
 				}`)
@@ -157,7 +155,7 @@ func TestVerify(t *testing.T) {
 				t.Helper()
 
 				dir := t.TempDir()
-				writePolicy(t, dir, "default.json", `{
+				testutil.WritePolicy(t, dir, "default.json", `{
 					"trust": {"builders": [{"id": "test", "maxLevel": 3}]},
 					"slsa": {"missingPolicy": "warn"}
 				}`)
@@ -199,7 +197,7 @@ func TestVerify(t *testing.T) {
 				t.Helper()
 
 				dir := t.TempDir()
-				writePolicy(t, dir, "default.json", `{
+				testutil.WritePolicy(t, dir, "default.json", `{
 					"slsa": {"missingPolicy": "allow"},
 					"vex": {"missingPolicy": "deny"}
 				}`)
@@ -269,7 +267,7 @@ func TestVerifyCache(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	writePolicy(t, dir, "default.json", `{}`)
+	testutil.WritePolicy(t, dir, "default.json", `{}`)
 
 	cfg := config.DefaultConfig()
 	cfg.Verification = config.ModeWarn
@@ -302,7 +300,7 @@ func TestVerifyCacheWarnMode(t *testing.T) {
 	// but warn mode overrides to Allowed=true. The cached result must also
 	// be Allowed=true on subsequent lookups.
 	dir := t.TempDir()
-	writePolicy(t, dir, "default.json", `{
+	testutil.WritePolicy(t, dir, "default.json", `{
 		"trust": {"builders": [{"id": "test", "maxLevel": 2}]},
 		"slsa": {"missingPolicy": "deny"}
 	}`)
@@ -347,7 +345,7 @@ func TestVerifyCacheEnforceMode(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	writePolicy(t, dir, "default.json", `{
+	testutil.WritePolicy(t, dir, "default.json", `{
 		"trust": {"builders": [{"id": "test", "maxLevel": 2}]},
 		"slsa": {"missingPolicy": "deny"}
 	}`)
@@ -383,11 +381,11 @@ func TestVerifyNamespacePolicy(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	writePolicy(t, dir, "default.json", `{
+	testutil.WritePolicy(t, dir, "default.json", `{
 		"trust": {"builders": [{"id": "test", "maxLevel": 3}]},
 		"slsa": {"missingPolicy": "deny"}
 	}`)
-	writePolicy(t, dir, "staging.json", `{
+	testutil.WritePolicy(t, dir, "staging.json", `{
 		"slsa": {"missingPolicy": "allow"}
 	}`)
 
@@ -429,7 +427,7 @@ func TestNew(t *testing.T) {
 				t.Helper()
 
 				dir := t.TempDir()
-				writePolicy(t, dir, "bad.json", `{invalid json}`)
+				testutil.WritePolicy(t, dir, "bad.json", `{invalid json}`)
 
 				cfg := config.DefaultConfig()
 				cfg.Verification = config.ModeWarn
@@ -487,7 +485,7 @@ func TestReload(t *testing.T) {
 				t.Helper()
 
 				dir := t.TempDir()
-				writePolicy(t, dir, "default.json", `{}`)
+				testutil.WritePolicy(t, dir, "default.json", `{}`)
 
 				cfg := config.DefaultConfig()
 				cfg.Verification = config.ModeEnforce
@@ -503,7 +501,7 @@ func TestReload(t *testing.T) {
 				t.Helper()
 
 				dir := t.TempDir()
-				writePolicy(t, dir, "bad.json", `{invalid json}`)
+				testutil.WritePolicy(t, dir, "bad.json", `{invalid json}`)
 
 				cfg := config.DefaultConfig()
 				cfg.Verification = config.ModeEnforce
@@ -526,7 +524,7 @@ func TestReload(t *testing.T) {
 				t.Helper()
 
 				dir := t.TempDir()
-				writePolicy(t, dir, "default.json", `{}`)
+				testutil.WritePolicy(t, dir, "default.json", `{}`)
 
 				cfg := config.DefaultConfig()
 				cfg.Verification = config.ModeWarn
@@ -543,7 +541,7 @@ func TestReload(t *testing.T) {
 			t.Parallel()
 
 			dir := t.TempDir()
-			writePolicy(t, dir, "default.json", `{}`)
+			testutil.WritePolicy(t, dir, "default.json", `{}`)
 
 			cfg := config.DefaultConfig()
 			cfg.Verification = config.ModeWarn
@@ -572,7 +570,7 @@ func TestReloadPreservesCacheWhenConfigUnchanged(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	writePolicy(t, dir, "default.json", `{}`)
+	testutil.WritePolicy(t, dir, "default.json", `{}`)
 
 	cfg := config.DefaultConfig()
 	cfg.Verification = config.ModeWarn
@@ -610,7 +608,7 @@ func TestReloadClearsCacheWhenCacheFailureTTLChanges(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	writePolicy(t, dir, "default.json", `{}`)
+	testutil.WritePolicy(t, dir, "default.json", `{}`)
 
 	cfg := config.DefaultConfig()
 	cfg.Verification = config.ModeWarn
@@ -649,7 +647,7 @@ func TestReloadClearsCacheWhenPolicyChanges(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	writePolicy(t, dir, "default.json", `{}`)
+	testutil.WritePolicy(t, dir, "default.json", `{}`)
 
 	cfg := config.DefaultConfig()
 	cfg.Verification = config.ModeWarn
@@ -664,7 +662,7 @@ func TestReloadClearsCacheWhenPolicyChanges(t *testing.T) {
 	)
 	testutil.AssertNoError(t, err)
 
-	writePolicy(t, dir, "default.json", `{"slsa":{"missingPolicy":"deny"}}`)
+	testutil.WritePolicy(t, dir, "default.json", `{"slsa":{"missingPolicy":"deny"}}`)
 
 	reloadCfg := config.DefaultConfig()
 	reloadCfg.Verification = config.ModeWarn
@@ -684,11 +682,7 @@ func TestReloadClearsCacheWhenPolicyChanges(t *testing.T) {
 	}
 }
 
-const (
-	testDockerNginx    = "docker.io/library/nginx:latest"
-	testCheckTypeSlsa  = "slsa"
-	testCheckTypeFetch = "fetch"
-)
+const testDockerNginx = "docker.io/library/nginx:latest"
 
 func TestBuildDigestRef(t *testing.T) {
 	t.Parallel()
@@ -758,7 +752,7 @@ func TestReady(t *testing.T) {
 		t.Parallel()
 
 		dir := t.TempDir()
-		writePolicy(t, dir, "default.json", `{}`)
+		testutil.WritePolicy(t, dir, "default.json", `{}`)
 
 		cfg := config.DefaultConfig()
 		cfg.Verification = config.ModeWarn
@@ -828,7 +822,7 @@ func TestResultHasFailures(t *testing.T) {
 				Allowed: true,
 				Reason:  "partial",
 				CheckResults: []types.CheckResult{{
-					Type: testCheckTypeSlsa, Passed: false,
+					Type: types.CheckTypeSLSA, Passed: false,
 					Status: types.StatusFail, Detail: "err",
 				}},
 			},
@@ -840,7 +834,7 @@ func TestResultHasFailures(t *testing.T) {
 				Allowed: true,
 				Reason:  "ok",
 				CheckResults: []types.CheckResult{{
-					Type: testCheckTypeSlsa, Passed: true,
+					Type: types.CheckTypeSLSA, Passed: true,
 					Status: types.StatusPass, Detail: "ok",
 				}},
 			},
@@ -883,7 +877,7 @@ func TestResultShouldUseShorterTTL(t *testing.T) {
 				Allowed: true,
 				Reason:  "ok",
 				CheckResults: []types.CheckResult{{
-					Type: testCheckTypeFetch, Passed: true,
+					Type: types.CheckTypeFetch, Passed: true,
 					Status: types.StatusWarn, Detail: "fetch failed",
 				}},
 			},
@@ -895,7 +889,7 @@ func TestResultShouldUseShorterTTL(t *testing.T) {
 				Allowed: true,
 				Reason:  "ok",
 				CheckResults: []types.CheckResult{{
-					Type: testCheckTypeSlsa, Passed: true,
+					Type: types.CheckTypeSLSA, Passed: true,
 					Status: types.StatusPass, Detail: "ok",
 				}},
 			},
@@ -980,7 +974,7 @@ func TestHandleMissingAttestationUnknownPolicy(t *testing.T) {
 		name       string
 		pol        policy.Action
 		wantPassed bool
-		wantStatus string
+		wantStatus types.CheckStatus
 	}{
 		{
 			name:       "allow policy passes",
@@ -1025,7 +1019,7 @@ func TestHandleMissingAttestationUnknownPolicy(t *testing.T) {
 			t.Parallel()
 
 			result := verifier.ExportHandleMissingAttestation(
-				test.pol, "test_check", "test detail",
+				test.pol, types.CheckTypeSLSA, "test detail",
 			)
 
 			if result.Passed != test.wantPassed {
@@ -1036,8 +1030,8 @@ func TestHandleMissingAttestationUnknownPolicy(t *testing.T) {
 				t.Errorf("expected Status=%q, got %q", test.wantStatus, result.Status)
 			}
 
-			if result.Type != "test_check" {
-				t.Errorf("expected Type=%q, got %q", "test_check", result.Type)
+			if result.Type != types.CheckTypeSLSA {
+				t.Errorf("expected Type=%q, got %q", types.CheckTypeSLSA, result.Type)
 			}
 		})
 	}
@@ -1064,39 +1058,39 @@ func TestCombineResults(t *testing.T) {
 		},
 		{
 			name:        "both pass",
-			slsa:        types.PassResult("slsa", "ok"),
-			vex:         types.PassResult("vex", "ok"),
+			slsa:        types.PassResult(types.CheckTypeSLSA, "ok"),
+			vex:         types.PassResult(types.CheckTypeVEX, "ok"),
 			wantAllowed: true,
 			wantReason:  "",
 			wantChecks:  2,
 		},
 		{
 			name:        "slsa fails",
-			slsa:        types.FailResult("slsa", "missing"),
-			vex:         types.PassResult("vex", "ok"),
+			slsa:        types.FailResult(types.CheckTypeSLSA, "missing"),
+			vex:         types.PassResult(types.CheckTypeVEX, "ok"),
 			wantAllowed: false,
 			wantReason:  "missing",
 			wantChecks:  2,
 		},
 		{
 			name:        "both fail",
-			slsa:        types.FailResult("slsa", "slsa bad"),
-			vex:         types.FailResult("vex", "vex bad"),
+			slsa:        types.FailResult(types.CheckTypeSLSA, "slsa bad"),
+			vex:         types.FailResult(types.CheckTypeVEX, "vex bad"),
 			wantAllowed: false,
 			wantReason:  "slsa bad; vex bad",
 			wantChecks:  2,
 		},
 		{
 			name:        "slsa warn",
-			slsa:        types.WarnResult("slsa", "slsa warning"),
-			vex:         types.PassResult("vex", "ok"),
+			slsa:        types.WarnResult(types.CheckTypeSLSA, "slsa warning"),
+			vex:         types.PassResult(types.CheckTypeVEX, "ok"),
 			wantAllowed: true,
 			wantReason:  "slsa warning",
 			wantChecks:  2,
 		},
 		{
 			name:        "only slsa",
-			slsa:        types.PassResult("slsa", "ok"),
+			slsa:        types.PassResult(types.CheckTypeSLSA, "ok"),
 			vex:         nil,
 			wantAllowed: true,
 			wantReason:  "",
@@ -1127,11 +1121,13 @@ func TestCombineResults(t *testing.T) {
 func TestApplyCheckResult(t *testing.T) {
 	t.Parallel()
 
+	const testCheckType types.CheckType = "test"
+
 	t.Run("fail sets allowed false and appends reason", func(t *testing.T) {
 		t.Parallel()
 
 		result := &types.Result{Allowed: true, Reason: "existing", CheckResults: nil}
-		check := types.FailResult("test", "new failure")
+		check := types.FailResult(testCheckType, "new failure")
 		verifier.ExportApplyCheckResult(result, check)
 
 		if result.Allowed {
@@ -1147,7 +1143,7 @@ func TestApplyCheckResult(t *testing.T) {
 		t.Parallel()
 
 		result := &types.Result{Allowed: true, Reason: "", CheckResults: nil}
-		check := types.WarnResult("test", "warning detail")
+		check := types.WarnResult(testCheckType, "warning detail")
 		verifier.ExportApplyCheckResult(result, check)
 
 		if !result.Allowed {
@@ -1163,7 +1159,7 @@ func TestApplyCheckResult(t *testing.T) {
 		t.Parallel()
 
 		result := &types.Result{Allowed: true, Reason: "", CheckResults: nil}
-		check := types.PassResult("test", "ok")
+		check := types.PassResult(testCheckType, "ok")
 		verifier.ExportApplyCheckResult(result, check)
 
 		if !result.Allowed {
@@ -1174,13 +1170,4 @@ func TestApplyCheckResult(t *testing.T) {
 			t.Errorf("expected empty reason, got %q", result.Reason)
 		}
 	})
-}
-
-func writePolicy(t *testing.T, dir, name, content string) {
-	t.Helper()
-
-	err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600)
-	if err != nil {
-		t.Fatalf("writing policy: %v", err)
-	}
 }

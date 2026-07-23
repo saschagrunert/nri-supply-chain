@@ -27,7 +27,7 @@ func ExportBuildDigestRef(imageRef, digest string) string {
 
 // ExportHandleMissingAttestation exposes handleMissingAttestation for external tests.
 func ExportHandleMissingAttestation(
-	pol policy.Action, checkType, detail string,
+	pol policy.Action, checkType types.CheckType, detail string,
 ) *types.CheckResult {
 	return handleMissingAttestation(pol, checkType, detail)
 }
@@ -43,8 +43,8 @@ func ExportCacheAffectingFieldsChanged(prev, next *config.Config) bool {
 }
 
 // ExportCombineResults exposes combineResults for external tests.
-func ExportCombineResults(slsaResult, vexResult *types.CheckResult) *types.Result {
-	return combineResults(slsaResult, vexResult)
+func ExportCombineResults(checks ...*types.CheckResult) *types.Result {
+	return combineResults(checks...)
 }
 
 // ExportApplyCheckResult exposes applyCheckResult for external tests.

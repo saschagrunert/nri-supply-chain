@@ -61,6 +61,30 @@ func TestNewMetrics(t *testing.T) {
 	if met.VerificationSkippedTotal == nil {
 		t.Error("expected VerificationSkippedTotal to be set")
 	}
+
+	if met.CircuitBreakerTripsTotal == nil {
+		t.Error("expected CircuitBreakerTripsTotal to be set")
+	}
+
+	if met.TrustedRootStaleTotal == nil {
+		t.Error("expected TrustedRootStaleTotal to be set")
+	}
+
+	if met.CacheFailureHitsTotal == nil {
+		t.Error("expected CacheFailureHitsTotal to be set")
+	}
+
+	if met.BuildInfo == nil {
+		t.Error("expected BuildInfo to be set")
+	}
+
+	if met.ConfigReloadsTotal == nil {
+		t.Error("expected ConfigReloadsTotal to be set")
+	}
+
+	if met.ConfigReloadErrorsTotal == nil {
+		t.Error("expected ConfigReloadErrorsTotal to be set")
+	}
 }
 
 func TestMetricsHandler(t *testing.T) {
@@ -136,6 +160,8 @@ func TestMetricsIncrement(t *testing.T) {
 	met.VerificationTotal.WithLabelValues("vex", "fail", "production").Inc()
 	met.VerificationDuration.WithLabelValues("slsa").Observe(0.5)
 	met.VerificationSkippedTotal.WithLabelValues("excluded", "default").Inc()
+	met.ConfigReloadsTotal.Inc()
+	met.ConfigReloadErrorsTotal.Inc()
 
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequestWithContext(
@@ -171,9 +197,45 @@ func TestMetricsIncrement(t *testing.T) {
 		`nri_supply_chain_verification_total{namespace="default",result="pass",type="slsa"} 1`,
 		`nri_supply_chain_verification_total{namespace="production",result="fail",type="vex"} 1`,
 		`nri_supply_chain_verification_skipped_total{namespace="default",reason="excluded"} 1`,
+		`nri_supply_chain_config_reloads_total 1`,
+		`nri_supply_chain_config_reload_errors_total 1`,
 	} {
 		if !strings.Contains(bodyStr, expected) {
 			t.Errorf("expected %q in metrics output", expected)
 		}
+	}
+}
+
+func TestSetBuildInfo(t *testing.T) {
+	t.Parallel()
+
+	met := metrics.New()
+	met.SetBuildInfo("1.2.3", "go1.26.5")
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(
+		context.Background(), http.MethodGet, "/metrics", http.NoBody,
+	)
+	met.Handler().ServeHTTP(recorder, req)
+
+	resp := recorder.Result()
+
+	defer func() {
+		closeErr := resp.Body.Close()
+		if closeErr != nil {
+			t.Fatalf("closing response body: %v", closeErr)
+		}
+	}()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading response body: %v", err)
+	}
+
+	bodyStr := string(body)
+
+	expected := `nri_supply_chain_build_info{goversion="go1.26.5",version="1.2.3"} 1`
+	if !strings.Contains(bodyStr, expected) {
+		t.Errorf("expected %q in metrics output", expected)
 	}
 }

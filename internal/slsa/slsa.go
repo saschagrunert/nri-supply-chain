@@ -28,7 +28,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
-const checkType = "slsa"
+const checkType = types.CheckTypeSLSA
 
 var (
 	// ErrSubjectDigestMismatch indicates the provenance subject does not match the image digest.

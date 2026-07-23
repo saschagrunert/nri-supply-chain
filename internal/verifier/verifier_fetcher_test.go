@@ -576,7 +576,7 @@ func TestVerifyWithFetcher(t *testing.T) {
 				policyJSON = strings.ReplaceAll(policyJSON, "/etc/keys/v.pub", keyPath)
 			}
 
-			writePolicy(t, dir, "default.json", policyJSON)
+			testutil.WritePolicy(t, dir, "default.json", policyJSON)
 
 			cfg := config.DefaultConfig()
 			cfg.Verification = test.mode
@@ -643,7 +643,7 @@ func TestVerifyCacheFailureTTL(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	writePolicy(t, dir, "default.json", `{
+	testutil.WritePolicy(t, dir, "default.json", `{
 		"trust": {"builders": [{"id": "test", "maxLevel": 2}]},
 		"slsa": {"missingPolicy": "deny"}
 	}`)
@@ -718,7 +718,7 @@ func TestVerifyConcurrentSameDigest(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	writePolicy(t, dir, "default.json", `{}`)
+	testutil.WritePolicy(t, dir, "default.json", `{}`)
 
 	fetcher := &countingFetcher{
 		calls: atomic.Int32{},
@@ -763,7 +763,7 @@ func TestVerifyCircuitBreakerIntegration(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	writePolicy(t, dir, "default.json", `{}`)
+	testutil.WritePolicy(t, dir, "default.json", `{}`)
 
 	fetcher := &failingFetcher{calls: atomic.Int32{}}
 
@@ -833,7 +833,7 @@ func TestVerifyCircuitBreakerMetric(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	writePolicy(t, dir, "default.json", `{}`)
+	testutil.WritePolicy(t, dir, "default.json", `{}`)
 
 	fetcher := &failingFetcher{calls: atomic.Int32{}}
 
@@ -901,7 +901,7 @@ func TestVerifyConcurrentWithReloadModeSwitch(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	writePolicy(t, dir, "default.json", `{}`)
+	testutil.WritePolicy(t, dir, "default.json", `{}`)
 
 	fetcher := &countingFetcher{
 		calls: atomic.Int32{},
@@ -965,7 +965,7 @@ func TestVerifyConcurrentWithReload(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	writePolicy(t, dir, "default.json", `{}`)
+	testutil.WritePolicy(t, dir, "default.json", `{}`)
 
 	fetcher := &countingFetcher{
 		calls: atomic.Int32{},
@@ -1090,7 +1090,7 @@ func TestVerifyIndexDigestFallback(t *testing.T) {
 		t.Parallel()
 
 		dir := t.TempDir()
-		writePolicy(t, dir, "default.json", policyTrustRunnerJSON)
+		testutil.WritePolicy(t, dir, "default.json", policyTrustRunnerJSON)
 
 		cfg := config.DefaultConfig()
 		cfg.Verification = config.ModeEnforce
@@ -1126,7 +1126,7 @@ func TestVerifyIndexDigestFallback(t *testing.T) {
 		t.Parallel()
 
 		dir := t.TempDir()
-		writePolicy(t, dir, "default.json", policyTrustRunnerJSON)
+		testutil.WritePolicy(t, dir, "default.json", policyTrustRunnerJSON)
 
 		cfg := config.DefaultConfig()
 		cfg.Verification = config.ModeEnforce
@@ -1166,7 +1166,7 @@ func TestVerifyIndexDigestFallback(t *testing.T) {
 		t.Parallel()
 
 		dir := t.TempDir()
-		writePolicy(t, dir, "default.json", policyTrustRunnerJSON)
+		testutil.WritePolicy(t, dir, "default.json", policyTrustRunnerJSON)
 
 		cfg := config.DefaultConfig()
 		cfg.Verification = config.ModeEnforce

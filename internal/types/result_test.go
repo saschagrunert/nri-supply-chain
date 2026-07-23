@@ -23,9 +23,9 @@ import (
 func TestPassResult(t *testing.T) {
 	t.Parallel()
 
-	result := types.PassResult("slsa", "verified")
+	result := types.PassResult(types.CheckTypeSLSA, "verified")
 
-	if result.Type != "slsa" {
+	if result.Type != types.CheckTypeSLSA {
 		t.Errorf("expected type slsa, got %q", result.Type)
 	}
 
@@ -45,9 +45,9 @@ func TestPassResult(t *testing.T) {
 func TestWarnResult(t *testing.T) {
 	t.Parallel()
 
-	result := types.WarnResult("vex", "under investigation")
+	result := types.WarnResult(types.CheckTypeVEX, "under investigation")
 
-	if result.Type != "vex" {
+	if result.Type != types.CheckTypeVEX {
 		t.Errorf("expected type vex, got %q", result.Type)
 	}
 
@@ -67,9 +67,9 @@ func TestWarnResult(t *testing.T) {
 func TestFailResult(t *testing.T) {
 	t.Parallel()
 
-	result := types.FailResult("vsa", "untrusted verifier")
+	result := types.FailResult(types.CheckTypeVSA, "untrusted verifier")
 
-	if result.Type != "vsa" {
+	if result.Type != types.CheckTypeVSA {
 		t.Errorf("expected type vsa, got %q", result.Type)
 	}
 
@@ -89,9 +89,9 @@ func TestFailResult(t *testing.T) {
 func TestSoftFailResult(t *testing.T) {
 	t.Parallel()
 
-	result := types.SoftFailResult("vsa", "stale verifier")
+	result := types.SoftFailResult(types.CheckTypeVSA, "stale verifier")
 
-	if result.Type != "vsa" {
+	if result.Type != types.CheckTypeVSA {
 		t.Errorf("expected type vsa, got %q", result.Type)
 	}
 

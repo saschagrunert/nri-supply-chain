@@ -18,8 +18,6 @@ import (
 	"context"
 	"errors"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -140,7 +138,7 @@ func TestCreateContainerEnforceReject(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	writePolicy(t, dir, "default.json", `{
+	testutil.WritePolicy(t, dir, "default.json", `{
 		"trust": {
 			"builders": [{"id": "test", "maxLevel": 3}]
 		},
@@ -171,7 +169,7 @@ func TestCreateContainerWarnAllow(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	writePolicy(t, dir, "default.json", `{
+	testutil.WritePolicy(t, dir, "default.json", `{
 		"trust": {
 			"builders": [{"id": "test", "maxLevel": 3}]
 		},
@@ -215,7 +213,7 @@ func TestConfigureWithNRIConfig(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	writePolicy(t, dir, "default.json", `{}`)
+	testutil.WritePolicy(t, dir, "default.json", `{}`)
 
 	cfg := config.DefaultConfig()
 	met := metrics.New()
@@ -483,7 +481,7 @@ func TestResolveImageContainerdDigestFromImageName(t *testing.T) {
 func TestSynchronizePrewarm(t *testing.T) {
 	t.Parallel()
 
-	plug := newTestPlugin(t, config.ModeDisabled, "")
+	plug, done := newTestPluginWithPrewarmSignal(t, config.ModeDisabled, "")
 
 	pods := []*api.PodSandbox{
 		{Id: testPodID, Namespace: testNamespace, Name: testPodName},
@@ -508,8 +506,7 @@ func TestSynchronizePrewarm(t *testing.T) {
 		t.Error("expected nil updates")
 	}
 
-	// Give the prewarm goroutine time to complete.
-	time.Sleep(100 * time.Millisecond)
+	waitForPrewarm(t, done)
 }
 
 func TestSynchronizeNoContainers(t *testing.T) {
@@ -530,7 +527,7 @@ func TestSynchronizeNoContainers(t *testing.T) {
 func TestSynchronizeDeduplicates(t *testing.T) {
 	t.Parallel()
 
-	plug := newTestPlugin(t, config.ModeDisabled, "")
+	plug, done := newTestPluginWithPrewarmSignal(t, config.ModeDisabled, "")
 
 	pods := []*api.PodSandbox{
 		{Id: testPodID, Namespace: testNamespace, Name: testPodName},
@@ -564,7 +561,7 @@ func TestSynchronizeDeduplicates(t *testing.T) {
 		t.Error("expected nil updates")
 	}
 
-	time.Sleep(100 * time.Millisecond)
+	waitForPrewarm(t, done)
 }
 
 func newTestPlugin(t *testing.T, mode config.VerificationMode, policyDir string) *plugin.Plugin {
@@ -585,12 +582,27 @@ func newTestPlugin(t *testing.T, mode config.VerificationMode, policyDir string)
 	return plugin.New(v, met, "", 30*time.Second)
 }
 
-func writePolicy(t *testing.T, dir, filename, content string) {
+func newTestPluginWithPrewarmSignal(
+	t *testing.T, mode config.VerificationMode, policyDir string,
+) (plug *plugin.Plugin, done <-chan struct{}) {
 	t.Helper()
 
-	err := os.WriteFile(filepath.Join(dir, filename), []byte(content), 0o600)
-	if err != nil {
-		t.Fatalf("writing policy: %v", err)
+	plug = newTestPlugin(t, mode, policyDir)
+
+	ch := make(chan struct{}, 1)
+
+	plug.ExportSetPrewarmDone(func() { ch <- struct{}{} })
+
+	return plug, ch
+}
+
+func waitForPrewarm(t *testing.T, done <-chan struct{}) {
+	t.Helper()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for prewarm to complete")
 	}
 }
 
@@ -598,14 +610,14 @@ func TestSynchronizePrewarmVerifyError(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	writePolicy(t, dir, "default.json", `{
+	testutil.WritePolicy(t, dir, "default.json", `{
 		"trust": {
 			"builders": [{"id": "test", "maxLevel": 3}]
 		},
 		"slsa": {"missingPolicy": "deny"}
 	}`)
 
-	plug := newTestPlugin(t, config.ModeEnforce, dir)
+	plug, done := newTestPluginWithPrewarmSignal(t, config.ModeEnforce, dir)
 
 	pods := []*api.PodSandbox{
 		{Id: testPodID, Namespace: testNamespace, Name: testPodName},
@@ -630,14 +642,13 @@ func TestSynchronizePrewarmVerifyError(t *testing.T) {
 		t.Error("expected nil updates")
 	}
 
-	// Give the prewarm goroutine time to complete.
-	time.Sleep(200 * time.Millisecond)
+	waitForPrewarm(t, done)
 }
 
 func TestSynchronizePrewarmCancelledContext(t *testing.T) {
 	t.Parallel()
 
-	plug := newTestPlugin(t, config.ModeDisabled, "")
+	plug, done := newTestPluginWithPrewarmSignal(t, config.ModeDisabled, "")
 
 	pods := []*api.PodSandbox{
 		{Id: testPodID, Namespace: testNamespace, Name: testPodName},
@@ -672,14 +683,13 @@ func TestSynchronizePrewarmCancelledContext(t *testing.T) {
 		t.Error("expected nil updates")
 	}
 
-	// Give the prewarm goroutine time to complete (it should exit quickly).
-	time.Sleep(200 * time.Millisecond)
+	waitForPrewarm(t, done)
 }
 
 func TestSynchronizeSkipsMissingAnnotations(t *testing.T) {
 	t.Parallel()
 
-	plug := newTestPlugin(t, config.ModeDisabled, "")
+	plug, done := newTestPluginWithPrewarmSignal(t, config.ModeDisabled, "")
 
 	pods := []*api.PodSandbox{
 		{Id: testPodID, Namespace: testNamespace, Name: testPodName},
@@ -712,8 +722,7 @@ func TestSynchronizeSkipsMissingAnnotations(t *testing.T) {
 		t.Error("expected nil updates")
 	}
 
-	// Give the prewarm goroutine time to complete.
-	time.Sleep(100 * time.Millisecond)
+	waitForPrewarm(t, done)
 }
 
 func TestPrewarmCacheDirectCancel(t *testing.T) {
@@ -731,6 +740,7 @@ func TestPrewarmCacheDirectCancel(t *testing.T) {
 			"sha256:"+idx+hexPad[:64-len(idx)],
 			"",
 			testNamespace,
+			"container-"+idx,
 		)
 	}
 
@@ -747,7 +757,7 @@ func TestCreateContainerResolvesDigestWhenMissing(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	writePolicy(t, dir, "default.json", `{
+	testutil.WritePolicy(t, dir, "default.json", `{
 		"slsa": {"missingPolicy": "allow"},
 		"vex": {"missingPolicy": "allow"}
 	}`)
@@ -849,7 +859,7 @@ func TestCreateContainerSkipsResolveWhenDigestPresent(t *testing.T) {
 func TestSynchronizeResolvesDigestForPrewarm(t *testing.T) {
 	t.Parallel()
 
-	plug := newTestPlugin(t, config.ModeDisabled, "")
+	plug, done := newTestPluginWithPrewarmSignal(t, config.ModeDisabled, "")
 	plug.ExportSetDigestResolver(func(_ context.Context, _ string) (string, string, error) {
 		return testDigest, "", nil
 	})
@@ -876,7 +886,7 @@ func TestSynchronizeResolvesDigestForPrewarm(t *testing.T) {
 		t.Error("expected nil updates")
 	}
 
-	time.Sleep(100 * time.Millisecond)
+	waitForPrewarm(t, done)
 }
 
 func TestSynchronizeResolveDigestFailureSkipsContainer(t *testing.T) {
@@ -908,8 +918,6 @@ func TestSynchronizeResolveDigestFailureSkipsContainer(t *testing.T) {
 	if updates != nil {
 		t.Error("expected nil updates")
 	}
-
-	time.Sleep(100 * time.Millisecond)
 }
 
 func TestDefaultDigestResolverSingleImage(t *testing.T) {

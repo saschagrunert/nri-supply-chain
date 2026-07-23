@@ -45,9 +45,10 @@ var (
 )
 
 const (
-	maxConcurrentFetches = 50
-	defaultPolicyLabel   = "default"
-	warmTimeout          = 30 * time.Second
+	maxConcurrentFetches   = 50
+	defaultPolicyLabel     = "default"
+	warmTimeout            = 30 * time.Second
+	maxVerificationTimeout = 5 * time.Minute
 )
 
 type snapshot struct {
@@ -414,8 +415,12 @@ func (v *Verifier) verifyOnce(
 
 		// Use context.WithoutCancel so the verification completes even if
 		// the triggering request is cancelled. Other waiters on DoChan
-		// should not inherit this caller's cancellation.
-		checkCtx := context.WithoutCancel(ctx)
+		// should not inherit this caller's cancellation. A hard timeout
+		// bounds resource usage when a registry is unresponsive.
+		checkCtx, checkCancel := context.WithTimeout(
+			context.WithoutCancel(ctx), maxVerificationTimeout,
+		)
+		defer checkCancel()
 
 		result := runChecks(checkCtx, state, pol, imageRef, digest, indexDigest, namespace)
 

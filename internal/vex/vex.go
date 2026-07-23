@@ -31,7 +31,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
-const checkType = "vex"
+const checkType = types.CheckTypeVEX
 
 var (
 	// ErrInvalidVEX indicates the VEX document could not be parsed.
