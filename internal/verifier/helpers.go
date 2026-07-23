@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"path"
 	"strings"
 
 	"github.com/google/go-containerregistry/pkg/name"
@@ -171,11 +170,11 @@ func buildDigestRef(imageRef, digest string) string {
 	return ref.Context().Digest(digest).String()
 }
 
-// isExcluded uses path.Match: '*' matches non-'/' characters only, so patterns
-// must account for the full registry/namespace/image depth.
+// isExcluded checks whether imageRef matches any exclude glob pattern.
+// '*' matches non-'/' characters, '**' matches any characters including '/'.
 func isExcluded(ctx context.Context, excludedImages []string, imageRef string) bool {
 	for _, pattern := range excludedImages {
-		matched, err := path.Match(pattern, imageRef)
+		matched, err := attestation.GlobMatch(pattern, imageRef)
 		if err != nil {
 			slog.DebugContext(ctx, "Malformed exclude pattern",
 				"pattern", pattern,

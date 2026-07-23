@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path"
 	"slices"
 	"strings"
 
@@ -228,8 +227,9 @@ func verifyBuildType(buildType string, pol *policy.Policy) error {
 	return fmt.Errorf("%w: %q", ErrUntrustedBuildType, buildType)
 }
 
-// verifySources uses path.Match: '*' matches non-'/' characters only, so
-// "github.com/org/*" matches "github.com/org/repo" but not deeper paths.
+// verifySources checks whether the provenance source matches any trusted
+// source pattern. '*' matches non-'/' characters, '**' matches any
+// characters including '/'.
 func verifySources(params map[string]any, pol *policy.Policy) error {
 	if pol.Trust == nil || len(pol.Trust.Sources) == 0 {
 		return nil
@@ -246,7 +246,7 @@ func verifySources(params map[string]any, pol *policy.Policy) error {
 	}
 
 	for _, pattern := range pol.Trust.Sources {
-		matched, err := path.Match(pattern, source)
+		matched, err := attestation.GlobMatch(pattern, source)
 		if err != nil {
 			return fmt.Errorf("invalid source pattern %q: %w", pattern, err)
 		}

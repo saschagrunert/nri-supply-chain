@@ -48,8 +48,8 @@ teardown_file() {
 @test "different namespace same image is a cache miss" {
 	local ns1="cache-ns1"
 	local ns2="cache-ns2"
-	kubectl create namespace "$ns1" 2>/dev/null || true
-	kubectl create namespace "$ns2" 2>/dev/null || true
+	register_namespace "$ns1"
+	register_namespace "$ns2"
 	wait_for_service_account "$ns1"
 	wait_for_service_account "$ns2"
 
@@ -74,11 +74,6 @@ teardown_file() {
 	misses_after=$(curl_metrics | awk '/nri_supply_chain_cache_misses_total/ && !/^#/ {print $2; exit}')
 
 	[[ "${misses_after:-0}" -gt "${misses_before:-0}" ]]
-
-	kubectl delete pods --all -n "$ns1" --force --grace-period=0 2>/dev/null || true
-	kubectl delete pods --all -n "$ns2" --force --grace-period=0 2>/dev/null || true
-	kubectl delete namespace "$ns1" 2>/dev/null || true
-	kubectl delete namespace "$ns2" 2>/dev/null || true
 }
 
 @test "cache disabled with cache_ttl=0s always verifies" {

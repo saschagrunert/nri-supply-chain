@@ -1171,3 +1171,74 @@ func TestApplyCheckResult(t *testing.T) {
 		}
 	})
 }
+
+func TestNewValidateRuntimeError(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{
+		"trust": {
+			"verifiers": [{"id": "v1", "key": "/nonexistent/key.pub"}]
+		}
+	}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+
+	_, err := verifier.New(cfg, metrics.New(), nil)
+	if err == nil {
+		t.Fatal("expected error for nonexistent verifier key file")
+	}
+}
+
+func TestNewValidateEnforceError(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{
+		"trust": {
+			"issuers": ["https://example.com"],
+			"builders": [{"id": "test", "maxLevel": 1}]
+		}
+	}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+	cfg.PolicyDir = dir
+
+	_, err := verifier.New(cfg, metrics.New(), nil)
+	if !errors.Is(err, policy.ErrSANPatternsRequired) {
+		t.Fatalf("expected ErrSANPatternsRequired, got %v", err)
+	}
+}
+
+func TestVerifyExcludeDoubleStarPattern(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{
+		"exclude": ["registry.k8s.io/**"],
+		"trust": {"builders": [{"id": "test", "maxLevel": 3}]},
+		"slsa": {"missingPolicy": "deny"}
+	}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+	cfg.PolicyDir = dir
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	result, err := verif.Verify(
+		context.Background(),
+		"registry.k8s.io/coredns/coredns:v1.12.0",
+		"sha256:abc", "", "default",
+	)
+	testutil.AssertNoError(t, err)
+
+	if !result.Allowed {
+		t.Errorf("expected ** exclude to match nested path, got denied: %s",
+			result.Reason)
+	}
+}

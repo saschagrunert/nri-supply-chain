@@ -201,18 +201,18 @@ func TestPolicyValidateExclude(t *testing.T) {
 
 	runValidateTests(t, []validateTest{
 		{
-			name: "invalid exclude pattern",
+			name: "valid exclude pattern single star",
 			policy: policy.Policy{
-				Trust: nil, Exclude: []string{"[invalid"}, SLSA: nil,
+				Trust: nil, Exclude: []string{"gcr.io/org/*"}, SLSA: nil,
 				VEX: nil, VSA: nil, Signatures: nil,
 			},
-			wantErr:     true,
+			wantErr:     false,
 			expectedErr: nil,
 		},
 		{
-			name: "valid exclude pattern",
+			name: "valid exclude pattern double star",
 			policy: policy.Policy{
-				Trust: nil, Exclude: []string{"gcr.io/org/*"}, SLSA: nil,
+				Trust: nil, Exclude: []string{"registry.k8s.io/**"}, SLSA: nil,
 				VEX: nil, VSA: nil, Signatures: nil,
 			},
 			wantErr:     false,
