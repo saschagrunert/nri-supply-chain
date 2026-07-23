@@ -15,9 +15,21 @@
 package attestation
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 )
+
+// GlobMatch reports whether text matches the glob pattern.
+// '*' matches non-'/' characters, '**' matches any characters including '/'.
+func GlobMatch(pattern, text string) (bool, error) {
+	re, err := regexp.Compile("^" + globToRegex(pattern) + "$")
+	if err != nil {
+		return false, fmt.Errorf("compiling glob pattern %q: %w", pattern, err)
+	}
+
+	return re.MatchString(text), nil
+}
 
 // globToRegex converts a glob pattern to a regex string, consistent with
 // path.Match semantics: '*' matches non-'/' characters, '**' matches any

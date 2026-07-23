@@ -123,9 +123,21 @@ setup() {
 	fi
 }
 
+EXTRA_NAMESPACES=()
+
+register_namespace() {
+	EXTRA_NAMESPACES+=("$1")
+	kubectl create namespace "$1" 2>/dev/null || true
+}
+
 teardown() {
 	kubectl delete pods --all -n "$TEST_NS" --force --grace-period=0 2>/dev/null || true
 	kubectl delete namespace "$TEST_NS" 2>/dev/null || true
+	for ns in "${EXTRA_NAMESPACES[@]}"; do
+		kubectl delete pods --all -n "$ns" --force --grace-period=0 2>/dev/null || true
+		kubectl delete namespace "$ns" 2>/dev/null || true
+	done
+	EXTRA_NAMESPACES=()
 }
 
 wait_for_node_ready() {
@@ -229,6 +241,8 @@ start_plugin() {
 		sleep 1
 		elapsed=$((elapsed + 1))
 	done
+	echo "ERROR: plugin did not connect within 10s" >&2
+	return 1
 }
 
 stop_plugin() {

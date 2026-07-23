@@ -25,11 +25,12 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"path"
 	"path/filepath"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 )
 
 // Action represents a policy action for missing or failed attestations.
@@ -596,7 +597,7 @@ func (p *Policy) validateVerifiers() error {
 
 func validateGlobPatterns(field string, patterns []string) error {
 	for idx, pattern := range patterns {
-		_, err := path.Match(pattern, "")
+		_, err := attestation.GlobMatch(pattern, "")
 		if err != nil {
 			return fmt.Errorf(
 				"invalid %s[%d] pattern %q: %w", field, idx, pattern, err,

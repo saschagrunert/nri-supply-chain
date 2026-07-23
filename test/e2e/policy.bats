@@ -47,7 +47,7 @@ teardown_file() {
 
 @test "namespace-specific policy overrides default" {
 	local ns="production"
-	kubectl create namespace "$ns" 2>/dev/null || true
+	register_namespace "$ns"
 	wait_for_service_account "$ns"
 
 	write_policy "$ns" '{
@@ -61,8 +61,6 @@ teardown_file() {
 		--image "$POLICY_IMAGE" \
 		--restart=Never
 	wait_for_pod_status "ns-override-pod" "Running" 60 "$ns"
-	kubectl delete pod "ns-override-pod" -n "$ns" --force --grace-period=0 2>/dev/null || true
-	kubectl delete namespace "$ns" 2>/dev/null || true
 }
 
 @test "excluded image pattern skips verification" {
@@ -109,7 +107,7 @@ teardown_file() {
 
 @test "missing namespace policy falls back to default" {
 	local ns="nonexistent-policy-ns"
-	kubectl create namespace "$ns" 2>/dev/null || true
+	register_namespace "$ns"
 	wait_for_service_account "$ns"
 
 	kubectl run "fallback-pod" \
@@ -117,9 +115,6 @@ teardown_file() {
 		--image "$POLICY_IMAGE" \
 		--restart=Never || true
 	assert_log_contains "Container rejected"
-
-	kubectl delete pods --all -n "$ns" --force --grace-period=0 2>/dev/null || true
-	kubectl delete namespace "$ns" 2>/dev/null || true
 }
 
 @test "empty policy allows pod" {
@@ -220,7 +215,7 @@ teardown_file() {
 
 @test "namespace policy with inherits merges with default" {
 	local ns="inherit-ns"
-	kubectl create namespace "$ns" 2>/dev/null || true
+	register_namespace "$ns"
 	wait_for_service_account "$ns"
 
 	write_policy "$ns" '{
@@ -238,7 +233,4 @@ teardown_file() {
 	# Default policy still denies in the default namespace.
 	run_pod "inherit-default-pod" "$POLICY_IMAGE" || true
 	assert_log_contains "Container rejected"
-
-	kubectl delete pod "inherit-pod" -n "$ns" --force --grace-period=0 2>/dev/null || true
-	kubectl delete namespace "$ns" 2>/dev/null || true
 }

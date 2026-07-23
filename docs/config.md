@@ -68,7 +68,7 @@ default for that namespace. By default this is a full replacement; set
     "sources": ["github.com/myorg/*"],
     "buildTypes": ["https://actions.github.io/buildtypes/workflow/v1"]
   },
-  "exclude": ["test-*", "dev-*"],
+  "exclude": ["test-*", "registry.k8s.io/**"],
   "slsa": {
     "missingPolicy": "deny",
     "rejectUnknownParameters": true,

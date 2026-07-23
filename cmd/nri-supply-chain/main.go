@@ -724,6 +724,10 @@ func handleFileEvent(
 	}
 
 	return time.AfterFunc(fileWatchDebounce, func() {
+		if ctx.Err() != nil {
+			return
+		}
+
 		handleReload(ctx, configPath, verif, met, watcher)
 	})
 }

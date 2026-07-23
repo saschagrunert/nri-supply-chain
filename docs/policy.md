@@ -130,7 +130,7 @@ Skip verification for known base images or internal tooling:
 
 ```json
 {
-  "exclude": ["gcr.io/distroless/*", "registry.k8s.io/pause:*"],
+  "exclude": ["gcr.io/distroless/*", "registry.k8s.io/**"],
   "trust": {
     "builders": [
       {
@@ -159,13 +159,15 @@ Trust roots for verification. All sub-fields are optional.
 | `verifiers`   | array | Trusted VSA verifiers. Each entry has `id` (URI) and an optional `key` (absolute path to PEM public key). When `key` is set, it is also used for Sigstore bundle signature verification. When `key` is omitted, bundles are verified via keyless (Fulcio/OIDC) using `issuers` and `sanPatterns`, which must be configured.                                                                                                                                                                   |
 | `issuers`     | array | Trusted OIDC issuers for keyless (Fulcio) verification.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `sanPatterns` | array | Accepted certificate Subject Alternative Names. Supports glob patterns: `*` matches any non-`/` sequence, `**` matches any characters including `/`, `?` matches a single non-`/` character, `[...]` matches a character class. Use `**` for GitHub Actions OIDC SANs that include workflow paths (e.g., `https://github.com/org/repo/**`). Required when `issuers` is set in `enforce` mode. In `warn` mode, omitting this field accepts any SAN from a trusted issuer (with a log warning). |
-| `sources`     | array | Allowed source repository glob patterns (Go `path.Match` syntax).                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `sources`     | array | Allowed source repository glob patterns. Supports the same glob syntax as `sanPatterns`: `*` matches non-`/` characters, `**` matches any characters including `/`.                                                                                                                                                                                                                                                                                                                           |
 | `buildTypes`  | array | Accepted build type URIs for SLSA provenance.                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 ### `exclude` (array of strings)
 
-Glob patterns for images that skip verification entirely. Uses Go `path.Match`
-semantics where `*` matches any non-`/` sequence.
+Glob patterns for images that skip verification entirely. `*` matches any
+non-`/` sequence (single path segment), `**` matches any characters including
+`/` (multiple segments). For example, `registry.k8s.io/**` excludes all images
+under `registry.k8s.io` regardless of nesting depth.
 
 ### `slsa` (object)
 
@@ -333,18 +335,18 @@ semantics:
 
 ### `exclude` and `trust.sources`
 
-These use Go `path.Match` semantics:
+These fields support glob patterns with the same syntax as `sanPatterns`:
 
-- `*` matches any sequence of non-`/` characters
+- `*` matches any sequence of non-`/` characters (single path segment)
+- `**` matches any characters including `/` (multiple path segments)
 - `?` matches any single non-`/` character
 - `[abc]` matches any character in the set
-- `**` (globstar) is **not** supported
 
 Patterns are matched against the full image reference as received from the
-container runtime, including registry and path components. Patterns must
-account for the full registry/namespace/image depth. For example,
+container runtime, including registry and path components. For example,
 `registry.io/org/*` matches `registry.io/org/repo` but not
-`registry.io/org/team/repo`. Use multiple patterns for nested paths.
+`registry.io/org/team/repo`. Use `registry.io/org/**` to match any nesting
+depth.
 
 Common mistake: writing `nginx:*` as an exclude pattern will not match
 `docker.io/library/nginx:latest` because `*` does not cross `/` boundaries.
