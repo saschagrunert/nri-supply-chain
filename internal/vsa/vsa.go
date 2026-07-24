@@ -42,6 +42,11 @@ const (
 	minSLSAVersion = "1.0"
 
 	clockSkewTolerance = 60 * time.Second
+
+	// maxReasonableAge caps the computed age to prevent time.Duration overflow
+	// on crafted timestamps (e.g., year 0001). time.Duration is int64
+	// nanoseconds, overflowing at ~292 years.
+	maxReasonableAge = 200 * 365 * 24 * time.Hour
 )
 
 var (
@@ -338,6 +343,10 @@ func verifyFreshness(timeVerified string, pol *policy.Policy) error {
 
 	if age < 0 {
 		age = 0
+	}
+
+	if age > maxReasonableAge {
+		return fmt.Errorf("%w: timestamp %s is unreasonably old", ErrStaleVSA, timeVerified)
 	}
 
 	if pol.VSA == nil || pol.VSA.MaxAge == "" {

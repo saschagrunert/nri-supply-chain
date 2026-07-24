@@ -144,9 +144,9 @@ func WarnEnforceDefaults(cfg *config.Config, policies map[string]*policy.Policy)
 	}
 
 	switch cfg.FetchFailurePolicy {
-	case policy.ActionDeny:
+	case types.ActionDeny:
 		// Desired state for enforce mode; no warning needed.
-	case policy.ActionWarn:
+	case types.ActionWarn:
 		slog.Warn(
 			"enforce mode with default fetch_failure_policy=warn allows containers on fetch failure; "+
 				"consider setting fetch_failure_policy=deny",
@@ -155,7 +155,7 @@ func WarnEnforceDefaults(cfg *config.Config, policies map[string]*policy.Policy)
 			"circuit_breaker_threshold",
 			cfg.CircuitBreakerThreshold,
 		)
-	case policy.ActionAllow:
+	case types.ActionAllow:
 		slog.Warn(
 			"enforce mode with fetch_failure_policy=allow allows containers on fetch failure; "+
 				"consider setting fetch_failure_policy=deny",
@@ -170,7 +170,7 @@ func WarnEnforceDefaults(cfg *config.Config, policies map[string]*policy.Policy)
 			label = defaultPolicyLabel
 		}
 
-		if pol.SLSAMissingPolicy() == policy.ActionAllow {
+		if pol.SLSAMissingPolicy() == types.ActionAllow {
 			slog.Warn("enforce mode with default SLSA missing_policy=allow allows "+
 				"containers without SLSA provenance attestations; consider setting missingPolicy=deny",
 				"policy", label,
@@ -178,7 +178,7 @@ func WarnEnforceDefaults(cfg *config.Config, policies map[string]*policy.Policy)
 			)
 		}
 
-		if pol.VEXMissingPolicy() == policy.ActionAllow {
+		if pol.VEXMissingPolicy() == types.ActionAllow {
 			slog.Warn("enforce mode with default VEX missing_policy=allow allows "+
 				"containers without VEX attestations; consider setting vex.missingPolicy=deny",
 				"policy", label,

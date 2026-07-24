@@ -31,6 +31,8 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/verify"
 	"golang.org/x/sync/singleflight"
 	"golang.org/x/time/rate"
+
+	"github.com/saschagrunert/nri-supply-chain/internal/glob"
 )
 
 // ExportDefaultVerifyBundle exposes verifyBundleWithCache (nil cache) for external tests.
@@ -46,9 +48,9 @@ func ExportBuildCertificateID(issuers, sanPatterns []string) (verify.Certificate
 	return buildCertificateIdentity(issuers, sanPatterns)
 }
 
-// ExportGlobToRegex exposes globToRegex for external tests.
+// ExportGlobToRegex exposes glob.ToRegex for external tests.
 func ExportGlobToRegex(pattern string) string {
-	return globToRegex(pattern)
+	return glob.ToRegex(pattern)
 }
 
 // ExportBuildKeyMaterial exposes buildKeyMaterial for external tests.

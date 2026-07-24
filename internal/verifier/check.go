@@ -475,14 +475,14 @@ func binAttestations(attestations []attestation.VerifiedAttestation) attestation
 }
 
 func handleMissingAttestation(
-	pol policy.Action, checkType types.CheckType, detail string,
+	pol types.Action, checkType types.CheckType, detail string,
 ) *types.CheckResult {
 	switch pol {
-	case policy.ActionDeny:
+	case types.ActionDeny:
 		return types.FailResult(checkType, detail)
-	case policy.ActionWarn:
+	case types.ActionWarn:
 		return types.WarnResult(checkType, detail)
-	case policy.ActionAllow:
+	case types.ActionAllow:
 		return types.PassResult(checkType, detail)
 	default:
 		slog.Warn("Unrecognized missing attestation policy, defaulting to deny",

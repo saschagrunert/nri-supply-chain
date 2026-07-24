@@ -34,6 +34,7 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/verify"
 	"github.com/sigstore/sigstore/pkg/signature"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/glob"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
@@ -238,7 +239,7 @@ func buildCertificateIdentity(issuers, sanPatterns []string) (verify.Certificate
 	if len(sanPatterns) > 0 {
 		converted := make([]string, len(sanPatterns))
 		for idx, p := range sanPatterns {
-			converted[idx] = globToRegex(p)
+			converted[idx] = glob.ToRegex(p)
 		}
 
 		sanRegex = "^(?:" + strings.Join(converted, "|") + ")$"

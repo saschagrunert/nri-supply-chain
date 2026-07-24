@@ -27,7 +27,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"github.com/saschagrunert/nri-supply-chain/internal/policy"
+	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
 // VerificationMode controls the supply chain verification behavior.
@@ -120,7 +120,7 @@ type Config struct {
 	FetchTimeout Duration `toml:"fetch_timeout"`
 	// FetchFailurePolicy controls behavior when attestation fetch fails due to
 	// network errors. Valid values: "allow", "warn" (default), "deny".
-	FetchFailurePolicy policy.Action `toml:"fetch_failure_policy"`
+	FetchFailurePolicy types.Action `toml:"fetch_failure_policy"`
 	// CacheTTL is how long verification results are cached per image digest + namespace.
 	CacheTTL Duration `toml:"cache_ttl"`
 	// CacheFailureTTL is how long failed verification results are cached.
@@ -151,7 +151,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		Verification:            ModeDisabled,
 		FetchTimeout:            Duration{Duration: defaultFetchTimeout},
-		FetchFailurePolicy:      policy.ActionWarn,
+		FetchFailurePolicy:      types.ActionWarn,
 		CacheTTL:                Duration{Duration: defaultCacheTTL},
 		CacheFailureTTL:         Duration{Duration: defaultCacheFailureTTL},
 		PolicyDir:               "/etc/nri-supply-chain/policies",
@@ -238,7 +238,7 @@ func (c *Config) validateMetricsAddr() error {
 }
 
 func (c *Config) validateFetchAndCache() error {
-	err := policy.ValidateAction("fetch_failure_policy", c.FetchFailurePolicy)
+	err := types.ValidateAction("fetch_failure_policy", c.FetchFailurePolicy)
 	if err != nil {
 		return fmt.Errorf("validating config: %w", err)
 	}
@@ -301,25 +301,11 @@ func (c *Config) validateResilienceFields() error {
 
 // LoadFromFile reads and parses a TOML config file.
 func LoadFromFile(path string) (*Config, error) {
-	cfg := DefaultConfig()
-
-	meta, err := toml.DecodeFile(path, cfg)
+	cfg, err := load(func(cfg *Config) (toml.MetaData, error) {
+		return toml.DecodeFile(path, cfg)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("reading config file %q: %w", path, err)
-	}
-
-	if undecoded := meta.Undecoded(); len(undecoded) > 0 {
-		keys := make([]string, len(undecoded))
-		for i, k := range undecoded {
-			keys[i] = k.String()
-		}
-
-		return nil, fmt.Errorf("%w: %s", ErrUnknownConfigKeys, strings.Join(keys, ", "))
-	}
-
-	err = cfg.Validate()
-	if err != nil {
-		return nil, fmt.Errorf("validating config: %w", err)
+		return nil, fmt.Errorf("config file %q: %w", path, err)
 	}
 
 	return cfg, nil
@@ -327,11 +313,17 @@ func LoadFromFile(path string) (*Config, error) {
 
 // LoadFromString parses a TOML config string.
 func LoadFromString(data string) (*Config, error) {
+	return load(func(cfg *Config) (toml.MetaData, error) {
+		return toml.Decode(data, cfg)
+	})
+}
+
+func load(decode func(*Config) (toml.MetaData, error)) (*Config, error) {
 	cfg := DefaultConfig()
 
-	meta, err := toml.Decode(data, cfg)
+	meta, err := decode(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("parsing config: %w", err)
+		return nil, fmt.Errorf("decoding config: %w", err)
 	}
 
 	if undecoded := meta.Undecoded(); len(undecoded) > 0 {

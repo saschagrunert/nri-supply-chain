@@ -141,7 +141,9 @@ must pass verification.
    rejecting. See [docs/verification.md](docs/verification.md) for the
    full verification flow.
 
-5. Deploy the plugin (see [Deployment](docs/deployment.md) for all options):
+5. Deploy the plugin (requires NRI enabled on the container runtime, see
+   [Runtime Requirements](docs/deployment.md#runtime-requirements)).
+   Edit the placeholder values (`myorg`) in the ConfigMap before deploying:
 
    ```console
    kubectl apply -f deploy/kubernetes/

@@ -24,6 +24,7 @@ import (
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
+	"github.com/saschagrunert/nri-supply-chain/internal/glob"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
@@ -126,7 +127,7 @@ func recordBreakerFailure(
 	breaker *attestation.CircuitBreaker,
 	met *metrics.Metrics,
 	host string,
-	fetchFailurePolicy policy.Action,
+	fetchFailurePolicy types.Action,
 ) {
 	if breaker == nil {
 		return
@@ -174,7 +175,7 @@ func buildDigestRef(imageRef, digest string) string {
 // '*' matches non-'/' characters, '**' matches any characters including '/'.
 func isExcluded(ctx context.Context, excludedImages []string, imageRef string) bool {
 	for _, pattern := range excludedImages {
-		matched, err := attestation.GlobMatch(pattern, imageRef)
+		matched, err := glob.Match(pattern, imageRef)
 		if err != nil {
 			slog.DebugContext(ctx, "Malformed exclude pattern",
 				"pattern", pattern,

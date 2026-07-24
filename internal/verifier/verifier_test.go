@@ -972,25 +972,25 @@ func TestHandleMissingAttestationUnknownPolicy(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		pol        policy.Action
+		pol        types.Action
 		wantPassed bool
 		wantStatus types.CheckStatus
 	}{
 		{
 			name:       "allow policy passes",
-			pol:        policy.ActionAllow,
+			pol:        types.ActionAllow,
 			wantPassed: true,
 			wantStatus: types.StatusPass,
 		},
 		{
 			name:       "warn policy passes with warn status",
-			pol:        policy.ActionWarn,
+			pol:        types.ActionWarn,
 			wantPassed: true,
 			wantStatus: types.StatusWarn,
 		},
 		{
 			name:       "deny policy fails",
-			pol:        policy.ActionDeny,
+			pol:        types.ActionDeny,
 			wantPassed: false,
 			wantStatus: types.StatusFail,
 		},

@@ -16,7 +16,6 @@ package verifier
 
 import (
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
-	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
@@ -27,7 +26,7 @@ func ExportBuildDigestRef(imageRef, digest string) string {
 
 // ExportHandleMissingAttestation exposes handleMissingAttestation for external tests.
 func ExportHandleMissingAttestation(
-	pol policy.Action, checkType types.CheckType, detail string,
+	pol types.Action, checkType types.CheckType, detail string,
 ) *types.CheckResult {
 	return handleMissingAttestation(pol, checkType, detail)
 }

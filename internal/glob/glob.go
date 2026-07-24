@@ -12,18 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package attestation
+// Package glob provides glob-to-regex pattern matching for supply chain policy evaluation.
+package glob
 
 import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 )
 
-// GlobMatch reports whether text matches the glob pattern.
+// Bounded by the number of distinct glob patterns in loaded policy files.
+var compiledPatterns sync.Map //nolint:gochecknoglobals // cache compiled regexps
+
+// Match reports whether text matches the glob pattern.
 // '*' matches non-'/' characters, '**' matches any characters including '/'.
-func GlobMatch(pattern, text string) (bool, error) {
-	re, err := regexp.Compile("^" + globToRegex(pattern) + "$")
+// Compiled regexps are cached for repeated calls with the same pattern.
+func Match(pattern, text string) (bool, error) {
+	re, err := compile(pattern)
 	if err != nil {
 		return false, fmt.Errorf("compiling glob pattern %q: %w", pattern, err)
 	}
@@ -31,13 +37,30 @@ func GlobMatch(pattern, text string) (bool, error) {
 	return re.MatchString(text), nil
 }
 
-// globToRegex converts a glob pattern to a regex string, consistent with
+func compile(pattern string) (*regexp.Regexp, error) {
+	if cached, ok := compiledPatterns.Load(pattern); ok {
+		if compiled, ok := cached.(*regexp.Regexp); ok {
+			return compiled, nil
+		}
+	}
+
+	compiled, err := regexp.Compile("^" + ToRegex(pattern) + "$")
+	if err != nil {
+		return nil, fmt.Errorf("compiling regexp: %w", err)
+	}
+
+	compiledPatterns.Store(pattern, compiled)
+
+	return compiled, nil
+}
+
+// ToRegex converts a glob pattern to a regex string, consistent with
 // path.Match semantics: '*' matches non-'/' characters, '**' matches any
 // characters including '/', '?' matches a single non-'/' character, and
 // '[...]' character classes have backslash escapes consumed to prevent
 // glob/regex semantic divergence (e.g. [\d] in glob matches only 'd', not
 // the regex digit class).
-func globToRegex(pattern string) string {
+func ToRegex(pattern string) string {
 	var builder strings.Builder
 
 	runes := []rune(pattern)
