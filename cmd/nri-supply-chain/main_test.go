@@ -815,8 +815,9 @@ func writeValidationPolicy(t *testing.T, dir, filename, content string) {
 
 // --- outputVerifyResult tests ---
 
-//nolint:paralleltest // captures os.Stdout
 func TestOutputVerifyResultAllowed(t *testing.T) {
+	t.Parallel()
+
 	checks := []checkEntry{
 		{Type: "slsa", Passed: true, Status: "pass", Detail: "verified"},
 	}
@@ -854,8 +855,9 @@ func TestOutputVerifyResultAllowed(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // captures os.Stdout
 func TestOutputVerifyResultDenied(t *testing.T) {
+	t.Parallel()
+
 	out := captureVerifyOutput(t, "evil:latest", "sha256:bad", "prod", false, "failed checks", nil)
 
 	if out.Allowed {
@@ -878,36 +880,13 @@ func captureVerifyOutput(
 ) verifyOutput {
 	t.Helper()
 
-	origStdout := os.Stdout
-
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("creating pipe: %v", err)
-	}
-
-	os.Stdout = w
-
-	outputVerifyResult(imageRef, digest, namespace, allowed, reason, checks)
-
-	err = w.Close()
-	if err != nil {
-		os.Stdout = origStdout
-
-		t.Fatalf("closing write pipe: %v", err)
-	}
-
-	os.Stdout = origStdout
-
 	var buf bytes.Buffer
 
-	_, err = io.Copy(&buf, r)
-	if err != nil {
-		t.Fatalf("reading pipe: %v", err)
-	}
+	outputVerifyResult(&buf, imageRef, digest, namespace, allowed, reason, checks)
 
 	var out verifyOutput
 
-	err = json.Unmarshal(buf.Bytes(), &out)
+	err := json.Unmarshal(buf.Bytes(), &out)
 	if err != nil {
 		t.Fatalf("invalid JSON output: %v\nraw: %s", err, buf.String())
 	}

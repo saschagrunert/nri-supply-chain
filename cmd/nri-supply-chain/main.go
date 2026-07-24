@@ -21,6 +21,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -32,6 +33,8 @@ import (
 
 	"github.com/containerd/nri/pkg/stub"
 	"github.com/fsnotify/fsnotify"
+	"github.com/google/go-containerregistry/pkg/authn"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
@@ -540,12 +543,14 @@ func runVerify(opts *options, cfg *config.Config) int {
 	checks := convertCheckResults(result)
 
 	if err != nil {
-		outputVerifyResult(imageRef, digest, namespace, false, err.Error(), checks)
+		outputVerifyResult(os.Stdout, imageRef, digest, namespace, false, err.Error(), checks)
 
 		return 1
 	}
 
-	outputVerifyResult(imageRef, digest, namespace, result.Allowed, result.Reason, checks)
+	outputVerifyResult(
+		os.Stdout, imageRef, digest, namespace, result.Allowed, result.Reason, checks,
+	)
 
 	if !result.Allowed {
 		return 1
@@ -582,7 +587,9 @@ func resolveDigest(imageRef string, timeout time.Duration) (resolvedDigest, erro
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	digest, indexDigest, err := registry.ResolveDigest(ctx, imageRef)
+	digest, indexDigest, err := registry.ResolveDigest(ctx, imageRef,
+		remote.WithAuthFromKeychain(authn.DefaultKeychain),
+	)
 	if err != nil {
 		return resolvedDigest{}, fmt.Errorf("resolving digest: %w", err)
 	}
@@ -591,6 +598,7 @@ func resolveDigest(imageRef string, timeout time.Duration) (resolvedDigest, erro
 }
 
 func outputVerifyResult(
+	writer io.Writer,
 	imageRef, digest, namespace string,
 	allowed bool, reason string, checks []checkEntry,
 ) {
@@ -603,7 +611,7 @@ func outputVerifyResult(
 		CheckResults: checks,
 	}
 
-	enc := json.NewEncoder(os.Stdout)
+	enc := json.NewEncoder(writer)
 	enc.SetIndent("", "  ")
 
 	encErr := enc.Encode(out)
@@ -673,6 +681,8 @@ func runFileWatch(
 
 		case event, ok := <-watcher.Events:
 			if !ok {
+				slog.Warn("File watcher events channel closed")
+
 				return
 			}
 
@@ -680,6 +690,8 @@ func runFileWatch(
 
 		case watchErr, ok := <-watcher.Errors:
 			if !ok {
+				slog.Warn("File watcher errors channel closed")
+
 				return
 			}
 

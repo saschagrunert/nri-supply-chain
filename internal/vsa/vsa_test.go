@@ -386,6 +386,17 @@ func TestVerify(t *testing.T) {
 			wantErr:    nil,
 		},
 		{
+			name: "unreasonably old timestamp rejected",
+			modify: func(s *vsa.Statement) {
+				s.Predicate.TimeVerified = "0001-01-01T00:00:00Z"
+			},
+			pol:        trustedPolicy(),
+			wantPassed: false,
+			wantReject: false,
+			wantStatus: types.StatusWarn,
+			wantErr:    nil,
+		},
+		{
 			name:   "invalid max age duration",
 			modify: nil,
 			pol: &policy.Policy{

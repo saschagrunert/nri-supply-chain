@@ -25,6 +25,12 @@ import (
 // Bounded by the number of distinct glob patterns in loaded policy files.
 var compiledPatterns sync.Map //nolint:gochecknoglobals // cache compiled regexps
 
+// ResetCache clears the compiled regexp cache. Call this after a config reload
+// so stale patterns from old policies do not persist.
+func ResetCache() {
+	compiledPatterns.Clear()
+}
+
 // Match reports whether text matches the glob pattern.
 // '*' matches non-'/' characters, '**' matches any characters including '/'.
 // Compiled regexps are cached for repeated calls with the same pattern.
