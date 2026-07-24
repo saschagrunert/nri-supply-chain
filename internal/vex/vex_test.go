@@ -151,7 +151,7 @@ func TestVerify(t *testing.T) {
 			name: "under investigation warn",
 			doc:  validVEXDoc(openvex.StatusUnderInvestigation),
 			pol: &policy.Policy{
-				VEX: &policy.VEXPolicy{UnderInvestigationPolicy: policy.ActionWarn},
+				VEX: &policy.VEXPolicy{UnderInvestigationPolicy: types.ActionWarn},
 			},
 			wantPassed: true,
 			wantStatus: types.StatusWarn,
@@ -160,7 +160,7 @@ func TestVerify(t *testing.T) {
 			name: "under investigation deny",
 			doc:  validVEXDoc(openvex.StatusUnderInvestigation),
 			pol: &policy.Policy{
-				VEX: &policy.VEXPolicy{UnderInvestigationPolicy: policy.ActionDeny},
+				VEX: &policy.VEXPolicy{UnderInvestigationPolicy: types.ActionDeny},
 			},
 			wantPassed: false,
 			wantStatus: types.StatusFail,
@@ -687,7 +687,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		result, err := vex.VerifyMultiple(
 			context.Background(), attestations,
 			&policy.Policy{
-				VEX: &policy.VEXPolicy{UnderInvestigationPolicy: policy.ActionWarn},
+				VEX: &policy.VEXPolicy{UnderInvestigationPolicy: types.ActionWarn},
 			},
 			testImageRef, testDigest,
 		)

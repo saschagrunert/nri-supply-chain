@@ -278,7 +278,7 @@ func buildOCIPURL(imageRef, imageDigest string) string {
 }
 
 func handleUnderInvestigation(pol *policy.Policy) *types.CheckResult {
-	uiPolicy := policy.ActionAllow
+	uiPolicy := types.ActionAllow
 	if pol.VEX != nil && pol.VEX.UnderInvestigationPolicy != "" {
 		uiPolicy = pol.VEX.UnderInvestigationPolicy
 	}
@@ -286,11 +286,11 @@ func handleUnderInvestigation(pol *policy.Policy) *types.CheckResult {
 	detail := "vulnerability under investigation"
 
 	switch uiPolicy {
-	case policy.ActionDeny:
+	case types.ActionDeny:
 		return failResult(detail)
-	case policy.ActionWarn:
+	case types.ActionWarn:
 		return types.WarnResult(checkType, detail)
-	case policy.ActionAllow:
+	case types.ActionAllow:
 		return types.PassResult(checkType, detail)
 	default:
 		return types.PassResult(checkType, detail)

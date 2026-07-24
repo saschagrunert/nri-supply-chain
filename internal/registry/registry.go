@@ -16,17 +16,50 @@
 package registry
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"runtime"
 
+	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 )
 
 // ErrNoPlatformMatch indicates that no image in a manifest list matches the current platform.
 var ErrNoPlatformMatch = errors.New("no matching platform image in manifest list")
+
+// ResolveDigest resolves an image reference to its digest, handling manifest lists
+// by selecting the platform-specific image.
+func ResolveDigest(
+	ctx context.Context,
+	imageRef string,
+	opts ...remote.Option,
+) (digest, indexDigest string, err error) {
+	ref, err := name.ParseReference(imageRef)
+	if err != nil {
+		return "", "", fmt.Errorf("parsing image reference: %w", err)
+	}
+
+	opts = append(opts, remote.WithContext(ctx))
+
+	desc, err := remote.Get(ref, opts...)
+	if err != nil {
+		return "", "", fmt.Errorf("resolving image digest: %w", err)
+	}
+
+	if desc.MediaType.IsIndex() {
+		platformDigest, indexErr := ResolveIndexDigest(desc)
+		if indexErr != nil {
+			return "", "", fmt.Errorf("resolving index digest: %w", indexErr)
+		}
+
+		return platformDigest, desc.Digest.String(), nil
+	}
+
+	return desc.Digest.String(), "", nil
+}
 
 // ResolveIndexDigest extracts the platform-specific digest from a manifest list descriptor.
 func ResolveIndexDigest(desc *remote.Descriptor) (string, error) {

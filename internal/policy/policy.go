@@ -30,21 +30,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
+	"github.com/saschagrunert/nri-supply-chain/internal/glob"
+	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
-
-// Action represents a policy action for missing or failed attestations.
-type Action string
 
 const (
 	maxSLSALevel = 3
-
-	// ActionAllow permits the action.
-	ActionAllow Action = "allow"
-	// ActionWarn logs a warning but permits the action.
-	ActionWarn Action = "warn"
-	// ActionDeny rejects the action.
-	ActionDeny Action = "deny"
 )
 
 var (
@@ -82,9 +73,6 @@ var (
 	ErrTrailingContent = errors.New(
 		"unexpected trailing content in policy file",
 	)
-
-	// ErrInvalidAction indicates an unrecognized policy action value.
-	ErrInvalidAction = errors.New("invalid policy action value")
 
 	// ErrEmptyValue indicates a list contains an empty string.
 	ErrEmptyValue = errors.New("empty value")
@@ -159,7 +147,7 @@ type TrustedVerifier struct {
 // SLSAPolicy contains SLSA provenance verification settings.
 type SLSAPolicy struct {
 	// MissingPolicy controls behavior when no provenance attestation is found.
-	MissingPolicy Action `json:"missingPolicy,omitempty"`
+	MissingPolicy types.Action `json:"missingPolicy,omitempty"`
 	// RejectUnknownParameters rejects provenance with unrecognized externalParameters fields.
 	RejectUnknownParameters bool `json:"rejectUnknownParameters,omitempty"`
 	// KnownParameters lists recognized externalParameters keys when
@@ -171,9 +159,9 @@ type SLSAPolicy struct {
 // VEXPolicy contains VEX verification settings.
 type VEXPolicy struct {
 	// MissingPolicy controls behavior when no VEX attestation is found.
-	MissingPolicy Action `json:"missingPolicy,omitempty"`
+	MissingPolicy types.Action `json:"missingPolicy,omitempty"`
 	// UnderInvestigationPolicy controls behavior for "under_investigation" status.
-	UnderInvestigationPolicy Action `json:"underInvestigationPolicy,omitempty"`
+	UnderInvestigationPolicy types.Action `json:"underInvestigationPolicy,omitempty"`
 }
 
 // VSAPolicy contains Verification Summary Attestation settings.
@@ -195,21 +183,21 @@ type SignaturesPolicy struct {
 }
 
 // SLSAMissingPolicy returns the effective SLSA missing policy.
-func (p *Policy) SLSAMissingPolicy() Action {
+func (p *Policy) SLSAMissingPolicy() types.Action {
 	if p.SLSA != nil && p.SLSA.MissingPolicy != "" {
 		return p.SLSA.MissingPolicy
 	}
 
-	return ActionAllow
+	return types.ActionAllow
 }
 
 // VEXMissingPolicy returns the effective VEX missing policy.
-func (p *Policy) VEXMissingPolicy() Action {
+func (p *Policy) VEXMissingPolicy() types.Action {
 	if p.VEX != nil && p.VEX.MissingPolicy != "" {
 		return p.VEX.MissingPolicy
 	}
 
-	return ActionAllow
+	return types.ActionAllow
 }
 
 // Builders returns the trusted builders list, or nil if trust is not configured.
@@ -597,7 +585,7 @@ func (p *Policy) validateVerifiers() error {
 
 func validateGlobPatterns(field string, patterns []string) error {
 	for idx, pattern := range patterns {
-		_, err := attestation.GlobMatch(pattern, "")
+		_, err := glob.Match(pattern, "")
 		if err != nil {
 			return fmt.Errorf(
 				"invalid %s[%d] pattern %q: %w", field, idx, pattern, err,
@@ -628,7 +616,7 @@ func (p *Policy) validateSLSA() error {
 	}
 
 	if p.SLSA.MissingPolicy != "" {
-		err := ValidateAction(
+		err := types.ValidateAction(
 			"slsa.missingPolicy", p.SLSA.MissingPolicy,
 		)
 		if err != nil {
@@ -652,7 +640,7 @@ func (p *Policy) validateVEX() error {
 	}
 
 	if p.VEX.MissingPolicy != "" {
-		err := ValidateAction(
+		err := types.ValidateAction(
 			"vex.missingPolicy", p.VEX.MissingPolicy,
 		)
 		if err != nil {
@@ -661,7 +649,7 @@ func (p *Policy) validateVEX() error {
 	}
 
 	if p.VEX.UnderInvestigationPolicy != "" {
-		err := ValidateAction(
+		err := types.ValidateAction(
 			"vex.underInvestigationPolicy", p.VEX.UnderInvestigationPolicy,
 		)
 		if err != nil {
@@ -686,19 +674,17 @@ func (p *Policy) validateVSA() error {
 	}
 
 	if p.VSA.MaxAge != "" {
-		d, err := time.ParseDuration(p.VSA.MaxAge)
+		_, err := time.ParseDuration(p.VSA.MaxAge)
 		if err != nil {
 			return fmt.Errorf("invalid vsa.maxAge %q: %w", p.VSA.MaxAge, err)
 		}
-
-		p.VSA.MaxAgeDuration = d
 	}
 
 	return nil
 }
 
 func (p *Policy) initDerived() {
-	if p.VSA != nil && p.VSA.MaxAge != "" && p.VSA.MaxAgeDuration == 0 {
+	if p.VSA != nil && p.VSA.MaxAge != "" {
 		duration, err := time.ParseDuration(p.VSA.MaxAge)
 		if err != nil {
 			slog.Warn("invalid vsa.maxAge in policy, ignoring",
@@ -709,15 +695,5 @@ func (p *Policy) initDerived() {
 		}
 
 		p.VSA.MaxAgeDuration = duration
-	}
-}
-
-// ValidateAction validates that the given value is a valid policy action.
-func ValidateAction(name string, value Action) error {
-	switch value {
-	case ActionAllow, ActionWarn, ActionDeny:
-		return nil
-	default:
-		return fmt.Errorf("%w: %s %q", ErrInvalidAction, name, value)
 	}
 }

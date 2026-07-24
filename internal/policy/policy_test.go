@@ -23,6 +23,7 @@ import (
 
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
+	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
 const (
@@ -235,7 +236,7 @@ func TestPolicyValidateSLSA(t *testing.T) {
 				VEX: nil, VSA: nil, Signatures: nil,
 			},
 			wantErr:     true,
-			expectedErr: policy.ErrInvalidAction,
+			expectedErr: types.ErrInvalidAction,
 		},
 	})
 }
@@ -249,8 +250,8 @@ func TestPolicyValidateVEX(t *testing.T) {
 			policy: policy.Policy{
 				Trust: nil, Exclude: nil, SLSA: nil,
 				VEX: &policy.VEXPolicy{
-					MissingPolicy:            policy.ActionWarn,
-					UnderInvestigationPolicy: policy.ActionAllow,
+					MissingPolicy:            types.ActionWarn,
+					UnderInvestigationPolicy: types.ActionAllow,
 				},
 				VSA: nil, Signatures: nil,
 			},
@@ -295,12 +296,12 @@ func TestSLSAMissingPolicy(t *testing.T) {
 	tests := []struct {
 		name     string
 		policy   policy.Policy
-		expected policy.Action
+		expected types.Action
 	}{
 		{
 			name:     "nil slsa defaults to allow",
 			policy:   emptyPolicy(),
-			expected: policy.ActionAllow,
+			expected: types.ActionAllow,
 		},
 		{
 			name: "empty missing policy defaults to allow",
@@ -311,18 +312,18 @@ func TestSLSAMissingPolicy(t *testing.T) {
 				},
 				VEX: nil, VSA: nil, Signatures: nil,
 			},
-			expected: policy.ActionAllow,
+			expected: types.ActionAllow,
 		},
 		{
 			name: "explicit deny",
 			policy: policy.Policy{
 				Trust: nil, Exclude: nil,
 				SLSA: &policy.SLSAPolicy{
-					MissingPolicy: policy.ActionDeny, RejectUnknownParameters: false,
+					MissingPolicy: types.ActionDeny, RejectUnknownParameters: false,
 				},
 				VEX: nil, VSA: nil, Signatures: nil,
 			},
-			expected: policy.ActionDeny,
+			expected: types.ActionDeny,
 		},
 	}
 
@@ -343,12 +344,12 @@ func TestVEXMissingPolicy(t *testing.T) {
 	tests := []struct {
 		name     string
 		policy   policy.Policy
-		expected policy.Action
+		expected types.Action
 	}{
 		{
 			name:     "nil vex defaults to allow",
 			policy:   emptyPolicy(),
-			expected: policy.ActionAllow,
+			expected: types.ActionAllow,
 		},
 		{
 			name: "empty missing policy defaults to allow",
@@ -360,19 +361,19 @@ func TestVEXMissingPolicy(t *testing.T) {
 				},
 				VSA: nil, Signatures: nil,
 			},
-			expected: policy.ActionAllow,
+			expected: types.ActionAllow,
 		},
 		{
 			name: "explicit deny",
 			policy: policy.Policy{
 				Trust: nil, Exclude: nil, SLSA: nil,
 				VEX: &policy.VEXPolicy{
-					MissingPolicy:            policy.ActionDeny,
+					MissingPolicy:            types.ActionDeny,
 					UnderInvestigationPolicy: "",
 				},
 				VSA: nil, Signatures: nil,
 			},
-			expected: policy.ActionDeny,
+			expected: types.ActionDeny,
 		},
 	}
 
@@ -412,7 +413,7 @@ func TestLoadPolicyValid(t *testing.T) {
 		t.Errorf("unexpected builder ID: %s", pol.Builders()[0].ID)
 	}
 
-	if pol.SLSAMissingPolicy() != policy.ActionWarn {
+	if pol.SLSAMissingPolicy() != types.ActionWarn {
 		t.Errorf("expected warn, got %s", pol.SLSAMissingPolicy())
 	}
 }
@@ -478,7 +479,7 @@ func TestLoadAllNamespaces(t *testing.T) {
 		t.Fatal("expected default policy")
 	}
 
-	if defaultPolicy.SLSAMissingPolicy() != policy.ActionAllow {
+	if defaultPolicy.SLSAMissingPolicy() != types.ActionAllow {
 		t.Errorf(
 			"expected allow, got %s", defaultPolicy.SLSAMissingPolicy(),
 		)
@@ -489,7 +490,7 @@ func TestLoadAllNamespaces(t *testing.T) {
 		t.Fatal("expected production policy")
 	}
 
-	if prodPolicy.SLSAMissingPolicy() != policy.ActionDeny {
+	if prodPolicy.SLSAMissingPolicy() != types.ActionDeny {
 		t.Errorf(
 			"expected deny, got %s", prodPolicy.SLSAMissingPolicy(),
 		)
@@ -543,7 +544,7 @@ func TestPolicyValidateVEXPolicies(t *testing.T) {
 				VSA: nil, Signatures: nil,
 			},
 			wantErr:     true,
-			expectedErr: policy.ErrInvalidAction,
+			expectedErr: types.ErrInvalidAction,
 		},
 		{
 			name: "invalid VEX under investigation policy",
@@ -556,7 +557,7 @@ func TestPolicyValidateVEXPolicies(t *testing.T) {
 				VSA: nil, Signatures: nil,
 			},
 			wantErr:     true,
-			expectedErr: policy.ErrInvalidAction,
+			expectedErr: types.ErrInvalidAction,
 		},
 	})
 }
@@ -679,12 +680,12 @@ func defaultTestPolicy() *policy.Policy {
 		},
 		Exclude: []string{"gcr.io/default/*"},
 		SLSA: &policy.SLSAPolicy{
-			MissingPolicy:           policy.ActionDeny,
+			MissingPolicy:           types.ActionDeny,
 			RejectUnknownParameters: false,
 			KnownParameters:         nil,
 		},
 		VEX: &policy.VEXPolicy{
-			MissingPolicy:            policy.ActionWarn,
+			MissingPolicy:            types.ActionWarn,
 			UnderInvestigationPolicy: "",
 		},
 		VSA: &policy.VSAPolicy{
@@ -741,7 +742,7 @@ func TestMergeWithDefaultInheritsSLSA(t *testing.T) {
 
 	merged := mergedEmptyNamespace()
 	if merged.SLSA == nil ||
-		merged.SLSA.MissingPolicy != policy.ActionDeny {
+		merged.SLSA.MissingPolicy != types.ActionDeny {
 		t.Error("expected default SLSA to be inherited")
 	}
 }
@@ -751,7 +752,7 @@ func TestMergeWithDefaultInheritsVEX(t *testing.T) {
 
 	merged := mergedEmptyNamespace()
 	if merged.VEX == nil ||
-		merged.VEX.MissingPolicy != policy.ActionWarn {
+		merged.VEX.MissingPolicy != types.ActionWarn {
 		t.Error("expected default VEX to be inherited")
 	}
 }
@@ -800,7 +801,7 @@ func TestMergeWithDefaultTrustOverride(t *testing.T) {
 			merged.Trust.Builders[0].ID)
 	}
 
-	if merged.SLSA.MissingPolicy != policy.ActionDeny {
+	if merged.SLSA.MissingPolicy != types.ActionDeny {
 		t.Error("expected default SLSA to be preserved")
 	}
 }
@@ -828,7 +829,7 @@ func TestMergeWithDefaultSLSAOverride(t *testing.T) {
 	nsPol := &policy.Policy{
 		Inherits: nil, Trust: nil, Exclude: nil,
 		SLSA: &policy.SLSAPolicy{
-			MissingPolicy:           policy.ActionAllow,
+			MissingPolicy:           types.ActionAllow,
 			RejectUnknownParameters: false,
 			KnownParameters:         nil,
 		},
@@ -837,7 +838,7 @@ func TestMergeWithDefaultSLSAOverride(t *testing.T) {
 
 	merged := policy.MergeWithDefault(nsPol, defaultTestPolicy())
 
-	if merged.SLSA.MissingPolicy != policy.ActionAllow {
+	if merged.SLSA.MissingPolicy != types.ActionAllow {
 		t.Error("expected namespace SLSA to override default")
 	}
 }
@@ -848,7 +849,7 @@ func TestMergeWithDefaultVEXOverride(t *testing.T) {
 	nsPol := &policy.Policy{
 		Inherits: nil, Trust: nil, Exclude: nil, SLSA: nil,
 		VEX: &policy.VEXPolicy{
-			MissingPolicy:            policy.ActionDeny,
+			MissingPolicy:            types.ActionDeny,
 			UnderInvestigationPolicy: "",
 		},
 		VSA: nil, Signatures: nil,
@@ -856,7 +857,7 @@ func TestMergeWithDefaultVEXOverride(t *testing.T) {
 
 	merged := policy.MergeWithDefault(nsPol, defaultTestPolicy())
 
-	if merged.VEX.MissingPolicy != policy.ActionDeny {
+	if merged.VEX.MissingPolicy != types.ActionDeny {
 		t.Error("expected namespace VEX to override default")
 	}
 }
@@ -919,7 +920,7 @@ func TestLoadAllInheritsMergesWithDefault(t *testing.T) {
 	testutil.AssertNoError(t, err)
 
 	staging := policies["staging"]
-	if staging.SLSAMissingPolicy() != policy.ActionAllow {
+	if staging.SLSAMissingPolicy() != types.ActionAllow {
 		t.Errorf("expected allow (overridden), got %s",
 			staging.SLSAMissingPolicy())
 	}
@@ -1136,12 +1137,12 @@ func TestHash(t *testing.T) {
 
 		pol1 := &policy.Policy{
 			SLSA: &policy.SLSAPolicy{
-				MissingPolicy: policy.ActionDeny,
+				MissingPolicy: types.ActionDeny,
 			},
 		}
 		pol2 := &policy.Policy{
 			SLSA: &policy.SLSAPolicy{
-				MissingPolicy: policy.ActionDeny,
+				MissingPolicy: types.ActionDeny,
 			},
 		}
 
@@ -1162,12 +1163,12 @@ func TestHash(t *testing.T) {
 
 		pol1 := &policy.Policy{
 			SLSA: &policy.SLSAPolicy{
-				MissingPolicy: policy.ActionDeny,
+				MissingPolicy: types.ActionDeny,
 			},
 		}
 		pol2 := &policy.Policy{
 			SLSA: &policy.SLSAPolicy{
-				MissingPolicy: policy.ActionAllow,
+				MissingPolicy: types.ActionAllow,
 			},
 		}
 
@@ -1192,7 +1193,7 @@ func TestHash(t *testing.T) {
 				},
 			},
 			SLSA: &policy.SLSAPolicy{
-				MissingPolicy: policy.ActionWarn,
+				MissingPolicy: types.ActionWarn,
 			},
 		}
 
@@ -1253,7 +1254,7 @@ func TestInitDerivedValidMaxAge(t *testing.T) {
 	}
 }
 
-func TestInitDerivedSkipsWhenAlreadySet(t *testing.T) {
+func TestInitDerivedOverwritesPrevious(t *testing.T) {
 	t.Parallel()
 
 	pol := &policy.Policy{
@@ -1265,7 +1266,7 @@ func TestInitDerivedSkipsWhenAlreadySet(t *testing.T) {
 
 	pol.ExportInitDerived()
 
-	if pol.VSA.MaxAgeDuration != 48*time.Hour {
-		t.Errorf("expected MaxAgeDuration=48h (unchanged), got %v", pol.VSA.MaxAgeDuration)
+	if pol.VSA.MaxAgeDuration != time.Hour {
+		t.Errorf("expected MaxAgeDuration=1h (from MaxAge), got %v", pol.VSA.MaxAgeDuration)
 	}
 }

@@ -27,7 +27,6 @@ import (
 	"github.com/containerd/nri/pkg/api"
 	"github.com/containerd/nri/pkg/stub"
 	"github.com/google/go-containerregistry/pkg/authn"
-	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"golang.org/x/sync/semaphore"
 
@@ -107,29 +106,14 @@ func New(
 func defaultDigestResolver(
 	ctx context.Context, imageRef string,
 ) (digest, indexDigest string, err error) {
-	ref, err := name.ParseReference(imageRef)
-	if err != nil {
-		return "", "", fmt.Errorf("parsing image reference: %w", err)
-	}
-
-	desc, err := remote.Get(ref,
+	digest, indexDigest, err = registry.ResolveDigest(ctx, imageRef,
 		remote.WithAuthFromKeychain(authn.DefaultKeychain),
-		remote.WithContext(ctx),
 	)
 	if err != nil {
-		return "", "", fmt.Errorf("resolving image digest: %w", err)
+		return "", "", fmt.Errorf("resolving digest: %w", err)
 	}
 
-	if desc.MediaType.IsIndex() {
-		platformDigest, indexErr := registry.ResolveIndexDigest(desc)
-		if indexErr != nil {
-			return "", "", fmt.Errorf("resolving index digest: %w", indexErr)
-		}
-
-		return platformDigest, desc.Digest.String(), nil
-	}
-
-	return desc.Digest.String(), "", nil
+	return digest, indexDigest, nil
 }
 
 // Connected returns true if the plugin has successfully connected to the NRI runtime.

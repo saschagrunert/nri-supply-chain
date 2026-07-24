@@ -22,8 +22,8 @@ import (
 	"time"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
-	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
+	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -33,7 +33,7 @@ func TestDefaultConfig(t *testing.T) {
 
 	testutil.AssertEqual(t, config.ModeDisabled, cfg.Verification)
 	testutil.AssertEqual(t, 30*time.Second, cfg.FetchTimeout.Duration)
-	testutil.AssertEqual(t, policy.ActionWarn, cfg.FetchFailurePolicy)
+	testutil.AssertEqual(t, types.ActionWarn, cfg.FetchFailurePolicy)
 	testutil.AssertEqual(t, 24*time.Hour, cfg.CacheTTL.Duration)
 	testutil.AssertEqual(t, 5*time.Minute, cfg.CacheFailureTTL.Duration)
 	testutil.AssertEqual(t, "/etc/nri-supply-chain/policies", cfg.PolicyDir)
@@ -133,10 +133,10 @@ func TestConfigValidateEnabledPolicies(t *testing.T) {
 			name: "invalid fetch failure policy",
 			modify: func(c *config.Config) {
 				c.Verification = config.ModeWarn
-				c.FetchFailurePolicy = policy.Action("invalid")
+				c.FetchFailurePolicy = types.Action("invalid")
 			},
 			wantErr:     true,
-			expectedErr: policy.ErrInvalidAction,
+			expectedErr: types.ErrInvalidAction,
 		},
 		{
 			name: "zero fetch timeout",
@@ -311,7 +311,7 @@ metrics_addr = ":8080"
 
 		testutil.AssertEqual(t, config.ModeWarn, cfg.Verification)
 		testutil.AssertEqual(t, 10*time.Second, cfg.FetchTimeout.Duration)
-		testutil.AssertEqual(t, policy.ActionDeny, cfg.FetchFailurePolicy)
+		testutil.AssertEqual(t, types.ActionDeny, cfg.FetchFailurePolicy)
 		testutil.AssertEqual(t, time.Hour, cfg.CacheTTL.Duration)
 		testutil.AssertEqual(t, policyDir, cfg.PolicyDir)
 		testutil.AssertEqual(t, ":8080", cfg.MetricsAddr)

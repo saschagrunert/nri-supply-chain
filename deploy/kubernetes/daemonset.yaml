@@ -16,9 +16,12 @@ data:
     cache_ttl = "24h"
     cache_failure_ttl = "5m"
     policy_dir = "/etc/nri-supply-chain/policies"
+    # Binds to all interfaces for Prometheus scraping (default is 127.0.0.1:9090).
     metrics_addr = ":9090"
     circuit_breaker_threshold = 5
     circuit_breaker_cooldown = "30s"
+  # IMPORTANT: Replace all "myorg" placeholders below with your organization's
+  # actual values before deploying.
   default.json: |
     {
       "trust": {

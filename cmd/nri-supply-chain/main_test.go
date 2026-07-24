@@ -46,6 +46,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/plugin"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
+	sctypes "github.com/saschagrunert/nri-supply-chain/internal/types"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
@@ -579,7 +580,7 @@ func TestWarnValidationEnforceDefaults(t *testing.T) {
 			cfg: func() *config.Config {
 				c := config.DefaultConfig()
 				c.Verification = config.ModeEnforce
-				c.FetchFailurePolicy = policy.ActionWarn
+				c.FetchFailurePolicy = sctypes.ActionWarn
 
 				return c
 			}(),
@@ -590,7 +591,7 @@ func TestWarnValidationEnforceDefaults(t *testing.T) {
 			cfg: func() *config.Config {
 				c := config.DefaultConfig()
 				c.Verification = config.ModeEnforce
-				c.FetchFailurePolicy = policy.ActionAllow
+				c.FetchFailurePolicy = sctypes.ActionAllow
 
 				return c
 			}(),
@@ -601,7 +602,7 @@ func TestWarnValidationEnforceDefaults(t *testing.T) {
 			cfg: func() *config.Config {
 				c := config.DefaultConfig()
 				c.Verification = config.ModeEnforce
-				c.FetchFailurePolicy = policy.ActionDeny
+				c.FetchFailurePolicy = sctypes.ActionDeny
 
 				return c
 			}(),
@@ -612,14 +613,14 @@ func TestWarnValidationEnforceDefaults(t *testing.T) {
 			cfg: func() *config.Config {
 				c := config.DefaultConfig()
 				c.Verification = config.ModeEnforce
-				c.FetchFailurePolicy = policy.ActionDeny
+				c.FetchFailurePolicy = sctypes.ActionDeny
 
 				return c
 			}(),
 			policies: map[string]*policy.Policy{
 				"": {
 					SLSA: &policy.SLSAPolicy{
-						MissingPolicy: policy.ActionAllow,
+						MissingPolicy: sctypes.ActionAllow,
 					},
 				},
 			},
@@ -629,14 +630,14 @@ func TestWarnValidationEnforceDefaults(t *testing.T) {
 			cfg: func() *config.Config {
 				c := config.DefaultConfig()
 				c.Verification = config.ModeEnforce
-				c.FetchFailurePolicy = policy.ActionDeny
+				c.FetchFailurePolicy = sctypes.ActionDeny
 
 				return c
 			}(),
 			policies: map[string]*policy.Policy{
 				"prod": {
 					SLSA: &policy.SLSAPolicy{
-						MissingPolicy: policy.ActionDeny,
+						MissingPolicy: sctypes.ActionDeny,
 					},
 				},
 			},
@@ -646,14 +647,14 @@ func TestWarnValidationEnforceDefaults(t *testing.T) {
 			cfg: func() *config.Config {
 				c := config.DefaultConfig()
 				c.Verification = config.ModeEnforce
-				c.FetchFailurePolicy = policy.ActionDeny
+				c.FetchFailurePolicy = sctypes.ActionDeny
 
 				return c
 			}(),
 			policies: map[string]*policy.Policy{
 				"": {
 					SLSA: &policy.SLSAPolicy{
-						MissingPolicy: policy.ActionDeny,
+						MissingPolicy: sctypes.ActionDeny,
 					},
 				},
 			},
@@ -663,17 +664,17 @@ func TestWarnValidationEnforceDefaults(t *testing.T) {
 			cfg: func() *config.Config {
 				c := config.DefaultConfig()
 				c.Verification = config.ModeEnforce
-				c.FetchFailurePolicy = policy.ActionDeny
+				c.FetchFailurePolicy = sctypes.ActionDeny
 
 				return c
 			}(),
 			policies: map[string]*policy.Policy{
 				"secure": {
 					SLSA: &policy.SLSAPolicy{
-						MissingPolicy: policy.ActionDeny,
+						MissingPolicy: sctypes.ActionDeny,
 					},
 					VEX: &policy.VEXPolicy{
-						MissingPolicy: policy.ActionDeny,
+						MissingPolicy: sctypes.ActionDeny,
 					},
 				},
 			},

@@ -149,6 +149,12 @@ Skip verification for known base images or internal tooling:
 
 ## Field Reference
 
+### `inherits` (boolean)
+
+When set to `true` on a namespace policy (`<namespace>.json`), unset fields
+are inherited from `default.json` instead of using empty defaults. Only valid
+on namespace policies; the default policy cannot set `inherits`.
+
 ### `trust` (object)
 
 Trust roots for verification. All sub-fields are optional.
@@ -358,15 +364,16 @@ SAN patterns support glob-style wildcards that are converted to regular
 expressions for certificate matching:
 
 - `*` matches any sequence of non-`/` characters
+- `**` matches any characters including `/`
 - `?` matches any single non-`/` character
 - `[...]` character classes are supported (including negation with `[^...]`)
 - All other characters are treated as literals
 
 Example: `https://github.com/myorg/*` matches `https://github.com/myorg/repo`
 but not `https://github.com/myorg/repo/.github/workflows/build.yaml@refs/heads/main`
-(the `*` does not cross `/` boundaries). For GitHub Actions workflow SANs, use
-a more specific pattern like
-`https://github.com/myorg/repo/.github/workflows/*`.
+(the `*` does not cross `/` boundaries). Use `**` for GitHub Actions workflow
+SANs that include nested paths, for example
+`https://github.com/myorg/repo/**`.
 
 ## Namespace Overrides
 

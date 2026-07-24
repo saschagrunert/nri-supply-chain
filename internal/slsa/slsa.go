@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
+	"github.com/saschagrunert/nri-supply-chain/internal/glob"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
@@ -246,7 +247,7 @@ func verifySources(params map[string]any, pol *policy.Policy) error {
 	}
 
 	for _, pattern := range pol.Trust.Sources {
-		matched, err := attestation.GlobMatch(pattern, source)
+		matched, err := glob.Match(pattern, source)
 		if err != nil {
 			return fmt.Errorf("invalid source pattern %q: %w", pattern, err)
 		}

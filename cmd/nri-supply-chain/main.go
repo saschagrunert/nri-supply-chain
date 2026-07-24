@@ -32,8 +32,6 @@ import (
 
 	"github.com/containerd/nri/pkg/stub"
 	"github.com/fsnotify/fsnotify"
-	"github.com/google/go-containerregistry/pkg/name"
-	crremote "github.com/google/go-containerregistry/pkg/v1/remote"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
@@ -581,32 +579,15 @@ type resolvedDigest struct {
 }
 
 func resolveDigest(imageRef string, timeout time.Duration) (resolvedDigest, error) {
-	ref, err := name.ParseReference(imageRef)
-	if err != nil {
-		return resolvedDigest{}, fmt.Errorf("parsing image reference: %w", err)
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	desc, err := crremote.Get(ref, crremote.WithContext(ctx))
+	digest, indexDigest, err := registry.ResolveDigest(ctx, imageRef)
 	if err != nil {
-		return resolvedDigest{}, fmt.Errorf("resolving image digest: %w", err)
+		return resolvedDigest{}, fmt.Errorf("resolving digest: %w", err)
 	}
 
-	if desc.MediaType.IsIndex() {
-		platformDigest, indexErr := registry.ResolveIndexDigest(desc)
-		if indexErr != nil {
-			return resolvedDigest{}, fmt.Errorf("resolving index digest: %w", indexErr)
-		}
-
-		return resolvedDigest{
-			digest:      platformDigest,
-			indexDigest: desc.Digest.String(),
-		}, nil
-	}
-
-	return resolvedDigest{digest: desc.Digest.String(), indexDigest: ""}, nil
+	return resolvedDigest{digest: digest, indexDigest: indexDigest}, nil
 }
 
 func outputVerifyResult(

@@ -32,9 +32,9 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
-	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/slsa"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
+	"github.com/saschagrunert/nri-supply-chain/internal/types"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 	"github.com/saschagrunert/nri-supply-chain/internal/vsa"
 )
@@ -194,7 +194,7 @@ func TestVerifyWithFetcher(t *testing.T) {
 		policyJSON         string
 		mode               config.VerificationMode
 		fetcher            *mockFetcher
-		fetchFailurePolicy policy.Action
+		fetchFailurePolicy types.Action
 		setupPayloads      func(t *testing.T, fetcher *mockFetcher)
 		wantAllowed        bool
 		wantErr            error
@@ -374,7 +374,7 @@ func TestVerifyWithFetcher(t *testing.T) {
 				attestations: nil,
 				err:          errMockFetch,
 			},
-			fetchFailurePolicy: policy.ActionAllow,
+			fetchFailurePolicy: types.ActionAllow,
 			setupPayloads:      nil,
 			wantAllowed:        true,
 			wantErr:            nil,
@@ -388,7 +388,7 @@ func TestVerifyWithFetcher(t *testing.T) {
 				attestations: nil,
 				err:          errMockFetch,
 			},
-			fetchFailurePolicy: policy.ActionDeny,
+			fetchFailurePolicy: types.ActionDeny,
 			setupPayloads:      nil,
 			wantAllowed:        false,
 			wantErr:            verifier.ErrVerificationFailed,
@@ -402,7 +402,7 @@ func TestVerifyWithFetcher(t *testing.T) {
 				attestations: nil,
 				err:          errMockFetch,
 			},
-			fetchFailurePolicy: policy.ActionWarn,
+			fetchFailurePolicy: types.ActionWarn,
 			setupPayloads:      nil,
 			wantAllowed:        true,
 			wantErr:            nil,
