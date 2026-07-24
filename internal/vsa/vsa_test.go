@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	testImageRef      = "docker.io/library/nginx@sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abc1"
+	testImageRef      = "docker.io/library/nginx@sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
 	testVerifierID    = "https://example.com/verifier"
 	testVerifierKey   = "/etc/keys/verifier.pub"
 	testPolicyURI     = "https://example.com/policy"
@@ -176,7 +176,9 @@ func TestVerify(t *testing.T) {
 		{
 			name: "resource URI mismatch",
 			modify: func(s *vsa.Statement) {
-				s.Predicate.ResourceURI = "docker.io/library/other@sha256:xyz"
+				s.Predicate.ResourceURI = "docker.io/library/other@" +
+					"sha256:ffffffffffffffffffffffffffffffff" +
+					"ffffffffffffffffffffffffffffffff"
 			},
 			pol:        trustedPolicy(),
 			wantPassed: false,

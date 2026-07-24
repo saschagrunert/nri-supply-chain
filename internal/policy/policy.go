@@ -183,6 +183,8 @@ type SignaturesPolicy struct {
 }
 
 // SLSAMissingPolicy returns the effective SLSA missing policy.
+// Defaults to allow so that the plugin can be deployed in warn mode
+// without requiring provenance from the start.
 func (p *Policy) SLSAMissingPolicy() types.Action {
 	if p.SLSA != nil && p.SLSA.MissingPolicy != "" {
 		return p.SLSA.MissingPolicy
@@ -192,6 +194,8 @@ func (p *Policy) SLSAMissingPolicy() types.Action {
 }
 
 // VEXMissingPolicy returns the effective VEX missing policy.
+// Defaults to allow so that the plugin can be deployed in warn mode
+// without requiring VEX attestations from the start.
 func (p *Policy) VEXMissingPolicy() types.Action {
 	if p.VEX != nil && p.VEX.MissingPolicy != "" {
 		return p.VEX.MissingPolicy
@@ -344,7 +348,8 @@ func (p *Policy) ValidateEnforce() error {
 }
 
 // ValidateRuntime performs runtime checks that require filesystem access,
-// such as verifying that verifier key files exist on disk.
+// such as verifying that verifier key files exist on disk. Uses Lstat to
+// detect symlinks (Stat would silently follow them).
 func (p *Policy) ValidateRuntime() error {
 	if p.Trust == nil {
 		return nil
@@ -355,11 +360,18 @@ func (p *Policy) ValidateRuntime() error {
 			continue
 		}
 
-		info, err := os.Stat(verif.Key)
+		info, err := os.Lstat(verif.Key)
 		if err != nil {
 			return fmt.Errorf(
 				"trust.verifiers[%d] %q: key file %q: %w",
 				idx, verif.ID, verif.Key, err,
+			)
+		}
+
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf(
+				"trust.verifiers[%d] %q: key path %q: %w (symlinks are not allowed)",
+				idx, verif.ID, verif.Key, ErrNotRegularFile,
 			)
 		}
 

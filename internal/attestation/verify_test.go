@@ -710,23 +710,23 @@ func TestParseDigestRef(t *testing.T) {
 		{
 			name:       "invalid reference",
 			imageRef:   ":::invalid",
-			digest:     "sha256:abc",
+			digest:     testDigest,
 			wantErr:    true,
 			wantDigest: "",
 		},
 		{
 			name:       "valid reference",
 			imageRef:   "docker.io/library/nginx:latest",
-			digest:     "sha256:abc123",
+			digest:     testDigest,
 			wantErr:    false,
-			wantDigest: "sha256:abc123",
+			wantDigest: testDigest,
 		},
 		{
 			name:       "short reference",
 			imageRef:   "nginx:latest",
-			digest:     "sha256:def456",
+			digest:     "sha256:b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3",
 			wantErr:    false,
-			wantDigest: "sha256:def456",
+			wantDigest: "sha256:b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3",
 		},
 	}
 
@@ -782,7 +782,7 @@ func TestErrSentinels(t *testing.T) {
 func TestParseDigestRefContextPreserved(t *testing.T) {
 	t.Parallel()
 
-	ref, err := attestation.ExportParseDigestRef("quay.io/myorg/myimage:v1.0", "sha256:abc123")
+	ref, err := attestation.ExportParseDigestRef("quay.io/myorg/myimage:v1.0", testDigest)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -992,7 +992,8 @@ func TestNewTestOCIFetcherInjectsBoth(t *testing.T) {
 	}
 
 	result, _ := fetcher.CollectAttestations(
-		context.Background(), manifests, baseRef, "sha256:test", nil, &attestation.FetchOptions{},
+		context.Background(), manifests, baseRef,
+		testDigest, nil, &attestation.FetchOptions{},
 	)
 
 	if !fetchCalled {

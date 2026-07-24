@@ -19,8 +19,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/glob"
@@ -48,6 +50,8 @@ var (
 
 	// ErrInvalidProvenance indicates the provenance attestation could not be parsed.
 	ErrInvalidProvenance = errors.New("invalid provenance attestation")
+
+	warnedMaxLevel sync.Map //nolint:gochecknoglobals // dedup per builder ID
 )
 
 // Statement represents an in-toto statement wrapping a SLSA provenance predicate.
@@ -198,9 +202,9 @@ func verifySubjectDigest(subjects []Subject, imageDigest string) error {
 }
 
 // verifyBuilder checks whether the builder is in the trusted builders list.
-// MaxLevel is not checked here because SLSA provenance does not declare a build
-// level; levels are a property of the builder's infrastructure. The VSA verifier
-// checks verifiedLevels against the policy's minimumLevel.
+// When a matched builder has a MaxLevel configured, a warning is logged because
+// SLSA provenance does not declare a build level, so MaxLevel can only be
+// enforced via VSA verification (vsa.minimumLevel).
 func verifyBuilder(builder Builder, pol *policy.Policy) error {
 	builders := pol.Builders()
 	if len(builders) == 0 {
@@ -209,6 +213,17 @@ func verifyBuilder(builder Builder, pol *policy.Policy) error {
 
 	for _, trusted := range builders {
 		if trusted.ID == builder.ID {
+			if trusted.MaxLevel > 0 {
+				if _, loaded := warnedMaxLevel.LoadOrStore(builder.ID, struct{}{}); !loaded {
+					slog.Warn(
+						"Builder has maxLevel configured but SLSA provenance does not "+
+							"declare build levels; use VSA verification to enforce levels",
+						"builder", builder.ID,
+						"maxLevel", trusted.MaxLevel,
+					)
+				}
+			}
+
 			return nil
 		}
 	}
@@ -288,6 +303,17 @@ func defaultKnownParameters() []string {
 
 func passResult() *types.CheckResult {
 	return types.PassResult(checkType, "SLSA provenance verified")
+}
+
+// ResetMaxLevelWarnings clears the deduplication state so that maxLevel
+// warnings are re-emitted on the next verification cycle. Call this after a
+// config reload to ensure warnings reflect the new policy state.
+func ResetMaxLevelWarnings() {
+	warnedMaxLevel.Range(func(key, _ any) bool {
+		warnedMaxLevel.Delete(key)
+
+		return true
+	})
 }
 
 func failResult(detail string) *types.CheckResult {

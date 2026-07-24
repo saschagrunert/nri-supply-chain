@@ -27,7 +27,11 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
-const testGaugeHelp = "test"
+const (
+	testGaugeHelp = "test"
+	testDigest    = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4" +
+		"e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+)
 
 func TestNewWithGaugeResetsToZero(t *testing.T) {
 	t.Parallel()
@@ -38,7 +42,7 @@ func TestNewWithGaugeResetsToZero(t *testing.T) {
 	})
 	testGauge.Set(42)
 
-	_ = cache.NewWithGauge(time.Hour, testGauge)
+	_ = cache.NewWithGauge(time.Hour, testGauge, nil)
 
 	val := testutil.ToFloat64(testGauge)
 	if val != 0 {
@@ -49,8 +53,8 @@ func TestNewWithGaugeResetsToZero(t *testing.T) {
 func TestNewWithGaugeNilGauge(t *testing.T) {
 	t.Parallel()
 
-	testCache := cache.NewWithGauge(time.Hour, nil)
-	testCache.Set("sha256:abc", "default", &types.Result{
+	testCache := cache.NewWithGauge(time.Hour, nil, nil)
+	testCache.Set(testDigest, "default", &types.Result{
 		Allowed: true, Reason: "ok", CheckResults: nil,
 	})
 
@@ -67,9 +71,10 @@ func TestGaugeUpdatesOnSetAndClear(t *testing.T) {
 		Help: testGaugeHelp,
 	})
 
-	testCache := cache.NewWithGauge(time.Hour, testGauge)
+	testCache := cache.NewWithGauge(time.Hour, testGauge, nil)
 
-	testCache.Set("sha256:a", "default", &types.Result{
+	testCache.Set("sha256:b2c3d4e5f6a1b2c3d4e5f6a1b2"+
+		"c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3", "default", &types.Result{
 		Allowed: true, Reason: "", CheckResults: nil,
 	})
 
@@ -77,7 +82,8 @@ func TestGaugeUpdatesOnSetAndClear(t *testing.T) {
 		t.Errorf("expected gauge 1 after set, got %f", val)
 	}
 
-	testCache.Set("sha256:b", "default", &types.Result{
+	testCache.Set("sha256:c3d4e5f6a1b2c3d4e5f6a1b2"+
+		"c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4", "default", &types.Result{
 		Allowed: true, Reason: "", CheckResults: nil,
 	})
 
@@ -100,9 +106,10 @@ func TestGaugeUpdatesOnExpiry(t *testing.T) {
 		Help: testGaugeHelp,
 	})
 
-	testCache := cache.NewWithGauge(time.Millisecond, testGauge)
+	testCache := cache.NewWithGauge(time.Millisecond, testGauge, nil)
 
-	testCache.Set("sha256:a", "default", &types.Result{
+	testCache.Set("sha256:b2c3d4e5f6a1b2c3d4e5f6a1b2"+
+		"c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3", "default", &types.Result{
 		Allowed: true, Reason: "", CheckResults: nil,
 	})
 
@@ -112,7 +119,8 @@ func TestGaugeUpdatesOnExpiry(t *testing.T) {
 
 	time.Sleep(5 * time.Millisecond)
 
-	got := testCache.Get("sha256:a", "default")
+	got := testCache.Get("sha256:b2c3d4e5f6a1b2c3d4e5f6a1b2"+
+		"c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3", "default")
 	if got != nil {
 		t.Error("expected expired entry to be nil")
 	}
@@ -128,9 +136,9 @@ func TestCacheGetSet(t *testing.T) {
 	c := cache.New(time.Hour)
 
 	result := &types.Result{Allowed: true, Reason: "test", CheckResults: nil}
-	c.Set("sha256:abc", "default", result)
+	c.Set(testDigest, "default", result)
 
-	got := c.Get("sha256:abc", "default")
+	got := c.Get(testDigest, "default")
 	if got == nil {
 		t.Fatal("expected cached result, got nil")
 	} else if got.Reason != "test" {
@@ -143,7 +151,10 @@ func TestCacheMiss(t *testing.T) {
 
 	c := cache.New(time.Hour)
 
-	if got := c.Get("sha256:notfound", "default"); got != nil {
+	if got := c.Get(
+		"sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+		"default",
+	); got != nil {
 		t.Errorf("expected nil, got %v", got)
 	}
 }
@@ -153,19 +164,19 @@ func TestCacheNamespaceIsolation(t *testing.T) {
 
 	testCache := cache.New(time.Hour)
 
-	testCache.Set("sha256:abc", "ns1", &types.Result{
+	testCache.Set(testDigest, "ns1", &types.Result{
 		Allowed: true, Reason: "ns1", CheckResults: nil,
 	})
-	testCache.Set("sha256:abc", "ns2", &types.Result{
+	testCache.Set(testDigest, "ns2", &types.Result{
 		Allowed: false, Reason: "ns2", CheckResults: nil,
 	})
 
-	got1 := testCache.Get("sha256:abc", "ns1")
+	got1 := testCache.Get(testDigest, "ns1")
 	if got1 == nil || got1.Reason != "ns1" {
 		t.Errorf("expected ns1 result, got %v", got1)
 	}
 
-	got2 := testCache.Get("sha256:abc", "ns2")
+	got2 := testCache.Get(testDigest, "ns2")
 	if got2 == nil || got2.Reason != "ns2" {
 		t.Errorf("expected ns2 result, got %v", got2)
 	}
@@ -176,13 +187,13 @@ func TestCacheExpiry(t *testing.T) {
 
 	testCache := cache.New(time.Millisecond)
 
-	testCache.Set("sha256:abc", "default", &types.Result{
+	testCache.Set(testDigest, "default", &types.Result{
 		Allowed: true, Reason: "", CheckResults: nil,
 	})
 
 	time.Sleep(5 * time.Millisecond)
 
-	if got := testCache.Get("sha256:abc", "default"); got != nil {
+	if got := testCache.Get(testDigest, "default"); got != nil {
 		t.Error("expected expired entry to be nil")
 	}
 }
@@ -192,11 +203,11 @@ func TestCacheZeroTTLSkipsSet(t *testing.T) {
 
 	testCache := cache.New(0)
 
-	testCache.Set("sha256:abc", "default", &types.Result{
+	testCache.Set(testDigest, "default", &types.Result{
 		Allowed: true, Reason: "", CheckResults: nil,
 	})
 
-	if got := testCache.Get("sha256:abc", "default"); got != nil {
+	if got := testCache.Get(testDigest, "default"); got != nil {
 		t.Error("expected nil with zero TTL")
 	}
 }
@@ -233,7 +244,7 @@ func TestCacheLen(t *testing.T) {
 		t.Errorf("expected empty cache, got %d", testCache.Len())
 	}
 
-	testCache.Set("sha256:abc", "default", &types.Result{
+	testCache.Set(testDigest, "default", &types.Result{
 		Allowed: true, Reason: "", CheckResults: nil,
 	})
 
@@ -256,11 +267,14 @@ func TestCacheCapacityEvictsExpired(t *testing.T) {
 
 	time.Sleep(5 * time.Millisecond)
 
-	testCache.Set("sha256:new", "default", &types.Result{
+	const freshDigest = "sha256:dddddddddddddddddddddddddddddddd" +
+		"dddddddddddddddddddddddddddddddd"
+
+	testCache.Set(freshDigest, "default", &types.Result{
 		Allowed: true, Reason: "fresh", CheckResults: nil,
 	})
 
-	if got := testCache.Get("sha256:new", "default"); got == nil {
+	if got := testCache.Get(freshDigest, "default"); got == nil {
 		t.Fatal("expected new entry after expired eviction")
 	} else if got.Reason != "fresh" {
 		t.Errorf("expected reason 'fresh', got %q", got.Reason)
@@ -272,10 +286,10 @@ func TestCacheOverwriteUpdatesExpiry(t *testing.T) {
 
 	testCache := cache.New(time.Hour)
 
-	testCache.Set("sha256:abc", "default", &types.Result{
+	testCache.Set(testDigest, "default", &types.Result{
 		Allowed: true, Reason: "old", CheckResults: nil,
 	})
-	testCache.Set("sha256:abc", "default", &types.Result{
+	testCache.Set(testDigest, "default", &types.Result{
 		Allowed: true, Reason: "new", CheckResults: nil,
 	})
 
@@ -283,7 +297,7 @@ func TestCacheOverwriteUpdatesExpiry(t *testing.T) {
 		t.Errorf("expected 1 entry after overwrite, got %d", testCache.Len())
 	}
 
-	got := testCache.Get("sha256:abc", "default")
+	got := testCache.Get(testDigest, "default")
 	if got == nil || got.Reason != "new" {
 		t.Errorf("expected reason 'new', got %v", got)
 	}
@@ -334,7 +348,7 @@ func TestCacheCapacityEvictionUpdatesGauge(t *testing.T) {
 		Help: testGaugeHelp,
 	})
 
-	testCache := cache.NewWithGauge(time.Hour, testGauge)
+	testCache := cache.NewWithGauge(time.Hour, testGauge, nil)
 
 	for idx := range 10001 {
 		testCache.Set(
@@ -361,26 +375,28 @@ func TestCacheOverwriteAtCapacityKeepsGauge(t *testing.T) {
 		Help: testGaugeHelp,
 	})
 
-	testCache := cache.NewWithGauge(time.Hour, testGauge)
+	testCache := cache.NewWithGauge(time.Hour, testGauge, nil)
 
-	const maxSize = 10000
-	for idx := range maxSize {
+	for idx := range cache.DefaultMaxSize {
 		testCache.Set(
 			fmt.Sprintf("sha256:%d", idx), "default",
 			&types.Result{Allowed: true, Reason: "old", CheckResults: nil},
 		)
 	}
 
-	testCache.Set("sha256:0", "default", &types.Result{
-		Allowed: true, Reason: "updated", CheckResults: nil,
-	})
+	testCache.Set(
+		"sha256:0", "default",
+		&types.Result{
+			Allowed: true, Reason: "updated", CheckResults: nil,
+		},
+	)
 
-	if testCache.Len() != maxSize {
-		t.Errorf("expected cache size %d, got %d", maxSize, testCache.Len())
+	if testCache.Len() != cache.DefaultMaxSize {
+		t.Errorf("expected cache size %d, got %d", cache.DefaultMaxSize, testCache.Len())
 	}
 
-	if val := testutil.ToFloat64(testGauge); val != maxSize {
-		t.Errorf("expected gauge %d after overwrite, got %f", maxSize, val)
+	if val := testutil.ToFloat64(testGauge); val != cache.DefaultMaxSize {
+		t.Errorf("expected gauge %d after overwrite, got %f", cache.DefaultMaxSize, val)
 	}
 
 	got := testCache.Get("sha256:0", "default")
@@ -395,21 +411,36 @@ func TestCacheSetWithTTLOverride(t *testing.T) {
 	testCache := cache.New(time.Hour)
 
 	// Set with a short TTL override.
-	testCache.Set("sha256:fail", "default", &types.Result{
-		Allowed: false, Reason: "fetch failed", CheckResults: nil,
-	}, 10*time.Millisecond)
+	testCache.Set(
+		"sha256:1111111111111111111111111111111111111111111111111111111111111111",
+		"default",
+		&types.Result{
+			Allowed: false, Reason: "fetch failed", CheckResults: nil,
+		},
+		10*time.Millisecond,
+	)
 
 	// Set with normal TTL (no override).
-	testCache.Set("sha256:pass", "default", &types.Result{
-		Allowed: true, Reason: "ok", CheckResults: nil,
-	})
+	testCache.Set(
+		"sha256:2222222222222222222222222222222222222222222222222222222222222222",
+		"default",
+		&types.Result{
+			Allowed: true, Reason: "ok", CheckResults: nil,
+		},
+	)
 
 	// Both should be present immediately.
-	if got := testCache.Get("sha256:fail", "default"); got == nil {
+	if got := testCache.Get(
+		"sha256:1111111111111111111111111111111111111111111111111111111111111111",
+		"default",
+	); got == nil {
 		t.Error("expected failure entry to be present immediately")
 	}
 
-	if got := testCache.Get("sha256:pass", "default"); got == nil {
+	if got := testCache.Get(
+		"sha256:2222222222222222222222222222222222222222222222222222222222222222",
+		"default",
+	); got == nil {
 		t.Error("expected pass entry to be present immediately")
 	}
 
@@ -417,12 +448,18 @@ func TestCacheSetWithTTLOverride(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	// Failure entry should have expired.
-	if got := testCache.Get("sha256:fail", "default"); got != nil {
+	if got := testCache.Get(
+		"sha256:1111111111111111111111111111111111111111111111111111111111111111",
+		"default",
+	); got != nil {
 		t.Error("expected failure entry to have expired with short TTL override")
 	}
 
 	// Success entry should still be present.
-	if got := testCache.Get("sha256:pass", "default"); got == nil {
+	if got := testCache.Get(
+		"sha256:2222222222222222222222222222222222222222222222222222222222222222",
+		"default",
+	); got == nil {
 		t.Error("expected pass entry to still be present with normal TTL")
 	}
 }
@@ -433,11 +470,11 @@ func TestCacheSetZeroTTLOverrideUsesDefault(t *testing.T) {
 	testCache := cache.New(time.Hour)
 
 	// Zero override should use the default TTL.
-	testCache.Set("sha256:abc", "default", &types.Result{
+	testCache.Set(testDigest, "default", &types.Result{
 		Allowed: true, Reason: "ok", CheckResults: nil,
 	}, 0)
 
-	if got := testCache.Get("sha256:abc", "default"); got == nil {
+	if got := testCache.Get(testDigest, "default"); got == nil {
 		t.Error("expected entry to be present when zero TTL override falls back to default")
 	}
 }
@@ -446,13 +483,13 @@ func TestCacheClear(t *testing.T) {
 	t.Parallel()
 
 	testCache := cache.New(time.Hour)
-	testCache.Set("sha256:abc", "default", &types.Result{
+	testCache.Set(testDigest, "default", &types.Result{
 		Allowed: true, Reason: "", CheckResults: nil,
 	})
 
 	testCache.Clear()
 
-	if got := testCache.Get("sha256:abc", "default"); got != nil {
+	if got := testCache.Get(testDigest, "default"); got != nil {
 		t.Error("expected nil after clear")
 	}
 }

@@ -21,7 +21,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 )
 
-const benchDigest = "sha256:abc"
+const benchDigest = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
 
 func BenchmarkBinAttestations(b *testing.B) {
 	attestations := []attestation.VerifiedAttestation{

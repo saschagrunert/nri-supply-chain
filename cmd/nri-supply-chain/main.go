@@ -505,6 +505,10 @@ func updatePolicyDirWatch(watcher *fsnotify.Watcher, configPath, newPolicyDir st
 }
 
 func runVerify(opts *options, cfg *config.Config) int {
+	return runVerifyTo(os.Stdout, opts, cfg)
+}
+
+func runVerifyTo(writer io.Writer, opts *options, cfg *config.Config) int {
 	imageRef := opts.verifyImage
 	namespace := opts.verifyNamespace
 
@@ -543,13 +547,13 @@ func runVerify(opts *options, cfg *config.Config) int {
 	checks := convertCheckResults(result)
 
 	if err != nil {
-		outputVerifyResult(os.Stdout, imageRef, digest, namespace, false, err.Error(), checks)
+		outputVerifyResult(writer, imageRef, digest, namespace, false, err.Error(), checks)
 
 		return 1
 	}
 
 	outputVerifyResult(
-		os.Stdout, imageRef, digest, namespace, result.Allowed, result.Reason, checks,
+		writer, imageRef, digest, namespace, result.Allowed, result.Reason, checks,
 	)
 
 	if !result.Allowed {

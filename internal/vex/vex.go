@@ -149,7 +149,7 @@ func VerifyMultiple(
 			failDetails = append(failDetails, result.Detail)
 		}
 
-		if result.Status == types.StatusWarn {
+		if isUnderInvestigation(result) {
 			anyUnderInvestigation = true
 		}
 	}
@@ -169,6 +169,10 @@ func VerifyMultiple(
 	}
 
 	return passResult(), nil
+}
+
+func isUnderInvestigation(result *types.CheckResult) bool {
+	return result.Status == types.StatusWarn
 }
 
 func verifySubjectAndExtract(att []byte, imageDigest string) ([]byte, error) {

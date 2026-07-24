@@ -26,10 +26,13 @@ func FuzzVerify(f *testing.F) {
 	f.Add([]byte(`{"subject":[],"predicate":{"statements":[]}}`))
 	f.Add([]byte(`{}`))
 
+	const testDigest = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4" +
+		"e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+
 	f.Fuzz(func(_ *testing.T, data []byte) {
 		vex.Verify(
 			context.Background(), data, &policy.Policy{},
-			"docker.io/library/nginx:latest", "sha256:abc123",
+			"docker.io/library/nginx:latest", testDigest,
 		)
 	})
 }

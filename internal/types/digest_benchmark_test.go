@@ -22,6 +22,6 @@ import (
 
 func BenchmarkParseDigest(b *testing.B) {
 	for range b.N {
-		types.ParseDigest("sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abc1")
+		types.ParseDigest("sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2")
 	}
 }
