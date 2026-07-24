@@ -59,6 +59,8 @@ type Metrics struct {
 	TrustedRootStaleTotal prometheus.Counter
 	// CacheFailureHitsTotal counts cache hits that returned a previously cached failure result.
 	CacheFailureHitsTotal prometheus.Counter
+	// CacheEvictionsTotal counts cache entry evictions.
+	CacheEvictionsTotal prometheus.Counter
 	// BuildInfo exposes version and Go metadata as a constant gauge.
 	BuildInfo *prometheus.GaugeVec
 	// ConfigReloadsTotal counts successful configuration reloads.
@@ -69,6 +71,8 @@ type Metrics struct {
 }
 
 // New creates and registers all supply chain verification metrics.
+//
+//nolint:funlen // flat metric registration
 func New() *Metrics {
 	met := &Metrics{
 		VerificationTotal:        newVerificationTotal(),
@@ -108,6 +112,10 @@ func New() *Metrics {
 		CacheFailureHitsTotal: newCounter(
 			"cache_failure_hits_total",
 			"Total number of cache hits that returned a previously cached failure result.",
+		),
+		CacheEvictionsTotal: newCounter(
+			"cache_evictions_total",
+			"Total number of cache entry evictions.",
 		),
 		BuildInfo: newGaugeVec(
 			"build_info",
@@ -238,6 +246,7 @@ func (m *Metrics) register() {
 		m.CircuitBreakerTripsTotal,
 		m.TrustedRootStaleTotal,
 		m.CacheFailureHitsTotal,
+		m.CacheEvictionsTotal,
 		m.BuildInfo,
 		m.ConfigReloadsTotal,
 		m.ConfigReloadErrorsTotal,

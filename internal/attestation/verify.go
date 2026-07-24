@@ -286,7 +286,7 @@ func ResetSANPatternWarnings() {
 }
 
 func warnNoSANPatterns(issuers []string) {
-	key := strings.Join(issuers, "\x00")
+	key := fmt.Sprintf("%d\x00", len(issuers)) + strings.Join(issuers, "\x00")
 
 	if _, loaded := warnedSANPatterns.LoadOrStore(key, struct{}{}); loaded {
 		return

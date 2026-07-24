@@ -30,7 +30,7 @@ import (
 
 const (
 	testImageRef      = "docker.io/library/nginx:latest"
-	testDigest        = "sha256:abc123def456"
+	testDigest        = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
 	testDigestAlgo    = "sha256"
 	testVEXContext    = "https://openvex.dev/ns/v0.2.0"
 	testInTotoType    = "https://in-toto.io/Statement/v1"
@@ -228,7 +228,10 @@ func TestVerify(t *testing.T) {
 					{
 						Vulnerability: openvex.Vulnerability{Name: "CVE-2024-5678"},
 						Products: []openvex.Product{
-							{Component: openvex.Component{ID: "sha256:differentdigest"}},
+							{Component: openvex.Component{
+								ID: "sha256:ffffffffffffffffffffffffffffffff" +
+									"ffffffffffffffffffffffffffffffff",
+							}},
 						},
 						Status: openvex.StatusAffected,
 					},
@@ -789,7 +792,7 @@ func TestVerifyPURLSingleSegmentRepo(t *testing.T) {
 
 	const (
 		imageRef = "quay.io/myimage:latest"
-		digest   = "sha256:def456"
+		digest   = "sha256:b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3"
 	)
 
 	purl := "pkg:oci/myimage@" + digest + "?repository_url=quay.io"
@@ -943,7 +946,7 @@ func TestVerifyInTotoWrapped(t *testing.T) {
 		{
 			name:       "mismatching subject digest fails",
 			doc:        validVEXDoc(openvex.StatusNotAffected),
-			digest:     "sha256:000000000000",
+			digest:     "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
 			wantErr:    vex.ErrSubjectMismatch,
 			wantPassed: false,
 		},

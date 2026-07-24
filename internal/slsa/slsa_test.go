@@ -28,8 +28,8 @@ import (
 )
 
 const (
-	testDigest           = "sha256:abc123def456"
-	testDigestHash       = "abc123def456"
+	testDigest           = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+	testDigestHash       = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
 	testDigestAlgo       = "sha256"
 	testBuilderID        = "https://github.com/actions/runner"
 	testUntrustedBuilder = "https://untrusted.example.com"
@@ -180,7 +180,7 @@ func TestVerify(t *testing.T) {
 				return mustMarshal(t, validStatement())
 			},
 			policy:     &policy.Policy{},
-			digest:     "sha256:different",
+			digest:     "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
 			wantErr:    nil,
 			wantPass:   false,
 			wantType:   types.CheckTypeSLSA,

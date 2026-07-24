@@ -581,7 +581,8 @@ func TestCollectAttestationsMaxReferrers(t *testing.T) {
 	)
 
 	result, hadBundles := fetcher.CollectAttestations(
-		context.Background(), manifests, baseRef, "sha256:test", nil, &attestation.FetchOptions{},
+		context.Background(), manifests, baseRef,
+		testDigest, nil, &attestation.FetchOptions{},
 	)
 
 	if !hadBundles {
@@ -603,7 +604,7 @@ func TestCollectAttestationsDigestPreserved(t *testing.T) {
 		t.Fatalf("creating test digest ref: %v", err)
 	}
 
-	const wantDigest = "sha256:mydigest"
+	const wantDigest = "sha256:b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3"
 
 	manifests := []ociV1.Descriptor{
 		{

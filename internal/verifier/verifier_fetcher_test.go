@@ -40,7 +40,7 @@ import (
 )
 
 const (
-	testFetchDigest       = "sha256:abc123"
+	testFetchDigest       = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
 	testDefaultNamespace  = "default"
 	testInTotoStatementV1 = "https://in-toto.io/Statement/v1"
 	testOpenVEXPredicate  = "https://openvex.dev/ns"
@@ -89,7 +89,7 @@ func validSLSAPayload(t *testing.T) []byte {
 		Subject: []slsa.Subject{
 			{
 				Name:   testSubjectName,
-				Digest: map[string]string{testAlgoSHA256: "abc123"},
+				Digest: map[string]string{testAlgoSHA256: testFetchDigest[len("sha256:"):]},
 			},
 		},
 		PredicateType: attestation.PredicateSLSAProvenanceV1,
@@ -661,7 +661,11 @@ func TestVerifyCacheFailureTTL(t *testing.T) {
 	// In warn mode it's allowed, but the underlying result has failures,
 	// so it should be cached with the short failure TTL.
 	result1, err := verif.Verify(
-		context.Background(), "nginx:latest", "sha256:failttl", "", "default",
+		context.Background(),
+		"nginx:latest",
+		"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+		"",
+		"default",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -675,7 +679,11 @@ func TestVerifyCacheFailureTTL(t *testing.T) {
 	// Second call: cache should have expired due to the short failure TTL.
 	// The result should still be computed fresh (same outcome in this case).
 	result2, err := verif.Verify(
-		context.Background(), "nginx:latest", "sha256:failttl", "", "default",
+		context.Background(),
+		"nginx:latest",
+		"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+		"",
+		"default",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -1046,8 +1054,8 @@ func TestVerifyIndexDigestFallback(t *testing.T) {
 	t.Parallel()
 
 	const (
-		platformDigest = "sha256:aaaa1111"
-		indexDigest    = "sha256:bbbb2222"
+		platformDigest = "sha256:aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111"
+		indexDigest    = "sha256:bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222"
 	)
 
 	makePayload := func(t *testing.T, digest string) []byte {

@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -822,16 +821,20 @@ func TestOutputVerifyResultAllowed(t *testing.T) {
 		{Type: "slsa", Passed: true, Status: "pass", Detail: "verified"},
 	}
 
+	const testDigest = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4" +
+		"e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+
 	out := captureVerifyOutput(
-		t, "nginx:latest", "sha256:abc", testNamespaceMain, true, "verified", checks,
+		t, "nginx:latest", testDigest,
+		testNamespaceMain, true, "verified", checks,
 	)
 
 	if out.Image != "nginx:latest" {
 		t.Errorf("Image = %q, want %q", out.Image, "nginx:latest")
 	}
 
-	if out.Digest != "sha256:abc" {
-		t.Errorf("Digest = %q, want %q", out.Digest, "sha256:abc")
+	if out.Digest != testDigest {
+		t.Errorf("Digest = %q, want %q", out.Digest, testDigest)
 	}
 
 	if out.Namespace != testNamespaceMain {
@@ -858,7 +861,13 @@ func TestOutputVerifyResultAllowed(t *testing.T) {
 func TestOutputVerifyResultDenied(t *testing.T) {
 	t.Parallel()
 
-	out := captureVerifyOutput(t, "evil:latest", "sha256:bad", "prod", false, "failed checks", nil)
+	const deniedDigest = "sha256:ffffffffffffffffffffffffffffffff" +
+		"ffffffffffffffffffffffffffffffff"
+
+	out := captureVerifyOutput(
+		t, "evil:latest", deniedDigest,
+		"prod", false, "failed checks", nil,
+	)
 
 	if out.Allowed {
 		t.Error("expected Allowed = false")
@@ -1219,8 +1228,8 @@ func TestRunVerifyDisabledErrors(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // captures os.Stdout
 func TestRunVerifyEnforceDenied(t *testing.T) {
+	t.Parallel()
 	// Push image to in-memory registry, then verify with enforce mode.
 	regHandler := registry.New()
 	server := httptest.NewServer(regHandler)
@@ -1297,8 +1306,8 @@ func TestRunVerifyVerifierNewError(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // captures os.Stdout
 func TestRunVerifyWarnModeWithChecks(t *testing.T) {
+	t.Parallel()
 	// In warn mode with a deny policy, the verifier returns check results
 	// but allows the image. This exercises the CheckResults loop body.
 	regHandler := registry.New()
@@ -1353,24 +1362,9 @@ func TestRunVerifyWarnModeWithChecks(t *testing.T) {
 func captureRunVerify(t *testing.T, opts *options, cfg *config.Config) verifyOutput {
 	t.Helper()
 
-	origStdout := os.Stdout
-
-	r, w, pErr := os.Pipe()
-	if pErr != nil {
-		t.Fatalf("creating pipe: %v", pErr)
-	}
-
-	os.Stdout = w
-
-	_ = runVerify(opts, cfg)
-
-	_ = w.Close()
-
-	os.Stdout = origStdout
-
 	var buf bytes.Buffer
 
-	_, _ = io.Copy(&buf, r)
+	_ = runVerifyTo(&buf, opts, cfg)
 
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
 	lastJSON := findLastJSON(lines)
@@ -1392,17 +1386,41 @@ func captureRunVerify(t *testing.T, opts *options, cfg *config.Config) verifyOut
 func findLastJSON(lines []string) string {
 	// outputVerifyResult writes a multi-line JSON object.
 	// Collect lines starting from last '{' to matching '}'.
+	// Tracks brace depth while ignoring braces inside JSON strings.
 	var jsonLines []string
 
 	depth := 0
 
 	for _, line := range slices.Backward(lines) {
+		inString := false
+		escaped := false
+
 		for _, ch := range line {
-			switch ch {
-			case '}':
-				depth++
-			case '{':
-				depth--
+			if escaped {
+				escaped = false
+
+				continue
+			}
+
+			if ch == '\\' && inString {
+				escaped = true
+
+				continue
+			}
+
+			if ch == '"' {
+				inString = !inString
+
+				continue
+			}
+
+			if !inString {
+				switch ch {
+				case '}':
+					depth++
+				case '{':
+					depth--
+				}
 			}
 		}
 

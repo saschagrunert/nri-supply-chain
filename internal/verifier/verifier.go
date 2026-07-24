@@ -32,6 +32,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/glob"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
+	"github.com/saschagrunert/nri-supply-chain/internal/slsa"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
@@ -89,9 +90,12 @@ func New(cfg *config.Config, met *metrics.Metrics, fetcher attestation.Fetcher) 
 		snapshot: snapshot{
 			config:   &cfgCopy,
 			policies: nil,
-			cache:    cache.NewWithGauge(cfgCopy.CacheTTL.Duration, met.CacheEntriesTotal),
-			metrics:  met,
-			fetcher:  fetcher,
+			cache: cache.NewWithGauge(
+				cfgCopy.CacheTTL.Duration,
+				met.CacheEntriesTotal, met.CacheEvictionsTotal,
+			),
+			metrics: met,
+			fetcher: fetcher,
 			circuitBreakers: attestation.NewCircuitBreakerRegistry(
 				cfgCopy.CircuitBreakerThreshold,
 				cfgCopy.CircuitBreakerCooldown.Duration,
@@ -137,7 +141,7 @@ func New(cfg *config.Config, met *metrics.Metrics, fetcher attestation.Fetcher) 
 	return verif, nil
 }
 
-// WarnEnforceDefaults logs warnings when enforce mode is used with default
+// WarnEnforceDefaults logs warnings when enforce mode is used with
 // permissive settings that may allow unverified containers through.
 func WarnEnforceDefaults(cfg *config.Config, policies map[string]*policy.Policy) {
 	if cfg.Verification != config.ModeEnforce {
@@ -146,7 +150,6 @@ func WarnEnforceDefaults(cfg *config.Config, policies map[string]*policy.Policy)
 
 	switch cfg.FetchFailurePolicy {
 	case types.ActionDeny:
-		// Desired state for enforce mode; no warning needed.
 	case types.ActionWarn:
 		slog.Warn(
 			"enforce mode with default fetch_failure_policy=warn allows containers on fetch failure; "+
@@ -303,20 +306,24 @@ func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 	cacheInvalidated := cacheAffectingFieldsChanged(v.config, &cfgCopy) || policiesChanged
 
 	if cacheInvalidated {
-		v.cache = cache.NewWithGauge(cfgCopy.CacheTTL.Duration, v.metrics.CacheEntriesTotal)
+		v.cache = cache.NewWithGauge(
+			cfgCopy.CacheTTL.Duration,
+			v.metrics.CacheEntriesTotal, v.metrics.CacheEvictionsTotal,
+		)
 	}
 
 	logReloadChanges(ctx, v.config, &cfgCopy, v.policyHashes, newHashes, cacheInvalidated)
+
+	v.updateCircuitBreakersLocked(&cfgCopy)
+	v.updateFetcherLocked(ctx, &cfgCopy)
 
 	v.config = &cfgCopy
 	v.policies = policies
 	v.policyHashes = newHashes
 
-	v.updateCircuitBreakersLocked(&cfgCopy)
-	v.updateFetcherLocked(ctx, &cfgCopy)
-
 	if policiesChanged {
 		attestation.ResetSANPatternWarnings()
+		slsa.ResetMaxLevelWarnings()
 		glob.ResetCache()
 	}
 
@@ -325,11 +332,17 @@ func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 	return nil
 }
 
-// updateCircuitBreakersLocked replaces the registry unconditionally to bound
-// memory: lazily-created per-host breakers would otherwise accumulate forever.
-// The tradeoff is that a reload during a registry outage resets the breaker,
-// allowing a short burst of retries before it re-trips.
+// updateCircuitBreakersLocked replaces the circuit breaker registry only when
+// the threshold or cooldown settings change. Preserving the registry across
+// reloads prevents a burst of retries to failing registries after a config
+// reload that did not change breaker settings.
 func (v *Verifier) updateCircuitBreakersLocked(cfg *config.Config) {
+	if v.circuitBreakers != nil &&
+		v.config.CircuitBreakerThreshold == cfg.CircuitBreakerThreshold &&
+		v.config.CircuitBreakerCooldown.Duration == cfg.CircuitBreakerCooldown.Duration {
+		return
+	}
+
 	v.circuitBreakers = attestation.NewCircuitBreakerRegistry(
 		cfg.CircuitBreakerThreshold,
 		cfg.CircuitBreakerCooldown.Duration,

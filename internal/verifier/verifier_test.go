@@ -28,6 +28,9 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
+const testDigest = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4" +
+	"e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+
 func TestNewFetcher(t *testing.T) {
 	t.Parallel()
 
@@ -242,7 +245,7 @@ func TestVerify(t *testing.T) {
 			testutil.AssertNoError(t, err)
 
 			result, err := verif.Verify(
-				context.Background(), imageRef, "sha256:abc", "", "default",
+				context.Background(), imageRef, testDigest, "", "default",
 			)
 
 			if test.wantErr != nil {
@@ -278,12 +281,12 @@ func TestVerifyCache(t *testing.T) {
 	testutil.AssertNoError(t, err)
 
 	result1, err := verif.Verify(
-		context.Background(), "nginx:latest", "sha256:abc", "", "default",
+		context.Background(), "nginx:latest", testDigest, "", "default",
 	)
 	testutil.AssertNoError(t, err)
 
 	result2, err := verif.Verify(
-		context.Background(), "nginx:latest", "sha256:abc", "", "default",
+		context.Background(), "nginx:latest", testDigest, "", "default",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -313,8 +316,12 @@ func TestVerifyCacheWarnMode(t *testing.T) {
 	verif, err := verifier.New(cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
+	const cacheDigest = "sha256:11111111111111111111111111111111" +
+		"11111111111111111111111111111111"
+
 	result1, err := verif.Verify(
-		context.Background(), "nginx:latest", "sha256:warn-cache", "", "default",
+		context.Background(), "nginx:latest",
+		cacheDigest, "", "default",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -324,7 +331,8 @@ func TestVerifyCacheWarnMode(t *testing.T) {
 	}
 
 	result2, err := verif.Verify(
-		context.Background(), "nginx:latest", "sha256:warn-cache", "", "default",
+		context.Background(), "nginx:latest",
+		cacheDigest, "", "default",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -358,8 +366,12 @@ func TestVerifyCacheEnforceMode(t *testing.T) {
 	verif, err := verifier.New(cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
+	const enforceDigest = "sha256:22222222222222222222222222222222" +
+		"22222222222222222222222222222222"
+
 	_, err = verif.Verify(
-		context.Background(), "nginx:latest", "sha256:enforce-cache", "", "default",
+		context.Background(), "nginx:latest",
+		enforceDigest, "", "default",
 	)
 
 	if !errors.Is(err, verifier.ErrVerificationFailed) {
@@ -367,7 +379,8 @@ func TestVerifyCacheEnforceMode(t *testing.T) {
 	}
 
 	_, err = verif.Verify(
-		context.Background(), "nginx:latest", "sha256:enforce-cache", "", "default",
+		context.Background(), "nginx:latest",
+		enforceDigest, "", "default",
 	)
 
 	if !errors.Is(err, verifier.ErrVerificationFailed) {
@@ -397,14 +410,18 @@ func TestVerifyNamespacePolicy(t *testing.T) {
 	testutil.AssertNoError(t, err)
 
 	_, err = verif.Verify(
-		context.Background(), "nginx:latest", "sha256:abc", "", "default",
+		context.Background(), "nginx:latest", testDigest, "", "default",
 	)
 	if err == nil {
 		t.Error("expected error for default namespace")
 	}
 
+	const stagingDigest = "sha256:b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4" +
+		"e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3"
+
 	result, err := verif.Verify(
-		context.Background(), "nginx:latest", "sha256:def", "", "staging",
+		context.Background(), "nginx:latest",
+		stagingDigest, "", "staging",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -580,8 +597,12 @@ func TestReloadPreservesCacheWhenConfigUnchanged(t *testing.T) {
 	verif, err := verifier.New(cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
+	const reloadDigest = "sha256:33333333333333333333333333333333" +
+		"33333333333333333333333333333333"
+
 	result1, err := verif.Verify(
-		context.Background(), "nginx:latest", "sha256:preserve", "", "default",
+		context.Background(), "nginx:latest",
+		reloadDigest, "", "default",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -594,7 +615,7 @@ func TestReloadPreservesCacheWhenConfigUnchanged(t *testing.T) {
 	testutil.AssertNoError(t, err)
 
 	result2, err := verif.Verify(
-		context.Background(), "nginx:latest", "sha256:preserve", "", "default",
+		context.Background(), "nginx:latest", reloadDigest, "", "default",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -657,8 +678,12 @@ func TestReloadClearsCacheWhenPolicyChanges(t *testing.T) {
 	verif, err := verifier.New(cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
+	const policyDigest = "sha256:44444444444444444444444444444444" +
+		"44444444444444444444444444444444"
+
 	result1, err := verif.Verify(
-		context.Background(), "nginx:latest", "sha256:polchange", "", "default",
+		context.Background(), "nginx:latest",
+		policyDigest, "", "default",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -673,7 +698,8 @@ func TestReloadClearsCacheWhenPolicyChanges(t *testing.T) {
 	testutil.AssertNoError(t, err)
 
 	result2, err := verif.Verify(
-		context.Background(), "nginx:latest", "sha256:polchange", "", "default",
+		context.Background(), "nginx:latest",
+		policyDigest, "", "default",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -701,20 +727,20 @@ func TestBuildDigestRef(t *testing.T) {
 		},
 		{
 			name:     "imageRef already has digest",
-			imageRef: "docker.io/library/nginx@sha256:abc123",
-			digest:   "sha256:def456",
-			expected: "docker.io/library/nginx@sha256:abc123",
+			imageRef: "docker.io/library/nginx@sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+			digest:   "sha256:b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3",
+			expected: "docker.io/library/nginx@sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
 		},
 		{
 			name:     "appends digest to tag ref",
 			imageRef: testDockerNginx,
-			digest:   "sha256:abc123",
-			expected: "index.docker.io/library/nginx@sha256:abc123",
+			digest:   testDigest,
+			expected: "index.docker.io/library/nginx@sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
 		},
 		{
 			name:     "invalid imageRef returns original",
 			imageRef: ":::invalid",
-			digest:   "sha256:abc123",
+			digest:   testDigest,
 			expected: ":::invalid",
 		},
 	}
@@ -1233,7 +1259,7 @@ func TestVerifyExcludeDoubleStarPattern(t *testing.T) {
 	result, err := verif.Verify(
 		context.Background(),
 		"registry.k8s.io/coredns/coredns:v1.12.0",
-		"sha256:abc", "", "default",
+		testDigest, "", "default",
 	)
 	testutil.AssertNoError(t, err)
 

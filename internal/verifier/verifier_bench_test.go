@@ -26,6 +26,9 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
+const benchmarkDigest = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4" +
+	"e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+
 func benchWritePolicy(b *testing.B, dir, name, content string) {
 	b.Helper()
 
@@ -51,7 +54,7 @@ func BenchmarkVerifyCacheHit(b *testing.B) {
 
 	ctx := context.Background()
 
-	_, err = verif.Verify(ctx, "nginx:latest", "sha256:abc123", "", "default")
+	_, err = verif.Verify(ctx, "nginx:latest", benchmarkDigest, "", "default")
 	if err != nil {
 		b.Fatalf("initial verify: %v", err)
 	}
@@ -59,7 +62,9 @@ func BenchmarkVerifyCacheHit(b *testing.B) {
 	b.ResetTimer()
 
 	for range b.N {
-		_, err = verif.Verify(ctx, "nginx:latest", "sha256:abc123", "", "default")
+		_, err = verif.Verify(
+			ctx, "nginx:latest", benchmarkDigest, "", "default",
+		)
 		if err != nil {
 			b.Fatalf("verify: %v", err)
 		}
@@ -82,7 +87,7 @@ func BenchmarkVerifyCacheHitParallel(b *testing.B) {
 
 	ctx := context.Background()
 
-	_, err = verif.Verify(ctx, "nginx:latest", "sha256:abc123", "", "default")
+	_, err = verif.Verify(ctx, "nginx:latest", benchmarkDigest, "", "default")
 	if err != nil {
 		b.Fatalf("initial verify: %v", err)
 	}
@@ -91,7 +96,7 @@ func BenchmarkVerifyCacheHitParallel(b *testing.B) {
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_, verifyErr := verif.Verify(ctx, "nginx:latest", "sha256:abc123", "", "default")
+			_, verifyErr := verif.Verify(ctx, "nginx:latest", benchmarkDigest, "", "default")
 			if verifyErr != nil {
 				b.Errorf("verify: %v", verifyErr)
 
@@ -114,7 +119,9 @@ func BenchmarkVerifyDisabled(b *testing.B) {
 	b.ResetTimer()
 
 	for range b.N {
-		_, err = verif.Verify(ctx, "nginx:latest", "sha256:abc123", "", "default")
+		_, err = verif.Verify(
+			ctx, "nginx:latest", benchmarkDigest, "", "default",
+		)
 		if err != nil {
 			b.Fatalf("verify: %v", err)
 		}

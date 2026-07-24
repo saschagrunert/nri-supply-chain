@@ -26,10 +26,12 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
-const jitterDivisor = 10
+const (
+	jitterDivisor = 10
 
-// maxSize is the maximum number of entries allowed in the cache.
-const maxSize = 10000
+	// DefaultMaxSize is the default maximum number of entries in the cache.
+	DefaultMaxSize = 10000
+)
 
 type key struct {
 	digest    string
@@ -80,7 +82,9 @@ type Cache struct {
 	mu        sync.RWMutex
 	entries   map[key]entry
 	ttl       time.Duration
+	maxSize   int
 	gauge     prometheus.Gauge
+	evictions prometheus.Counter
 	expHeap   expiryHeap
 	heapIndex map[key]*heapEntry
 }
@@ -91,15 +95,20 @@ func New(ttl time.Duration) *Cache {
 		mu:        sync.RWMutex{},
 		entries:   make(map[key]entry),
 		ttl:       ttl,
+		maxSize:   DefaultMaxSize,
 		gauge:     nil,
+		evictions: nil,
 		expHeap:   nil,
 		heapIndex: make(map[key]*heapEntry),
 	}
 }
 
 // NewWithGauge creates a cache that updates the given Prometheus gauge
-// on entry count changes.
-func NewWithGauge(ttl time.Duration, gauge prometheus.Gauge) *Cache {
+// on entry count changes and tracks evictions.
+func NewWithGauge(
+	ttl time.Duration,
+	gauge prometheus.Gauge, evictions prometheus.Counter,
+) *Cache {
 	if gauge != nil {
 		gauge.Set(0)
 	}
@@ -108,7 +117,9 @@ func NewWithGauge(ttl time.Duration, gauge prometheus.Gauge) *Cache {
 		mu:        sync.RWMutex{},
 		entries:   make(map[key]entry),
 		ttl:       ttl,
+		maxSize:   DefaultMaxSize,
 		gauge:     gauge,
+		evictions: evictions,
 		expHeap:   nil,
 		heapIndex: make(map[key]*heapEntry),
 	}
@@ -181,10 +192,10 @@ func (c *Cache) Set(digest, namespace string, result *types.Result, ttlOverride 
 
 	cacheKey := key{digest: digest, namespace: namespace}
 
-	if _, exists := c.entries[cacheKey]; !exists && len(c.entries) >= maxSize {
+	if _, exists := c.entries[cacheKey]; !exists && len(c.entries) >= c.maxSize {
 		c.evictExpiredLocked()
 
-		if len(c.entries) >= maxSize {
+		if len(c.entries) >= c.maxSize {
 			c.evictOldestLocked()
 		}
 	}
@@ -246,6 +257,7 @@ func (c *Cache) evictOldestLocked() {
 
 	delete(c.entries, popped.cacheKey)
 	delete(c.heapIndex, popped.cacheKey)
+	c.recordEviction()
 }
 
 func (c *Cache) evictExpiredLocked() {
@@ -259,6 +271,13 @@ func (c *Cache) evictExpiredLocked() {
 
 		delete(c.entries, popped.cacheKey)
 		delete(c.heapIndex, popped.cacheKey)
+		c.recordEviction()
+	}
+}
+
+func (c *Cache) recordEviction() {
+	if c.evictions != nil {
+		c.evictions.Inc()
 	}
 }
 

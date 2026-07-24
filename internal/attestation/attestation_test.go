@@ -23,7 +23,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 )
 
-const testDigest = "sha256:abc123"
+const testDigest = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
 
 var errFetchFailed = errors.New("fetch failed")
 

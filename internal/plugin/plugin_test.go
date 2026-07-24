@@ -48,7 +48,7 @@ const (
 	testPodID     = "pod-1"
 	testCtrName   = "test-container"
 	testImage     = "nginx:latest"
-	testDigest    = "sha256:abc123"
+	testDigest    = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
 	testArchAmd64 = "amd64"
 	testArchArm64 = "arm64"
 	testArchS390x = "s390x"

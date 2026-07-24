@@ -21,6 +21,11 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
+const (
+	hexBlock64  = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+	hexBlock128 = hexBlock64 + hexBlock64
+)
+
 func TestParseDigest(t *testing.T) {
 	t.Parallel()
 
@@ -30,8 +35,10 @@ func TestParseDigest(t *testing.T) {
 		wantAlgo string
 		wantHash string
 	}{
-		{"valid sha256", "sha256:abcdef0123456789", "sha256", "abcdef0123456789"},
-		{"valid sha512", "sha512:def456", "sha512", "def456"},
+		{"valid sha256", "sha256:" + hexBlock64, "sha256", hexBlock64},
+		{"valid sha512", "sha512:" + hexBlock128, "sha512", hexBlock128},
+		{"valid sha3-256", "sha3-256:" + hexBlock64, "sha3-256", hexBlock64},
+		{"short hash rejected", "sha256:abcdef0123456789", "", ""},
 		{"missing colon", "sha256abc123", "", ""},
 		{"empty string", "", "", ""},
 		{"multiple colons rejected", "sha256:abc:def:ghi", "", ""},
@@ -41,7 +48,7 @@ func TestParseDigest(t *testing.T) {
 		{"non-hex hash", "sha256:xyz123", "", ""},
 		{"uppercase hex rejected", "sha256:ABCDEF", "", ""},
 		{"uppercase algo rejected", "SHA256:abc123", "", ""},
-		{"algo with hyphen rejected", "sha-256:abc123", "", ""},
+		{"unrecognized algo rejected", "sha-256:abc123", "", ""},
 		{"hash with spaces rejected", "sha256:abc 123", "", ""},
 	}
 
@@ -63,13 +70,14 @@ func TestParseDigest(t *testing.T) {
 }
 
 func FuzzParseDigest(f *testing.F) {
-	f.Add("sha256:abc123")
+	f.Add("sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2")
 	f.Add("")
 	f.Add(":")
 	f.Add("sha256:")
 	f.Add(":abc")
 	f.Add("no-colon")
 	f.Add("sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890")
+	f.Add("sha3-256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890")
 
 	f.Fuzz(func(t *testing.T, input string) {
 		if !utf8.ValidString(input) {
@@ -83,7 +91,7 @@ func FuzzParseDigest(f *testing.F) {
 			}
 
 			for _, c := range algo {
-				if (c < 'a' || c > 'z') && (c < '0' || c > '9') {
+				if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
 					t.Errorf("algo contains invalid character: %q", string(c))
 				}
 			}

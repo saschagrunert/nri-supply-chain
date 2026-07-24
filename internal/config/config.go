@@ -247,6 +247,25 @@ func (c *Config) validateFetchAndCache() error {
 		return fmt.Errorf("%w: got %s", ErrFetchTimeoutNotPositive, c.FetchTimeout.Duration)
 	}
 
+	err = c.validateCacheFields()
+	if err != nil {
+		return err
+	}
+
+	if c.Enabled() {
+		if c.PolicyDir == "" {
+			return ErrPolicyDirEmpty
+		}
+
+		if !filepath.IsAbs(c.PolicyDir) {
+			return fmt.Errorf("%w: %q", ErrPolicyDirNotAbsolute, c.PolicyDir)
+		}
+	}
+
+	return nil
+}
+
+func (c *Config) validateCacheFields() error {
 	if c.CacheTTL.Duration < 0 {
 		return fmt.Errorf("%w: got %s", ErrCacheTTLNegative, c.CacheTTL.Duration)
 	}
@@ -262,16 +281,6 @@ func (c *Config) validateFetchAndCache() error {
 		)
 
 		c.CacheFailureTTL.Duration = c.CacheTTL.Duration
-	}
-
-	if c.Enabled() {
-		if c.PolicyDir == "" {
-			return ErrPolicyDirEmpty
-		}
-
-		if !filepath.IsAbs(c.PolicyDir) {
-			return fmt.Errorf("%w: %q", ErrPolicyDirNotAbsolute, c.PolicyDir)
-		}
 	}
 
 	return nil

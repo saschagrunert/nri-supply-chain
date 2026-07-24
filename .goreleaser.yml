@@ -7,6 +7,8 @@ builds:
     binary: nri-supply-chain
     env:
       - CGO_ENABLED=0
+    flags:
+      - -trimpath
     goos:
       - linux
     goarch:

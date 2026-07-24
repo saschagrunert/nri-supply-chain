@@ -28,6 +28,7 @@ The plugin exposes Prometheus metrics at the configured
 | `nri_supply_chain_cache_hits_total`              | Counter   |                               | Cache hits                                                                           |
 | `nri_supply_chain_cache_misses_total`            | Counter   |                               | Cache misses                                                                         |
 | `nri_supply_chain_cache_entries`                 | Gauge     |                               | Current number of cached entries                                                     |
+| `nri_supply_chain_cache_evictions_total`         | Counter   |                               | Cache entry evictions (TTL expiry or capacity overflow)                              |
 | `nri_supply_chain_verification_skipped_total`    | Counter   | `reason`, `namespace`         | Containers allowed without verification. `reason`: `excluded`, `missing_annotations` |
 | `nri_supply_chain_fetch_errors_total`            | Counter   | `type`, `registry`            | Attestation fetch errors                                                             |
 | `nri_supply_chain_inflight_dedup_total`          | Counter   |                               | Deduplicated inflight verifications                                                  |
