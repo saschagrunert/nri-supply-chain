@@ -279,7 +279,7 @@ func retryJitter(base time.Duration) time.Duration {
 	maxJitter := max(int64(base)/fetchRetryJitterDivisor, 1)
 
 	//nolint:gosec // jitter does not need cryptographic randomness
-	return time.Duration(rand.IntN(int(maxJitter)))
+	return time.Duration(rand.Int64N(maxJitter))
 }
 
 func (f *OCIFetcher) fetchWithRetry(

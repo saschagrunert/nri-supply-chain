@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package attestation_test
+package glob_test
 
 import (
 	"regexp"
 	"testing"
 
-	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
+	"github.com/saschagrunert/nri-supply-chain/internal/glob"
 )
 
 func FuzzGlobToRegex(f *testing.F) {
@@ -34,11 +34,11 @@ func FuzzGlobToRegex(f *testing.F) {
 	f.Add("test[")
 
 	f.Fuzz(func(t *testing.T, pattern string) {
-		result := attestation.ExportGlobToRegex(pattern)
+		result := glob.ToRegex(pattern)
 
 		_, err := regexp.Compile(result)
 		if err != nil {
-			t.Errorf("globToRegex(%q) produced invalid regexp %q: %v", pattern, result, err)
+			t.Errorf("ToRegex(%q) produced invalid regexp %q: %v", pattern, result, err)
 		}
 	})
 }

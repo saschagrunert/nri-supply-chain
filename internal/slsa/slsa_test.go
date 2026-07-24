@@ -117,7 +117,7 @@ func TestVerify(t *testing.T) {
 			digest:     testDigest,
 			wantErr:    nil,
 			wantPass:   true,
-			wantType:   "slsa",
+			wantType:   types.CheckTypeSLSA,
 			wantStatus: types.StatusPass,
 		},
 		{
@@ -183,7 +183,7 @@ func TestVerify(t *testing.T) {
 			digest:     "sha256:different",
 			wantErr:    nil,
 			wantPass:   false,
-			wantType:   "",
+			wantType:   types.CheckTypeSLSA,
 			wantStatus: types.StatusFail,
 		},
 		{
@@ -197,7 +197,7 @@ func TestVerify(t *testing.T) {
 			digest:     "nocolon",
 			wantErr:    nil,
 			wantPass:   false,
-			wantType:   "",
+			wantType:   types.CheckTypeSLSA,
 			wantStatus: types.StatusFail,
 		},
 		{
@@ -217,7 +217,7 @@ func TestVerify(t *testing.T) {
 			digest:     testDigest,
 			wantErr:    nil,
 			wantPass:   false,
-			wantType:   "",
+			wantType:   types.CheckTypeSLSA,
 			wantStatus: types.StatusFail,
 		},
 		{
@@ -231,7 +231,7 @@ func TestVerify(t *testing.T) {
 			digest:     testDigest,
 			wantErr:    nil,
 			wantPass:   true,
-			wantType:   "",
+			wantType:   types.CheckTypeSLSA,
 			wantStatus: types.StatusPass,
 		},
 		{
@@ -252,7 +252,7 @@ func TestVerify(t *testing.T) {
 			digest:     testDigest,
 			wantErr:    nil,
 			wantPass:   false,
-			wantType:   "",
+			wantType:   types.CheckTypeSLSA,
 			wantStatus: types.StatusFail,
 		},
 		{
@@ -275,7 +275,7 @@ func TestVerify(t *testing.T) {
 			digest:     testDigest,
 			wantErr:    nil,
 			wantPass:   true,
-			wantType:   "",
+			wantType:   types.CheckTypeSLSA,
 			wantStatus: types.StatusPass,
 		},
 		{
@@ -296,7 +296,7 @@ func TestVerify(t *testing.T) {
 			digest:     testDigest,
 			wantErr:    nil,
 			wantPass:   false,
-			wantType:   "",
+			wantType:   types.CheckTypeSLSA,
 			wantStatus: types.StatusFail,
 		},
 		{
@@ -317,7 +317,7 @@ func TestVerify(t *testing.T) {
 			digest:     testDigest,
 			wantErr:    nil,
 			wantPass:   true,
-			wantType:   "",
+			wantType:   types.CheckTypeSLSA,
 			wantStatus: types.StatusPass,
 		},
 		{
@@ -343,7 +343,7 @@ func TestVerify(t *testing.T) {
 			digest:     testDigest,
 			wantErr:    nil,
 			wantPass:   false,
-			wantType:   "",
+			wantType:   types.CheckTypeSLSA,
 			wantStatus: types.StatusFail,
 		},
 		{
@@ -369,7 +369,7 @@ func TestVerify(t *testing.T) {
 			digest:     testDigest,
 			wantErr:    nil,
 			wantPass:   false,
-			wantType:   "",
+			wantType:   types.CheckTypeSLSA,
 			wantStatus: types.StatusFail,
 		},
 		{
@@ -395,7 +395,7 @@ func TestVerify(t *testing.T) {
 			digest:     testDigest,
 			wantErr:    nil,
 			wantPass:   false,
-			wantType:   "",
+			wantType:   types.CheckTypeSLSA,
 			wantStatus: types.StatusFail,
 		},
 		{
@@ -421,7 +421,7 @@ func TestVerify(t *testing.T) {
 			digest:     testDigest,
 			wantErr:    nil,
 			wantPass:   true,
-			wantType:   "",
+			wantType:   types.CheckTypeSLSA,
 			wantStatus: types.StatusPass,
 		},
 		{
@@ -453,7 +453,7 @@ func TestVerify(t *testing.T) {
 			digest:     testDigest,
 			wantErr:    nil,
 			wantPass:   true,
-			wantType:   "",
+			wantType:   types.CheckTypeSLSA,
 			wantStatus: types.StatusPass,
 		},
 		{
@@ -482,7 +482,7 @@ func TestVerify(t *testing.T) {
 			digest:     testDigest,
 			wantErr:    nil,
 			wantPass:   true,
-			wantType:   "",
+			wantType:   types.CheckTypeSLSA,
 			wantStatus: types.StatusPass,
 		},
 		{
@@ -512,7 +512,7 @@ func TestVerify(t *testing.T) {
 			digest:     testDigest,
 			wantErr:    nil,
 			wantPass:   false,
-			wantType:   "",
+			wantType:   types.CheckTypeSLSA,
 			wantStatus: types.StatusFail,
 		},
 		{
@@ -538,7 +538,7 @@ func TestVerify(t *testing.T) {
 			digest:     testDigest,
 			wantErr:    nil,
 			wantPass:   true,
-			wantType:   "",
+			wantType:   types.CheckTypeSLSA,
 			wantStatus: types.StatusPass,
 		},
 	}
@@ -564,11 +564,11 @@ func TestVerify(t *testing.T) {
 					test.wantPass, result.Passed, result.Detail)
 			}
 
-			if test.wantType != "" && result.Type != test.wantType {
+			if result.Type != test.wantType {
 				t.Errorf("expected type %q, got %q", test.wantType, result.Type)
 			}
 
-			if test.wantStatus != "" && result.Status != test.wantStatus {
+			if result.Status != test.wantStatus {
 				t.Errorf("expected status %q, got %q", test.wantStatus, result.Status)
 			}
 		})

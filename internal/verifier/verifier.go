@@ -29,6 +29,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/cache"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
+	"github.com/saschagrunert/nri-supply-chain/internal/glob"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
@@ -316,6 +317,7 @@ func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 
 	if policiesChanged {
 		attestation.ResetSANPatternWarnings()
+		glob.ResetCache()
 	}
 
 	WarnEnforceDefaults(&cfgCopy, policies)

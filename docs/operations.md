@@ -147,15 +147,16 @@ groups:
 The plugin enforces several hardcoded limits that are not configurable. These
 protect against resource exhaustion and unbounded processing.
 
-| Limit                       | Value                     | Behavior when exceeded                                                                                                   |
-| --------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Cache capacity              | 10,000 entries            | Expired entries are evicted first. If the cache is still full, the oldest entry is evicted to make room.                 |
-| Concurrent fetch limit      | 50                        | Additional verification requests block until a slot becomes available or the context is canceled.                        |
-| Fetch retry count           | 2 retries (3 total)       | Uses exponential backoff starting at 500ms. Only transient errors (network timeouts, HTTP 5xx) trigger retries.          |
-| Attestation size limit      | 10 MiB                    | Attestation bundles larger than 10 MiB are rejected. A warning is logged with the actual size.                           |
-| Max referrers per image     | 100                       | Only the first 100 bundle-type referrers are processed. Additional referrers are skipped with a warning.                 |
-| Sigstore trusted root cache | 1h TTL, 24h max staleness | The root is refreshed every hour. If the Sigstore TUF mirror is unreachable, the stale root is used for up to 24 hours.  |
-| VSA clock skew tolerance    | 60 seconds                | A VSA with `timeVerified` up to 60 seconds in the future is accepted. Beyond that, it is rejected as a future timestamp. |
+| Limit                       | Value                     | Behavior when exceeded                                                                                                                                                                  |
+| --------------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cache capacity              | 10,000 entries            | Expired entries are evicted first. If the cache is still full, the oldest entry is evicted to make room.                                                                                |
+| Concurrent fetch limit      | 50                        | Additional verification requests block until a slot becomes available or the context is canceled.                                                                                       |
+| Fetch retry count           | 2 retries (3 total)       | Uses exponential backoff starting at 500ms. Only transient errors (network timeouts, HTTP 5xx) trigger retries.                                                                         |
+| Attestation size limit      | 10 MiB                    | Attestation bundles larger than 10 MiB are rejected. A warning is logged with the actual size.                                                                                          |
+| Max referrers per image     | 100                       | Only the first 100 bundle-type referrers are processed. Additional referrers are skipped with a warning.                                                                                |
+| Sigstore trusted root cache | 1h TTL, 24h max staleness | The root is refreshed every hour. If the Sigstore TUF mirror is unreachable, the stale root is used for up to 24 hours.                                                                 |
+| VSA clock skew tolerance    | 60 seconds                | A VSA with `timeVerified` up to 60 seconds in the future is accepted. Beyond that, it is rejected as a future timestamp.                                                                |
+| Digest resolve timeout      | 1 second                  | Image digest resolution during NRI callbacks is capped at 1 second to stay under containerd's ttrpc timeout. The `--verify-image` CLI path uses the configured `fetch_timeout` instead. |
 
 **Sigstore trusted root refresh.** For keyless (Fulcio) verification, the
 plugin fetches the Sigstore trusted root from the TUF mirror on startup and
