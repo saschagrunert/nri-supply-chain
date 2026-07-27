@@ -212,13 +212,8 @@ func verifySubjectAndExtract(att []byte, imageDigest string) ([]byte, error) {
 }
 
 func subjectMatchesDigest(subjects []inTotoSubject, imageDigest string) bool {
-	algo, hash := types.ParseDigest(imageDigest)
-	if algo == "" {
-		return false
-	}
-
 	for _, subject := range subjects {
-		if subject.Digest[algo] == hash {
+		if types.MatchDigestInMap(imageDigest, subject.Digest) {
 			return true
 		}
 	}

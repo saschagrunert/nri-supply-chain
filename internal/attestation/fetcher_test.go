@@ -234,13 +234,13 @@ func TestCollectAttestations(t *testing.T) {
 
 	bundleDescriptor := func(predicateType string) ociV1.Descriptor {
 		return ociV1.Descriptor{
-			ArtifactType: attestation.BundleMediaType,
+			ArtifactType: attestation.ExportBundleMediaType,
 			Digest: ociV1.Hash{
 				Algorithm: testHashAlgorithm,
 				Hex:       testHashHex,
 			},
 			Annotations: map[string]string{
-				attestation.AnnotationPredicateType: predicateType,
+				attestation.ExportAnnotationPredicateType: predicateType,
 			},
 		}
 	}
@@ -305,13 +305,13 @@ func TestCollectAttestations(t *testing.T) {
 			name: "OCI empty artifact type accepted",
 			manifests: []ociV1.Descriptor{
 				{
-					ArtifactType: attestation.OCIEmptyMediaType,
+					ArtifactType: attestation.ExportOCIEmptyMediaType,
 					Digest: ociV1.Hash{
 						Algorithm: testHashAlgorithm,
 						Hex:       testHashHex,
 					},
 					Annotations: map[string]string{
-						attestation.AnnotationPredicateType: attestation.PredicateSLSAProvenanceV1,
+						attestation.ExportAnnotationPredicateType: attestation.PredicateSLSAProvenanceV1,
 					},
 				},
 			},
@@ -336,7 +336,7 @@ func TestCollectAttestations(t *testing.T) {
 						Hex:       testHashHex,
 					},
 					Annotations: map[string]string{
-						attestation.AnnotationPredicateType: attestation.PredicateSLSAProvenanceV1,
+						attestation.ExportAnnotationPredicateType: attestation.PredicateSLSAProvenanceV1,
 					},
 				},
 			},
@@ -355,7 +355,7 @@ func TestCollectAttestations(t *testing.T) {
 			name: "missing predicate annotation skipped",
 			manifests: []ociV1.Descriptor{
 				{
-					ArtifactType: attestation.BundleMediaType,
+					ArtifactType: attestation.ExportBundleMediaType,
 					Digest: ociV1.Hash{
 						Algorithm: testHashAlgorithm,
 						Hex:       testHashHex,
@@ -377,7 +377,7 @@ func TestCollectAttestations(t *testing.T) {
 			name: "predicate type resolved from manifest annotations",
 			manifests: []ociV1.Descriptor{
 				{
-					ArtifactType: attestation.BundleMediaType,
+					ArtifactType: attestation.ExportBundleMediaType,
 					Digest: ociV1.Hash{
 						Algorithm: testHashAlgorithm,
 						Hex:       testHashHex,
@@ -386,7 +386,7 @@ func TestCollectAttestations(t *testing.T) {
 			},
 			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
 				annot := map[string]string{
-					attestation.AnnotationPredicateType: attestation.PredicateSLSAProvenanceV1,
+					attestation.ExportAnnotationPredicateType: attestation.PredicateSLSAProvenanceV1,
 				}
 
 				return fakeImageWithAnnotations([]byte(`{"bundle": "ok"}`), annot), nil
@@ -403,7 +403,7 @@ func TestCollectAttestations(t *testing.T) {
 			name: "predicate type extracted from payload when annotation is generic",
 			manifests: []ociV1.Descriptor{
 				{
-					ArtifactType: attestation.OCIEmptyMediaType,
+					ArtifactType: attestation.ExportOCIEmptyMediaType,
 					Digest: ociV1.Hash{
 						Algorithm: testHashAlgorithm,
 						Hex:       testHashHex,
@@ -412,7 +412,7 @@ func TestCollectAttestations(t *testing.T) {
 			},
 			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
 				annot := map[string]string{
-					attestation.AnnotationPredicateType: "https://sigstore.dev/cosign/sign/v1",
+					attestation.ExportAnnotationPredicateType: "https://sigstore.dev/cosign/sign/v1",
 				}
 
 				return fakeImageWithAnnotations([]byte(`{"bundle": "ok"}`), annot), nil
@@ -560,13 +560,13 @@ func TestCollectAttestationsMaxReferrers(t *testing.T) {
 
 	for idx := range manifests {
 		manifests[idx] = ociV1.Descriptor{
-			ArtifactType: attestation.BundleMediaType,
+			ArtifactType: attestation.ExportBundleMediaType,
 			Digest: ociV1.Hash{
 				Algorithm: testHashAlgorithm,
 				Hex:       testHashHex,
 			},
 			Annotations: map[string]string{
-				attestation.AnnotationPredicateType: attestation.PredicateSLSAProvenanceV1,
+				attestation.ExportAnnotationPredicateType: attestation.PredicateSLSAProvenanceV1,
 			},
 		}
 	}
@@ -610,13 +610,13 @@ func TestCollectAttestationsAggregateSizeLimit(t *testing.T) {
 	manifests := make([]ociV1.Descriptor, 10)
 	for idx := range manifests {
 		manifests[idx] = ociV1.Descriptor{
-			ArtifactType: attestation.BundleMediaType,
+			ArtifactType: attestation.ExportBundleMediaType,
 			Digest: ociV1.Hash{
 				Algorithm: testHashAlgorithm,
 				Hex:       testHashHex,
 			},
 			Annotations: map[string]string{
-				attestation.AnnotationPredicateType: attestation.PredicateSLSAProvenanceV1,
+				attestation.ExportAnnotationPredicateType: attestation.PredicateSLSAProvenanceV1,
 			},
 		}
 	}
@@ -662,13 +662,13 @@ func TestCollectAttestationsDigestPreserved(t *testing.T) {
 
 	manifests := []ociV1.Descriptor{
 		{
-			ArtifactType: attestation.BundleMediaType,
+			ArtifactType: attestation.ExportBundleMediaType,
 			Digest: ociV1.Hash{
 				Algorithm: testHashAlgorithm,
 				Hex:       testHashHex,
 			},
 			Annotations: map[string]string{
-				attestation.AnnotationPredicateType: attestation.PredicateSLSAProvenanceV1,
+				attestation.ExportAnnotationPredicateType: attestation.PredicateSLSAProvenanceV1,
 			},
 		},
 	}
@@ -751,13 +751,13 @@ func TestBuildCertificateIdentitySANPatterns(t *testing.T) {
 
 func bundleDescriptor(predicateType string) ociV1.Descriptor {
 	return ociV1.Descriptor{
-		ArtifactType: attestation.BundleMediaType,
+		ArtifactType: attestation.ExportBundleMediaType,
 		Digest: ociV1.Hash{
 			Algorithm: testHashAlgorithm,
 			Hex:       testHashHex,
 		},
 		Annotations: map[string]string{
-			attestation.AnnotationPredicateType: predicateType,
+			attestation.ExportAnnotationPredicateType: predicateType,
 		},
 	}
 }

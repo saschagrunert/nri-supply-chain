@@ -422,7 +422,7 @@ func TestWarnValidationEnforceDefaults(t *testing.T) {
 				return c
 			}(),
 			policies: map[string]*policy.Policy{
-				"staging": {},
+				"stg": {},
 			},
 		},
 	}
@@ -457,6 +457,178 @@ func TestInitLogging(t *testing.T) {
 	}
 
 	initLogging("bogus")
+}
+
+const (
+	defaultPluginName = "supply-chain"
+	defaultPluginIdx  = "10"
+)
+
+func defaultOpts() options {
+	return options{
+		configPath:      "",
+		metricsAddr:     "",
+		pluginName:      defaultPluginName,
+		pluginIdx:       defaultPluginIdx,
+		logLevel:        logLevelInfo,
+		verifyImage:     "",
+		verifyNamespace: defaultNamespace,
+		showVersion:     false,
+		validate:        false,
+		jsonSchema:      "",
+	}
+}
+
+func TestParseFlagsFrom(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		args []string
+		want options
+	}{
+		{
+			name: "defaults with empty args",
+			args: []string{},
+			want: defaultOpts(),
+		},
+		{
+			name: "config flag",
+			args: []string{"--config", "/etc/nri/config.toml"},
+			want: func() options {
+				o := defaultOpts()
+				o.configPath = "/etc/nri/config.toml"
+
+				return o
+			}(),
+		},
+		{
+			name: "metrics-addr flag",
+			args: []string{"--metrics-addr", ":9090"},
+			want: func() options {
+				o := defaultOpts()
+				o.metricsAddr = ":9090"
+
+				return o
+			}(),
+		},
+		{
+			name: "plugin-name flag",
+			args: []string{"--plugin-name", "custom"},
+			want: func() options {
+				o := defaultOpts()
+				o.pluginName = "custom"
+
+				return o
+			}(),
+		},
+		{
+			name: "plugin-idx flag",
+			args: []string{"--plugin-idx", "42"},
+			want: func() options {
+				o := defaultOpts()
+				o.pluginIdx = "42"
+
+				return o
+			}(),
+		},
+		{
+			name: "log-level flag",
+			args: []string{"--log-level", logLevelDebug},
+			want: func() options {
+				o := defaultOpts()
+				o.logLevel = logLevelDebug
+
+				return o
+			}(),
+		},
+		{
+			name: "version flag",
+			args: []string{"--version"},
+			want: func() options {
+				o := defaultOpts()
+				o.showVersion = true
+
+				return o
+			}(),
+		},
+		{
+			name: "validate flag",
+			args: []string{"--validate"},
+			want: func() options {
+				o := defaultOpts()
+				o.validate = true
+
+				return o
+			}(),
+		},
+		{
+			name: "verify-image flag",
+			args: []string{"--verify-image", "quay.io/test:latest"},
+			want: func() options {
+				o := defaultOpts()
+				o.verifyImage = "quay.io/test:latest"
+
+				return o
+			}(),
+		},
+		{
+			name: "verify-namespace flag",
+			args: []string{"--verify-namespace", "production"},
+			want: func() options {
+				o := defaultOpts()
+				o.verifyNamespace = "production"
+
+				return o
+			}(),
+		},
+		{
+			name: "json-schema flag",
+			args: []string{"--json-schema", schemaPolicy},
+			want: func() options {
+				o := defaultOpts()
+				o.jsonSchema = schemaPolicy
+
+				return o
+			}(),
+		},
+		{
+			name: "multiple flags combined",
+			args: []string{
+				"--config", "/tmp/cfg.toml",
+				"--metrics-addr", ":8080",
+				"--plugin-name", "sc",
+				"--plugin-idx", "5",
+				"--log-level", logLevelError,
+				"--verify-image", "registry.io/img:v1",
+				"--verify-namespace", "staging",
+			},
+			want: options{
+				configPath:      "/tmp/cfg.toml",
+				metricsAddr:     ":8080",
+				pluginName:      "sc",
+				pluginIdx:       "5",
+				logLevel:        logLevelError,
+				verifyImage:     "registry.io/img:v1",
+				verifyNamespace: "staging",
+				showVersion:     false,
+				validate:        false,
+				jsonSchema:      "",
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := parseFlagsFrom(test.args)
+			if got != test.want {
+				t.Errorf("parseFlagsFrom(%v)\n got: %+v\nwant: %+v",
+					test.args, got, test.want)
+			}
+		})
+	}
 }
 
 func TestOCIFetcherWithRateLimit(t *testing.T) {

@@ -41,22 +41,22 @@ const (
 	// PredicateOpenVEX is the in-toto predicate type for OpenVEX documents.
 	PredicateOpenVEX = "https://openvex.dev/ns"
 
-	// BundleMediaType is the OCI artifact type for Sigstore bundles.
-	BundleMediaType = "application/vnd.dev.sigstore.bundle.v0.3+json"
+	// bundleMediaType is the OCI artifact type for Sigstore bundles.
+	bundleMediaType = "application/vnd.dev.sigstore.bundle.v0.3+json"
 
-	// OCIEmptyMediaType is the fallback artifact type some registries
+	// ociEmptyMediaType is the fallback artifact type some registries
 	// (notably GHCR) return for cosign-created attestations instead of
 	// the Sigstore bundle media type.
-	OCIEmptyMediaType = "application/vnd.oci.empty.v1+json"
+	ociEmptyMediaType = "application/vnd.oci.empty.v1+json"
 
-	// AnnotationPredicateType is the annotation key for the predicate type in Sigstore bundles.
-	AnnotationPredicateType = "dev.sigstore.bundle.predicateType"
+	// annotationPredicateType is the annotation key for the predicate type in Sigstore bundles.
+	annotationPredicateType = "dev.sigstore.bundle.predicateType"
 
-	// DSSEPayloadType is the expected DSSE envelope payload type for in-toto statements.
-	DSSEPayloadType = "application/vnd.in-toto+json"
+	// dssePayloadType is the expected DSSE envelope payload type for in-toto statements.
+	dssePayloadType = "application/vnd.in-toto+json"
 
-	// CosignAttestationTagSuffix is the tag suffix cosign uses for attestation images.
-	CosignAttestationTagSuffix = ".att"
+	// cosignAttestationTagSuffix is the tag suffix cosign uses for attestation images.
+	cosignAttestationTagSuffix = ".att"
 )
 
 // BundleVerifyFunc verifies a Sigstore bundle and returns the extracted DSSE payload.

@@ -85,9 +85,11 @@ func TestDefaultVerifyBundle(t *testing.T) {
 			wantInErr: "",
 		},
 		{
-			name:      "invalid bundle content",
-			ctx:       context.Background,
-			data:      []byte(`{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json"}`),
+			name: "invalid bundle content",
+			ctx:  context.Background,
+			data: []byte(
+				`{"mediaType":"` + attestation.ExportBundleMediaType + `"}`,
+			),
 			opts:      &attestation.FetchOptions{},
 			wantErr:   true,
 			wantInErr: "",
@@ -108,7 +110,9 @@ func TestDefaultVerifyBundle(t *testing.T) {
 		{
 			name: "nonexistent key path",
 			ctx:  context.Background,
-			data: []byte(`{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json"}`),
+			data: []byte(
+				`{"mediaType":"` + attestation.ExportBundleMediaType + `"}`,
+			),
 			opts: &attestation.FetchOptions{
 				TrustedKeys: []string{nonexistentKey},
 			},
@@ -116,9 +120,11 @@ func TestDefaultVerifyBundle(t *testing.T) {
 			wantInErr: "",
 		},
 		{
-			name:      "no trusted material configured",
-			ctx:       context.Background,
-			data:      []byte(`{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json"}`),
+			name: "no trusted material configured",
+			ctx:  context.Background,
+			data: []byte(
+				`{"mediaType":"` + attestation.ExportBundleMediaType + `"}`,
+			),
 			opts:      &attestation.FetchOptions{},
 			wantErr:   true,
 			wantInErr: "",
@@ -806,7 +812,9 @@ func TestExtractVerifiedPayload(t *testing.T) {
 		{
 			name: "valid DSSE envelope",
 			run: func() ([]byte, error) {
-				bndl := attestation.NewTestBundle(attestation.DSSEPayloadType, `{"test": true}`)
+				bndl := attestation.NewTestBundle(
+					attestation.ExportDSSEPayloadType, `{"test": true}`,
+				)
 
 				return attestation.ExportExtractVerifiedPayload(bndl)
 			},
@@ -980,13 +988,13 @@ func TestNewTestOCIFetcherInjectsBoth(t *testing.T) {
 
 	manifests := []ociV1.Descriptor{
 		{
-			ArtifactType: attestation.BundleMediaType,
+			ArtifactType: attestation.ExportBundleMediaType,
 			Digest: ociV1.Hash{
 				Algorithm: "sha256",
 				Hex:       "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
 			},
 			Annotations: map[string]string{
-				attestation.AnnotationPredicateType: attestation.PredicateSLSAProvenanceV1,
+				attestation.ExportAnnotationPredicateType: attestation.PredicateSLSAProvenanceV1,
 			},
 		},
 	}

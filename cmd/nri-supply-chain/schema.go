@@ -25,6 +25,11 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 )
 
+const (
+	schemaPolicy = "policy"
+	schemaResult = "result"
+)
+
 // PolicyJSONSchema generates the JSON Schema for policy configuration files.
 func PolicyJSONSchema() ([]byte, error) {
 	return generateSchema(
@@ -76,9 +81,9 @@ func printJSONSchema(schemaType string) int {
 	)
 
 	switch schemaType {
-	case "policy":
+	case schemaPolicy:
 		data, err = PolicyJSONSchema()
-	case "result":
+	case schemaResult:
 		data, err = VerifyResultJSONSchema()
 	default:
 		slog.Error(

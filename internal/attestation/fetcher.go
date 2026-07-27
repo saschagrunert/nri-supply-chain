@@ -39,7 +39,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-var errUnexpectedSingleflightResult = errors.New("fetcher: unexpected singleflight result type")
+var errUnexpectedFetchResult = errors.New("fetcher: unexpected singleflight result type")
 
 const (
 	maxAttestationSize      = 10 << 20 // 10 MiB
@@ -88,7 +88,7 @@ func (c *trustedRootCache) get(ctx context.Context) (*root.TrustedRoot, error) {
 
 	tr, ok := result.(*root.TrustedRoot)
 	if !ok {
-		return nil, fmt.Errorf("%w: %T", errUnexpectedSingleflightResult, result)
+		return nil, fmt.Errorf("%w: %T", errUnexpectedFetchResult, result)
 	}
 
 	return tr, nil
@@ -442,7 +442,7 @@ func isTransientError(err error) bool {
 
 func cosignAttestationTag(ref name.Digest) name.Tag {
 	return ref.Context().Tag(
-		strings.Replace(ref.DigestStr(), ":", "-", 1) + CosignAttestationTagSuffix,
+		strings.Replace(ref.DigestStr(), ":", "-", 1) + cosignAttestationTagSuffix,
 	)
 }
 
@@ -614,7 +614,7 @@ func (f *OCIFetcher) collectAttestations(
 			break
 		}
 
-		predicateType := desc.Annotations[AnnotationPredicateType]
+		predicateType := desc.Annotations[annotationPredicateType]
 
 		att, ok := f.processDescriptor(ctx, desc, ref, digest, predicateType, remoteOpts, fetchOpts)
 		if ok {
@@ -632,7 +632,7 @@ func (f *OCIFetcher) collectAttestations(
 
 func isBundleCandidate(artifactType string) bool {
 	switch artifactType {
-	case BundleMediaType, OCIEmptyMediaType, "":
+	case bundleMediaType, ociEmptyMediaType, "":
 		return true
 	default:
 		return false
@@ -725,7 +725,7 @@ func resolvePredicateFromManifest(ctx context.Context, img ociV1.Image, descDige
 		return ""
 	}
 
-	return manifest.Annotations[AnnotationPredicateType]
+	return manifest.Annotations[annotationPredicateType]
 }
 
 func parseDigestRef(imageRef, digest string) (name.Digest, error) {

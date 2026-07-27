@@ -140,8 +140,20 @@ jobs:
             package: ./internal/vsa/
             target: FuzzVerify
           - name: glob-to-regex
-            package: ./internal/attestation/
+            package: ./internal/glob/
             target: FuzzGlobToRegex
+          - name: digest-parse
+            package: ./internal/types/
+            target: FuzzParseDigest
+          - name: policy-load
+            package: ./internal/policy/
+            target: FuzzLoad
+          - name: extract-predicate-type
+            package: ./internal/attestation/
+            target: FuzzExtractPredicateType
+          - name: artifact-policy
+            package: ./internal/attestation/
+            target: FuzzArtifactPolicy
           - name: config-load
             package: ./internal/config/
             target: FuzzLoadFromString

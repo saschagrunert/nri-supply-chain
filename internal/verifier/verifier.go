@@ -43,14 +43,15 @@ var (
 	// ErrCircuitBreakerOpen is returned when the circuit breaker is open.
 	ErrCircuitBreakerOpen = errors.New("circuit breaker open for image")
 
-	errUnexpectedSingleflightResult = errors.New("verifier: unexpected singleflight result type")
+	errUnexpectedVerifyResult = errors.New("verifier: unexpected singleflight result type")
 )
 
 const (
-	maxConcurrentFetches   = 50
-	defaultPolicyLabel     = "default"
-	warmTimeout            = 30 * time.Second
-	maxVerificationTimeout = 5 * time.Minute
+	maxConcurrentFetches        = 50
+	maxConcurrentFetchesPerHost = 10
+	defaultPolicyLabel          = "default"
+	warmTimeout                 = 30 * time.Second
+	maxVerificationTimeout      = 5 * time.Minute
 )
 
 type snapshot struct {
@@ -61,6 +62,7 @@ type snapshot struct {
 	fetcher         attestation.Fetcher
 	circuitBreakers *attestation.CircuitBreakerRegistry
 	fetchSem        *semaphore.Weighted
+	hostSem         *sync.Map
 	auditLogger     *slog.Logger
 }
 
@@ -101,6 +103,7 @@ func New(cfg *config.Config, met *metrics.Metrics, fetcher attestation.Fetcher) 
 				cfgCopy.CircuitBreakerCooldown.Duration,
 			),
 			fetchSem:    semaphore.NewWeighted(maxConcurrentFetches),
+			hostSem:     &sync.Map{},
 			auditLogger: slog.Default(),
 		},
 		policyHashes: nil,
@@ -346,6 +349,7 @@ func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 		attestation.ResetSANPatternWarnings()
 		slsa.ResetMaxLevelWarnings()
 		glob.ResetCache()
+		v.hostSem.Clear()
 	}
 
 	WarnEnforceDefaults(&cfgCopy, policies)
@@ -504,7 +508,7 @@ func (v *Verifier) verifyOnce(
 
 		shared, ok := res.Val.(*types.Result)
 		if !ok {
-			return nil, fmt.Errorf("%w: %T", errUnexpectedSingleflightResult, res.Val)
+			return nil, fmt.Errorf("%w: %T", errUnexpectedVerifyResult, res.Val)
 		}
 
 		result := *shared
