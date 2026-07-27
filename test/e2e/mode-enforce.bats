@@ -115,7 +115,7 @@ create_enforce_images() {
 
 	local found=false elapsed=0
 	while [[ $elapsed -lt 30 ]]; do
-		if kubectl get events -n "$TEST_NS" -o jsonpath='{.items[*].message}' 2>/dev/null | grep -q "supply chain"; then
+		if kubectl get events -n "$TEST_NS" -o jsonpath='{.items[*].message}' --request-timeout="${CURL_TIMEOUT}s" 2>/dev/null | grep -q "supply chain"; then
 			found=true
 			break
 		fi
@@ -124,7 +124,7 @@ create_enforce_images() {
 	done
 	if [[ "$found" != "true" ]]; then
 		echo "ASSERTION FAILED: no supply chain event after 30s" >&2
-		kubectl get events -n "$TEST_NS" >&2 || true
+		kubectl get events -n "$TEST_NS" --request-timeout="${KUBECTL_TIMEOUT}s" >&2 || true
 	fi
 	[[ "$found" == "true" ]]
 }
@@ -134,16 +134,21 @@ create_enforce_images() {
 
 	kubectl debug "debug-target" -n "$TEST_NS" \
 		--image "registry.k8s.io/pause:3.10" \
-		--target "debug-target" -- true 2>/dev/null || true
+		--target "debug-target" \
+		--request-timeout="${KUBECTL_TIMEOUT}s" -- true 2>/dev/null || true
 
 	assert_log_contains "Container rejected"
 }
 
 @test "concurrent pod creation is handled without races" {
+	local pids=()
 	for i in $(seq 1 3); do
 		run_pod "concurrent-$i" "registry.k8s.io/pause:3.10" &
+		pids+=($!)
 	done
-	wait
+	for pid in "${pids[@]}"; do
+		timeout "$KUBECTL_TIMEOUT" tail --pid="$pid" -f /dev/null 2>/dev/null || kill "$pid" 2>/dev/null || true
+	done
 
 	local count=0 elapsed=0
 	while [[ $elapsed -lt 30 ]]; do

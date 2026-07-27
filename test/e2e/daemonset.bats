@@ -40,7 +40,7 @@ setup_file() {
 
 teardown_file() {
 	stop_metrics_portforward
-	kubectl delete -f "$DAEMONSET_MANIFEST" 2>/dev/null || true
+	kubectl delete -f "$DAEMONSET_MANIFEST" --request-timeout="${KUBECTL_TIMEOUT}s" 2>/dev/null || true
 	[[ -L /var/run/nri ]] && rm -f /var/run/nri
 	unconfigure_insecure_registry
 	stop_registry
@@ -54,7 +54,7 @@ teardown_file() {
 	pod=$(get_daemonset_pod_name)
 	local phase
 	phase=$(kubectl get pod "$pod" -n "$DAEMONSET_NS" \
-		-o jsonpath='{.status.phase}')
+		-o jsonpath='{.status.phase}' --request-timeout="${KUBECTL_TIMEOUT}s")
 	[[ "$phase" == "Running" ]]
 }
 
@@ -63,16 +63,16 @@ teardown_file() {
 	pod=$(get_daemonset_pod_name)
 	local ready
 	ready=$(kubectl get pod "$pod" -n "$DAEMONSET_NS" \
-		-o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')
+		-o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' --request-timeout="${KUBECTL_TIMEOUT}s")
 	[[ "$ready" == "True" ]]
 }
 
 @test "daemonset has correct desired vs ready count" {
 	local desired ready
 	desired=$(kubectl get daemonset nri-supply-chain -n "$DAEMONSET_NS" \
-		-o jsonpath='{.status.desiredNumberScheduled}')
+		-o jsonpath='{.status.desiredNumberScheduled}' --request-timeout="${KUBECTL_TIMEOUT}s")
 	ready=$(kubectl get daemonset nri-supply-chain -n "$DAEMONSET_NS" \
-		-o jsonpath='{.status.numberReady}')
+		-o jsonpath='{.status.numberReady}' --request-timeout="${KUBECTL_TIMEOUT}s")
 	[[ "$desired" -gt 0 ]]
 	[[ "$ready" -eq "$desired" ]]
 }
@@ -82,7 +82,7 @@ teardown_file() {
 	pod=$(get_daemonset_pod_name)
 	local state
 	state=$(kubectl get pod "$pod" -n "$DAEMONSET_NS" \
-		-o jsonpath='{.status.containerStatuses[0].state.running.startedAt}')
+		-o jsonpath='{.status.containerStatuses[0].state.running.startedAt}' --request-timeout="${KUBECTL_TIMEOUT}s")
 	[[ -n "$state" ]]
 }
 
@@ -90,13 +90,13 @@ teardown_file() {
 
 @test "healthz endpoint responds via port-forward" {
 	ensure_metrics_portforward
-	run curl -sf "http://localhost:${DAEMONSET_METRICS_PORT}/healthz"
+	run curl -sf --max-time "$CURL_TIMEOUT" "http://localhost:${DAEMONSET_METRICS_PORT}/healthz"
 	[[ "$status" -eq 0 ]]
 }
 
 @test "readyz endpoint responds via port-forward" {
 	ensure_metrics_portforward
-	run curl -sf "http://localhost:${DAEMONSET_METRICS_PORT}/readyz"
+	run curl -sf --max-time "$CURL_TIMEOUT" "http://localhost:${DAEMONSET_METRICS_PORT}/readyz"
 	[[ "$status" -eq 0 ]]
 }
 
@@ -104,14 +104,14 @@ teardown_file() {
 
 @test "metrics endpoint returns build_info" {
 	ensure_metrics_portforward
-	run curl -sf "http://localhost:${DAEMONSET_METRICS_PORT}/metrics"
+	run curl -sf --max-time "$CURL_TIMEOUT" "http://localhost:${DAEMONSET_METRICS_PORT}/metrics"
 	[[ "$status" -eq 0 ]]
 	echo "$output" | grep -q 'nri_supply_chain_build_info'
 }
 
 @test "metrics endpoint returns valid Prometheus format" {
 	ensure_metrics_portforward
-	run curl -sf "http://localhost:${DAEMONSET_METRICS_PORT}/metrics"
+	run curl -sf --max-time "$CURL_TIMEOUT" "http://localhost:${DAEMONSET_METRICS_PORT}/metrics"
 	[[ "$status" -eq 0 ]]
 	echo "$output" | grep -q '^# HELP'
 	echo "$output" | grep -q '^# TYPE'
@@ -126,11 +126,11 @@ teardown_file() {
 @test "creating a pod triggers verification in daemonset plugin" {
 	local test_ns
 	test_ns="ds-test-$(date +%s)"
-	kubectl create namespace "$test_ns" 2>/dev/null || true
+	kubectl create namespace "$test_ns" --request-timeout="${KUBECTL_TIMEOUT}s" 2>/dev/null || true
 
 	local elapsed=0
 	while [[ $elapsed -lt 30 ]]; do
-		if kubectl get serviceaccount default -n "$test_ns" &>/dev/null; then
+		if kubectl get serviceaccount default -n "$test_ns" --request-timeout="${CURL_TIMEOUT}s" &>/dev/null; then
 			break
 		fi
 		sleep 1
@@ -141,18 +141,19 @@ teardown_file() {
 	# quickly (no external network dependency). System images from
 	# registry.k8s.io are excluded in the DaemonSet policy.
 	local test_image="${REGISTRY_HOST}/test/ds-verify:latest"
-	"$CRANE" copy registry.k8s.io/pause:3.10 "$test_image" --insecure
+	timeout "$CMD_TIMEOUT" "$CRANE" copy registry.k8s.io/pause:3.10 "$test_image" --insecure
 
 	kubectl run ds-verify-pod \
 		--namespace "$test_ns" \
 		--image "$test_image" \
-		--restart=Never
+		--restart=Never \
+		--request-timeout="${KUBECTL_TIMEOUT}s"
 
 	local pod_elapsed=0
 	while [[ $pod_elapsed -lt 60 ]]; do
 		local phase
 		phase=$(kubectl get pod ds-verify-pod -n "$test_ns" \
-			-o jsonpath='{.status.phase}' 2>/dev/null || true)
+			-o jsonpath='{.status.phase}' --request-timeout="${CURL_TIMEOUT}s" 2>/dev/null || true)
 		if [[ "$phase" == "Running" ]]; then
 			break
 		fi
@@ -162,6 +163,6 @@ teardown_file() {
 
 	assert_daemonset_log_contains "Container verified" 30
 
-	kubectl delete pod ds-verify-pod -n "$test_ns" --force --grace-period=0 2>/dev/null || true
-	kubectl delete namespace "$test_ns" 2>/dev/null || true
+	kubectl delete pod ds-verify-pod -n "$test_ns" --force --grace-period=0 --request-timeout="${KUBECTL_TIMEOUT}s" 2>/dev/null || true
+	kubectl delete namespace "$test_ns" --request-timeout="${KUBECTL_TIMEOUT}s" 2>/dev/null || true
 }

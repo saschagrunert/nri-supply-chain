@@ -116,7 +116,7 @@ move_referrer_to_att_tag() {
 copy_referrer_to_att_tag() {
 	local ref="$1"
 	local digest
-	digest=$("$CRANE" digest "$ref" --insecure)
+	digest=$(timeout "$CMD_TIMEOUT" "$CRANE" digest "$ref" --insecure)
 	local att_tag="${digest//:/-}.att"
 	local repo="${ref%:*}"
 	local api_repo="${repo#*/}"
@@ -124,7 +124,7 @@ copy_referrer_to_att_tag() {
 	# Get the referrer index via OCI tag fallback
 	local oci_fallback_tag="${digest//:/-}"
 	local referrers_json
-	referrers_json=$(curl -sf \
+	referrers_json=$(curl -sf --max-time "$CURL_TIMEOUT" \
 		"http://${REGISTRY_HOST}/v2/${api_repo}/manifests/${oci_fallback_tag}" \
 		-H "Accept: application/vnd.oci.image.index.v1+json")
 
@@ -133,7 +133,7 @@ copy_referrer_to_att_tag() {
 
 	# Get the bundle image manifest
 	local bundle_manifest
-	bundle_manifest=$(curl -sf \
+	bundle_manifest=$(curl -sf --max-time "$CURL_TIMEOUT" \
 		"http://${REGISTRY_HOST}/v2/${api_repo}/manifests/${bundle_digest}" \
 		-H "Accept: application/vnd.oci.image.manifest.v1+json")
 
@@ -166,7 +166,7 @@ copy_referrer_to_att_tag() {
 			}]
 		}')
 
-	curl -sf -X PUT \
+	curl -sf --max-time "$CURL_TIMEOUT" -X PUT \
 		"http://${REGISTRY_HOST}/v2/${api_repo}/manifests/${att_tag}" \
 		-H "Content-Type: application/vnd.oci.image.manifest.v1+json" \
 		-d "$att_manifest" >/dev/null
@@ -179,13 +179,13 @@ patch_referrer_artifact_type() {
 	local ref="$1"
 	local new_type="$2"
 	local digest
-	digest=$("$CRANE" digest "$ref" --insecure)
+	digest=$(timeout "$CMD_TIMEOUT" "$CRANE" digest "$ref" --insecure)
 	local repo="${ref%:*}"
 	local api_repo="${repo#*/}"
 
 	local oci_fallback_tag="${digest//:/-}"
 	local referrers_json
-	referrers_json=$(curl -sf \
+	referrers_json=$(curl -sf --max-time "$CURL_TIMEOUT" \
 		"http://${REGISTRY_HOST}/v2/${api_repo}/manifests/${oci_fallback_tag}" \
 		-H "Accept: application/vnd.oci.image.index.v1+json")
 
@@ -194,7 +194,7 @@ patch_referrer_artifact_type() {
 		--arg t "$new_type" \
 		'.manifests[].artifactType = $t')
 
-	curl -sf -X PUT \
+	curl -sf --max-time "$CURL_TIMEOUT" -X PUT \
 		"http://${REGISTRY_HOST}/v2/${api_repo}/manifests/${oci_fallback_tag}" \
 		-H "Content-Type: application/vnd.oci.image.index.v1+json" \
 		-d "$patched" >/dev/null
@@ -205,13 +205,13 @@ patch_referrer_artifact_type() {
 delete_oci_referrer() {
 	local ref="$1"
 	local digest
-	digest=$("$CRANE" digest "$ref" --insecure)
+	digest=$(timeout "$CMD_TIMEOUT" "$CRANE" digest "$ref" --insecure)
 	local repo="${ref%:*}"
 	local api_repo="${repo#*/}"
 
 	local oci_fallback_tag="${digest//:/-}"
 	local referrers_json
-	referrers_json=$(curl -sf \
+	referrers_json=$(curl -sf --max-time "$CURL_TIMEOUT" \
 		"http://${REGISTRY_HOST}/v2/${api_repo}/manifests/${oci_fallback_tag}" \
 		-H "Accept: application/vnd.oci.image.index.v1+json")
 
@@ -219,12 +219,12 @@ delete_oci_referrer() {
 	bundle_digest=$(echo "$referrers_json" | jq -r '.manifests[0].digest')
 
 	# Delete the attestation manifest
-	curl -sf -X DELETE \
+	curl -sf --max-time "$CURL_TIMEOUT" -X DELETE \
 		"http://${REGISTRY_HOST}/v2/${api_repo}/manifests/${bundle_digest}" \
 		>/dev/null 2>&1 || true
 
 	# Delete the tag fallback index so remote.Referrers returns empty
-	curl -sf -X DELETE \
+	curl -sf --max-time "$CURL_TIMEOUT" -X DELETE \
 		"http://${REGISTRY_HOST}/v2/${api_repo}/manifests/${oci_fallback_tag}" \
 		>/dev/null 2>&1 || true
 }

@@ -56,7 +56,8 @@ teardown_file() {
 	kubectl run "cache-ns1-pod" \
 		--namespace "$ns1" \
 		--image "registry.k8s.io/pause:3.10" \
-		--restart=Never
+		--restart=Never \
+		--request-timeout="${KUBECTL_TIMEOUT}s"
 	wait_for_pod_status "cache-ns1-pod" "Running" 60 "$ns1"
 	assert_pod_verdict "cache-ns1-pod" "verified" "$ns1"
 
@@ -66,7 +67,8 @@ teardown_file() {
 	kubectl run "cache-ns2-pod" \
 		--namespace "$ns2" \
 		--image "registry.k8s.io/pause:3.10" \
-		--restart=Never
+		--restart=Never \
+		--request-timeout="${KUBECTL_TIMEOUT}s"
 	wait_for_pod_status "cache-ns2-pod" "Running" 60 "$ns2"
 	assert_pod_verdict "cache-ns2-pod" "verified" "$ns2"
 

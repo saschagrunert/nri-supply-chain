@@ -44,7 +44,7 @@ teardown_file() {
 
 @test "SIGHUP reloads policies from policy_dir" {
 	local ns="reload-policy-ns"
-	kubectl create namespace "$ns" 2>/dev/null || true
+	kubectl create namespace "$ns" --request-timeout="${KUBECTL_TIMEOUT}s" 2>/dev/null || true
 	wait_for_service_account "$ns"
 
 	write_plugin_config "enforce" "allow"
@@ -59,11 +59,12 @@ teardown_file() {
 	kubectl run "reload-policy-pod" \
 		--namespace "$ns" \
 		--image "registry.k8s.io/pause:3.10" \
-		--restart=Never
+		--restart=Never \
+		--request-timeout="${KUBECTL_TIMEOUT}s"
 	wait_for_pod_status "reload-policy-pod" "Running" 60 "$ns"
 
-	kubectl delete pod "reload-policy-pod" -n "$ns" --force --grace-period=0 2>/dev/null || true
-	kubectl delete namespace "$ns" 2>/dev/null || true
+	kubectl delete pod "reload-policy-pod" -n "$ns" --force --grace-period=0 --request-timeout="${KUBECTL_TIMEOUT}s" 2>/dev/null || true
+	kubectl delete namespace "$ns" --request-timeout="${KUBECTL_TIMEOUT}s" 2>/dev/null || true
 	rm -f "${POLICY_DIR}/${ns}.json"
 	write_plugin_config "warn"
 	reload_plugin

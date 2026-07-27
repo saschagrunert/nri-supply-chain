@@ -35,9 +35,9 @@ setup_file() {
 	write_plugin_config_cb "disabled" "allow"
 	start_plugin
 	wait_for_service_account "default"
-	kubectl run "cb-prepull" --namespace default --image "$CB_IMAGE" --restart=Never
+	kubectl run "cb-prepull" --namespace default --image "$CB_IMAGE" --restart=Never --request-timeout="${KUBECTL_TIMEOUT}s"
 	wait_for_pod_status "cb-prepull" "Running" 60 "default"
-	kubectl delete pod "cb-prepull" -n default --force --grace-period=0 2>/dev/null || true
+	kubectl delete pod "cb-prepull" -n default --force --grace-period=0 --request-timeout="${KUBECTL_TIMEOUT}s" 2>/dev/null || true
 	stop_plugin
 
 	stop_registry
@@ -46,7 +46,7 @@ setup_file() {
 setup() {
 	TEST_NS="test-$(date +%s)-${BATS_TEST_NUMBER}"
 	export TEST_NS
-	kubectl create namespace "$TEST_NS" 2>/dev/null || true
+	kubectl create namespace "$TEST_NS" --request-timeout="${KUBECTL_TIMEOUT}s" 2>/dev/null || true
 	wait_for_service_account "$TEST_NS"
 	if [[ -f "$PLUGIN_LOG" ]]; then
 		export LOG_OFFSET
