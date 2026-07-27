@@ -54,14 +54,13 @@ func acquireFetchSlots(
 }
 
 func acquireHostSem(hostSem *sync.Map, host string) *semaphore.Weighted {
-	val, _ := hostSem.LoadOrStore(host, semaphore.NewWeighted(maxConcurrentFetchesPerHost))
-
-	sem, ok := val.(*semaphore.Weighted)
-	if !ok {
-		panic(fmt.Sprintf("hostSem: unexpected type %T for host %q", val, host))
+	if val, ok := hostSem.Load(host); ok {
+		return val.(*semaphore.Weighted) //nolint:forcetypeassert // hostSem is private, only stores *Weighted
 	}
 
-	return sem
+	val, _ := hostSem.LoadOrStore(host, semaphore.NewWeighted(maxConcurrentFetchesPerHost))
+
+	return val.(*semaphore.Weighted) //nolint:forcetypeassert // hostSem is private, only stores *Weighted
 }
 
 func registryHost(imageRef string) string {

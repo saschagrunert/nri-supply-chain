@@ -15,6 +15,9 @@
 package verifier
 
 import (
+	"context"
+	"log/slog"
+
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
@@ -54,4 +57,52 @@ func ExportApplyCheckResult(result *types.Result, check *types.CheckResult) {
 // ExportResultShouldUseShorterTTL exposes resultShouldUseShorterTTL for external tests.
 func ExportResultShouldUseShorterTTL(result *types.Result) bool {
 	return resultShouldUseShorterTTL(result)
+}
+
+// ExportAuditEventLogAttrs exposes auditEvent.logAttrs for external tests.
+func ExportAuditEventLogAttrs(event *auditEvent) []any {
+	return event.logAttrs()
+}
+
+// ExportNewAuditEvent creates an auditEvent for external tests.
+func ExportNewAuditEvent(
+	image, digest, namespace string, allowed bool,
+	check, status, detail, decision, reason string,
+) *auditEvent {
+	return &auditEvent{
+		Image:     image,
+		Digest:    digest,
+		Namespace: namespace,
+		Allowed:   allowed,
+		Check:     check,
+		Status:    status,
+		Detail:    detail,
+		Decision:  decision,
+		Reason:    reason,
+	}
+}
+
+// ExportLogResult exposes logResult for external tests.
+func ExportLogResult(
+	ctx context.Context, logger *slog.Logger,
+	imageRef, digest, namespace string,
+	result *types.Result,
+) {
+	logResult(ctx, logger, imageRef, digest, namespace, result)
+}
+
+// ExportLogAuditDecision exposes logAuditDecision for external tests.
+func ExportLogAuditDecision(
+	ctx context.Context, logger *slog.Logger,
+	imageRef, digest, namespace, decision, reason string,
+) {
+	logAuditDecision(ctx, logger, imageRef, digest, namespace, decision, reason)
+}
+
+// ExportAllowResult exposes allowResult for external tests.
+func ExportAllowResult(
+	ctx context.Context, logger *slog.Logger,
+	imageRef, digest, namespace, reason string,
+) *types.Result {
+	return allowResult(ctx, logger, imageRef, digest, namespace, reason)
 }

@@ -31,6 +31,10 @@ const (
 
 	// DefaultMaxSize is the default maximum number of entries in the cache.
 	DefaultMaxSize = 10000
+
+	evictionIntervalDivisor = 10
+	minEvictionInterval     = 10 * time.Second
+	maxEvictionInterval     = 5 * time.Minute
 )
 
 type key struct {
@@ -87,11 +91,13 @@ type Cache struct {
 	evictions prometheus.Counter
 	expHeap   expiryHeap
 	heapIndex map[key]*heapEntry
+	stopOnce  sync.Once
+	stopCh    chan struct{}
 }
 
 // New creates a new verification result cache with the given TTL.
 func New(ttl time.Duration) *Cache {
-	return &Cache{
+	c := &Cache{ //nolint:varnamelen // c is the standard receiver name for Cache
 		mu:        sync.RWMutex{},
 		entries:   make(map[key]entry),
 		ttl:       ttl,
@@ -100,7 +106,15 @@ func New(ttl time.Duration) *Cache {
 		evictions: nil,
 		expHeap:   nil,
 		heapIndex: make(map[key]*heapEntry),
+		stopOnce:  sync.Once{},
+		stopCh:    make(chan struct{}),
 	}
+
+	if ttl > 0 {
+		go c.backgroundEvict(evictionInterval(ttl))
+	}
+
+	return c
 }
 
 // NewWithGauge creates a cache that updates the given Prometheus gauge
@@ -113,7 +127,7 @@ func NewWithGauge(
 		gauge.Set(0)
 	}
 
-	return &Cache{
+	c := &Cache{ //nolint:varnamelen // c is the standard receiver name for Cache
 		mu:        sync.RWMutex{},
 		entries:   make(map[key]entry),
 		ttl:       ttl,
@@ -122,7 +136,15 @@ func NewWithGauge(
 		evictions: evictions,
 		expHeap:   nil,
 		heapIndex: make(map[key]*heapEntry),
+		stopOnce:  sync.Once{},
+		stopCh:    make(chan struct{}),
 	}
+
+	if ttl > 0 {
+		go c.backgroundEvict(evictionInterval(ttl))
+	}
+
+	return c
 }
 
 // Get retrieves a cached result for the given digest and namespace.
@@ -235,6 +257,37 @@ func (c *Cache) Len() int {
 	defer c.mu.RUnlock()
 
 	return len(c.entries)
+}
+
+// Stop terminates the background eviction goroutine. Safe to call multiple
+// times; only the first call has an effect. After Stop returns, no further
+// background eviction will occur.
+func (c *Cache) Stop() {
+	c.stopOnce.Do(func() { close(c.stopCh) })
+}
+
+func (c *Cache) backgroundEvict(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.stopCh:
+			return
+		case <-ticker.C:
+			c.mu.Lock()
+			c.evictExpiredLocked()
+			c.updateGaugeLocked()
+			c.mu.Unlock()
+		}
+	}
+}
+
+func evictionInterval(ttl time.Duration) time.Duration {
+	return min(
+		max(ttl/evictionIntervalDivisor, minEvictionInterval),
+		maxEvictionInterval,
+	)
 }
 
 func (c *Cache) updateGaugeLocked() {

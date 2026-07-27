@@ -67,6 +67,8 @@ type Metrics struct {
 	ConfigReloadsTotal prometheus.Counter
 	// ConfigReloadErrorsTotal counts failed configuration reloads.
 	ConfigReloadErrorsTotal prometheus.Counter
+	// VerificationInterruptedTotal counts verifications interrupted by context cancellation.
+	VerificationInterruptedTotal prometheus.Counter
 	// PrewarmDurationSeconds measures cache pre-warming duration.
 	PrewarmDurationSeconds *prometheus.HistogramVec
 	registry               *prometheus.Registry
@@ -132,6 +134,10 @@ func New() *Metrics {
 		ConfigReloadErrorsTotal: newCounter(
 			"config_reload_errors_total",
 			"Total number of failed configuration reloads.",
+		),
+		VerificationInterruptedTotal: newCounter(
+			"verification_interrupted_total",
+			"Total number of verifications interrupted by context cancellation.",
 		),
 		PrewarmDurationSeconds: newPrewarmDuration(),
 		registry:               prometheus.NewRegistry(),
@@ -265,6 +271,7 @@ func (m *Metrics) register() {
 		m.BuildInfo,
 		m.ConfigReloadsTotal,
 		m.ConfigReloadErrorsTotal,
+		m.VerificationInterruptedTotal,
 		m.PrewarmDurationSeconds,
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{
 			PidFn:        nil,

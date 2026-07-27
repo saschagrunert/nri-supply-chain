@@ -21,23 +21,24 @@ internal limits, and security considerations.
 The plugin exposes Prometheus metrics at the configured
 [`metrics_addr`](config.md):
 
-| Metric                                           | Type      | Labels                        | Description                                                                          |
-| ------------------------------------------------ | --------- | ----------------------------- | ------------------------------------------------------------------------------------ |
-| `nri_supply_chain_verification_total`            | Counter   | `type`, `result`, `namespace` | Total verification attempts. `result`: `pass`, `warn`, `fail`                        |
-| `nri_supply_chain_verification_duration_seconds` | Histogram | `type`                        | Verification latency                                                                 |
-| `nri_supply_chain_cache_hits_total`              | Counter   |                               | Cache hits                                                                           |
-| `nri_supply_chain_cache_misses_total`            | Counter   |                               | Cache misses                                                                         |
-| `nri_supply_chain_cache_entries`                 | Gauge     |                               | Current number of cached entries                                                     |
-| `nri_supply_chain_cache_evictions_total`         | Counter   |                               | Cache entry evictions (TTL expiry or capacity overflow)                              |
-| `nri_supply_chain_verification_skipped_total`    | Counter   | `reason`, `namespace`         | Containers allowed without verification. `reason`: `excluded`, `missing_annotations` |
-| `nri_supply_chain_fetch_errors_total`            | Counter   | `type`, `registry`            | Attestation fetch errors                                                             |
-| `nri_supply_chain_inflight_dedup_total`          | Counter   |                               | Deduplicated inflight verifications                                                  |
-| `nri_supply_chain_circuit_breaker_trips_total`   | Counter   | `registry`                    | Circuit breaker open events                                                          |
-| `nri_supply_chain_trusted_root_stale_total`      | Counter   |                               | Stale trusted root served from cache                                                 |
-| `nri_supply_chain_cache_failure_hits_total`      | Counter   |                               | Cache hits returning a cached failure                                                |
-| `nri_supply_chain_build_info`                    | Gauge     | `version`, `goversion`        | Build metadata (set once at startup)                                                 |
-| `nri_supply_chain_config_reloads_total`          | Counter   |                               | Successful config reloads                                                            |
-| `nri_supply_chain_config_reload_errors_total`    | Counter   |                               | Failed config reload attempts                                                        |
+| Metric                                            | Type      | Labels                        | Description                                                                          |
+| ------------------------------------------------- | --------- | ----------------------------- | ------------------------------------------------------------------------------------ |
+| `nri_supply_chain_verification_total`             | Counter   | `type`, `result`, `namespace` | Total verification attempts. `result`: `pass`, `warn`, `fail`                        |
+| `nri_supply_chain_verification_duration_seconds`  | Histogram | `type`                        | Verification latency                                                                 |
+| `nri_supply_chain_cache_hits_total`               | Counter   |                               | Cache hits                                                                           |
+| `nri_supply_chain_cache_misses_total`             | Counter   |                               | Cache misses                                                                         |
+| `nri_supply_chain_cache_entries`                  | Gauge     |                               | Current number of cached entries                                                     |
+| `nri_supply_chain_cache_evictions_total`          | Counter   |                               | Cache entry evictions (background sweep, TTL expiry, or capacity overflow)           |
+| `nri_supply_chain_verification_skipped_total`     | Counter   | `reason`, `namespace`         | Containers allowed without verification. `reason`: `excluded`, `missing_annotations` |
+| `nri_supply_chain_fetch_errors_total`             | Counter   | `type`, `registry`            | Attestation fetch errors                                                             |
+| `nri_supply_chain_inflight_dedup_total`           | Counter   |                               | Deduplicated inflight verifications                                                  |
+| `nri_supply_chain_circuit_breaker_trips_total`    | Counter   | `registry`                    | Circuit breaker open events                                                          |
+| `nri_supply_chain_trusted_root_stale_total`       | Counter   |                               | Stale trusted root served from cache                                                 |
+| `nri_supply_chain_cache_failure_hits_total`       | Counter   |                               | Cache hits returning a cached failure                                                |
+| `nri_supply_chain_build_info`                     | Gauge     | `version`, `goversion`        | Build metadata (set once at startup)                                                 |
+| `nri_supply_chain_config_reloads_total`           | Counter   |                               | Successful config reloads                                                            |
+| `nri_supply_chain_verification_interrupted_total` | Counter   |                               | Verifications interrupted by context cancellation                                    |
+| `nri_supply_chain_config_reload_errors_total`     | Counter   |                               | Failed config reload attempts                                                        |
 
 ## Health and Readiness Probes
 
@@ -156,7 +157,7 @@ protect against resource exhaustion and unbounded processing.
 | Fetch retry count           | 2 retries (3 total)       | Uses exponential backoff starting at 500ms. Only transient errors (network timeouts, HTTP 5xx) trigger retries.                                                                         |
 | Attestation size limit      | 10 MiB per attestation    | Attestation bundles larger than 10 MiB are rejected. A warning is logged with the actual size.                                                                                          |
 | Aggregate attestation limit | 50 MiB per image          | Total attestation payload per image is capped at 50 MiB. Once exceeded, remaining referrers or cosign layers are skipped with a warning.                                                |
-| Max referrers per image     | 100                       | Only the first 100 bundle-type referrers are processed. Additional referrers are skipped with a warning.                                                                                |
+| Max referrers per image     | 50                        | Only the first 50 bundle-type referrers are processed. Additional referrers are skipped with a warning.                                                                                 |
 | Circuit breaker registry    | 1,000 hosts               | At most 1,000 per-host circuit breakers are tracked. When full, closed breakers are evicted first. If all are open, a shared overflow breaker is used for additional hosts.             |
 | Sigstore trusted root cache | 1h TTL, 24h max staleness | The root is refreshed every hour. If the Sigstore TUF mirror is unreachable, the stale root is used for up to 24 hours.                                                                 |
 | VSA clock skew tolerance    | 60 seconds                | A VSA with `timeVerified` up to 60 seconds in the future is accepted. Beyond that, it is rejected as a future timestamp.                                                                |

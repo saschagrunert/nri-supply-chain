@@ -46,6 +46,7 @@ const (
 	defaultCacheFailureTTL         = 5 * time.Minute
 	defaultCircuitBreakerThreshold = 5
 	defaultCircuitBreakerCooldown  = 30 * time.Second
+	maxFetchRateLimit              = 10000.0
 )
 
 var (
@@ -75,6 +76,9 @@ var (
 
 	// ErrFetchRateLimitNegative indicates a negative fetch rate limit.
 	ErrFetchRateLimitNegative = errors.New("fetch_rate_limit must be non-negative")
+
+	// ErrFetchRateLimitTooHigh indicates the fetch rate limit exceeds the maximum.
+	ErrFetchRateLimitTooHigh = errors.New("fetch_rate_limit exceeds maximum")
 
 	// ErrCacheFailureTTLNegative indicates a negative cache failure TTL.
 	ErrCacheFailureTTLNegative = errors.New("cache_failure_ttl must be non-negative")
@@ -217,6 +221,10 @@ func (c *Config) ValidateRuntime() error {
 
 // Normalize clamps fields to valid ranges. Call after Validate.
 func (c *Config) Normalize() {
+	if c.CacheTTL.Duration == 0 && c.Enabled() {
+		slog.Warn("cache_ttl is zero, verification result caching is disabled")
+	}
+
 	if c.CacheTTL.Duration > 0 && c.CacheFailureTTL.Duration > c.CacheTTL.Duration {
 		slog.Warn("cache_failure_ttl exceeds cache_ttl, clamping to cache_ttl",
 			"cache_failure_ttl", c.CacheFailureTTL.Duration,
@@ -305,6 +313,12 @@ func (c *Config) validateResilienceFields() error {
 	if c.FetchRateLimit < 0 {
 		return fmt.Errorf(
 			"%w: got %g", ErrFetchRateLimitNegative, c.FetchRateLimit,
+		)
+	}
+
+	if c.FetchRateLimit > maxFetchRateLimit {
+		return fmt.Errorf(
+			"%w: got %g, max %g", ErrFetchRateLimitTooHigh, c.FetchRateLimit, maxFetchRateLimit,
 		)
 	}
 

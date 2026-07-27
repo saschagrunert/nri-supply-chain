@@ -149,6 +149,17 @@ spec:
           configMap:
             name: nri-supply-chain-config
 ---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: nri-supply-chain
+  namespace: nri-supply-chain
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nri-supply-chain
+---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

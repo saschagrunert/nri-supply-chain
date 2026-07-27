@@ -44,7 +44,7 @@ var errUnexpectedFetchResult = errors.New("fetcher: unexpected singleflight resu
 const (
 	maxAttestationSize      = 10 << 20 // 10 MiB
 	maxTotalAttestationSize = 50 << 20 // 50 MiB aggregate limit per image
-	maxReferrers            = 100
+	maxReferrers            = 50
 	trustedRootCacheTTL     = 1 * time.Hour
 	trustedRootMaxStaleness = 24 * time.Hour
 	fetchMaxRetries         = 2
