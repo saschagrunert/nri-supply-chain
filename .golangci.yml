@@ -142,6 +142,7 @@ linters:
             - github.com/containerd/nri
             - github.com/fsnotify/fsnotify
             - github.com/google/go-containerregistry
+            - github.com/invopop/jsonschema
             - github.com/openvex/go-vex
             - github.com/prometheus/client_golang
             - github.com/saschagrunert/nri-supply-chain

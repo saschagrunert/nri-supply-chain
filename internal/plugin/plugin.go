@@ -21,24 +21,34 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/containerd/nri/pkg/api"
 	"github.com/containerd/nri/pkg/stub"
-	"github.com/google/go-containerregistry/pkg/authn"
-	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"golang.org/x/sync/semaphore"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
-	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
 // ErrMissingAnnotations indicates that required image annotations are absent.
 var ErrMissingAnnotations = errors.New("missing image annotations")
+
+// ImageVerifier abstracts the verification engine so tests can substitute a
+// mock without depending on the concrete verifier package.
+type ImageVerifier interface {
+	Verify(
+		ctx context.Context,
+		imageRef, digest, indexDigest, namespace string,
+	) (*types.Result, error)
+	Ready() (ready bool, reason string)
+	Enforcing() bool
+	Reload(ctx context.Context, cfg *config.Config) error
+}
 
 // DigestResolveFunc resolves an image reference to its platform-specific digest
 // via a registry. When the tag points to a manifest list, indexDigest returns
@@ -79,18 +89,20 @@ const (
 // Plugin implements the NRI CreateContainer and Configure hooks
 // for supply chain attestation verification.
 type Plugin struct {
-	verifier       *verifier.Verifier
+	verifier       ImageVerifier
 	metrics        *metrics.Metrics
 	configPath     string
 	connected      atomic.Bool
 	digestResolver DigestResolveFunc
 	fetchTimeout   time.Duration
 	prewarmDone    func()
+	prewarmMu      sync.Mutex
+	prewarmCancel  context.CancelFunc
 }
 
 // New creates a new Plugin with the given verifier, metrics, and config file path.
 func New(
-	v *verifier.Verifier, met *metrics.Metrics, configPath string, fetchTimeout time.Duration,
+	v ImageVerifier, met *metrics.Metrics, configPath string, fetchTimeout time.Duration,
 ) *Plugin {
 	return &Plugin{
 		verifier:       v,
@@ -100,15 +112,15 @@ func New(
 		digestResolver: defaultDigestResolver,
 		fetchTimeout:   fetchTimeout,
 		prewarmDone:    nil,
+		prewarmMu:      sync.Mutex{},
+		prewarmCancel:  nil,
 	}
 }
 
 func defaultDigestResolver(
 	ctx context.Context, imageRef string,
 ) (digest, indexDigest string, err error) {
-	digest, indexDigest, err = registry.ResolveDigest(ctx, imageRef,
-		remote.WithAuthFromKeychain(authn.DefaultKeychain),
-	)
+	digest, indexDigest, err = registry.ResolveWithDefaultKeychain(ctx, imageRef)
 	if err != nil {
 		return "", "", fmt.Errorf("resolving digest: %w", err)
 	}
@@ -179,9 +191,31 @@ func (p *Plugin) Synchronize(
 
 	// Use context.WithoutCancel so the pre-warm goroutine is not
 	// interrupted when the ttrpc request context completes.
-	go p.prewarmCache(context.WithoutCancel(ctx), images)
+	// Wrap it with a cancellable context so shutdown can stop prewarm.
+	prewarmCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+
+	p.prewarmMu.Lock()
+	if p.prewarmCancel != nil {
+		p.prewarmCancel()
+	}
+
+	p.prewarmCancel = cancel
+	p.prewarmMu.Unlock()
+
+	go p.prewarmCache(prewarmCtx, images)
 
 	return nil, nil
+}
+
+// CancelPrewarm cancels any in-progress cache pre-warming.
+func (p *Plugin) CancelPrewarm() {
+	p.prewarmMu.Lock()
+	cancel := p.prewarmCancel
+	p.prewarmMu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
 }
 
 // CreateContainer is called for each new container before it is created.
@@ -376,6 +410,8 @@ func (p *Plugin) prewarmCache(ctx context.Context, images []prewarmImage) {
 		}
 	}()
 
+	start := time.Now()
+
 	ctx, cancel := context.WithTimeout(ctx, prewarmTimeout)
 	defer cancel()
 
@@ -383,6 +419,30 @@ func (p *Plugin) prewarmCache(ctx context.Context, images []prewarmImage) {
 	total := len(images)
 	slog.Info("Pre-warming cache", "images", total)
 
+	verified, cancelled := p.runPrewarmVerifications(ctx, images, total)
+	if cancelled {
+		p.observePrewarm(start, "cancelled")
+
+		return
+	}
+
+	result := "success"
+	if int(verified) < total {
+		result = "partial"
+	}
+
+	p.observePrewarm(start, result)
+
+	slog.Info("Pre-warming cache complete",
+		"verified", verified,
+		"total", total,
+		"duration", time.Since(start),
+	)
+}
+
+func (p *Plugin) runPrewarmVerifications(
+	ctx context.Context, images []prewarmImage, total int,
+) (int32, bool) {
 	sem := semaphore.NewWeighted(prewarmConcurrency)
 	verified := atomic.Int32{}
 
@@ -393,7 +453,7 @@ func (p *Plugin) prewarmCache(ctx context.Context, images []prewarmImage) {
 		if err != nil {
 			slog.Warn("Pre-warm cache cancelled", "error", err)
 
-			break
+			return verified.Load(), true
 		}
 
 		go func() {
@@ -407,6 +467,8 @@ func (p *Plugin) prewarmCache(ctx context.Context, images []prewarmImage) {
 					"image", img.imageRef,
 					"error", verifyErr,
 				)
+
+				return
 			}
 
 			count := verified.Add(1)
@@ -417,18 +479,18 @@ func (p *Plugin) prewarmCache(ctx context.Context, images []prewarmImage) {
 		}()
 	}
 
-	// Wait for all in-flight pre-warm goroutines to finish.
 	err := sem.Acquire(ctx, prewarmConcurrency)
 	if err != nil {
 		slog.Warn("Pre-warm cache wait cancelled", "error", err)
 
-		return
+		return verified.Load(), true
 	}
 
-	slog.Info("Pre-warming cache complete",
-		"verified", verified.Load(),
-		"total", total,
-	)
+	return verified.Load(), false
+}
+
+func (p *Plugin) observePrewarm(start time.Time, result string) {
+	p.metrics.PrewarmDurationSeconds.WithLabelValues(result).Observe(time.Since(start).Seconds())
 }
 
 func resolveImage(annotations map[string]string) (imageRef, digest string) {

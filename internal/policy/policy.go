@@ -117,18 +117,18 @@ type Policy struct {
 // TrustPolicy contains trust roots for verification.
 type TrustPolicy struct {
 	// Builders is the list of trusted SLSA provenance builders.
-	Builders []TrustedBuilder `json:"builders"`
+	Builders []TrustedBuilder `json:"builders,omitempty"`
 	// Verifiers is the list of trusted VSA verifiers.
-	Verifiers []TrustedVerifier `json:"verifiers"`
+	Verifiers []TrustedVerifier `json:"verifiers,omitempty"`
 	// Issuers is the list of trusted signing identity issuers (Fulcio/OIDC).
-	Issuers []string `json:"issuers"`
+	Issuers []string `json:"issuers,omitempty"`
 	// SANPatterns restricts accepted certificate Subject Alternative Names.
 	// When empty, any SAN from a trusted issuer is accepted.
 	SANPatterns []string `json:"sanPatterns,omitempty"`
 	// Sources is a list of allowed source repository patterns.
-	Sources []string `json:"sources"`
+	Sources []string `json:"sources,omitempty"`
 	// BuildTypes is a list of accepted build type URIs.
-	BuildTypes []string `json:"buildTypes"`
+	BuildTypes []string `json:"buildTypes,omitempty"`
 }
 
 // TrustedBuilder represents a trusted SLSA provenance builder.

@@ -482,7 +482,7 @@ func (v *Verifier) verifyOnce(
 		recordMetrics(state.metrics, result, namespace)
 
 		if resultShouldUseShorterTTL(result) && state.config.CacheFailureTTL.Duration > 0 {
-			state.cache.Set(digest, namespace, result, state.config.CacheFailureTTL.Duration)
+			state.cache.SetWithTTL(digest, namespace, result, state.config.CacheFailureTTL.Duration)
 		} else {
 			state.cache.Set(digest, namespace, result)
 		}

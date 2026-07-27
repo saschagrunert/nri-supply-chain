@@ -67,7 +67,9 @@ type Metrics struct {
 	ConfigReloadsTotal prometheus.Counter
 	// ConfigReloadErrorsTotal counts failed configuration reloads.
 	ConfigReloadErrorsTotal prometheus.Counter
-	registry                *prometheus.Registry
+	// PrewarmDurationSeconds measures cache pre-warming duration.
+	PrewarmDurationSeconds *prometheus.HistogramVec
+	registry               *prometheus.Registry
 }
 
 // New creates and registers all supply chain verification metrics.
@@ -131,7 +133,8 @@ func New() *Metrics {
 			"config_reload_errors_total",
 			"Total number of failed configuration reloads.",
 		),
-		registry: prometheus.NewRegistry(),
+		PrewarmDurationSeconds: newPrewarmDuration(),
+		registry:               prometheus.NewRegistry(),
 	}
 
 	met.register()
@@ -205,6 +208,18 @@ func newVerificationDuration() *prometheus.HistogramVec {
 	)
 }
 
+func newPrewarmDuration() *prometheus.HistogramVec {
+	return prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "prewarm_duration_seconds",
+			Help:      "Duration of cache pre-warming in seconds.",
+			Buckets:   []float64{1, 5, 10, 30, 60, 120, 300},
+		},
+		[]string{labelResult},
+	)
+}
+
 func newVerificationSkipped() *prometheus.CounterVec {
 	return prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -250,6 +265,7 @@ func (m *Metrics) register() {
 		m.BuildInfo,
 		m.ConfigReloadsTotal,
 		m.ConfigReloadErrorsTotal,
+		m.PrewarmDurationSeconds,
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{
 			PidFn:        nil,
 			Namespace:    "",

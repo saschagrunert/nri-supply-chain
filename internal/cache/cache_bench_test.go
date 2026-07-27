@@ -75,6 +75,6 @@ func BenchmarkCacheSetWithTTLOverride(b *testing.B) {
 	b.ResetTimer()
 
 	for idx := range b.N {
-		testCache.Set(fmt.Sprintf("sha256:%d", idx), "default", result, 5*time.Minute)
+		testCache.SetWithTTL(fmt.Sprintf("sha256:%d", idx), "default", result, 5*time.Minute)
 	}
 }
