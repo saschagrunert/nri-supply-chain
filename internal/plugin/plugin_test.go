@@ -1157,3 +1157,36 @@ func TestDefaultDigestResolverInvalidRef(t *testing.T) {
 		t.Errorf("error = %q, expected to contain 'parsing image reference'", err)
 	}
 }
+
+func TestCancelPrewarm(t *testing.T) {
+	t.Parallel()
+
+	plug, done := newTestPluginWithPrewarmSignal(t, config.ModeDisabled, "")
+
+	pods := []*api.PodSandbox{
+		{Id: testPodID, Namespace: testNamespace, Name: testPodName},
+	}
+
+	containers := []*api.Container{
+		{
+			Id:           "ctr-cancel-prewarm",
+			PodSandboxId: testPodID,
+			Name:         "cancel-prewarm-container",
+			Annotations: map[string]string{
+				plugin.AnnotationImage:    testImage,
+				plugin.AnnotationImageRef: testDigest,
+			},
+		},
+	}
+
+	updates, err := plug.Synchronize(context.Background(), pods, containers)
+	testutil.AssertNoError(t, err)
+
+	if updates != nil {
+		t.Error("expected nil updates")
+	}
+
+	plug.CancelPrewarm()
+
+	waitForPrewarm(t, done)
+}

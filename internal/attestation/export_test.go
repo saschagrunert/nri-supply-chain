@@ -218,7 +218,7 @@ func (f *OCIFetcher) ExtractPayloadFromImage(
 // NewTestBundle creates a bundle with a DSSE envelope for testing.
 func NewTestBundle(payloadType, payload string) *bundle.Bundle {
 	protoBundle := &protobundle.Bundle{
-		MediaType: BundleMediaType,
+		MediaType: bundleMediaType,
 		Content: &protobundle.Bundle_DsseEnvelope{
 			DsseEnvelope: &protodsse.Envelope{
 				Payload:     []byte(payload),
@@ -259,6 +259,18 @@ func ExportArtifactPolicy(digest string) error {
 	return err
 }
 
+// ExportBundleMediaType exposes bundleMediaType for external tests.
+const ExportBundleMediaType = bundleMediaType
+
+// ExportOCIEmptyMediaType exposes ociEmptyMediaType for external tests.
+const ExportOCIEmptyMediaType = ociEmptyMediaType
+
+// ExportAnnotationPredicateType exposes annotationPredicateType for external tests.
+const ExportAnnotationPredicateType = annotationPredicateType
+
+// ExportDSSEPayloadType exposes dssePayloadType for external tests.
+const ExportDSSEPayloadType = dssePayloadType
+
 // ExportMaxCircuitBreakers exposes maxCircuitBreakers for external tests.
 const ExportMaxCircuitBreakers = maxCircuitBreakers
 
@@ -293,7 +305,7 @@ func (r *CircuitBreakerRegistry) ExportCooldown() time.Duration {
 // NewTestMessageSignatureBundle creates a bundle with a message signature (no DSSE envelope).
 func NewTestMessageSignatureBundle() *bundle.Bundle {
 	protoBundle := &protobundle.Bundle{
-		MediaType: BundleMediaType,
+		MediaType: bundleMediaType,
 		Content: &protobundle.Bundle_MessageSignature{
 			MessageSignature: &protocommon.MessageSignature{
 				MessageDigest: &protocommon.HashOutput{

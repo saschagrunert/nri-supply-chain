@@ -215,6 +215,40 @@ teardown_file() {
 	reload_plugin
 }
 
+@test "multiple namespaces apply their own policies" {
+	local ns_allow="multi-ns-allow"
+	local ns_deny="multi-ns-deny"
+
+	register_namespace "$ns_allow"
+	register_namespace "$ns_deny"
+	wait_for_service_account "$ns_allow"
+	wait_for_service_account "$ns_deny"
+
+	write_policy "$ns_allow" '{
+		"slsa": {"missingPolicy": "allow"},
+		"vex": {"missingPolicy": "allow"}
+	}'
+	write_policy "$ns_deny" '{
+		"slsa": {"missingPolicy": "deny"},
+		"vex": {"missingPolicy": "allow"}
+	}'
+	reload_plugin
+
+	kubectl run "multi-allow-pod" \
+		--namespace "$ns_allow" \
+		--image "$POLICY_IMAGE" \
+		--restart=Never \
+		--request-timeout="${KUBECTL_TIMEOUT}s"
+	wait_for_pod_status "multi-allow-pod" "Running" 60 "$ns_allow"
+
+	run kubectl run "multi-deny-pod" \
+		--namespace "$ns_deny" \
+		--image "$POLICY_IMAGE" \
+		--restart=Never \
+		--request-timeout="${KUBECTL_TIMEOUT}s"
+	assert_log_contains "Container rejected"
+}
+
 @test "namespace policy with inherits merges with default" {
 	local ns="inherit-ns"
 	register_namespace "$ns"

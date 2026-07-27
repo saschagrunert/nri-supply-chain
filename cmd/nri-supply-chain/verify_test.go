@@ -39,12 +39,11 @@ import (
 )
 
 const (
-	testNamespaceMain = "default"
-	testArchAmd64     = "amd64"
-	testArchArm64     = "arm64"
-	testArchS390x     = "s390x"
-	testOSLinux       = "linux"
-	testOSZos         = "zos"
+	testArchAmd64 = "amd64"
+	testArchArm64 = "arm64"
+	testArchS390x = "s390x"
+	testOSLinux   = "linux"
+	testOSZos     = "zos"
 )
 
 func TestOutputVerifyResultAllowed(t *testing.T) {
@@ -59,7 +58,7 @@ func TestOutputVerifyResultAllowed(t *testing.T) {
 
 	out := captureVerifyOutput(
 		t, "nginx:latest", testDigest,
-		testNamespaceMain, true, "verified", checks,
+		defaultNamespace, true, "verified", checks,
 	)
 
 	if out.Image != "nginx:latest" {
@@ -70,8 +69,8 @@ func TestOutputVerifyResultAllowed(t *testing.T) {
 		t.Errorf("Digest = %q, want %q", out.Digest, testDigest)
 	}
 
-	if out.Namespace != testNamespaceMain {
-		t.Errorf("Namespace = %q, want %q", out.Namespace, testNamespaceMain)
+	if out.Namespace != defaultNamespace {
+		t.Errorf("Namespace = %q, want %q", out.Namespace, defaultNamespace)
 	}
 
 	if !out.Allowed {
@@ -424,7 +423,7 @@ func TestRunVerifyResolveDigestFails(t *testing.T) {
 		pluginIdx:       "",
 		logLevel:        "",
 		verifyImage:     ":::invalid-ref",
-		verifyNamespace: testNamespaceMain,
+		verifyNamespace: defaultNamespace,
 		showVersion:     false,
 		validate:        false,
 		jsonSchema:      "",
@@ -447,7 +446,7 @@ func TestRunVerifyDisabledErrors(t *testing.T) {
 		pluginIdx:       "",
 		logLevel:        "",
 		verifyImage:     "example.com/test:latest",
-		verifyNamespace: testNamespaceMain,
+		verifyNamespace: defaultNamespace,
 		showVersion:     false,
 		validate:        false,
 		jsonSchema:      "",
@@ -495,7 +494,7 @@ func TestRunVerifyEnforceDenied(t *testing.T) {
 		pluginIdx:       "",
 		logLevel:        "",
 		verifyImage:     imgRef,
-		verifyNamespace: testNamespaceMain,
+		verifyNamespace: defaultNamespace,
 		showVersion:     false,
 		validate:        false,
 		jsonSchema:      "",
@@ -527,7 +526,7 @@ func TestRunVerifyVerifierNewError(t *testing.T) {
 		pluginIdx:       "",
 		logLevel:        "",
 		verifyImage:     "test:latest",
-		verifyNamespace: testNamespaceMain,
+		verifyNamespace: defaultNamespace,
 		showVersion:     false,
 		validate:        false,
 		jsonSchema:      "",
@@ -576,7 +575,7 @@ func TestRunVerifyWarnModeWithChecks(t *testing.T) {
 		pluginIdx:       "",
 		logLevel:        "",
 		verifyImage:     imgRef,
-		verifyNamespace: testNamespaceMain,
+		verifyNamespace: defaultNamespace,
 		showVersion:     false,
 		validate:        false,
 		jsonSchema:      "",

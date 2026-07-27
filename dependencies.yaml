@@ -32,6 +32,8 @@ dependencies:
     refPaths:
       - path: Makefile
         match: ^GOLANGCI_LINT_VERSION
+      - path: .github/workflows/ci.yml
+        match: "version: v2\\."
 
   - name: syft
     version: 1.49.0

@@ -23,7 +23,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -730,15 +729,7 @@ func (p *Policy) validateVSA() error {
 
 func (p *Policy) initDerived() {
 	if p.VSA != nil && p.VSA.MaxAge != "" {
-		duration, err := time.ParseDuration(p.VSA.MaxAge)
-		if err != nil {
-			slog.Warn("invalid vsa.maxAge in policy, ignoring",
-				"maxAge", p.VSA.MaxAge, "error", err,
-			)
-
-			return
-		}
-
-		p.VSA.MaxAgeDuration = duration
+		// Validate() already rejects invalid durations, so the error is safe to discard.
+		p.VSA.MaxAgeDuration, _ = time.ParseDuration(p.VSA.MaxAge)
 	}
 }

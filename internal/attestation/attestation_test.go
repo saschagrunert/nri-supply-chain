@@ -154,21 +154,6 @@ func TestPredicateTypeConstants(t *testing.T) {
 			got:  attestation.PredicateOpenVEX,
 			want: "https://openvex.dev/ns",
 		},
-		{
-			name: "bundle media type",
-			got:  attestation.BundleMediaType,
-			want: "application/vnd.dev.sigstore.bundle.v0.3+json",
-		},
-		{
-			name: "annotation predicate type",
-			got:  attestation.AnnotationPredicateType,
-			want: "dev.sigstore.bundle.predicateType",
-		},
-		{
-			name: "DSSE payload type",
-			got:  attestation.DSSEPayloadType,
-			want: "application/vnd.in-toto+json",
-		},
 	}
 
 	for _, tt := range tests {

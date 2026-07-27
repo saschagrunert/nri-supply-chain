@@ -37,6 +37,7 @@ KUBERNIX := $(BUILD_DIR)/kubernix
 MDTOC := $(BUILD_DIR)/mdtoc
 COSIGN := $(BUILD_DIR)/cosign
 CRANE := $(BUILD_DIR)/crane
+GOVULNCHECK := $(BUILD_DIR)/govulncheck
 
 ARCH ?= $(shell uname -m | \
 	sed 's/x86_64/amd64/' | \
@@ -106,6 +107,10 @@ fuzz: ## Run all fuzz tests (use FUZZTIME to adjust, default 30s)
 			$(GO) test -fuzz=$$target -fuzztime=$(FUZZTIME) $$pkg || exit 1; \
 		done; \
 	done
+
+.PHONY: bench
+bench: ## Run benchmark tests
+	$(GO) test -bench=. -benchmem -count=1 -run=^$$ ./...
 
 ##@ Release
 
@@ -228,9 +233,13 @@ $(CRANE):
 	tar xfz $(BUILD_DIR)/crane.tar.gz -C $(BUILD_DIR) crane
 	rm $(BUILD_DIR)/crane.tar.gz
 
+$(GOVULNCHECK):
+	@mkdir -p $(BUILD_DIR)
+	GOBIN=$(abspath $(BUILD_DIR)) $(GO) install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
+
 .PHONY: govulncheck
-govulncheck: ## Run govulncheck
-	$(GO) run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+govulncheck: $(GOVULNCHECK) ## Run govulncheck
+	$(GOVULNCHECK) ./...
 
 ##@ Maintenance
 

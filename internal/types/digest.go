@@ -56,6 +56,17 @@ func ParseDigest(digest string) (algo, hash string) {
 	return parts[0], parts[1]
 }
 
+// MatchDigestInMap returns true if imageDigest matches a key-value pair in the
+// given digest map (algorithm -> hex hash).
+func MatchDigestInMap(imageDigest string, subjectDigests map[string]string) bool {
+	algo, hash := ParseDigest(imageDigest)
+	if algo == "" {
+		return false
+	}
+
+	return subjectDigests[algo] == hash
+}
+
 func isHex(s string) bool {
 	for _, c := range s {
 		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {

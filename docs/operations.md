@@ -152,6 +152,7 @@ protect against resource exhaustion and unbounded processing.
 | --------------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Cache capacity              | 10,000 entries            | Expired entries are evicted first. If the cache is still full, the oldest entry is evicted to make room.                                                                                |
 | Concurrent fetch limit      | 50                        | Additional verification requests block until a slot becomes available or the context is canceled.                                                                                       |
+| Per-host fetch limit        | 10                        | At most 10 of the 50 global fetch slots can be used by a single registry host. Prevents one slow or unresponsive registry from starving fetches to other registries.                    |
 | Fetch retry count           | 2 retries (3 total)       | Uses exponential backoff starting at 500ms. Only transient errors (network timeouts, HTTP 5xx) trigger retries.                                                                         |
 | Attestation size limit      | 10 MiB per attestation    | Attestation bundles larger than 10 MiB are rejected. A warning is logged with the actual size.                                                                                          |
 | Aggregate attestation limit | 50 MiB per image          | Total attestation payload per image is capped at 50 MiB. Once exceeded, remaining referrers or cosign layers are skipped with a warning.                                                |
@@ -180,6 +181,14 @@ registry, all subsequent fetch attempts to that registry short-circuit to
 container creation. Note that `"deny"` means registry outages will prevent all
 new containers from starting, trading availability for security. Choose based on
 your threat model.
+
+**Metrics label cardinality.** Several metrics use `namespace` and `registry`
+labels whose cardinality depends on the cluster. In multi-tenant clusters with
+many namespaces or images pulled from many registries, these labels can cause
+significant Prometheus memory growth. Monitor the cardinality of
+`nri_supply_chain_verification_total` and `nri_supply_chain_fetch_errors_total`
+and consider Prometheus recording rules to pre-aggregate if the series count
+grows large.
 
 **Enforce-mode startup warnings.** When running in `enforce` mode, the plugin
 logs warnings at startup if permissive defaults are still in place. It warns

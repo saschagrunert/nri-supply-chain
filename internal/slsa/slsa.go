@@ -187,13 +187,8 @@ func isSLSAPredicate(predicateType string) bool {
 }
 
 func verifySubjectDigest(subjects []Subject, imageDigest string) error {
-	algo, hash := types.ParseDigest(imageDigest)
-	if algo == "" {
-		return fmt.Errorf("%w: invalid digest format %q", ErrSubjectDigestMismatch, imageDigest)
-	}
-
 	for _, subject := range subjects {
-		if subject.Digest[algo] == hash {
+		if types.MatchDigestInMap(imageDigest, subject.Digest) {
 			return nil
 		}
 	}
@@ -309,11 +304,7 @@ func passResult() *types.CheckResult {
 // warnings are re-emitted on the next verification cycle. Call this after a
 // config reload to ensure warnings reflect the new policy state.
 func ResetMaxLevelWarnings() {
-	warnedMaxLevel.Range(func(key, _ any) bool {
-		warnedMaxLevel.Delete(key)
-
-		return true
-	})
+	warnedMaxLevel.Clear()
 }
 
 func failResult(detail string) *types.CheckResult {

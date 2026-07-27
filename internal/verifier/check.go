@@ -83,16 +83,12 @@ func runChecks(
 	}
 
 	if state.fetchSem != nil {
-		semErr := state.fetchSem.Acquire(ctx, 1)
+		release, semErr := acquireFetchSlots(ctx, state, host)
 		if semErr != nil {
-			return handleFetchError(
-				state.config, state.metrics,
-				fmt.Errorf("fetch concurrency limit: %w", semErr),
-				imageRef, host,
-			)
+			return handleFetchError(state.config, state.metrics, semErr, imageRef, host)
 		}
 
-		defer state.fetchSem.Release(1)
+		defer release()
 	}
 
 	attestations, attestDigest, fetchErr := fetchAttestations(

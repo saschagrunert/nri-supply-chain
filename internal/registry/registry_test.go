@@ -15,12 +15,14 @@
 package registry_test
 
 import (
+	"context"
 	"errors"
 	"net/http/httptest"
 	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/google/go-containerregistry/pkg/crane"
 	"github.com/google/go-containerregistry/pkg/name"
 	ociregistry "github.com/google/go-containerregistry/pkg/registry"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
@@ -210,5 +212,121 @@ func TestResolveIndexDigestEmptyIndex(t *testing.T) {
 
 	if !errors.Is(err, registry.ErrNoPlatformMatch) {
 		t.Errorf("expected ErrNoPlatformMatch, got: %v", err)
+	}
+}
+
+func TestResolveDigestPlainImage(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(ociregistry.New())
+	t.Cleanup(server.Close)
+
+	addr := strings.TrimPrefix(server.URL, "http://")
+	imgRef := addr + "/plain:latest"
+
+	img, err := mutate.ConfigFile(empty.Image, nil)
+	if err != nil {
+		t.Fatalf("creating test image: %v", err)
+	}
+
+	err = crane.Push(img, imgRef, crane.Insecure)
+	if err != nil {
+		t.Fatalf("pushing test image: %v", err)
+	}
+
+	digest, indexDigest, err := registry.ResolveDigest(
+		context.Background(), imgRef,
+		remote.WithTransport(server.Client().Transport),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.HasPrefix(digest, "sha256:") {
+		t.Errorf("digest = %q, expected sha256: prefix", digest)
+	}
+
+	if indexDigest != "" {
+		t.Errorf("indexDigest = %q, expected empty for plain image", indexDigest)
+	}
+}
+
+func TestResolveDigestManifestList(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(ociregistry.New())
+	t.Cleanup(server.Close)
+
+	addr := strings.TrimPrefix(server.URL, "http://")
+	imgRef := addr + "/multiarch:latest"
+
+	img := makeImage(t, runtime.GOARCH, runtime.GOOS)
+
+	idx := pushIndex(t, server, "multiarch:latest",
+		mutate.IndexAddendum{
+			Add: img,
+			Descriptor: v1.Descriptor{
+				Platform: &v1.Platform{
+					Architecture: runtime.GOARCH,
+					OS:           runtime.GOOS,
+				},
+			},
+		},
+	)
+
+	digest, indexDigest, err := registry.ResolveDigest(
+		context.Background(), imgRef,
+		remote.WithTransport(server.Client().Transport),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.HasPrefix(digest, "sha256:") {
+		t.Errorf("digest = %q, expected sha256: prefix", digest)
+	}
+
+	idxDigest, err := idx.Digest()
+	if err != nil {
+		t.Fatalf("getting index digest: %v", err)
+	}
+
+	if indexDigest != idxDigest.String() {
+		t.Errorf("indexDigest = %q, expected %q", indexDigest, idxDigest.String())
+	}
+
+	if digest == idxDigest.String() {
+		t.Error("expected platform-specific digest, got index digest")
+	}
+}
+
+func TestResolveDigestInvalidRef(t *testing.T) {
+	t.Parallel()
+
+	_, _, err := registry.ResolveDigest(context.Background(), ":::invalid")
+	if err == nil {
+		t.Fatal("expected error for invalid image reference")
+	}
+
+	if !strings.Contains(err.Error(), "parsing image reference") {
+		t.Errorf("error = %q, expected to contain 'parsing image reference'", err)
+	}
+}
+
+func TestResolveDigestNetworkError(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(ociregistry.New())
+	server.Close() // Close immediately to force network error.
+
+	addr := strings.TrimPrefix(server.URL, "http://")
+	imgRef := addr + "/unreachable:latest"
+
+	_, _, err := registry.ResolveDigest(
+		context.Background(), imgRef,
+		remote.WithTransport(server.Client().Transport),
+	)
+	if err == nil {
+		t.Fatal("expected error for closed server")
 	}
 }

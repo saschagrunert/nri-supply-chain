@@ -278,11 +278,7 @@ var warnedSANPatterns sync.Map //nolint:gochecknoglobals // dedup per unique iss
 // warnings are re-emitted on the next verification cycle. Call this after a
 // config reload to ensure warnings reflect the new policy state.
 func ResetSANPatternWarnings() {
-	warnedSANPatterns.Range(func(key, _ any) bool {
-		warnedSANPatterns.Delete(key)
-
-		return true
-	})
+	warnedSANPatterns.Clear()
 }
 
 func warnNoSANPatterns(issuers []string) {
@@ -305,10 +301,10 @@ func extractVerifiedPayload(bndl *bundle.Bundle) ([]byte, error) {
 	}
 
 	rawEnvelope := envelope.RawEnvelope()
-	if rawEnvelope.PayloadType != DSSEPayloadType {
+	if rawEnvelope.PayloadType != dssePayloadType {
 		return nil, fmt.Errorf(
 			"%w: expected %q, got %q",
-			errInvalidPayloadType, DSSEPayloadType, rawEnvelope.PayloadType,
+			errInvalidPayloadType, dssePayloadType, rawEnvelope.PayloadType,
 		)
 	}
 
