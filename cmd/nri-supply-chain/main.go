@@ -217,6 +217,11 @@ func setupConfig(opts *options) (*config.Config, error) {
 
 	if opts.metricsAddr != "" {
 		cfg.MetricsAddr = opts.metricsAddr
+
+		err = cfg.Validate()
+		if err != nil {
+			return nil, fmt.Errorf("validating config with --metrics-addr override: %w", err)
+		}
 	}
 
 	if cfg.Enabled() {

@@ -30,6 +30,7 @@ const (
 	testBuilderID    = "test"
 	testInvalidValue = "invalid"
 	testVerifierID   = "https://example.com/v"
+	testIssuerURL    = "https://accounts.google.com"
 )
 
 type validateTest struct {
@@ -1004,7 +1005,7 @@ func TestValidateEnforceRequiresSANPatterns(t *testing.T) {
 
 	pol := &policy.Policy{
 		Trust: &policy.TrustPolicy{
-			Issuers: []string{"https://accounts.google.com"},
+			Issuers: []string{testIssuerURL},
 		},
 	}
 
@@ -1019,7 +1020,7 @@ func TestValidateEnforcePassesWithSANPatterns(t *testing.T) {
 
 	pol := &policy.Policy{
 		Trust: &policy.TrustPolicy{
-			Issuers:     []string{"https://accounts.google.com"},
+			Issuers:     []string{testIssuerURL},
 			SANPatterns: []string{"build@example.com"},
 		},
 	}
@@ -1251,6 +1252,69 @@ func TestInitDerivedValidMaxAge(t *testing.T) {
 
 	if pol.VSA.MaxAgeDuration != 24*time.Hour {
 		t.Errorf("expected MaxAgeDuration=24h, got %v", pol.VSA.MaxAgeDuration)
+	}
+}
+
+func TestValidateDuplicateBuilderID(t *testing.T) {
+	t.Parallel()
+
+	pol := policy.Policy{
+		Trust: &policy.TrustPolicy{
+			Builders: []policy.TrustedBuilder{
+				{ID: "https://builder.example.com", MaxLevel: 2},
+				{ID: "https://builder.example.com", MaxLevel: 3},
+			},
+		},
+	}
+
+	err := pol.Validate()
+	if !errors.Is(err, policy.ErrDuplicateBuilderID) {
+		t.Errorf("expected ErrDuplicateBuilderID, got %v", err)
+	}
+}
+
+func TestValidateDuplicateVerifierID(t *testing.T) {
+	t.Parallel()
+
+	pol := policy.Policy{
+		Trust: &policy.TrustPolicy{
+			Issuers: []string{testIssuerURL},
+			Verifiers: []policy.TrustedVerifier{
+				{ID: "https://verifier.example.com"},
+				{ID: "https://verifier.example.com"},
+			},
+		},
+	}
+
+	err := pol.Validate()
+	if !errors.Is(err, policy.ErrDuplicateVerifierID) {
+		t.Errorf("expected ErrDuplicateVerifierID, got %v", err)
+	}
+}
+
+func TestValidateVSAMaxAgeNegative(t *testing.T) {
+	t.Parallel()
+
+	pol := policy.Policy{
+		VSA: &policy.VSAPolicy{MaxAge: "-1h"},
+	}
+
+	err := pol.Validate()
+	if !errors.Is(err, policy.ErrVSAMaxAgeNotPositive) {
+		t.Errorf("expected ErrVSAMaxAgeNotPositive, got %v", err)
+	}
+}
+
+func TestValidateVSAMaxAgeZero(t *testing.T) {
+	t.Parallel()
+
+	pol := policy.Policy{
+		VSA: &policy.VSAPolicy{MaxAge: "0s"},
+	}
+
+	err := pol.Validate()
+	if !errors.Is(err, policy.ErrVSAMaxAgeNotPositive) {
+		t.Errorf("expected ErrVSAMaxAgeNotPositive, got %v", err)
 	}
 }
 

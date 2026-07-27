@@ -119,6 +119,13 @@ func (cb *CircuitBreaker) isOpen() bool {
 	return cb.state == circuitOpen
 }
 
+func (cb *CircuitBreaker) isClosed() bool {
+	cb.mu.RLock()
+	defer cb.mu.RUnlock()
+
+	return cb.state == circuitClosed
+}
+
 // CircuitBreakerRegistry manages per-host circuit breakers. Each registry host
 // gets its own breaker so that a failing registry does not block requests to
 // healthy registries.
@@ -175,11 +182,12 @@ func (r *CircuitBreakerRegistry) Get(host string) *CircuitBreaker {
 	return breaker
 }
 
-// evictNonOpenLocked removes breakers that are not in the open state.
-// Lock ordering: r.mu must be held; acquires breaker.mu via isOpen.
+// evictNonOpenLocked removes breakers in the closed state. Half-open
+// breakers are preserved because they are awaiting a probe result.
+// Lock ordering: r.mu must be held; acquires breaker.mu via isClosed.
 func (r *CircuitBreakerRegistry) evictNonOpenLocked() {
 	for host, breaker := range r.breakers {
-		if !breaker.isOpen() {
+		if breaker.isClosed() {
 			delete(r.breakers, host)
 		}
 	}

@@ -84,6 +84,15 @@ var (
 	ErrSANPatternsRequired = errors.New(
 		"trust.sanPatterns is required when trust.issuers is set in enforce mode",
 	)
+
+	// ErrDuplicateBuilderID indicates a duplicate builder ID in the trust policy.
+	ErrDuplicateBuilderID = errors.New("duplicate builder id")
+
+	// ErrDuplicateVerifierID indicates a duplicate verifier ID in the trust policy.
+	ErrDuplicateVerifierID = errors.New("duplicate verifier id")
+
+	// ErrVSAMaxAgeNotPositive indicates a non-positive VSA maxAge value.
+	ErrVSAMaxAgeNotPositive = errors.New("vsa.maxAge must be positive")
 )
 
 // Policy defines the trust roots and per-namespace verification settings.
@@ -513,12 +522,22 @@ func (p *Policy) validateTrust() error {
 		return nil
 	}
 
+	seenBuilders := make(map[string]bool, len(p.Trust.Builders))
+
 	for idx, builder := range p.Trust.Builders {
 		if builder.ID == "" {
 			return fmt.Errorf(
 				"%w: trust.builders[%d]", ErrBuilderIDRequired, idx,
 			)
 		}
+
+		if seenBuilders[builder.ID] {
+			return fmt.Errorf(
+				"%w %q at trust.builders[%d]", ErrDuplicateBuilderID, builder.ID, idx,
+			)
+		}
+
+		seenBuilders[builder.ID] = true
 
 		if builder.MaxLevel < 0 || builder.MaxLevel > maxSLSALevel {
 			return fmt.Errorf(
@@ -566,12 +585,22 @@ func (p *Policy) validateTrustStringFields() error {
 }
 
 func (p *Policy) validateVerifiers() error {
+	seenVerifiers := make(map[string]bool, len(p.Trust.Verifiers))
+
 	for idx, verif := range p.Trust.Verifiers {
 		if verif.ID == "" {
 			return fmt.Errorf(
 				"%w: trust.verifiers[%d]", ErrVerifierIDRequired, idx,
 			)
 		}
+
+		if seenVerifiers[verif.ID] {
+			return fmt.Errorf(
+				"%w %q at trust.verifiers[%d]", ErrDuplicateVerifierID, verif.ID, idx,
+			)
+		}
+
+		seenVerifiers[verif.ID] = true
 
 		if verif.Key == "" {
 			if len(p.Trust.Issuers) == 0 {
@@ -686,9 +715,13 @@ func (p *Policy) validateVSA() error {
 	}
 
 	if p.VSA.MaxAge != "" {
-		_, err := time.ParseDuration(p.VSA.MaxAge)
+		d, err := time.ParseDuration(p.VSA.MaxAge)
 		if err != nil {
 			return fmt.Errorf("invalid vsa.maxAge %q: %w", p.VSA.MaxAge, err)
+		}
+
+		if d <= 0 {
+			return fmt.Errorf("%w, got %q", ErrVSAMaxAgeNotPositive, p.VSA.MaxAge)
 		}
 	}
 

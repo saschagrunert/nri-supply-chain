@@ -237,6 +237,37 @@ func TestCircuitBreakerRegistrySharedOverflowWhenAllOpen(t *testing.T) {
 	}
 }
 
+func TestCircuitBreakerRegistryPreservesHalfOpenOnEviction(t *testing.T) {
+	t.Parallel()
+
+	registry := attestation.NewCircuitBreakerRegistry(1, time.Nanosecond)
+
+	for idx := range attestation.ExportMaxCircuitBreakers {
+		breaker := registry.Get(fmt.Sprintf("host-%d.example.com", idx))
+
+		if idx == 0 {
+			breaker.RecordFailure()
+
+			time.Sleep(time.Millisecond)
+
+			if !breaker.Allow() {
+				t.Fatal("expected half-open breaker to allow probe after cooldown")
+			}
+		}
+	}
+
+	extra := registry.Get("new-host.example.com")
+
+	if extra == nil {
+		t.Fatal("expected non-nil breaker after eviction")
+	}
+
+	halfOpen := registry.Get("host-0.example.com")
+	if halfOpen == nil {
+		t.Fatal("expected half-open breaker to survive eviction")
+	}
+}
+
 func TestCircuitBreakerRegistryThresholdAndCooldown(t *testing.T) {
 	t.Parallel()
 

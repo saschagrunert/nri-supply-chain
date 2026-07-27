@@ -544,6 +544,64 @@ func TestConfigValidateCacheFailureTTL(t *testing.T) {
 	})
 }
 
+func TestConfigNormalizeClampsFailureTTL(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.CacheTTL = config.Duration{Duration: 1 * time.Hour}
+	cfg.CacheFailureTTL = config.Duration{Duration: 2 * time.Hour}
+
+	testutil.AssertNoError(t, cfg.Validate())
+
+	cfg.Normalize()
+
+	if cfg.CacheFailureTTL.Duration != cfg.CacheTTL.Duration {
+		t.Errorf(
+			"expected CacheFailureTTL clamped to %v, got %v",
+			cfg.CacheTTL.Duration, cfg.CacheFailureTTL.Duration,
+		)
+	}
+}
+
+func TestConfigNormalizeNoOpWhenWithinRange(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.CacheTTL = config.Duration{Duration: 1 * time.Hour}
+	cfg.CacheFailureTTL = config.Duration{Duration: 5 * time.Minute}
+
+	original := cfg.CacheFailureTTL.Duration
+
+	cfg.Normalize()
+
+	if cfg.CacheFailureTTL.Duration != original {
+		t.Errorf(
+			"expected CacheFailureTTL unchanged at %v, got %v",
+			original, cfg.CacheFailureTTL.Duration,
+		)
+	}
+}
+
+func TestConfigValidateIdempotent(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.CacheTTL = config.Duration{Duration: 1 * time.Hour}
+	cfg.CacheFailureTTL = config.Duration{Duration: 2 * time.Hour}
+
+	testutil.AssertNoError(t, cfg.Validate())
+
+	if cfg.CacheFailureTTL.Duration != 2*time.Hour {
+		t.Error("Validate() should not mutate CacheFailureTTL")
+	}
+
+	testutil.AssertNoError(t, cfg.Validate())
+
+	if cfg.CacheFailureTTL.Duration != 2*time.Hour {
+		t.Error("second Validate() call should not mutate CacheFailureTTL")
+	}
+}
+
 func TestConfigValidateFetchRateLimit(t *testing.T) {
 	t.Parallel()
 

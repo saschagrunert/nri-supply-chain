@@ -197,9 +197,10 @@ func verifySubjectAndExtract(att []byte, imageDigest string) ([]byte, error) {
 				ErrSubjectMismatch, imageDigest,
 			)
 		}
-	} else if imageDigest == "" {
-		slog.Warn("VEX subject verification skipped (no digest available)",
-			"subjectCount", len(stmt.Subject),
+	} else if imageDigest == "" && len(stmt.Subject) > 0 {
+		return nil, fmt.Errorf(
+			"%w: statement has %d subjects but no digest for binding",
+			ErrSubjectMismatch, len(stmt.Subject),
 		)
 	}
 
@@ -297,7 +298,11 @@ func handleUnderInvestigation(pol *policy.Policy) *types.CheckResult {
 	case types.ActionAllow:
 		return types.PassResult(checkType, detail)
 	default:
-		return types.PassResult(checkType, detail)
+		slog.Warn("Unrecognized under_investigation policy, defaulting to warn",
+			"policy", uiPolicy,
+		)
+
+		return types.WarnResult(checkType, detail)
 	}
 }
 

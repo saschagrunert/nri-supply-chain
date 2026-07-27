@@ -215,6 +215,18 @@ func (c *Config) ValidateRuntime() error {
 	return nil
 }
 
+// Normalize clamps fields to valid ranges. Call after Validate.
+func (c *Config) Normalize() {
+	if c.CacheTTL.Duration > 0 && c.CacheFailureTTL.Duration > c.CacheTTL.Duration {
+		slog.Warn("cache_failure_ttl exceeds cache_ttl, clamping to cache_ttl",
+			"cache_failure_ttl", c.CacheFailureTTL.Duration,
+			"cache_ttl", c.CacheTTL.Duration,
+		)
+
+		c.CacheFailureTTL.Duration = c.CacheTTL.Duration
+	}
+}
+
 func (c *Config) validateMetricsAddr() error {
 	if c.MetricsAddr == "" {
 		return nil
@@ -272,15 +284,6 @@ func (c *Config) validateCacheFields() error {
 
 	if c.CacheFailureTTL.Duration < 0 {
 		return fmt.Errorf("%w: got %s", ErrCacheFailureTTLNegative, c.CacheFailureTTL.Duration)
-	}
-
-	if c.CacheTTL.Duration > 0 && c.CacheFailureTTL.Duration > c.CacheTTL.Duration {
-		slog.Warn("cache_failure_ttl exceeds cache_ttl, clamping to cache_ttl",
-			"cache_failure_ttl", c.CacheFailureTTL.Duration,
-			"cache_ttl", c.CacheTTL.Duration,
-		)
-
-		c.CacheFailureTTL.Duration = c.CacheTTL.Duration
 	}
 
 	return nil
@@ -348,6 +351,8 @@ func load(decode func(*Config) (toml.MetaData, error)) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("validating config: %w", err)
 	}
+
+	cfg.Normalize()
 
 	return cfg, nil
 }

@@ -50,10 +50,16 @@ func applyEnforcement(
 		"reason", result.Reason,
 	)
 
+	checkResults := result.CheckResults
+	if len(checkResults) > 0 {
+		checkResults = make([]types.CheckResult, len(result.CheckResults))
+		copy(checkResults, result.CheckResults)
+	}
+
 	return &types.Result{
 		Allowed:      true,
 		Reason:       result.Reason,
-		CheckResults: result.CheckResults,
+		CheckResults: checkResults,
 	}, nil
 }
 
@@ -148,8 +154,20 @@ func fetchAttestations(
 			return atts, indexDigest, nil
 		}
 
-		slog.DebugContext(ctx, "No attestations on index digest, falling back to platform digest",
-			"indexDigest", indexDigest, "platformDigest", digest)
+		if err != nil {
+			slog.DebugContext(ctx,
+				"Index digest fetch failed, falling back to platform digest",
+				"indexDigest", indexDigest,
+				"platformDigest", digest,
+				"error", err,
+			)
+		} else {
+			slog.DebugContext(ctx,
+				"No attestations on index digest, falling back to platform digest",
+				"indexDigest", indexDigest,
+				"platformDigest", digest,
+			)
+		}
 	}
 
 	attestations, err := state.fetcher.Fetch(ctx, imageRef, digest, opts)
@@ -321,8 +339,7 @@ func runSLSACheck(
 
 		met.VerificationTotal.WithLabelValues(string(types.CheckTypeSLSA), "error", namespace).Inc()
 
-		return handleMissingAttestation(
-			pol.SLSAMissingPolicy(),
+		return types.FailResult(
 			types.CheckTypeSLSA,
 			fmt.Sprintf("SLSA verification error for %s: %s", imageRef, err),
 		)
@@ -372,8 +389,7 @@ func runVEXCheck(
 
 		met.VerificationTotal.WithLabelValues(string(types.CheckTypeVEX), "error", namespace).Inc()
 
-		return handleMissingAttestation(
-			pol.VEXMissingPolicy(),
+		return types.FailResult(
 			types.CheckTypeVEX,
 			fmt.Sprintf("VEX verification error for %s: %s", imageRef, err),
 		)
