@@ -17,6 +17,10 @@ NRI_SOCKET="${KUBERNIX_ROOT}/nri/nri.sock"
 
 export KUBECONFIG
 
+CMD_TIMEOUT=120
+KUBECTL_TIMEOUT=30
+CURL_TIMEOUT=10
+
 is_containerd() {
 	[[ "$CRI_RUNTIME" == "containerd" ]]
 }
@@ -114,7 +118,7 @@ stop_kubernix() {
 
 setup() {
 	TEST_NS="test-$(date +%s)-${BATS_TEST_NUMBER}"
-	kubectl create namespace "$TEST_NS" 2>/dev/null || true
+	kubectl create namespace "$TEST_NS" --request-timeout="${KUBECTL_TIMEOUT}s" 2>/dev/null || true
 	wait_for_service_account "$TEST_NS"
 	if [[ -f "$PLUGIN_LOG" ]]; then
 		LOG_OFFSET=$(wc -c <"$PLUGIN_LOG")
@@ -127,15 +131,15 @@ EXTRA_NAMESPACES=()
 
 register_namespace() {
 	EXTRA_NAMESPACES+=("$1")
-	kubectl create namespace "$1" 2>/dev/null || true
+	kubectl create namespace "$1" --request-timeout="${KUBECTL_TIMEOUT}s" 2>/dev/null || true
 }
 
 teardown() {
-	kubectl delete pods --all -n "$TEST_NS" --force --grace-period=0 2>/dev/null || true
-	kubectl delete namespace "$TEST_NS" 2>/dev/null || true
+	kubectl delete pods --all -n "$TEST_NS" --force --grace-period=0 --request-timeout="${KUBECTL_TIMEOUT}s" 2>/dev/null || true
+	kubectl delete namespace "$TEST_NS" --request-timeout="${KUBECTL_TIMEOUT}s" 2>/dev/null || true
 	for ns in "${EXTRA_NAMESPACES[@]}"; do
-		kubectl delete pods --all -n "$ns" --force --grace-period=0 2>/dev/null || true
-		kubectl delete namespace "$ns" 2>/dev/null || true
+		kubectl delete pods --all -n "$ns" --force --grace-period=0 --request-timeout="${KUBECTL_TIMEOUT}s" 2>/dev/null || true
+		kubectl delete namespace "$ns" --request-timeout="${KUBECTL_TIMEOUT}s" 2>/dev/null || true
 	done
 	EXTRA_NAMESPACES=()
 }
@@ -152,7 +156,7 @@ wait_for_node_ready() {
 			echo "ERROR: kubernix process (PID $kubernix_pid) died during startup" >&2
 			return 1
 		fi
-		if kubectl get nodes 2>/dev/null | grep -q " Ready"; then
+		if kubectl get nodes --request-timeout="${CURL_TIMEOUT}s" 2>/dev/null | grep -q " Ready"; then
 			return 0
 		fi
 		sleep 2
@@ -160,9 +164,9 @@ wait_for_node_ready() {
 	done
 	echo "ERROR: Node not ready after ${NODE_READY_TIMEOUT}s" >&2
 	echo "DEBUG: kubectl get nodes:" >&2
-	kubectl get nodes -o wide 2>&1 >&2 || true
+	kubectl get nodes -o wide --request-timeout="${KUBECTL_TIMEOUT}s" 2>&1 >&2 || true
 	echo "DEBUG: node conditions:" >&2
-	kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}: {range .status.conditions[*]}{.type}={.status} ({.reason}: {.message}) {end}{"\n"}{end}' 2>&1 >&2 || true
+	kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}: {range .status.conditions[*]}{.type}={.status} ({.reason}: {.message}) {end}{"\n"}{end}' --request-timeout="${KUBECTL_TIMEOUT}s" 2>&1 >&2 || true
 	return 1
 }
 
@@ -170,7 +174,7 @@ wait_for_service_account() {
 	local ns="${1}"
 	local elapsed=0
 	while [[ $elapsed -lt 30 ]]; do
-		if kubectl get serviceaccount default -n "$ns" &>/dev/null; then
+		if kubectl get serviceaccount default -n "$ns" --request-timeout="${CURL_TIMEOUT}s" &>/dev/null; then
 			return 0
 		fi
 		sleep 1
@@ -247,8 +251,18 @@ start_plugin() {
 
 stop_plugin() {
 	if [[ -f "$PLUGIN_PID_FILE" ]]; then
-		kill "$(cat "$PLUGIN_PID_FILE")" 2>/dev/null || true
-		wait "$(cat "$PLUGIN_PID_FILE")" 2>/dev/null || true
+		local pid
+		pid=$(cat "$PLUGIN_PID_FILE")
+		kill "$pid" 2>/dev/null || true
+		local elapsed=0
+		while kill -0 "$pid" 2>/dev/null && [[ $elapsed -lt 10 ]]; do
+			sleep 1
+			elapsed=$((elapsed + 1))
+		done
+		if kill -0 "$pid" 2>/dev/null; then
+			kill -9 "$pid" 2>/dev/null || true
+		fi
+		wait "$pid" 2>/dev/null || true
 		rm -f "$PLUGIN_PID_FILE"
 	fi
 }
@@ -279,6 +293,7 @@ run_pod() {
 		--namespace "$TEST_NS" \
 		--image "$image" \
 		--restart=Never \
+		--request-timeout="${KUBECTL_TIMEOUT}s" \
 		"$@"
 }
 
@@ -291,13 +306,13 @@ wait_for_pod_status() {
 
 	while [[ $elapsed -lt $timeout ]]; do
 		local status
-		status=$(kubectl get pod "$name" -n "$ns" -o jsonpath='{.status.phase}' 2>/dev/null || true)
+		status=$(kubectl get pod "$name" -n "$ns" -o jsonpath='{.status.phase}' --request-timeout="${CURL_TIMEOUT}s" 2>/dev/null || true)
 		if [[ "$status" == "$expected" ]]; then
 			return 0
 		fi
 
 		local container_status
-		container_status=$(kubectl get pod "$name" -n "$ns" -o jsonpath='{.status.containerStatuses[0].state.waiting.reason}' 2>/dev/null || true)
+		container_status=$(kubectl get pod "$name" -n "$ns" -o jsonpath='{.status.containerStatuses[0].state.waiting.reason}' --request-timeout="${CURL_TIMEOUT}s" 2>/dev/null || true)
 		if [[ "$expected" == "CreateContainerError" && "$container_status" == "CreateContainerError" ]]; then
 			return 0
 		fi
@@ -308,7 +323,7 @@ wait_for_pod_status() {
 
 	echo "ERROR: Pod $name did not reach status $expected after ${timeout}s (current: ${status:-unknown}, container: ${container_status:-unknown})" >&2
 	echo "DEBUG: kubectl describe pod $name -n $ns:" >&2
-	kubectl describe pod "$name" -n "$ns" 2>&1 >&2 || true
+	kubectl describe pod "$name" -n "$ns" --request-timeout="${KUBECTL_TIMEOUT}s" 2>&1 >&2 || true
 	echo "DEBUG: plugin log (NRI container info + errors):" >&2
 	grep -E '(NRI container|Container rejected|Container verified|Missing image)' "$PLUGIN_LOG" 2>&1 | tail -10 >&2 || true
 	echo "DEBUG: plugin log (attestation fetch):" >&2
@@ -378,7 +393,7 @@ restore_default_keybased_policy() {
 
 curl_metrics() {
 	local addr="${1:-localhost:9090}"
-	curl -sf "http://${addr}/metrics"
+	curl -sf --max-time "$CURL_TIMEOUT" "http://${addr}/metrics"
 }
 
 wait_for_metrics() {
@@ -387,7 +402,7 @@ wait_for_metrics() {
 	local timeout="${3:-10}"
 	local elapsed=0
 	while [[ $elapsed -lt $timeout ]]; do
-		if curl -sf "http://${addr}/metrics" 2>/dev/null | grep -q "$pattern"; then
+		if curl -sf --max-time "$CURL_TIMEOUT" "http://${addr}/metrics" 2>/dev/null | grep -q "$pattern"; then
 			return 0
 		fi
 		sleep 1
@@ -425,7 +440,7 @@ start_registry() {
 	echo $! >"$REGISTRY_PID_FILE"
 	local elapsed=0
 	while [[ $elapsed -lt 10 ]]; do
-		if curl -sf "http://${REGISTRY_HOST}/v2/" >/dev/null 2>&1; then
+		if curl -sf --max-time "$CURL_TIMEOUT" "http://${REGISTRY_HOST}/v2/" >/dev/null 2>&1; then
 			return 0
 		fi
 		sleep 1
@@ -437,25 +452,35 @@ start_registry() {
 
 stop_registry() {
 	if [[ -f "$REGISTRY_PID_FILE" ]]; then
-		kill "$(cat "$REGISTRY_PID_FILE")" 2>/dev/null || true
-		wait "$(cat "$REGISTRY_PID_FILE")" 2>/dev/null || true
+		local pid
+		pid=$(cat "$REGISTRY_PID_FILE")
+		kill "$pid" 2>/dev/null || true
+		local elapsed=0
+		while kill -0 "$pid" 2>/dev/null && [[ $elapsed -lt 10 ]]; do
+			sleep 1
+			elapsed=$((elapsed + 1))
+		done
+		if kill -0 "$pid" 2>/dev/null; then
+			kill -9 "$pid" 2>/dev/null || true
+		fi
+		wait "$pid" 2>/dev/null || true
 		rm -f "$REGISTRY_PID_FILE"
 	fi
 }
 
 generate_signing_key() {
-	"$COSIGN" generate-key-pair --output-key-prefix "${BATS_FILE_TMPDIR}/cosign"
+	timeout "$KUBECTL_TIMEOUT" "$COSIGN" generate-key-pair --output-key-prefix "${BATS_FILE_TMPDIR}/cosign"
 }
 
 push_test_image() {
 	local tag="$1"
 	local ref="${REGISTRY_HOST}/test/${tag}"
 	local output
-	if ! output=$("$CRANE" copy --platform linux/amd64 registry.k8s.io/pause:3.10 "$ref" --insecure 2>&1); then
+	if ! output=$(timeout "$CMD_TIMEOUT" "$CRANE" copy --platform linux/amd64 registry.k8s.io/pause:3.10 "$ref" --insecure 2>&1); then
 		echo "ERROR: crane copy failed for $ref: $output" >&2
 		return 1
 	fi
-	if ! output=$("$CRANE" mutate --label "nri-test=${tag}" "$ref" --insecure 2>&1); then
+	if ! output=$(timeout "$CMD_TIMEOUT" "$CRANE" mutate --label "nri-test=${tag}" "$ref" --insecure 2>&1); then
 		echo "ERROR: crane mutate failed for $ref: $output" >&2
 		return 1
 	fi
@@ -465,7 +490,7 @@ push_test_image() {
 get_image_digest() {
 	local ref="$1"
 	local digest
-	if ! digest=$("$CRANE" digest "$ref" --insecure 2>&1); then
+	if ! digest=$(timeout "$CMD_TIMEOUT" "$CRANE" digest "$ref" --insecure 2>&1); then
 		echo "ERROR: crane digest failed for $ref: $digest" >&2
 		return 1
 	fi
@@ -508,7 +533,7 @@ unconfigure_insecure_registry() {
 create_signing_config() {
 	local config_file="${BATS_FILE_TMPDIR}/signing-config.json"
 	if [[ ! -f "$config_file" ]]; then
-		"$COSIGN" signing-config create >"$config_file"
+		timeout "$KUBECTL_TIMEOUT" "$COSIGN" signing-config create >"$config_file"
 	fi
 	echo "$config_file"
 }
@@ -520,7 +545,7 @@ attest_image() {
 	local signing_config
 	signing_config=$(create_signing_config)
 	local output
-	if ! output=$("$COSIGN" attest \
+	if ! output=$(timeout "$CMD_TIMEOUT" "$COSIGN" attest \
 		--key "$COSIGN_KEY" \
 		--type "$predicate_type" \
 		--predicate "$predicate_file" \
@@ -599,10 +624,10 @@ build_daemonset_image() {
 	tar -cf "$layer_tar" -C "$layer_dir" usr
 
 	local base_ref="${image_ref%:*}:base"
-	"$CRANE" pull gcr.io/distroless/static-debian12:latest "$BATS_FILE_TMPDIR/base.tar"
-	"$CRANE" push "$BATS_FILE_TMPDIR/base.tar" "$base_ref" --insecure
-	"$CRANE" append -b "$base_ref" -f "$layer_tar" -t "$image_ref" --insecure
-	"$CRANE" mutate "$image_ref" \
+	timeout "$CMD_TIMEOUT" "$CRANE" pull gcr.io/distroless/static-debian12:latest "$BATS_FILE_TMPDIR/base.tar"
+	timeout "$CMD_TIMEOUT" "$CRANE" push "$BATS_FILE_TMPDIR/base.tar" "$base_ref" --insecure
+	timeout "$CMD_TIMEOUT" "$CRANE" append -b "$base_ref" -f "$layer_tar" -t "$image_ref" --insecure
+	timeout "$CMD_TIMEOUT" "$CRANE" mutate "$image_ref" \
 		--entrypoint "/usr/local/bin/nri-supply-chain" \
 		--insecure
 
@@ -650,7 +675,7 @@ deploy_daemonset() {
 	' "$DAEMONSET_MANIFEST" >"${DAEMONSET_MANIFEST}.tmp"
 	mv "${DAEMONSET_MANIFEST}.tmp" "$DAEMONSET_MANIFEST"
 
-	kubectl apply -f "$DAEMONSET_MANIFEST"
+	kubectl apply -f "$DAEMONSET_MANIFEST" --request-timeout="${KUBECTL_TIMEOUT}s"
 }
 
 wait_for_daemonset_ready() {
@@ -660,16 +685,16 @@ wait_for_daemonset_ready() {
 	while [[ $elapsed -lt $timeout ]]; do
 		local desired ready
 		desired=$(kubectl get daemonset nri-supply-chain -n "$DAEMONSET_NS" \
-			-o jsonpath='{.status.desiredNumberScheduled}' 2>/dev/null || echo "0")
+			-o jsonpath='{.status.desiredNumberScheduled}' --request-timeout="${CURL_TIMEOUT}s" 2>/dev/null || echo "0")
 		ready=$(kubectl get daemonset nri-supply-chain -n "$DAEMONSET_NS" \
-			-o jsonpath='{.status.numberReady}' 2>/dev/null || echo "0")
+			-o jsonpath='{.status.numberReady}' --request-timeout="${CURL_TIMEOUT}s" 2>/dev/null || echo "0")
 		if [[ "$desired" -gt 0 && "$ready" -eq "$desired" ]]; then
 			local pod
 			pod=$(get_daemonset_pod_name 2>/dev/null || true)
 			if [[ -n "$pod" ]]; then
 				local container_ready
 				container_ready=$(kubectl get pod "$pod" -n "$DAEMONSET_NS" \
-					-o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null || echo "false")
+					-o jsonpath='{.status.containerStatuses[0].ready}' --request-timeout="${CURL_TIMEOUT}s" 2>/dev/null || echo "false")
 				if [[ "$container_ready" == "true" ]]; then
 					stable=$((stable + 1))
 					if [[ $stable -ge 3 ]]; then
@@ -688,14 +713,14 @@ wait_for_daemonset_ready() {
 
 	if [[ $stable -lt 3 ]]; then
 		echo "ERROR: DaemonSet not ready after ${timeout}s (desired=${desired:-?}, ready=${ready:-?})" >&2
-		kubectl describe daemonset nri-supply-chain -n "$DAEMONSET_NS" 2>&1 >&2 || true
-		kubectl get pods -n "$DAEMONSET_NS" -o wide 2>&1 >&2 || true
+		kubectl describe daemonset nri-supply-chain -n "$DAEMONSET_NS" --request-timeout="${KUBECTL_TIMEOUT}s" 2>&1 >&2 || true
+		kubectl get pods -n "$DAEMONSET_NS" -o wide --request-timeout="${KUBECTL_TIMEOUT}s" 2>&1 >&2 || true
 		local pod
 		pod=$(get_daemonset_pod_name 2>/dev/null || true)
 		if [[ -n "$pod" ]]; then
-			kubectl describe pod "$pod" -n "$DAEMONSET_NS" 2>&1 >&2 || true
-			kubectl logs "$pod" -n "$DAEMONSET_NS" --tail=50 2>&1 >&2 || true
-			kubectl logs "$pod" -n "$DAEMONSET_NS" --previous --tail=50 2>&1 >&2 || true
+			kubectl describe pod "$pod" -n "$DAEMONSET_NS" --request-timeout="${KUBECTL_TIMEOUT}s" 2>&1 >&2 || true
+			kubectl logs "$pod" -n "$DAEMONSET_NS" --tail=50 --request-timeout="${KUBECTL_TIMEOUT}s" 2>&1 >&2 || true
+			kubectl logs "$pod" -n "$DAEMONSET_NS" --previous --tail=50 --request-timeout="${KUBECTL_TIMEOUT}s" 2>&1 >&2 || true
 		fi
 		return 1
 	fi
@@ -708,7 +733,7 @@ wait_for_daemonset_ready() {
 	while [[ $elapsed -lt $timeout ]]; do
 		local started_at
 		started_at=$(kubectl get pod "$pod" -n "$DAEMONSET_NS" \
-			-o jsonpath='{.status.containerStatuses[0].state.running.startedAt}' 2>/dev/null || true)
+			-o jsonpath='{.status.containerStatuses[0].state.running.startedAt}' --request-timeout="${CURL_TIMEOUT}s" 2>/dev/null || true)
 		if [[ -n "$started_at" ]]; then
 			local started_epoch now_epoch running_for
 			started_epoch=$(date -d "$started_at" +%s 2>/dev/null || echo "0")
@@ -722,22 +747,22 @@ wait_for_daemonset_ready() {
 		elapsed=$((elapsed + 3))
 	done
 	echo "ERROR: DaemonSet container not stable after ${timeout}s" >&2
-	kubectl describe pod "$pod" -n "$DAEMONSET_NS" 2>&1 >&2 || true
-	kubectl logs "$pod" -n "$DAEMONSET_NS" --tail=50 2>&1 >&2 || true
+	kubectl describe pod "$pod" -n "$DAEMONSET_NS" --request-timeout="${KUBECTL_TIMEOUT}s" 2>&1 >&2 || true
+	kubectl logs "$pod" -n "$DAEMONSET_NS" --tail=50 --request-timeout="${KUBECTL_TIMEOUT}s" 2>&1 >&2 || true
 	return 1
 }
 
 get_daemonset_pod_name() {
 	kubectl get pods -n "$DAEMONSET_NS" \
 		-l app.kubernetes.io/name=nri-supply-chain \
-		-o jsonpath='{.items[0].metadata.name}' 2>/dev/null
+		-o jsonpath='{.items[0].metadata.name}' --request-timeout="${KUBECTL_TIMEOUT}s" 2>/dev/null
 }
 
 daemonset_log_contains() {
 	local pattern="$1"
 	local pod
 	pod=$(get_daemonset_pod_name)
-	kubectl logs "$pod" -n "$DAEMONSET_NS" 2>/dev/null | grep -q "$pattern"
+	kubectl logs "$pod" -n "$DAEMONSET_NS" --request-timeout="${KUBECTL_TIMEOUT}s" 2>/dev/null | grep -q "$pattern"
 }
 
 assert_daemonset_log_contains() {
@@ -755,7 +780,7 @@ assert_daemonset_log_contains() {
 	pod=$(get_daemonset_pod_name 2>/dev/null || echo "unknown")
 	echo "ASSERTION FAILED: DaemonSet pod log does not contain '$pattern' after ${timeout}s" >&2
 	echo "=== DaemonSet pod log tail ===" >&2
-	kubectl logs "$pod" -n "$DAEMONSET_NS" --tail=30 2>&1 >&2 || true
+	kubectl logs "$pod" -n "$DAEMONSET_NS" --tail=30 --request-timeout="${KUBECTL_TIMEOUT}s" 2>&1 >&2 || true
 	echo "=== End DaemonSet pod log ===" >&2
 	return 1
 }
@@ -768,7 +793,7 @@ start_metrics_portforward() {
 	echo $! >"$METRICS_PORTFORWARD_PID_FILE"
 	local elapsed=0
 	while [[ $elapsed -lt 60 ]]; do
-		if curl -sf "http://localhost:${DAEMONSET_METRICS_PORT}/healthz" >/dev/null 2>&1; then
+		if curl -sf --max-time "$CURL_TIMEOUT" "http://localhost:${DAEMONSET_METRICS_PORT}/healthz" >/dev/null 2>&1; then
 			return 0
 		fi
 		sleep 1
@@ -776,13 +801,13 @@ start_metrics_portforward() {
 	done
 	echo "ERROR: port-forward not ready after 60s" >&2
 	echo "=== Pod status ===" >&2
-	kubectl get pod "$pod" -n "$DAEMONSET_NS" -o wide 2>&1 >&2 || true
+	kubectl get pod "$pod" -n "$DAEMONSET_NS" -o wide --request-timeout="${KUBECTL_TIMEOUT}s" 2>&1 >&2 || true
 	echo "=== Pod describe ===" >&2
-	kubectl describe pod "$pod" -n "$DAEMONSET_NS" 2>&1 >&2 || true
+	kubectl describe pod "$pod" -n "$DAEMONSET_NS" --request-timeout="${KUBECTL_TIMEOUT}s" 2>&1 >&2 || true
 	echo "=== Pod logs ===" >&2
-	kubectl logs "$pod" -n "$DAEMONSET_NS" --tail=50 2>&1 >&2 || true
+	kubectl logs "$pod" -n "$DAEMONSET_NS" --tail=50 --request-timeout="${KUBECTL_TIMEOUT}s" 2>&1 >&2 || true
 	echo "=== Previous pod logs ===" >&2
-	kubectl logs "$pod" -n "$DAEMONSET_NS" --previous --tail=50 2>&1 >&2 || true
+	kubectl logs "$pod" -n "$DAEMONSET_NS" --previous --tail=50 --request-timeout="${KUBECTL_TIMEOUT}s" 2>&1 >&2 || true
 	return 1
 }
 
@@ -791,7 +816,7 @@ ensure_metrics_portforward() {
 		local pid
 		pid=$(cat "$METRICS_PORTFORWARD_PID_FILE")
 		if kill -0 "$pid" 2>/dev/null; then
-			if curl -sf "http://localhost:${DAEMONSET_METRICS_PORT}/healthz" >/dev/null 2>&1; then
+			if curl -sf --max-time "$CURL_TIMEOUT" "http://localhost:${DAEMONSET_METRICS_PORT}/healthz" >/dev/null 2>&1; then
 				return 0
 			fi
 		fi
@@ -802,8 +827,18 @@ ensure_metrics_portforward() {
 
 stop_metrics_portforward() {
 	if [[ -f "$METRICS_PORTFORWARD_PID_FILE" ]]; then
-		kill "$(cat "$METRICS_PORTFORWARD_PID_FILE")" 2>/dev/null || true
-		wait "$(cat "$METRICS_PORTFORWARD_PID_FILE")" 2>/dev/null || true
+		local pid
+		pid=$(cat "$METRICS_PORTFORWARD_PID_FILE")
+		kill "$pid" 2>/dev/null || true
+		local elapsed=0
+		while kill -0 "$pid" 2>/dev/null && [[ $elapsed -lt 10 ]]; do
+			sleep 1
+			elapsed=$((elapsed + 1))
+		done
+		if kill -0 "$pid" 2>/dev/null; then
+			kill -9 "$pid" 2>/dev/null || true
+		fi
+		wait "$pid" 2>/dev/null || true
 		rm -f "$METRICS_PORTFORWARD_PID_FILE"
 	fi
 }

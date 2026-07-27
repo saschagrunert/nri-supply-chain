@@ -53,7 +53,7 @@ create_sigstore_images() {
 
 @test "key-based verification with wrong key is rejected" {
 	local wrong_key="${BATS_FILE_TMPDIR}/wrong"
-	COSIGN_PASSWORD="" "$COSIGN" generate-key-pair --output-key-prefix "$wrong_key" 2>/dev/null
+	COSIGN_PASSWORD="" timeout "$KUBECTL_TIMEOUT" "$COSIGN" generate-key-pair --output-key-prefix "$wrong_key" 2>/dev/null
 
 	write_policy "default" "$(
 		cat <<-EOF
@@ -98,7 +98,7 @@ create_sigstore_images() {
 
 @test "multiple verifiers with first matching passes" {
 	local wrong_key="${BATS_FILE_TMPDIR}/multi-wrong"
-	COSIGN_PASSWORD="" "$COSIGN" generate-key-pair --output-key-prefix "$wrong_key" 2>/dev/null
+	COSIGN_PASSWORD="" timeout "$KUBECTL_TIMEOUT" "$COSIGN" generate-key-pair --output-key-prefix "$wrong_key" 2>/dev/null
 
 	write_policy "default" "$(
 		cat <<-EOF

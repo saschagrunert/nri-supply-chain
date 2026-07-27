@@ -117,12 +117,12 @@ teardown_file() {
 }
 
 @test "healthz probe returns 200" {
-	run curl -sf http://localhost:9090/healthz
+	run curl -sf --max-time "$CURL_TIMEOUT" http://localhost:9090/healthz
 	[[ "$status" -eq 0 ]]
 }
 
 @test "readyz probe returns 200 when connected" {
-	run curl -sf http://localhost:9090/readyz
+	run curl -sf --max-time "$CURL_TIMEOUT" http://localhost:9090/readyz
 	[[ "$status" -eq 0 ]]
 }
 

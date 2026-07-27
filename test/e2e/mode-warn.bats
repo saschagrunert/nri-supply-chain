@@ -54,6 +54,7 @@ teardown_file() {
 		--namespace "$TEST_NS" \
 		--image "registry.k8s.io/pause:3.10" \
 		--restart=Never \
+		--request-timeout="${KUBECTL_TIMEOUT}s" \
 		--overrides='{
 			"spec": {
 				"containers": [
@@ -80,6 +81,7 @@ teardown_file() {
 		--namespace "$TEST_NS" \
 		--image "registry.k8s.io/pause:3.10" \
 		--restart=Never \
+		--request-timeout="${KUBECTL_TIMEOUT}s" \
 		--overrides='{
 			"spec": {
 				"initContainers": [

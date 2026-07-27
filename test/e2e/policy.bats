@@ -59,7 +59,8 @@ teardown_file() {
 	kubectl run "ns-override-pod" \
 		--namespace "$ns" \
 		--image "$POLICY_IMAGE" \
-		--restart=Never
+		--restart=Never \
+		--request-timeout="${KUBECTL_TIMEOUT}s"
 	wait_for_pod_status "ns-override-pod" "Running" 60 "$ns"
 }
 
@@ -113,7 +114,8 @@ teardown_file() {
 	kubectl run "fallback-pod" \
 		--namespace "$ns" \
 		--image "$POLICY_IMAGE" \
-		--restart=Never || true
+		--restart=Never \
+		--request-timeout="${KUBECTL_TIMEOUT}s" || true
 	assert_log_contains "Container rejected"
 }
 
@@ -227,7 +229,8 @@ teardown_file() {
 	kubectl run "inherit-pod" \
 		--namespace "$ns" \
 		--image "$POLICY_IMAGE" \
-		--restart=Never
+		--restart=Never \
+		--request-timeout="${KUBECTL_TIMEOUT}s"
 	wait_for_pod_status "inherit-pod" "Running" 60 "$ns"
 
 	# Default policy still denies in the default namespace.
