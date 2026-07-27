@@ -43,6 +43,7 @@ var errUnexpectedSingleflightResult = errors.New("fetcher: unexpected singleflig
 
 const (
 	maxAttestationSize      = 10 << 20 // 10 MiB
+	maxTotalAttestationSize = 50 << 20 // 50 MiB aggregate limit per image
 	maxReferrers            = 100
 	trustedRootCacheTTL     = 1 * time.Hour
 	trustedRootMaxStaleness = 24 * time.Hour
@@ -458,9 +459,7 @@ func (f *OCIFetcher) fetchCosignTagAttestations(
 
 	img, fetchErr := f.fetchImage(attTag, remoteOpts...)
 	if fetchErr != nil {
-		var transportErr *transport.Error
-		if errors.As(fetchErr, &transportErr) &&
-			transportErr.StatusCode == http.StatusNotFound {
+		if isRegistryNotFound(fetchErr) {
 			return nil, nil
 		}
 
@@ -474,11 +473,10 @@ func (f *OCIFetcher) fetchCosignTagAttestations(
 		return nil, fmt.Errorf("reading cosign attestation layers: %w", layerErr)
 	}
 
-	if len(layers) == 0 {
-		return nil, nil
-	}
-
-	var attestations []VerifiedAttestation
+	var (
+		attestations []VerifiedAttestation
+		totalSize    int64
+	)
 
 	for idx, layer := range layers {
 		ctxErr := ctx.Err()
@@ -497,6 +495,11 @@ func (f *OCIFetcher) fetchCosignTagAttestations(
 
 		att, ok := f.processCosignLayer(ctx, layer, digest, fetchOpts)
 		if ok {
+			totalSize += int64(len(att.Payload))
+			if exceededTotalAttestationSize(ctx, totalSize) {
+				break
+			}
+
 			attestations = append(attestations, att)
 		}
 	}
@@ -584,6 +587,7 @@ func (f *OCIFetcher) collectAttestations(
 		attestations []VerifiedAttestation
 		hadBundles   bool
 		processed    int
+		totalSize    int64
 	)
 
 	for idx := range manifests {
@@ -614,6 +618,11 @@ func (f *OCIFetcher) collectAttestations(
 
 		att, ok := f.processDescriptor(ctx, desc, ref, digest, predicateType, remoteOpts, fetchOpts)
 		if ok {
+			totalSize += int64(len(att.Payload))
+			if exceededTotalAttestationSize(ctx, totalSize) {
+				break
+			}
+
 			attestations = append(attestations, att)
 		}
 	}
@@ -628,6 +637,27 @@ func isBundleCandidate(artifactType string) bool {
 	default:
 		return false
 	}
+}
+
+func exceededTotalAttestationSize(ctx context.Context, totalSize int64) bool {
+	if totalSize <= maxTotalAttestationSize {
+		return false
+	}
+
+	slog.WarnContext(ctx,
+		"Aggregate attestation size exceeds limit, skipping remaining",
+		"totalSize", totalSize,
+		"limit", maxTotalAttestationSize,
+	)
+
+	return true
+}
+
+func isRegistryNotFound(err error) bool {
+	var transportErr *transport.Error
+
+	return errors.As(err, &transportErr) &&
+		transportErr.StatusCode == http.StatusNotFound
 }
 
 func (f *OCIFetcher) processDescriptor(

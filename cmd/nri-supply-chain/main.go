@@ -408,6 +408,7 @@ func handleReload(
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("Recovered panic in reload handler", "error", r)
+			met.ConfigReloadErrorsTotal.Inc()
 		}
 	}()
 

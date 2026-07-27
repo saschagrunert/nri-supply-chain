@@ -125,6 +125,7 @@ func (cb *CircuitBreaker) isOpen() bool {
 type CircuitBreakerRegistry struct {
 	mu        sync.Mutex
 	breakers  map[string]*CircuitBreaker
+	overflow  *CircuitBreaker
 	threshold int
 	cooldown  time.Duration
 }
@@ -135,6 +136,7 @@ func NewCircuitBreakerRegistry(threshold int, cooldown time.Duration) *CircuitBr
 	return &CircuitBreakerRegistry{
 		mu:        sync.Mutex{},
 		breakers:  make(map[string]*CircuitBreaker),
+		overflow:  nil,
 		threshold: threshold,
 		cooldown:  cooldown,
 	}
@@ -157,10 +159,14 @@ func (r *CircuitBreakerRegistry) Get(host string) *CircuitBreaker {
 	}
 
 	if len(r.breakers) >= maxCircuitBreakers {
-		slog.Warn("Circuit breaker registry at capacity, reusing default breaker",
+		slog.Warn("Circuit breaker registry at capacity, using shared overflow breaker",
 			"host", host, "capacity", maxCircuitBreakers)
 
-		return NewCircuitBreaker(r.threshold, r.cooldown)
+		if r.overflow == nil {
+			r.overflow = NewCircuitBreaker(r.threshold, r.cooldown)
+		}
+
+		return r.overflow
 	}
 
 	breaker = NewCircuitBreaker(r.threshold, r.cooldown)
