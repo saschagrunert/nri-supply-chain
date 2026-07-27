@@ -1,0 +1,106 @@
+// Copyright The nri-supply-chain Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"os"
+
+	"github.com/invopop/jsonschema"
+
+	"github.com/saschagrunert/nri-supply-chain/internal/policy"
+)
+
+// PolicyJSONSchema generates the JSON Schema for policy configuration files.
+func PolicyJSONSchema() ([]byte, error) {
+	return generateSchema(
+		&policy.Policy{},
+		"nri-supply-chain Policy",
+		"Defines the trust roots and "+
+			"per-namespace verification settings for nri-supply-chain.",
+	)
+}
+
+// VerifyResultJSONSchema generates the JSON Schema for --verify-image output.
+func VerifyResultJSONSchema() ([]byte, error) {
+	return generateSchema(
+		&verifyOutput{
+			Image:        "",
+			Digest:       "",
+			Namespace:    "",
+			Allowed:      false,
+			Reason:       "",
+			CheckResults: nil,
+		},
+		"nri-supply-chain Verify Result",
+		"JSON output of the --verify-image command.",
+	)
+}
+
+func generateSchema(
+	target any, title, description string,
+) ([]byte, error) {
+	schema := jsonschema.Reflect(target)
+	schema.ID = ""
+	schema.Title = title
+	schema.Description = description
+
+	data, err := json.MarshalIndent(schema, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshaling schema: %w", err)
+	}
+
+	data = append(data, '\n')
+
+	return data, nil
+}
+
+func printJSONSchema(schemaType string) int {
+	var (
+		data []byte
+		err  error
+	)
+
+	switch schemaType {
+	case "policy":
+		data, err = PolicyJSONSchema()
+	case "result":
+		data, err = VerifyResultJSONSchema()
+	default:
+		slog.Error(
+			"Unknown schema type, use 'policy' or 'result'",
+			"type", schemaType,
+		)
+
+		return 1
+	}
+
+	if err != nil {
+		slog.Error("Failed to generate JSON Schema", "error", err)
+
+		return 1
+	}
+
+	_, err = os.Stdout.Write(data)
+	if err != nil {
+		slog.Error("Failed to write JSON Schema", "error", err)
+
+		return 1
+	}
+
+	return 0
+}

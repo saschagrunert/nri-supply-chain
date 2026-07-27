@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"runtime"
 
+	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -59,6 +60,14 @@ func ResolveDigest(
 	}
 
 	return desc.Digest.String(), "", nil
+}
+
+// ResolveWithDefaultKeychain resolves an image reference to its digest using the
+// default container keychain for authentication.
+func ResolveWithDefaultKeychain(
+	ctx context.Context, imageRef string,
+) (digest, indexDigest string, err error) {
+	return ResolveDigest(ctx, imageRef, remote.WithAuthFromKeychain(authn.DefaultKeychain))
 }
 
 // ResolveIndexDigest extracts the platform-specific digest from a manifest list descriptor.

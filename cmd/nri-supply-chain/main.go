@@ -17,24 +17,13 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
 	"os"
-	"os/signal"
-	"path/filepath"
 	"runtime"
-	"syscall"
-	"time"
 
 	"github.com/containerd/nri/pkg/stub"
-	"github.com/fsnotify/fsnotify"
-	"github.com/google/go-containerregistry/pkg/authn"
-	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
@@ -42,8 +31,6 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/plugin"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
-	"github.com/saschagrunert/nri-supply-chain/internal/registry"
-	"github.com/saschagrunert/nri-supply-chain/internal/types"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
@@ -52,11 +39,6 @@ var version = "0.1.5"
 var logLevelVar slog.LevelVar //nolint:gochecknoglobals // shared between initLogging and reload
 
 const (
-	readHeaderTimeout   = 10 * time.Second
-	shutdownGracePeriod = 5 * time.Second
-	fileWatchDebounce   = 500 * time.Millisecond
-	panicExitCode       = 2
-
 	logLevelDebug = "debug"
 	logLevelInfo  = "info"
 	logLevelWarn  = "warn"
@@ -73,22 +55,7 @@ type options struct {
 	verifyNamespace string
 	showVersion     bool
 	validate        bool
-}
-
-type verifyOutput struct {
-	Image        string       `json:"image"`
-	Digest       string       `json:"digest"`
-	Namespace    string       `json:"namespace"`
-	Allowed      bool         `json:"allowed"`
-	Reason       string       `json:"reason,omitempty"`
-	CheckResults []checkEntry `json:"checkResults,omitempty"`
-}
-
-type checkEntry struct {
-	Type   string `json:"type"`
-	Passed bool   `json:"passed"`
-	Status string `json:"status"`
-	Detail string `json:"detail,omitempty"`
+	jsonSchema      string
 }
 
 func main() {
@@ -102,6 +69,10 @@ func run() int {
 		_, _ = fmt.Fprintln(os.Stdout, "nri-supply-chain v"+version)
 
 		return 0
+	}
+
+	if opts.jsonSchema != "" {
+		return printJSONSchema(opts.jsonSchema)
 	}
 
 	initLogging(opts.logLevel)
@@ -125,6 +96,10 @@ func run() int {
 		return runVerify(&opts, cfg)
 	}
 
+	return startPlugin(&opts, cfg)
+}
+
+func startPlugin(opts *options, cfg *config.Config) int {
 	met := metrics.New()
 	met.SetBuildInfo(version, runtime.Version())
 
@@ -145,10 +120,10 @@ func run() int {
 
 	defer cancel()
 
-	cleanupSignals := setupSignals(ctx, cancel, opts.configPath, verif, met, cfg)
+	cleanupSignals := setupSignals(ctx, cancel, opts.configPath, verif, met, cfg, plug)
 	defer cleanupSignals()
 
-	err = runPlugin(ctx, plug, met, cfg.MetricsAddr, &opts, cancel)
+	err = runPlugin(ctx, plug, met, cfg.MetricsAddr, opts, cancel)
 	if err != nil {
 		slog.Error("Plugin exited with error", "error", err)
 
@@ -158,43 +133,30 @@ func run() int {
 	return 0
 }
 
-func setupSignals(
-	ctx context.Context, cancel context.CancelFunc,
-	configPath string, verif *verifier.Verifier,
-	met *metrics.Metrics, cfg *config.Config,
-) func() {
-	sighup := make(chan os.Signal, 1)
-	signal.Notify(sighup, syscall.SIGHUP)
-
-	sigterm := make(chan os.Signal, 1)
-	signal.Notify(sigterm, syscall.SIGINT, syscall.SIGTERM)
-
-	done := make(chan struct{})
-
-	cleanupWatch, watcher := setupFileWatch(ctx, configPath, cfg.PolicyDir, verif, met)
-	setupReload(ctx, configPath, verif, met, sighup, watcher)
-	handleShutdown(ctx, cancel, sigterm, done)
-
-	return func() {
-		signal.Stop(sighup)
-		signal.Stop(sigterm)
-		close(done)
-		cleanupWatch()
-	}
+func parseFlags() options {
+	return parseFlagsFrom(os.Args[1:])
 }
 
-func parseFlags() options {
-	configPath := flag.String("config", "", "path to TOML config file")
-	metricsAddr := flag.String("metrics-addr", "", "metrics HTTP listen address (overrides config)")
-	pluginName := flag.String("plugin-name", "supply-chain", "NRI plugin name")
-	pluginIdx := flag.String("plugin-idx", "10", "NRI plugin index")
-	logLevel := flag.String("log-level", logLevelInfo, "log level (debug, info, warn, error)")
-	showVersion := flag.Bool("version", false, "print version and exit")
-	validate := flag.Bool("validate", false, "validate config and policies, then exit")
-	verifyImage := flag.String("verify-image", "", "verify an image and exit")
-	verifyNamespace := flag.String("verify-namespace", "default", "namespace for verification")
+func parseFlagsFrom(args []string) options {
+	flagSet := flag.NewFlagSet("nri-supply-chain", flag.ExitOnError)
 
-	flag.Parse()
+	configPath := flagSet.String("config", "", "path to TOML config file")
+	metricsAddr := flagSet.String(
+		"metrics-addr", "", "metrics HTTP listen address (overrides config)",
+	)
+	pluginName := flagSet.String("plugin-name", "supply-chain", "NRI plugin name")
+	pluginIdx := flagSet.String("plugin-idx", "10", "NRI plugin index")
+	logLevel := flagSet.String("log-level", logLevelInfo, "log level (debug, info, warn, error)")
+	showVersion := flagSet.Bool("version", false, "print version and exit")
+	validate := flagSet.Bool("validate", false, "validate config and policies, then exit")
+	verifyImage := flagSet.String("verify-image", "", "verify an image and exit")
+	verifyNamespace := flagSet.String("verify-namespace", "default", "namespace for verification")
+	jsonSchema := flagSet.String(
+		"json-schema", "",
+		"print JSON Schema and exit (policy, result)",
+	)
+
+	_ = flagSet.Parse(args)
 
 	return options{
 		configPath:      *configPath,
@@ -206,6 +168,7 @@ func parseFlags() options {
 		verifyNamespace: *verifyNamespace,
 		showVersion:     *showVersion,
 		validate:        *validate,
+		jsonSchema:      *jsonSchema,
 	}
 }
 
@@ -386,461 +349,4 @@ func runPlugin(
 	}
 
 	return nil
-}
-
-func setupReload(
-	ctx context.Context, configPath string, verif *verifier.Verifier,
-	met *metrics.Metrics, sigCh <-chan os.Signal, watcher *fsnotify.Watcher,
-) {
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-sigCh:
-			}
-
-			handleReload(ctx, configPath, verif, met, watcher)
-		}
-	}()
-}
-
-func handleReload(
-	ctx context.Context, configPath string,
-	verif *verifier.Verifier, met *metrics.Metrics,
-	watcher *fsnotify.Watcher,
-) {
-	defer func() {
-		if r := recover(); r != nil {
-			slog.Error("Recovered panic in reload handler", "error", r)
-			met.ConfigReloadErrorsTotal.Inc()
-		}
-	}()
-
-	slog.Info("Reloading config")
-
-	if configPath == "" {
-		slog.Warn("No config file specified, skipping reload")
-
-		return
-	}
-
-	newCfg, err := config.LoadFromFile(configPath)
-	if err != nil {
-		met.ConfigReloadErrorsTotal.Inc()
-		slog.Error("Config reload failed", "error", err)
-
-		return
-	}
-
-	if newCfg.Enabled() {
-		err = newCfg.ValidateRuntime()
-		if err != nil {
-			met.ConfigReloadErrorsTotal.Inc()
-			slog.Error("Config reload validation failed", "error", err)
-
-			return
-		}
-	}
-
-	if newCfg.LogLevel != "" {
-		if parsed := parseLogLevel(newCfg.LogLevel); parsed != nil {
-			current := logLevelVar.Level()
-
-			if current != *parsed {
-				logLevelVar.Set(*parsed)
-				slog.Info("Log level changed", "from", current, "to", *parsed)
-			}
-		}
-	}
-
-	reloadErr := verif.Reload(ctx, newCfg)
-	if reloadErr != nil {
-		met.ConfigReloadErrorsTotal.Inc()
-		slog.Error("Verifier reload failed", "error", reloadErr)
-	} else {
-		met.ConfigReloadsTotal.Inc()
-		slog.Info("Config reloaded successfully")
-		updatePolicyDirWatch(watcher, configPath, newCfg.PolicyDir)
-	}
-}
-
-func updatePolicyDirWatch(watcher *fsnotify.Watcher, configPath, newPolicyDir string) {
-	if watcher == nil {
-		return
-	}
-
-	newAbsDir := ""
-
-	if newPolicyDir != "" {
-		abs, absErr := filepath.Abs(newPolicyDir)
-		if absErr == nil {
-			newAbsDir = abs
-		}
-	}
-
-	// Remove any watched path that is not the config file or the new policy directory.
-	for _, watched := range watcher.WatchList() {
-		if watched == configPath || watched == newAbsDir {
-			continue
-		}
-
-		removeErr := watcher.Remove(watched)
-		if removeErr != nil {
-			slog.Warn("Failed to unwatch old policy directory",
-				"path", watched, "error", removeErr)
-		} else {
-			slog.Info("Removed old policy directory from file watcher",
-				"path", watched)
-		}
-	}
-
-	if newAbsDir == "" {
-		return
-	}
-
-	// watcher.Add is a no-op for already-watched paths.
-	addErr := watcher.Add(newAbsDir)
-	if addErr != nil {
-		slog.Warn("Failed to watch new policy directory",
-			"path", newAbsDir, "error", addErr)
-	} else {
-		slog.Info("Added new policy directory to file watcher",
-			"path", newAbsDir)
-	}
-}
-
-func runVerify(opts *options, cfg *config.Config) int {
-	return runVerifyTo(os.Stdout, opts, cfg)
-}
-
-func runVerifyTo(writer io.Writer, opts *options, cfg *config.Config) int {
-	imageRef := opts.verifyImage
-	namespace := opts.verifyNamespace
-
-	if !cfg.Enabled() {
-		slog.Error("--verify-image requires verification to be enabled")
-
-		return 1
-	}
-
-	met := metrics.New()
-	fetcher := verifier.NewFetcher(cfg)
-
-	verif, err := verifier.New(cfg, met, fetcher)
-	if err != nil {
-		slog.Error("Failed to create verifier", "error", err)
-
-		return 1
-	}
-
-	resolved, err := resolveDigest(imageRef, cfg.FetchTimeout.Duration)
-	if err != nil {
-		slog.Error("Failed to resolve image digest", "image", imageRef, "error", err)
-
-		return 1
-	}
-
-	digest := resolved.digest
-
-	result, err := verif.Verify(
-		context.Background(), imageRef, digest, resolved.indexDigest, namespace,
-	)
-	if err != nil {
-		slog.Error("Verification failed", "image", imageRef, "error", err)
-	}
-
-	checks := convertCheckResults(result)
-
-	if err != nil {
-		outputVerifyResult(writer, imageRef, digest, namespace, false, err.Error(), checks)
-
-		return 1
-	}
-
-	outputVerifyResult(
-		writer, imageRef, digest, namespace, result.Allowed, result.Reason, checks,
-	)
-
-	if !result.Allowed {
-		return 1
-	}
-
-	return 0
-}
-
-func convertCheckResults(result *types.Result) []checkEntry {
-	if result == nil {
-		return nil
-	}
-
-	checks := make([]checkEntry, 0, len(result.CheckResults))
-
-	for _, cr := range result.CheckResults {
-		checks = append(checks, checkEntry{
-			Type:   string(cr.Type),
-			Passed: cr.Passed,
-			Status: string(cr.Status),
-			Detail: cr.Detail,
-		})
-	}
-
-	return checks
-}
-
-type resolvedDigest struct {
-	digest      string
-	indexDigest string
-}
-
-func resolveDigest(imageRef string, timeout time.Duration) (resolvedDigest, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	digest, indexDigest, err := registry.ResolveDigest(ctx, imageRef,
-		remote.WithAuthFromKeychain(authn.DefaultKeychain),
-	)
-	if err != nil {
-		return resolvedDigest{}, fmt.Errorf("resolving digest: %w", err)
-	}
-
-	return resolvedDigest{digest: digest, indexDigest: indexDigest}, nil
-}
-
-func outputVerifyResult(
-	writer io.Writer,
-	imageRef, digest, namespace string,
-	allowed bool, reason string, checks []checkEntry,
-) {
-	out := verifyOutput{
-		Image:        imageRef,
-		Digest:       digest,
-		Namespace:    namespace,
-		Allowed:      allowed,
-		Reason:       reason,
-		CheckResults: checks,
-	}
-
-	enc := json.NewEncoder(writer)
-	enc.SetIndent("", "  ")
-
-	encErr := enc.Encode(out)
-	if encErr != nil {
-		slog.Error("Failed to encode verify output", "error", encErr)
-	}
-}
-
-func setupFileWatch(
-	ctx context.Context, configPath, policyDir string,
-	verif *verifier.Verifier, met *metrics.Metrics,
-) (func(), *fsnotify.Watcher) {
-	if configPath == "" {
-		return func() {}, nil
-	}
-
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		slog.Warn("Failed to create file watcher, relying on SIGHUP", "error", err)
-
-		return func() {}, nil
-	}
-
-	watchErr := watcher.Add(configPath)
-	if watchErr != nil {
-		slog.Warn("Failed to watch config file", "path", configPath, "error", watchErr)
-	}
-
-	if policyDir != "" {
-		absDir, absErr := filepath.Abs(policyDir)
-		if absErr == nil {
-			watchErr = watcher.Add(absDir)
-			if watchErr != nil {
-				slog.Warn("Failed to watch policy directory",
-					"path", absDir,
-					"error", watchErr,
-				)
-			}
-		}
-	}
-
-	go runFileWatch(ctx, watcher, configPath, verif, met)
-
-	return func() {
-		closeErr := watcher.Close()
-		if closeErr != nil {
-			slog.Warn("Failed to close file watcher", "error", closeErr)
-		}
-	}, watcher
-}
-
-func runFileWatch(
-	ctx context.Context, watcher *fsnotify.Watcher,
-	configPath string, verif *verifier.Verifier,
-	met *metrics.Metrics,
-) {
-	var debounce *time.Timer
-
-	for {
-		select {
-		case <-ctx.Done():
-			if debounce != nil {
-				debounce.Stop()
-			}
-
-			return
-
-		case event, ok := <-watcher.Events:
-			if !ok {
-				slog.Warn("File watcher events channel closed")
-
-				return
-			}
-
-			debounce = handleFileEvent(ctx, event, debounce, configPath, verif, met, watcher)
-
-		case watchErr, ok := <-watcher.Errors:
-			if !ok {
-				slog.Warn("File watcher errors channel closed")
-
-				return
-			}
-
-			slog.Warn("File watcher error", "error", watchErr)
-		}
-	}
-}
-
-func handleFileEvent(
-	ctx context.Context, event fsnotify.Event,
-	debounce *time.Timer, configPath string,
-	verif *verifier.Verifier, met *metrics.Metrics,
-	watcher *fsnotify.Watcher,
-) *time.Timer {
-	if !isReloadEvent(event) {
-		return debounce
-	}
-
-	slog.Debug("File change detected", "file", event.Name, "op", event.Op)
-
-	if debounce != nil {
-		debounce.Stop()
-	}
-
-	return time.AfterFunc(fileWatchDebounce, func() {
-		if ctx.Err() != nil {
-			return
-		}
-
-		handleReload(ctx, configPath, verif, met, watcher)
-	})
-}
-
-func isReloadEvent(event fsnotify.Event) bool {
-	return event.Has(fsnotify.Write) ||
-		event.Has(fsnotify.Create) ||
-		event.Has(fsnotify.Remove)
-}
-
-func handleShutdown(
-	ctx context.Context, cancel context.CancelFunc,
-	sigCh <-chan os.Signal, done <-chan struct{},
-) {
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				slog.Error("Recovered panic in shutdown handler", "error", r)
-				os.Exit(panicExitCode)
-			}
-		}()
-
-		select {
-		case <-ctx.Done():
-			return
-		case <-sigCh:
-		}
-
-		slog.Info("Shutting down")
-		cancel()
-
-		select {
-		case <-done:
-		case <-sigCh:
-			slog.Warn("Received second signal, forcing exit")
-			os.Exit(1)
-		}
-	}()
-}
-
-func serveMetrics(
-	ctx context.Context, met *metrics.Metrics, addr string,
-	plug *plugin.Plugin,
-) error {
-	if addr == "" {
-		slog.Info("Metrics server disabled (no address configured)")
-		<-ctx.Done()
-
-		return nil
-	}
-
-	mux := http.NewServeMux()
-	mux.Handle("/metrics", met.Handler())
-	registerHealthProbes(mux, plug)
-
-	srv := &http.Server{
-		Addr:              addr,
-		Handler:           mux,
-		ReadHeaderTimeout: readHeaderTimeout,
-	}
-
-	//nolint:gosec,contextcheck // parent ctx is already cancelled; fresh context is intentional
-	go shutdownOnCancel(ctx.Done(), srv)
-
-	slog.Info("Starting metrics and health server", "addr", addr)
-
-	err := srv.ListenAndServe()
-	if err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("metrics server: %w", err)
-	}
-
-	return nil
-}
-
-func shutdownOnCancel(done <-chan struct{}, srv *http.Server) {
-	<-done
-
-	shutdownCtx, shutdownCancel := context.WithTimeout(
-		context.Background(), shutdownGracePeriod,
-	)
-	defer shutdownCancel()
-
-	shutdownErr := srv.Shutdown(shutdownCtx)
-	if shutdownErr != nil {
-		slog.Error("Failed to shutdown metrics server", "error", shutdownErr)
-	}
-}
-
-func registerHealthProbes(mux *http.ServeMux, plug *plugin.Plugin) {
-	mux.HandleFunc("/healthz", func(writer http.ResponseWriter, _ *http.Request) {
-		writer.WriteHeader(http.StatusOK)
-		_, _ = writer.Write([]byte("ok"))
-	})
-
-	mux.HandleFunc("/readyz", func(writer http.ResponseWriter, _ *http.Request) {
-		if !plug.Connected() {
-			writer.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = writer.Write([]byte("not ready: NRI not connected"))
-
-			return
-		}
-
-		if ready, reason := plug.VerifierReady(); !ready {
-			writer.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = writer.Write([]byte("not ready: " + reason))
-
-			return
-		}
-
-		writer.WriteHeader(http.StatusOK)
-		_, _ = writer.Write([]byte("ok"))
-	})
 }

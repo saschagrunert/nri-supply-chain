@@ -111,6 +111,7 @@ examples, see [policy.md](policy.md).
 --validate            Validate config and policies, then exit
 --verify-image        Verify a specific image and exit (requires --config)
 --verify-namespace    Namespace for verification (default: default)
+--json-schema         Print JSON Schema and exit (policy, result)
 ```
 
 To verify a single image without running the plugin (requires `--config` with
@@ -139,3 +140,76 @@ The output is JSON with per-check details:
   ]
 }
 ```
+
+The full JSON Schema for this output can be generated via:
+
+```console
+nri-supply-chain --json-schema result
+```
+
+<details>
+<summary>JSON Schema output</summary>
+
+<!-- verify-jsonschema-start -->
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$ref": "#/$defs/verifyOutput",
+  "$defs": {
+    "checkEntry": {
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": ["type", "passed", "status"]
+    },
+    "verifyOutput": {
+      "properties": {
+        "image": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "allowed": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "checkResults": {
+          "items": {
+            "$ref": "#/$defs/checkEntry"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": ["image", "digest", "namespace", "allowed"]
+    }
+  },
+  "title": "nri-supply-chain Verify Result",
+  "description": "JSON output of the --verify-image command."
+}
+```
+
+<!-- verify-jsonschema-end -->
+
+</details>

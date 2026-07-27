@@ -410,8 +410,8 @@ func TestCacheSetWithTTLOverride(t *testing.T) {
 
 	testCache := cache.New(time.Hour)
 
-	// Set with a short TTL override.
-	testCache.Set(
+	// Set with a short TTL.
+	testCache.SetWithTTL(
 		"sha256:1111111111111111111111111111111111111111111111111111111111111111",
 		"default",
 		&types.Result{
@@ -464,18 +464,18 @@ func TestCacheSetWithTTLOverride(t *testing.T) {
 	}
 }
 
-func TestCacheSetZeroTTLOverrideUsesDefault(t *testing.T) {
+func TestCacheSetWithTTLZeroDoesNotCache(t *testing.T) {
 	t.Parallel()
 
 	testCache := cache.New(time.Hour)
 
-	// Zero override should use the default TTL.
-	testCache.Set(testDigest, "default", &types.Result{
+	// Zero TTL should skip caching entirely.
+	testCache.SetWithTTL(testDigest, "default", &types.Result{
 		Allowed: true, Reason: "ok", CheckResults: nil,
 	}, 0)
 
-	if got := testCache.Get(testDigest, "default"); got == nil {
-		t.Error("expected entry to be present when zero TTL override falls back to default")
+	if got := testCache.Get(testDigest, "default"); got != nil {
+		t.Error("expected entry to be absent when TTL is zero")
 	}
 }
 

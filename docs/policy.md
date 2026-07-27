@@ -147,6 +147,186 @@ Skip verification for known base images or internal tooling:
 }
 ```
 
+## JSON Schema
+
+The full JSON Schema for policy files can be printed with:
+
+```console
+nri-supply-chain --json-schema policy
+```
+
+<details>
+<summary>JSON Schema output</summary>
+
+<!-- jsonschema-start -->
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$ref": "#/$defs/Policy",
+  "$defs": {
+    "Policy": {
+      "properties": {
+        "inherits": {
+          "type": "boolean"
+        },
+        "trust": {
+          "$ref": "#/$defs/TrustPolicy"
+        },
+        "exclude": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "slsa": {
+          "$ref": "#/$defs/SLSAPolicy"
+        },
+        "vex": {
+          "$ref": "#/$defs/VEXPolicy"
+        },
+        "vsa": {
+          "$ref": "#/$defs/VSAPolicy"
+        },
+        "signatures": {
+          "$ref": "#/$defs/SignaturesPolicy"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "SLSAPolicy": {
+      "properties": {
+        "missingPolicy": {
+          "type": "string"
+        },
+        "rejectUnknownParameters": {
+          "type": "boolean"
+        },
+        "knownParameters": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "SignaturesPolicy": {
+      "properties": {
+        "requireTransparencyLog": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "TrustPolicy": {
+      "properties": {
+        "builders": {
+          "items": {
+            "$ref": "#/$defs/TrustedBuilder"
+          },
+          "type": "array"
+        },
+        "verifiers": {
+          "items": {
+            "$ref": "#/$defs/TrustedVerifier"
+          },
+          "type": "array"
+        },
+        "issuers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "sanPatterns": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "sources": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "buildTypes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "TrustedBuilder": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "maxLevel": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": ["id", "maxLevel"]
+    },
+    "TrustedVerifier": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": ["id"]
+    },
+    "VEXPolicy": {
+      "properties": {
+        "missingPolicy": {
+          "type": "string"
+        },
+        "underInvestigationPolicy": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "VSAPolicy": {
+      "properties": {
+        "minimumLevel": {
+          "type": "integer"
+        },
+        "maxAge": {
+          "type": "string"
+        },
+        "policy": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "title": "nri-supply-chain Policy",
+  "description": "Defines the trust roots and per-namespace verification settings for nri-supply-chain."
+}
+```
+
+<!-- jsonschema-end -->
+
+</details>
+
 ## Field Reference
 
 ### `inherits` (boolean)

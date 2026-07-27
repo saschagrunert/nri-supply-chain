@@ -30,21 +30,66 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
+const auditMessage = "Supply chain audit"
+
+// AuditEvent defines the structured schema for supply chain audit log entries.
+type AuditEvent struct {
+	Image     string `json:"image"`
+	Digest    string `json:"digest"`
+	Namespace string `json:"namespace"`
+	Allowed   bool   `json:"allowed,omitempty"`
+	Check     string `json:"check,omitempty"`
+	Status    string `json:"status,omitempty"`
+	Detail    string `json:"detail,omitempty"`
+	Decision  string `json:"decision,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+func (e *AuditEvent) logAttrs() []any {
+	attrs := []any{
+		"image", e.Image,
+		"digest", e.Digest,
+		"namespace", e.Namespace,
+	}
+
+	if e.Check != "" {
+		attrs = append(attrs,
+			"allowed", e.Allowed,
+			"check", e.Check,
+			"status", e.Status,
+			"detail", e.Detail,
+		)
+	}
+
+	if e.Decision != "" {
+		attrs = append(attrs,
+			"allowed", e.Allowed,
+			"decision", e.Decision,
+			"reason", e.Reason,
+		)
+	}
+
+	return attrs
+}
+
 func logResult(
 	ctx context.Context, logger *slog.Logger,
 	imageRef, digest, namespace string,
 	result *types.Result,
 ) {
 	for _, checkResult := range result.CheckResults {
-		logger.InfoContext(ctx, "Supply chain audit",
-			"image", imageRef,
-			"digest", digest,
-			"namespace", namespace,
-			"allowed", result.Allowed,
-			"check", checkResult.Type,
-			"status", checkResult.Status,
-			"detail", checkResult.Detail,
-		)
+		event := &AuditEvent{
+			Image:     imageRef,
+			Digest:    digest,
+			Namespace: namespace,
+			Allowed:   result.Allowed,
+			Check:     string(checkResult.Type),
+			Status:    string(checkResult.Status),
+			Detail:    checkResult.Detail,
+			Decision:  "",
+			Reason:    "",
+		}
+		logger.InfoContext(ctx, auditMessage, event.logAttrs()...)
 	}
 }
 
@@ -52,13 +97,18 @@ func logAuditDecision(
 	ctx context.Context, logger *slog.Logger,
 	imageRef, digest, namespace, decision, reason string,
 ) {
-	logger.InfoContext(ctx, "Supply chain audit",
-		"image", imageRef,
-		"digest", digest,
-		"namespace", namespace,
-		"decision", decision,
-		"reason", reason,
-	)
+	event := &AuditEvent{
+		Image:     imageRef,
+		Digest:    digest,
+		Namespace: namespace,
+		Allowed:   decision == "allowed",
+		Check:     "",
+		Status:    "",
+		Detail:    "",
+		Decision:  decision,
+		Reason:    reason,
+	}
+	logger.InfoContext(ctx, auditMessage, event.logAttrs()...)
 }
 
 func allowResult(
@@ -277,26 +327,30 @@ func logReloadChanges(
 		attrs = append(attrs, "mode_prev", prev.Verification, "mode_next", next.Verification)
 	}
 
-	if len(prevHashes) != len(nextHashes) {
-		attrs = append(attrs, "policies_prev", len(prevHashes), "policies_next", len(nextHashes))
-	} else {
-		changed := 0
+	changed := 0
 
-		for ns, hash := range prevHashes {
-			if nextHashes[ns] != hash {
-				changed++
-			}
-		}
+	for namespace, hash := range prevHashes {
+		if nextHash, ok := nextHashes[namespace]; !ok {
+			changed++
 
-		for ns := range nextHashes {
-			if _, ok := prevHashes[ns]; !ok {
-				changed++
-			}
-		}
+			slog.DebugContext(ctx, "Policy removed", "namespace", namespace)
+		} else if nextHash != hash {
+			changed++
 
-		if changed > 0 {
-			attrs = append(attrs, "policies_changed", changed)
+			slog.DebugContext(ctx, "Policy changed", "namespace", namespace)
 		}
+	}
+
+	for namespace := range nextHashes {
+		if _, ok := prevHashes[namespace]; !ok {
+			changed++
+
+			slog.DebugContext(ctx, "Policy added", "namespace", namespace)
+		}
+	}
+
+	if changed > 0 {
+		attrs = append(attrs, "policies_changed", changed)
 	}
 
 	slog.InfoContext(ctx, "Config reload applied", attrs...)
