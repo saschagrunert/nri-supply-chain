@@ -210,7 +210,7 @@ func TestCircuitBreakerRegistryEvictsClosedAtCapacity(t *testing.T) {
 	}
 }
 
-func TestCircuitBreakerRegistryDetachedWhenAllOpen(t *testing.T) {
+func TestCircuitBreakerRegistrySharedOverflowWhenAllOpen(t *testing.T) {
 	t.Parallel()
 
 	registry := attestation.NewCircuitBreakerRegistry(1, time.Minute)
@@ -223,17 +223,17 @@ func TestCircuitBreakerRegistryDetachedWhenAllOpen(t *testing.T) {
 	extra := registry.Get("overflow.example.com")
 
 	if extra == nil {
-		t.Fatal("expected non-nil detached breaker")
+		t.Fatal("expected non-nil overflow breaker")
 	}
 
 	if !extra.Allow() {
-		t.Error("expected detached breaker to allow requests (closed state)")
+		t.Error("expected overflow breaker to allow requests (closed state)")
 	}
 
-	sameHost := registry.Get("overflow.example.com")
+	sameHost := registry.Get("overflow-2.example.com")
 
-	if sameHost == extra {
-		t.Error("expected detached breaker not to be stored in registry")
+	if sameHost != extra {
+		t.Error("expected shared overflow breaker to be reused for different overflow hosts")
 	}
 }
 

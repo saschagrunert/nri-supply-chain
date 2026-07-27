@@ -594,6 +594,60 @@ func TestCollectAttestationsMaxReferrers(t *testing.T) {
 	}
 }
 
+func TestCollectAttestationsAggregateSizeLimit(t *testing.T) {
+	t.Parallel()
+
+	baseRef, err := name.NewDigest(
+		"docker.io/library/nginx@sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abcd",
+	)
+	if err != nil {
+		t.Fatalf("creating test digest ref: %v", err)
+	}
+
+	payloadSize := attestation.ExportMaxTotalAttestationSize / 5
+	largePayload := make([]byte, payloadSize)
+
+	manifests := make([]ociV1.Descriptor, 10)
+	for idx := range manifests {
+		manifests[idx] = ociV1.Descriptor{
+			ArtifactType: attestation.BundleMediaType,
+			Digest: ociV1.Hash{
+				Algorithm: testHashAlgorithm,
+				Hex:       testHashHex,
+			},
+			Annotations: map[string]string{
+				attestation.AnnotationPredicateType: attestation.PredicateSLSAProvenanceV1,
+			},
+		}
+	}
+
+	fetcher := attestation.NewTestOCIFetcher(
+		func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
+			return largePayload, nil
+		},
+		func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+			return fakeImageWithPayload([]byte(`{"bundle": "data"}`)), nil
+		},
+	)
+
+	result, hadBundles := fetcher.CollectAttestations(
+		context.Background(), manifests, baseRef,
+		testDigest, nil, &attestation.FetchOptions{},
+	)
+
+	if !hadBundles {
+		t.Error("expected hadBundles=true")
+	}
+
+	if len(result) >= 10 {
+		t.Errorf("expected aggregate size limit to truncate results, got %d", len(result))
+	}
+
+	if len(result) > 5 {
+		t.Errorf("expected at most 5 results within 50 MiB aggregate, got %d", len(result))
+	}
+}
+
 func TestCollectAttestationsDigestPreserved(t *testing.T) {
 	t.Parallel()
 

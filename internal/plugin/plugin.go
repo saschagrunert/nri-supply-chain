@@ -309,7 +309,6 @@ func (p *Plugin) collectPrewarmImages(
 		namespace := podNS[ctr.GetPodSandboxId()]
 
 		key := imageRef + "\x00" + namespace
-
 		if _, ok := seen[key]; ok {
 			continue
 		}
@@ -332,6 +331,7 @@ func (p *Plugin) resolvePrewarmDigests(
 	ctx context.Context, images []prewarmImage,
 ) []prewarmImage {
 	resolved := make([]prewarmImage, 0, len(images))
+	seen := make(map[string]struct{})
 
 	for idx := range images {
 		img := images[idx]
@@ -355,6 +355,13 @@ func (p *Plugin) resolvePrewarmDigests(
 			img.digest = dig
 			img.indexDigest = idxDig
 		}
+
+		key := img.digest + "\x00" + img.namespace
+		if _, ok := seen[key]; ok {
+			continue
+		}
+
+		seen[key] = struct{}{}
 
 		resolved = append(resolved, img)
 	}

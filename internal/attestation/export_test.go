@@ -262,6 +262,9 @@ func ExportArtifactPolicy(digest string) error {
 // ExportMaxCircuitBreakers exposes maxCircuitBreakers for external tests.
 const ExportMaxCircuitBreakers = maxCircuitBreakers
 
+// ExportMaxTotalAttestationSize exposes maxTotalAttestationSize for external tests.
+const ExportMaxTotalAttestationSize = maxTotalAttestationSize
+
 // ExportIsOpen exposes isOpen for external tests.
 func (cb *CircuitBreaker) ExportIsOpen() bool {
 	return cb.isOpen()
