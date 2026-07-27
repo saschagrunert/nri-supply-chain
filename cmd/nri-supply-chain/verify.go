@@ -66,7 +66,7 @@ func runVerifyTo(writer io.Writer, opts *options, cfg *config.Config) int {
 	}
 
 	met := metrics.New()
-	fetcher := verifier.NewFetcher(cfg)
+	fetcher := verifier.NewFetcher(context.Background(), cfg)
 
 	verif, err := verifier.New(cfg, met, fetcher)
 	if err != nil {
@@ -74,6 +74,8 @@ func runVerifyTo(writer io.Writer, opts *options, cfg *config.Config) int {
 
 		return 1
 	}
+
+	defer verif.Stop()
 
 	resolved, err := resolveDigest(imageRef, cfg.FetchTimeout.Duration)
 	if err != nil {

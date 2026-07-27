@@ -816,8 +816,8 @@ func TestVerifyCircuitBreakerIntegration(t *testing.T) {
 		t.Error("expected allowed=true in warn mode with open breaker")
 	}
 
-	if !strings.Contains(result.Reason, "circuit breaker") {
-		t.Errorf("expected reason to mention circuit breaker, got %q", result.Reason)
+	if !strings.Contains(result.Reason, "attestation fetch failed") {
+		t.Errorf("expected reason to mention fetch failure, got %q", result.Reason)
 	}
 
 	if got := fetcher.calls.Load(); got != 3 {
@@ -884,8 +884,8 @@ func TestVerifyCircuitBreakerMetric(t *testing.T) {
 		t.Error("expected allowed=true in warn mode with open breaker")
 	}
 
-	if !strings.Contains(result.Reason, "circuit breaker") {
-		t.Errorf("expected reason to mention circuit breaker, got %q", result.Reason)
+	if !strings.Contains(result.Reason, "attestation fetch failed") {
+		t.Errorf("expected reason to mention fetch failure, got %q", result.Reason)
 	}
 
 	if got := fetcher.calls.Load(); got != 2 {

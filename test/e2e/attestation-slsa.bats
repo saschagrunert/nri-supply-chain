@@ -9,9 +9,7 @@ setup_file() {
 	generate_signing_key
 	configure_insecure_registry
 
-	start_kubernix
-
-	wait_for_node_ready
+	start_kubernix_with_retry
 
 	write_nri_dropin
 	reload_runtime
@@ -257,6 +255,6 @@ create_slsa_images() {
 }
 
 @test "image without SLSA attestation rejected when missingPolicy is deny" {
-	run_pod "no-prov" "registry.k8s.io/pause:3.10" || true
+	run_pod "no-prov" "$PAUSE_IMAGE" || true
 	assert_log_contains "Container rejected"
 }

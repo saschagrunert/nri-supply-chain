@@ -51,7 +51,8 @@ var (
 	// ErrInvalidProvenance indicates the provenance attestation could not be parsed.
 	ErrInvalidProvenance = errors.New("invalid provenance attestation")
 
-	warnedMaxLevel sync.Map //nolint:gochecknoglobals // dedup per builder ID
+	warnedMaxLevel   sync.Map //nolint:gochecknoglobals // dedup per builder ID
+	warnedEmptyTrust sync.Map //nolint:gochecknoglobals // one-time empty trust warning
 )
 
 // Statement represents an in-toto statement wrapping a SLSA provenance predicate.
@@ -111,6 +112,8 @@ func Verify(att []byte, pol *policy.Policy, imageDigest string) (*types.CheckRes
 			"%w: unexpected predicate type %q", ErrInvalidProvenance, stmt.PredicateType,
 		)
 	}
+
+	warnEmptyTrust(pol)
 
 	err = verifySubjectDigest(stmt.Subject, imageDigest)
 	if err != nil {
@@ -301,12 +304,30 @@ func passResult() *types.CheckResult {
 }
 
 // ResetMaxLevelWarnings clears the deduplication state so that maxLevel
-// warnings are re-emitted on the next verification cycle. Call this after a
-// config reload to ensure warnings reflect the new policy state.
+// and empty-trust warnings are re-emitted on the next verification cycle.
+// Call this after a config reload to ensure warnings reflect the new policy state.
 func ResetMaxLevelWarnings() {
 	warnedMaxLevel.Clear()
+	warnedEmptyTrust.Clear()
+}
+
+func warnEmptyTrust(pol *policy.Policy) {
+	if len(pol.Builders()) > 0 {
+		return
+	}
+
+	if pol.Trust != nil && (len(pol.Trust.Sources) > 0 || len(pol.Trust.BuildTypes) > 0) {
+		return
+	}
+
+	if _, loaded := warnedEmptyTrust.LoadOrStore("empty", struct{}{}); loaded {
+		return
+	}
+
+	slog.Warn("SLSA verification has no trusted builders, sources, or build types configured; " +
+		"any provenance will pass builder and source checks")
 }
 
 func failResult(detail string) *types.CheckResult {
-	return types.FailResult(checkType, detail)
+	return types.FailResult(checkType, detail, nil)
 }

@@ -158,6 +158,8 @@ func TestDefaultVerifyBundle(t *testing.T) {
 func TestBuildCertificateIdentity(t *testing.T) {
 	t.Parallel()
 
+	t.Cleanup(attestation.ResetSANPatternWarnings)
+
 	tests := []struct {
 		name            string
 		issuers         []string
@@ -373,6 +375,8 @@ func TestBuildKeylessConfigTransparencyLog(t *testing.T) {
 func TestBuildCertificateIdentityMissingSANFallback(t *testing.T) {
 	t.Parallel()
 
+	t.Cleanup(attestation.ResetSANPatternWarnings)
+
 	// When no SAN patterns are provided, the SAN regex should be ".*".
 	certID, err := attestation.ExportBuildCertificateID(
 		[]string{testIssuerExample}, nil,
@@ -538,6 +542,8 @@ func TestBuildVerificationConfig(t *testing.T) {
 
 func TestBuildVerificationConfigWithCache(t *testing.T) {
 	t.Parallel()
+
+	t.Cleanup(attestation.ResetSANPatternWarnings)
 
 	tests := []struct {
 		name      string

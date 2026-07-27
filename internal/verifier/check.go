@@ -19,8 +19,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"sync"
 	"time"
+
+	"github.com/google/go-containerregistry/pkg/name"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
@@ -72,7 +75,17 @@ func runChecks(
 		return runChecksWithoutFetcher(pol, state.metrics, imageRef)
 	}
 
-	host := registryHost(imageRef)
+	// Parse the image reference once and reuse it for host extraction and
+	// digest-ref construction, avoiding redundant parsing.
+	parsedRef, parseErr := name.ParseReference(imageRef)
+
+	var host string
+	if parseErr != nil {
+		host = imageRef
+	} else {
+		host = parsedRef.Context().RegistryStr()
+	}
+
 	breaker := registryBreakerByHost(state.circuitBreakers, host)
 
 	if breaker != nil && !breaker.Allow() {
@@ -107,7 +120,7 @@ func runChecks(
 
 	bins := binAttestations(attestations)
 
-	vsaResult := checkVSA(ctx, bins.vsa, pol, imageRef, attestDigest, state.metrics)
+	vsaResult := checkVSA(ctx, bins.vsa, pol, imageRef, attestDigest, state.metrics, parsedRef)
 	if vsaResult != nil {
 		return vsaResult
 	}
@@ -201,6 +214,7 @@ func buildFetchOpts(
 		opts.SANPatterns = pol.Trust.SANPatterns
 
 		keys := make([]string, 0, len(pol.Trust.Verifiers))
+
 		for idx := range pol.Trust.Verifiers {
 			if pol.Trust.Verifiers[idx].Key != "" {
 				keys = append(keys, pol.Trust.Verifiers[idx].Key)
@@ -219,7 +233,12 @@ func handleFetchError(
 ) *types.Result {
 	met.FetchErrorsTotal.WithLabelValues("attestation", host).Inc()
 
-	detail := fmt.Sprintf("attestation fetch failed for %s: %s", imageRef, fetchErr)
+	slog.Warn("Attestation fetch failed", "image", imageRef, "host", host, "error", fetchErr)
+
+	detail := "attestation fetch failed for " + imageRef
+	if errors.Is(fetchErr, ErrCircuitBreakerOpen) {
+		detail += " (circuit breaker open)"
+	}
 
 	checkResult := handleMissingAttestation(cfg.FetchFailurePolicy, types.CheckTypeFetch, detail)
 
@@ -233,6 +252,7 @@ func handleFetchError(
 func checkVSA(
 	ctx context.Context, vsaAttestations []attestation.VerifiedAttestation,
 	pol *policy.Policy, imageRef, digest string, met *metrics.Metrics,
+	parsedRef name.Reference,
 ) *types.Result {
 	if len(vsaAttestations) == 0 {
 		return nil
@@ -245,7 +265,7 @@ func checkVSA(
 			Observe(time.Since(start).Seconds())
 	}()
 
-	digestRef := buildDigestRef(imageRef, digest)
+	digestRef := digestRefFromParsed(parsedRef, imageRef, digest)
 
 	var passed *vsa.VerifyResult
 
@@ -297,12 +317,30 @@ func runParallelChecks(
 
 	go func() {
 		defer waitGroup.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("Panic during SLSA check",
+					"panic", r, "stack", string(debug.Stack()))
+
+				slsaResult = types.FailResult(types.CheckTypeSLSA,
+					"internal error during SLSA check", nil)
+			}
+		}()
 
 		slsaResult = runSLSACheck(ctx, bins.slsa, pol, met, imageRef, digest, namespace)
 	}()
 
 	go func() {
 		defer waitGroup.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("Panic during VEX check",
+					"panic", r, "stack", string(debug.Stack()))
+
+				vexResult = types.FailResult(types.CheckTypeVEX,
+					"internal error during VEX check", nil)
+			}
+		}()
 
 		vexResult = runVEXCheck(ctx, bins.vex, pol, met, imageRef, digest, namespace)
 	}()
@@ -351,6 +389,7 @@ func runSLSACheck(
 		return types.FailResult(
 			types.CheckTypeSLSA,
 			fmt.Sprintf("SLSA verification error for %s: %s", imageRef, err),
+			err,
 		)
 	}
 
@@ -401,6 +440,7 @@ func runVEXCheck(
 		return types.FailResult(
 			types.CheckTypeVEX,
 			fmt.Sprintf("VEX verification error for %s: %s", imageRef, err),
+			err,
 		)
 	}
 
@@ -457,22 +497,21 @@ func combineResults(checks ...*types.CheckResult) *types.Result {
 func applyCheckResult(result *types.Result, check *types.CheckResult) {
 	if !check.Passed {
 		result.Allowed = false
-
-		if result.Reason == "" {
-			result.Reason = check.Detail
-		} else {
-			result.Reason += "; " + check.Detail
-		}
+		appendReason(result, check.Detail)
 
 		return
 	}
 
 	if check.Status == types.StatusWarn {
-		if result.Reason == "" {
-			result.Reason = check.Detail
-		} else {
-			result.Reason += "; " + check.Detail
-		}
+		appendReason(result, check.Detail)
+	}
+}
+
+func appendReason(result *types.Result, detail string) {
+	if result.Reason == "" {
+		result.Reason = detail
+	} else {
+		result.Reason += "; " + detail
 	}
 }
 
@@ -483,7 +522,11 @@ type attestationBins struct {
 }
 
 func binAttestations(attestations []attestation.VerifiedAttestation) attestationBins {
-	var bins attestationBins
+	bins := attestationBins{
+		vsa:  make([]attestation.VerifiedAttestation, 0, len(attestations)),
+		slsa: make([]attestation.VerifiedAttestation, 0, len(attestations)),
+		vex:  make([]attestation.VerifiedAttestation, 0, len(attestations)),
+	}
 
 	for idx := range attestations {
 		switch attestations[idx].PredicateType {
@@ -504,7 +547,7 @@ func handleMissingAttestation(
 ) *types.CheckResult {
 	switch pol {
 	case types.ActionDeny:
-		return types.FailResult(checkType, detail)
+		return types.FailResult(checkType, detail, nil)
 	case types.ActionWarn:
 		return types.WarnResult(checkType, detail)
 	case types.ActionAllow:
@@ -515,6 +558,6 @@ func handleMissingAttestation(
 			"check", checkType,
 		)
 
-		return types.FailResult(checkType, detail)
+		return types.FailResult(checkType, detail, nil)
 	}
 }

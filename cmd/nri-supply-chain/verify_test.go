@@ -58,7 +58,7 @@ func TestOutputVerifyResultAllowed(t *testing.T) {
 
 	out := captureVerifyOutput(
 		t, "nginx:latest", testDigest,
-		defaultNamespace, true, "verified", checks,
+		defaultPolicyLabel, true, "verified", checks,
 	)
 
 	if out.Image != "nginx:latest" {
@@ -69,8 +69,8 @@ func TestOutputVerifyResultAllowed(t *testing.T) {
 		t.Errorf("Digest = %q, want %q", out.Digest, testDigest)
 	}
 
-	if out.Namespace != defaultNamespace {
-		t.Errorf("Namespace = %q, want %q", out.Namespace, defaultNamespace)
+	if out.Namespace != defaultPolicyLabel {
+		t.Errorf("Namespace = %q, want %q", out.Namespace, defaultPolicyLabel)
 	}
 
 	if !out.Allowed {
@@ -423,7 +423,7 @@ func TestRunVerifyResolveDigestFails(t *testing.T) {
 		pluginIdx:       "",
 		logLevel:        "",
 		verifyImage:     ":::invalid-ref",
-		verifyNamespace: defaultNamespace,
+		verifyNamespace: defaultPolicyLabel,
 		showVersion:     false,
 		validate:        false,
 		jsonSchema:      "",
@@ -446,7 +446,7 @@ func TestRunVerifyDisabledErrors(t *testing.T) {
 		pluginIdx:       "",
 		logLevel:        "",
 		verifyImage:     "example.com/test:latest",
-		verifyNamespace: defaultNamespace,
+		verifyNamespace: defaultPolicyLabel,
 		showVersion:     false,
 		validate:        false,
 		jsonSchema:      "",
@@ -494,7 +494,7 @@ func TestRunVerifyEnforceDenied(t *testing.T) {
 		pluginIdx:       "",
 		logLevel:        "",
 		verifyImage:     imgRef,
-		verifyNamespace: defaultNamespace,
+		verifyNamespace: defaultPolicyLabel,
 		showVersion:     false,
 		validate:        false,
 		jsonSchema:      "",
@@ -526,7 +526,7 @@ func TestRunVerifyVerifierNewError(t *testing.T) {
 		pluginIdx:       "",
 		logLevel:        "",
 		verifyImage:     "test:latest",
-		verifyNamespace: defaultNamespace,
+		verifyNamespace: defaultPolicyLabel,
 		showVersion:     false,
 		validate:        false,
 		jsonSchema:      "",
@@ -575,7 +575,7 @@ func TestRunVerifyWarnModeWithChecks(t *testing.T) {
 		pluginIdx:       "",
 		logLevel:        "",
 		verifyImage:     imgRef,
-		verifyNamespace: defaultNamespace,
+		verifyNamespace: defaultPolicyLabel,
 		showVersion:     false,
 		validate:        false,
 		jsonSchema:      "",

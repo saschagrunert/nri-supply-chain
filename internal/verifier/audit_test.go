@@ -88,6 +88,7 @@ func TestLogResultSerializesControlCharacters(t *testing.T) {
 				Status: types.StatusPass,
 				Passed: true,
 				Detail: "image with\nnewline\tand\ttabs",
+				Err:    nil,
 			},
 		},
 	}

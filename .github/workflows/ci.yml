@@ -121,6 +121,11 @@ jobs:
           sudo sysctl -w net.bridge.bridge-nf-call-ip6tables=1
           sudo sysctl -w net.ipv4.ip_forward=1
       - run: sudo -E env "PATH=$PATH" CRI_RUNTIME=${{ matrix.runtime }} "$(which bats)" test/e2e/${{ matrix.test.file }}.bats
+      - name: Collect debug logs
+        if: failure() || cancelled()
+        run: |
+          sudo dmesg -T 2>/dev/null | tail -50 || true
+          sudo find /tmp -maxdepth 4 -path '*/kubernix/*' -name '*.log' -exec sh -c 'echo "=== {} ===" && tail -100 "$1"' _ {} \; 2>/dev/null || true
 
   test-fuzz:
     name: fuzz / ${{ matrix.name }}

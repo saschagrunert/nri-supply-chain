@@ -18,6 +18,12 @@ updates:
       go-containerregistry:
         patterns:
           - "github.com/google/go-containerregistry"
+      go-openapi:
+        patterns:
+          - "github.com/go-openapi/*"
+      opentelemetry:
+        patterns:
+          - "go.opentelemetry.io/*"
   - package-ecosystem: docker
     directory: /
     schedule:

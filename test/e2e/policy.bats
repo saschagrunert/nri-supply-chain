@@ -20,9 +20,7 @@ setup_file() {
 	start_registry
 	configure_insecure_registry
 
-	start_kubernix
-
-	wait_for_node_ready
+	start_kubernix_with_retry
 	write_nri_dropin
 	reload_runtime
 
@@ -269,5 +267,38 @@ teardown_file() {
 
 	# Default policy still denies in the default namespace.
 	run_pod "inherit-default-pod" "$POLICY_IMAGE" || true
+	assert_log_contains "Container rejected"
+}
+
+@test "deleted policy file is handled gracefully on reload" {
+	local ns="deleted-policy-ns"
+	register_namespace "$ns"
+	wait_for_service_account "$ns"
+
+	write_policy "$ns" '{
+		"slsa": {"missingPolicy": "allow"},
+		"vex": {"missingPolicy": "allow"}
+	}'
+	reload_plugin
+
+	kubectl run "before-delete-pod" \
+		--namespace "$ns" \
+		--image "$POLICY_IMAGE" \
+		--restart=Never \
+		--request-timeout="${KUBECTL_TIMEOUT}s"
+	wait_for_pod_status "before-delete-pod" "Running" 60 "$ns"
+
+	# Delete the namespace policy file and reload.
+	rm -f "${POLICY_DIR}/${ns}.json"
+	reload_plugin
+	assert_log_contains "Policy removed"
+
+	# After deletion the namespace falls back to the default policy,
+	# which denies missing SLSA provenance.
+	run kubectl run "after-delete-pod" \
+		--namespace "$ns" \
+		--image "$POLICY_IMAGE" \
+		--restart=Never \
+		--request-timeout="${KUBECTL_TIMEOUT}s"
 	assert_log_contains "Container rejected"
 }

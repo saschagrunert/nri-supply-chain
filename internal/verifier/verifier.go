@@ -74,21 +74,22 @@ type Verifier struct {
 	mu           sync.Mutex // serializes Reload; policyHashes is only accessed under mu
 	policyHashes map[string]string
 	inflight     singleflight.Group
+	inflightWg   sync.WaitGroup
 }
 
 // NewFetcher creates a new OCI fetcher configured from cfg and pre-warms the
-// Sigstore trusted root. Use this when the caller wants the verifier to have a
-// real fetcher; pass the return value to New. Tests that need the "no fetcher"
+// Sigstore trusted root. The context bounds the warm-up; pass the application
+// context so startup can be cancelled. Tests that need the "no fetcher"
 // code path should pass nil to New directly.
-func NewFetcher(cfg *config.Config) *attestation.OCIFetcher {
-	return createAndWarmFetcher(context.Background(), cfg)
+func NewFetcher(ctx context.Context, cfg *config.Config) *attestation.OCIFetcher {
+	return createAndWarmFetcher(ctx, cfg)
 }
 
 // New creates a new Verifier with the given configuration, metrics, and attestation fetcher.
 func New(cfg *config.Config, met *metrics.Metrics, fetcher attestation.Fetcher) (*Verifier, error) {
 	cfgCopy := *cfg
 
-	if ociFetcher, ok := fetcher.(*attestation.OCIFetcher); ok {
+	if ociFetcher, ok := fetcher.(*attestation.OCIFetcher); ok && ociFetcher != nil {
 		ociFetcher.SetStaleRootCallback(met.TrustedRootStaleTotal.Inc)
 	}
 
@@ -113,6 +114,7 @@ func New(cfg *config.Config, met *metrics.Metrics, fetcher attestation.Fetcher) 
 		mu:           sync.Mutex{},
 		policyHashes: hashes,
 		inflight:     singleflight.Group{},
+		inflightWg:   sync.WaitGroup{},
 	}
 	verif.state.Store(snap)
 
@@ -168,6 +170,8 @@ func WarnEnforceDefaults(cfg *config.Config, policies map[string]*policy.Policy)
 				"consider setting fetch_failure_policy=deny",
 			"fetch_failure_policy",
 			cfg.FetchFailurePolicy,
+			"circuit_breaker_threshold",
+			cfg.CircuitBreakerThreshold,
 		)
 	}
 
@@ -196,8 +200,15 @@ func WarnEnforceDefaults(cfg *config.Config, policies map[string]*policy.Policy)
 }
 
 // Stop releases resources held by the verifier, including the cache's
-// background eviction goroutine.
+// background eviction goroutine. Waits for in-flight singleflight
+// verifications to complete before stopping the cache so they can
+// write their results. Acquires mu to serialize with Reload.
 func (v *Verifier) Stop() {
+	v.inflightWg.Wait()
+
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
 	v.state.Load().cache.Stop()
 }
 
@@ -266,22 +277,12 @@ func (v *Verifier) Verify(
 		), nil
 	}
 
-	if cached := state.cache.Get(digest, namespace); cached != nil {
-		state.metrics.CacheHitsTotal.Inc()
-
-		if resultShouldUseShorterTTL(cached) {
-			state.metrics.CacheFailureHitsTotal.Inc()
-		}
-
-		logResult(ctx, state.auditLogger, imageRef, digest, namespace, cached)
-		recordMetrics(state.metrics, cached, namespace)
-
-		return applyEnforcement(ctx, state.config, cached, imageRef)
+	result, err := v.handleCacheHit(ctx, state, imageRef, digest, namespace)
+	if result != nil || err != nil {
+		return result, err
 	}
 
-	state.metrics.CacheMissesTotal.Inc()
-
-	result, err := v.verifyOnce(ctx, state, pol, imageRef, digest, indexDigest, namespace)
+	result, err = v.verifyOnce(ctx, state, pol, imageRef, digest, indexDigest, namespace)
 	if err != nil {
 		return handleVerifyError(ctx, state, imageRef, digest, namespace, err)
 	}
@@ -363,6 +364,35 @@ func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 	WarnEnforceDefaults(&cfgCopy, policies)
 
 	return nil
+}
+
+func (v *Verifier) handleCacheHit(
+	ctx context.Context, state *snapshot,
+	imageRef, digest, namespace string,
+) (*types.Result, error) {
+	cached := state.cache.Get(digest, namespace)
+	if cached == nil {
+		state.metrics.CacheMissesTotal.Inc()
+
+		return nil, nil //nolint:nilnil // nil,nil signals cache miss to the caller
+	}
+
+	state.metrics.CacheHitsTotal.Inc()
+
+	if resultShouldUseShorterTTL(cached) {
+		state.metrics.CacheFailureHitsTotal.Inc()
+	}
+
+	result := *cached
+	if len(cached.CheckResults) > 0 {
+		result.CheckResults = make([]types.CheckResult, len(cached.CheckResults))
+		copy(result.CheckResults, cached.CheckResults)
+	}
+
+	logResult(ctx, state.auditLogger, imageRef, digest, namespace, &result)
+	recordMetrics(state.metrics, &result, namespace)
+
+	return applyEnforcement(ctx, state.config, &result, imageRef)
 }
 
 func reloadCache(prev *snapshot, cfg *config.Config, invalidated bool) *cache.Cache {
@@ -495,6 +525,14 @@ func (v *Verifier) verifyOnce(
 	flightKey := digest + "\x00" + namespace
 
 	flightCh := v.inflight.DoChan(flightKey, func() (any, error) {
+		// Add(1) is inside the closure so only the executing goroutine
+		// (not shared waiters) increments the counter. There is a narrow
+		// race where Stop() could call Wait() before the goroutine
+		// reaches Add(1), but the consequence is benign: the goroutine
+		// writes to a stopped-but-valid cache and completes normally.
+		v.inflightWg.Add(1)
+		defer v.inflightWg.Done()
+
 		if cached := state.cache.Get(digest, namespace); cached != nil {
 			return cached, nil
 		}
@@ -509,9 +547,6 @@ func (v *Verifier) verifyOnce(
 		defer checkCancel()
 
 		result := runChecks(checkCtx, state, pol, imageRef, digest, indexDigest, namespace)
-
-		logResult(checkCtx, state.auditLogger, imageRef, digest, namespace, result)
-		recordMetrics(state.metrics, result, namespace)
 
 		if resultShouldUseShorterTTL(result) && state.config.CacheFailureTTL.Duration > 0 {
 			state.cache.SetWithTTL(digest, namespace, result, state.config.CacheFailureTTL.Duration)
@@ -528,27 +563,38 @@ func (v *Verifier) verifyOnce(
 
 		return nil, fmt.Errorf("verification interrupted: %w", ctx.Err())
 	case res := <-flightCh:
-		if res.Shared {
-			state.metrics.InflightDedupTotal.Inc()
-		}
-
-		if res.Err != nil {
-			return nil, fmt.Errorf("inflight verification: %w", res.Err)
-		}
-
-		shared, ok := res.Val.(*types.Result)
-		if !ok {
-			return nil, fmt.Errorf("%w: %T", errUnexpectedVerifyResult, res.Val)
-		}
-
-		result := *shared
-		if len(shared.CheckResults) > 0 {
-			result.CheckResults = make([]types.CheckResult, len(shared.CheckResults))
-			copy(result.CheckResults, shared.CheckResults)
-		}
-
-		return &result, nil
+		return handleFlightResult(ctx, state, res, imageRef, digest, namespace)
 	}
+}
+
+func handleFlightResult(
+	ctx context.Context, state *snapshot,
+	res singleflight.Result,
+	imageRef, digest, namespace string,
+) (*types.Result, error) {
+	if res.Shared {
+		state.metrics.InflightDedupTotal.Inc()
+	}
+
+	if res.Err != nil {
+		return nil, fmt.Errorf("inflight verification: %w", res.Err)
+	}
+
+	shared, ok := res.Val.(*types.Result)
+	if !ok {
+		return nil, fmt.Errorf("%w: %T", errUnexpectedVerifyResult, res.Val)
+	}
+
+	result := *shared
+	if len(shared.CheckResults) > 0 {
+		result.CheckResults = make([]types.CheckResult, len(shared.CheckResults))
+		copy(result.CheckResults, shared.CheckResults)
+	}
+
+	logResult(ctx, state.auditLogger, imageRef, digest, namespace, &result)
+	recordMetrics(state.metrics, &result, namespace)
+
+	return &result, nil
 }
 
 func (v *Verifier) snap() *snapshot {

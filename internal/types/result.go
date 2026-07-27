@@ -71,6 +71,9 @@ type CheckResult struct {
 	Status CheckStatus
 	// Detail provides additional information about the check result.
 	Detail string
+	// Err is the underlying error that caused a failure, if any.
+	// Excluded from JSON serialization because errors are not JSON-marshalable.
+	Err error `json:"-"`
 }
 
 // PassResult returns a passing CheckResult.
@@ -80,6 +83,7 @@ func PassResult(checkType CheckType, detail string) *CheckResult {
 		Passed: true,
 		Status: StatusPass,
 		Detail: detail,
+		Err:    nil,
 	}
 }
 
@@ -90,27 +94,30 @@ func WarnResult(checkType CheckType, detail string) *CheckResult {
 		Passed: true,
 		Status: StatusWarn,
 		Detail: detail,
+		Err:    nil,
 	}
 }
 
-// FailResult returns a failing CheckResult.
-func FailResult(checkType CheckType, detail string) *CheckResult {
+// FailResult returns a failing CheckResult with an optional underlying error.
+func FailResult(checkType CheckType, detail string, err error) *CheckResult {
 	return &CheckResult{
 		Type:   checkType,
 		Passed: false,
 		Status: StatusFail,
 		Detail: detail,
+		Err:    err,
 	}
 }
 
 // SoftFailResult returns a CheckResult that did not pass but is only a warning.
 // Used for inconclusive checks (e.g., untrusted or stale VSA verifier results)
 // that should not block container creation but are not counted as passing.
-func SoftFailResult(checkType CheckType, detail string) *CheckResult {
+func SoftFailResult(checkType CheckType, detail string, err error) *CheckResult {
 	return &CheckResult{
 		Type:   checkType,
 		Passed: false,
 		Status: StatusWarn,
 		Detail: detail,
+		Err:    err,
 	}
 }

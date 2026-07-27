@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -34,7 +35,8 @@ import (
 )
 
 const (
-	maxSLSALevel = 3
+	maxSLSALevel      = 3
+	maxPolicyFileSize = 1 << 20
 )
 
 var (
@@ -92,6 +94,9 @@ var (
 
 	// ErrVSAMaxAgeNotPositive indicates a non-positive VSA maxAge value.
 	ErrVSAMaxAgeNotPositive = errors.New("vsa.maxAge must be positive")
+
+	// ErrPolicyFileTooLarge indicates a policy file exceeds the size limit.
+	ErrPolicyFileTooLarge = errors.New("policy file exceeds size limit")
 )
 
 // Policy defines the trust roots and per-namespace verification settings.
@@ -243,27 +248,32 @@ func MergeWithDefault(namespace, defaultPol *Policy) *Policy {
 	merged := clonePolicy(defaultPol)
 
 	if namespace.Trust != nil {
-		merged.Trust = namespace.Trust
+		merged.Trust = cloneTrust(namespace.Trust)
 	}
 
 	if namespace.Exclude != nil {
-		merged.Exclude = namespace.Exclude
+		merged.Exclude = slices.Clone(namespace.Exclude)
 	}
 
 	if namespace.SLSA != nil {
-		merged.SLSA = namespace.SLSA
+		slsaCopy := *namespace.SLSA
+		slsaCopy.KnownParameters = slices.Clone(slsaCopy.KnownParameters)
+		merged.SLSA = &slsaCopy
 	}
 
 	if namespace.VEX != nil {
-		merged.VEX = namespace.VEX
+		vexCopy := *namespace.VEX
+		merged.VEX = &vexCopy
 	}
 
 	if namespace.VSA != nil {
-		merged.VSA = namespace.VSA
+		vsaCopy := *namespace.VSA
+		merged.VSA = &vsaCopy
 	}
 
 	if namespace.Signatures != nil {
-		merged.Signatures = namespace.Signatures
+		sigCopy := *namespace.Signatures
+		merged.Signatures = &sigCopy
 	}
 
 	merged.initDerived()
@@ -358,6 +368,8 @@ func (p *Policy) ValidateEnforce() error {
 // ValidateRuntime performs runtime checks that require filesystem access,
 // such as verifying that verifier key files exist on disk. Uses Lstat to
 // detect symlinks (Stat would silently follow them).
+//
+// TOCTOU: the file could change between Lstat and LoadVerifierFromPEMFile.
 func (p *Policy) ValidateRuntime() error {
 	if p.Trust == nil {
 		return nil
@@ -396,9 +408,21 @@ func (p *Policy) ValidateRuntime() error {
 
 // Load loads and validates a policy file from disk.
 func Load(policyPath string) (*Policy, error) {
-	data, err := os.ReadFile(filepath.Clean(policyPath))
+	file, err := os.Open(filepath.Clean(policyPath))
 	if err != nil {
 		return nil, fmt.Errorf("reading policy file %q: %w", policyPath, err)
+	}
+	defer func() { _ = file.Close() }()
+
+	data, err := io.ReadAll(io.LimitReader(file, maxPolicyFileSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("reading policy file %q: %w", policyPath, err)
+	}
+
+	if int64(len(data)) > maxPolicyFileSize {
+		return nil, fmt.Errorf(
+			"%w: %q exceeds %d bytes", ErrPolicyFileTooLarge, policyPath, maxPolicyFileSize,
+		)
 	}
 
 	var pol Policy
@@ -520,6 +544,8 @@ func (p *Policy) validateTrust() error {
 	if p.Trust == nil {
 		return nil
 	}
+
+	warnEmptyTrust(p.Trust)
 
 	seenBuilders := make(map[string]bool, len(p.Trust.Builders))
 
@@ -644,6 +670,12 @@ func validateNonEmpty(field string, values []string) error {
 	}
 
 	return nil
+}
+
+func warnEmptyTrust(trust *TrustPolicy) {
+	if len(trust.Builders) == 0 && len(trust.Verifiers) == 0 && len(trust.Issuers) == 0 {
+		slog.Warn("trust section is configured but has no builders, verifiers, or issuers")
+	}
 }
 
 func (p *Policy) validateExclude() error {

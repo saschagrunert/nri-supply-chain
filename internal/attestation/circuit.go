@@ -55,10 +55,19 @@ func NewCircuitBreaker(threshold int, cooldown time.Duration) *CircuitBreaker {
 	}
 }
 
-// Allow returns true if the request should proceed. When the circuit is open
-// and the cooldown has elapsed, it transitions to half-open and allows a single
-// probe request.
+// Allow returns true if the request should proceed. Uses RLock for the
+// common closed-state fast path to avoid write-lock contention. When the
+// circuit is open and the cooldown has elapsed, it transitions to half-open
+// and allows a single probe request.
 func (cb *CircuitBreaker) Allow() bool {
+	cb.mu.RLock()
+	state := cb.state
+	cb.mu.RUnlock()
+
+	if state == circuitClosed {
+		return true
+	}
+
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
@@ -129,8 +138,12 @@ func (cb *CircuitBreaker) isClosed() bool {
 // CircuitBreakerRegistry manages per-host circuit breakers. Each registry host
 // gets its own breaker so that a failing registry does not block requests to
 // healthy registries.
+//
+// Lock ordering: r.mu must be acquired before any breaker.mu. The
+// evictNonOpenLocked method acquires breaker.mu (via isClosed) while
+// holding r.mu; callers must not hold a breaker.mu when calling Get.
 type CircuitBreakerRegistry struct {
-	mu        sync.Mutex
+	mu        sync.RWMutex
 	breakers  map[string]*CircuitBreaker
 	overflow  *CircuitBreaker
 	threshold int
@@ -141,7 +154,7 @@ type CircuitBreakerRegistry struct {
 // circuit breakers with the given threshold and cooldown.
 func NewCircuitBreakerRegistry(threshold int, cooldown time.Duration) *CircuitBreakerRegistry {
 	return &CircuitBreakerRegistry{
-		mu:        sync.Mutex{},
+		mu:        sync.RWMutex{},
 		breakers:  make(map[string]*CircuitBreaker),
 		overflow:  nil,
 		threshold: threshold,
@@ -153,11 +166,19 @@ func NewCircuitBreakerRegistry(threshold int, cooldown time.Duration) *CircuitBr
 // if it does not exist. The registry is capped at 1000 entries; when full,
 // existing closed breakers are evicted before adding new ones.
 func (r *CircuitBreakerRegistry) Get(host string) *CircuitBreaker {
+	r.mu.RLock()
+	breaker, found := r.breakers[host]
+	r.mu.RUnlock()
+
+	if found {
+		return breaker
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	breaker, ok := r.breakers[host]
-	if ok {
+	breaker, found = r.breakers[host]
+	if found {
 		return breaker
 	}
 
@@ -166,6 +187,9 @@ func (r *CircuitBreakerRegistry) Get(host string) *CircuitBreaker {
 	}
 
 	if len(r.breakers) >= maxCircuitBreakers {
+		// All hosts beyond capacity share a single overflow breaker.
+		// This prevents unbounded map growth at the cost of per-host
+		// isolation for the overflow set.
 		slog.Warn("Circuit breaker registry at capacity, using shared overflow breaker",
 			"host", host, "capacity", maxCircuitBreakers)
 

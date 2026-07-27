@@ -7,6 +7,7 @@ KUBERNIX="${KUBERNIX:-build/kubernix}"
 COSIGN="${COSIGN:-build/cosign}"
 CRANE="${CRANE:-build/crane}"
 CRI_RUNTIME="${CRI_RUNTIME:-crio}"
+PAUSE_IMAGE="${PAUSE_IMAGE:-registry.k8s.io/pause:3.10}"
 KUBERNIX_ROOT="${BATS_FILE_TMPDIR}/kubernix"
 PLUGIN_PID_FILE="${BATS_FILE_TMPDIR}/plugin.pid"
 PLUGIN_LOG="${BATS_FILE_TMPDIR}/plugin.log"
@@ -23,6 +24,26 @@ CURL_TIMEOUT=10
 
 is_containerd() {
 	[[ "$CRI_RUNTIME" == "containerd" ]]
+}
+
+stop_process_from_pidfile() {
+	local pidfile=$1
+	local name=$2
+	if [[ -f "$pidfile" ]]; then
+		local pid
+		pid=$(cat "$pidfile")
+		kill "$pid" 2>/dev/null || true
+		local elapsed=0
+		while kill -0 "$pid" 2>/dev/null && [[ $elapsed -lt 10 ]]; do
+			sleep 1
+			elapsed=$((elapsed + 1))
+		done
+		if kill -0 "$pid" 2>/dev/null; then
+			kill -9 "$pid" 2>/dev/null || true
+		fi
+		wait "$pid" 2>/dev/null || true
+		rm -f "$pidfile"
+	fi
 }
 
 start_kubernix() {
@@ -66,15 +87,58 @@ _patch_containerd_registry_config() {
 
 export NODE_READY_TIMEOUT=120
 export POD_TIMEOUT=60
+KUBERNIX_MAX_RETRIES=2
+KUBERNIX_RETRY_BUDGET=300
+
+wait_for_apiserver_ready() {
+	local timeout="${1:-60}"
+	local start_time
+	start_time=$(date +%s)
+	while (($(date +%s) - start_time < timeout)); do
+		if kubectl get --raw /readyz --request-timeout="${CURL_TIMEOUT}s" &>/dev/null; then
+			return 0
+		fi
+		sleep 2
+	done
+	echo "ERROR: API server readyz check failed after ${timeout}s" >&2
+	kubectl get --raw '/readyz?verbose' --request-timeout="${KUBECTL_TIMEOUT}s" 2>&1 >&2 || true
+	return 1
+}
+
+start_kubernix_with_retry() {
+	local attempt
+	local retry_start
+	retry_start=$(date +%s)
+	for attempt in $(seq 1 "$KUBERNIX_MAX_RETRIES"); do
+		if [[ $attempt -gt 1 ]]; then
+			local elapsed=$(($(date +%s) - retry_start))
+			if ((elapsed >= KUBERNIX_RETRY_BUDGET)); then
+				echo "ERROR: kubernix retry budget (${KUBERNIX_RETRY_BUDGET}s) exhausted after $((attempt - 1)) attempts" >&2
+				return 1
+			fi
+			echo "Retrying kubernix startup (attempt ${attempt}/${KUBERNIX_MAX_RETRIES}, ${elapsed}s elapsed)..." >&2
+			stop_kubernix
+			rm -rf "$KUBERNIX_ROOT"
+			mkdir -p "$KUBERNIX_ROOT"
+		fi
+
+		start_kubernix "$@"
+
+		if wait_for_node_ready && wait_for_apiserver_ready; then
+			return 0
+		fi
+	done
+
+	echo "ERROR: kubernix failed to start after $KUBERNIX_MAX_RETRIES attempts" >&2
+	return 1
+}
 
 setup_file() {
 	mkdir -p "$KUBERNIX_ROOT" "$POLICY_DIR"
 
 	echo '{}' >"$POLICY_DIR/default.json"
 
-	start_kubernix --log-level debug
-
-	wait_for_node_ready
+	start_kubernix_with_retry --log-level debug
 
 	write_nri_dropin
 	reload_runtime
@@ -89,20 +153,7 @@ teardown_file() {
 }
 
 stop_kubernix() {
-	if [[ -f "${BATS_FILE_TMPDIR}/kubernix.pid" ]]; then
-		local pid
-		pid=$(cat "${BATS_FILE_TMPDIR}/kubernix.pid")
-		kill "$pid" 2>/dev/null || true
-		local elapsed=0
-		while kill -0 "$pid" 2>/dev/null && [[ $elapsed -lt 10 ]]; do
-			sleep 1
-			elapsed=$((elapsed + 1))
-		done
-		if kill -0 "$pid" 2>/dev/null; then
-			kill -9 "$pid" 2>/dev/null || true
-		fi
-		wait "$pid" 2>/dev/null || true
-	fi
+	stop_process_from_pidfile "${BATS_FILE_TMPDIR}/kubernix.pid" "kubernix"
 	pkill -f "${KUBERNIX_ROOT}" 2>/dev/null || true
 	sleep 1
 	pkill -9 -f "${KUBERNIX_ROOT}" 2>/dev/null || true
@@ -125,6 +176,9 @@ setup() {
 	else
 		LOG_OFFSET=0
 	fi
+	if [[ -f "$POLICY_DIR/default.json" ]]; then
+		SAVED_DEFAULT_POLICY=$(cat "$POLICY_DIR/default.json")
+	fi
 }
 
 EXTRA_NAMESPACES=()
@@ -135,6 +189,9 @@ register_namespace() {
 }
 
 teardown() {
+	if [[ -n "${SAVED_DEFAULT_POLICY:-}" ]]; then
+		echo "$SAVED_DEFAULT_POLICY" >"$POLICY_DIR/default.json"
+	fi
 	kubectl delete pods --all -n "$TEST_NS" --force --grace-period=0 --request-timeout="${KUBECTL_TIMEOUT}s" 2>/dev/null || true
 	kubectl delete namespace "$TEST_NS" --request-timeout="${KUBECTL_TIMEOUT}s" 2>/dev/null || true
 	for ns in "${EXTRA_NAMESPACES[@]}"; do
@@ -250,21 +307,7 @@ start_plugin() {
 }
 
 stop_plugin() {
-	if [[ -f "$PLUGIN_PID_FILE" ]]; then
-		local pid
-		pid=$(cat "$PLUGIN_PID_FILE")
-		kill "$pid" 2>/dev/null || true
-		local elapsed=0
-		while kill -0 "$pid" 2>/dev/null && [[ $elapsed -lt 10 ]]; do
-			sleep 1
-			elapsed=$((elapsed + 1))
-		done
-		if kill -0 "$pid" 2>/dev/null; then
-			kill -9 "$pid" 2>/dev/null || true
-		fi
-		wait "$pid" 2>/dev/null || true
-		rm -f "$PLUGIN_PID_FILE"
-	fi
+	stop_process_from_pidfile "$PLUGIN_PID_FILE" "plugin"
 }
 
 reload_plugin() {
@@ -427,7 +470,7 @@ write_policy() {
 
 # --- Local registry and attestation helpers ---
 
-REGISTRY_PORT=5050
+REGISTRY_PORT="${REGISTRY_PORT:-5050}"
 REGISTRY_HOST="localhost:${REGISTRY_PORT}"
 REGISTRY_PID_FILE="${BATS_FILE_TMPDIR:-/tmp}/registry.pid"
 COSIGN_KEY="${BATS_FILE_TMPDIR:-/tmp}/cosign.key"
@@ -451,21 +494,7 @@ start_registry() {
 }
 
 stop_registry() {
-	if [[ -f "$REGISTRY_PID_FILE" ]]; then
-		local pid
-		pid=$(cat "$REGISTRY_PID_FILE")
-		kill "$pid" 2>/dev/null || true
-		local elapsed=0
-		while kill -0 "$pid" 2>/dev/null && [[ $elapsed -lt 10 ]]; do
-			sleep 1
-			elapsed=$((elapsed + 1))
-		done
-		if kill -0 "$pid" 2>/dev/null; then
-			kill -9 "$pid" 2>/dev/null || true
-		fi
-		wait "$pid" 2>/dev/null || true
-		rm -f "$REGISTRY_PID_FILE"
-	fi
+	stop_process_from_pidfile "$REGISTRY_PID_FILE" "registry"
 }
 
 generate_signing_key() {
@@ -476,7 +505,7 @@ push_test_image() {
 	local tag="$1"
 	local ref="${REGISTRY_HOST}/test/${tag}"
 	local output
-	if ! output=$(timeout "$CMD_TIMEOUT" "$CRANE" copy --platform linux/amd64 registry.k8s.io/pause:3.10 "$ref" --insecure 2>&1); then
+	if ! output=$(timeout "$CMD_TIMEOUT" "$CRANE" copy --platform linux/amd64 "$PAUSE_IMAGE" "$ref" --insecure 2>&1); then
 		echo "ERROR: crane copy failed for $ref: $output" >&2
 		return 1
 	fi
@@ -824,21 +853,7 @@ ensure_metrics_portforward() {
 }
 
 stop_metrics_portforward() {
-	if [[ -f "$METRICS_PORTFORWARD_PID_FILE" ]]; then
-		local pid
-		pid=$(cat "$METRICS_PORTFORWARD_PID_FILE")
-		kill "$pid" 2>/dev/null || true
-		local elapsed=0
-		while kill -0 "$pid" 2>/dev/null && [[ $elapsed -lt 10 ]]; do
-			sleep 1
-			elapsed=$((elapsed + 1))
-		done
-		if kill -0 "$pid" 2>/dev/null; then
-			kill -9 "$pid" 2>/dev/null || true
-		fi
-		wait "$pid" 2>/dev/null || true
-		rm -f "$METRICS_PORTFORWARD_PID_FILE"
-	fi
+	stop_process_from_pidfile "$METRICS_PORTFORWARD_PID_FILE" "metrics-portforward"
 }
 
 write_vsa_predicate() {

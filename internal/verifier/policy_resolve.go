@@ -50,7 +50,7 @@ func handleMissingPolicy(
 		Allowed: false,
 		Reason:  reason,
 		CheckResults: []types.CheckResult{
-			*types.FailResult(types.CheckTypePolicy, "no matching policy found"),
+			*types.FailResult(types.CheckTypePolicy, "no matching policy found", nil),
 		},
 	}, imageRef)
 }
@@ -135,6 +135,11 @@ func logReloadChanges(
 	}
 
 	if prev.Verification != next.Verification {
+		slog.WarnContext(ctx, "Verification mode changed",
+			"mode_prev", prev.Verification,
+			"mode_next", next.Verification,
+		)
+
 		attrs = append(attrs, "mode_prev", prev.Verification, "mode_next", next.Verification)
 	}
 

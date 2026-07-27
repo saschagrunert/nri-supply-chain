@@ -293,11 +293,11 @@ func handleUnderInvestigation(pol *policy.Policy) *types.CheckResult {
 	case types.ActionAllow:
 		return types.PassResult(checkType, detail)
 	default:
-		slog.Warn("Unrecognized under_investigation policy, defaulting to warn",
+		slog.Warn("Unrecognized under_investigation policy, defaulting to deny",
 			"policy", uiPolicy,
 		)
 
-		return types.WarnResult(checkType, detail)
+		return failResult(detail)
 	}
 }
 
@@ -306,5 +306,5 @@ func passResult() *types.CheckResult {
 }
 
 func failResult(detail string) *types.CheckResult {
-	return types.FailResult(checkType, detail)
+	return types.FailResult(checkType, detail, nil)
 }

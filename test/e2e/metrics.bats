@@ -12,9 +12,7 @@ setup_file() {
 		}
 	EOF
 
-	start_kubernix
-
-	wait_for_node_ready
+	start_kubernix_with_retry
 	write_nri_dropin
 	reload_runtime
 
@@ -28,7 +26,7 @@ teardown_file() {
 }
 
 @test "verification_total increments per check type" {
-	run_pod "metric-verify" "registry.k8s.io/pause:3.10"
+	run_pod "metric-verify" "$PAUSE_IMAGE"
 	wait_for_pod_status "metric-verify" "Running"
 	wait_for_metrics 'nri_supply_chain_verification_total'
 
@@ -38,7 +36,7 @@ teardown_file() {
 }
 
 @test "verification_total labels include check type and status" {
-	run_pod "metric-labels" "registry.k8s.io/pause:3.10"
+	run_pod "metric-labels" "$PAUSE_IMAGE"
 	wait_for_pod_status "metric-labels" "Running"
 	wait_for_metrics 'nri_supply_chain_verification_total'
 
@@ -50,11 +48,11 @@ teardown_file() {
 }
 
 @test "cache_hits_total and cache_misses_total track correctly" {
-	run_pod "metric-cache-1" "registry.k8s.io/pause:3.10"
+	run_pod "metric-cache-1" "$PAUSE_IMAGE"
 	wait_for_pod_status "metric-cache-1" "Running"
 	wait_for_metrics 'nri_supply_chain_cache_misses_total'
 
-	run_pod "metric-cache-2" "registry.k8s.io/pause:3.10"
+	run_pod "metric-cache-2" "$PAUSE_IMAGE"
 	wait_for_pod_status "metric-cache-2" "Running"
 	wait_for_metrics 'nri_supply_chain_cache_hits_total'
 
@@ -65,7 +63,7 @@ teardown_file() {
 }
 
 @test "verification_duration_seconds records latency" {
-	run_pod "metric-duration" "registry.k8s.io/pause:3.10"
+	run_pod "metric-duration" "$PAUSE_IMAGE"
 	wait_for_pod_status "metric-duration" "Running"
 	wait_for_metrics 'nri_supply_chain_verification_duration_seconds'
 

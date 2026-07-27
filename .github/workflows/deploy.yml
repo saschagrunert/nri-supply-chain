@@ -15,7 +15,7 @@ concurrency:
 permissions: {}
 
 env:
-  IMAGE: ghcr.io/saschagrunert/nri-supply-chain
+  IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
   build:
@@ -141,6 +141,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # required_contexts:[] bypasses deployment protection rules so the
+          # deployment is created unconditionally without waiting for status checks.
           DEPLOY_ID=$(gh api repos/${{ github.repository }}/deployments \
             --input - \
             --jq '.id' <<EOF

@@ -15,7 +15,6 @@
 package slsa_test
 
 import (
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -76,19 +75,10 @@ func validStatement() slsa.Statement {
 	}
 }
 
-func mustMarshal(t *testing.T, val any) []byte {
-	t.Helper()
-
-	data, err := json.Marshal(val)
-	if err != nil {
-		t.Fatalf("marshalling: %v", err)
-	}
-
-	return data
-}
-
 func TestVerify(t *testing.T) {
 	t.Parallel()
+
+	t.Cleanup(slsa.ResetMaxLevelWarnings)
 
 	tests := []struct {
 		name       string
@@ -105,7 +95,7 @@ func TestVerify(t *testing.T) {
 			data: func(t *testing.T) []byte {
 				t.Helper()
 
-				return mustMarshal(t, validStatement())
+				return testutil.MustMarshal(t, validStatement())
 			},
 			policy: &policy.Policy{
 				Trust: &policy.TrustPolicy{
@@ -128,7 +118,7 @@ func TestVerify(t *testing.T) {
 				stmt := validStatement()
 				stmt.PredicateType = "https://slsa.dev/provenance/v0.2"
 
-				return mustMarshal(t, stmt)
+				return testutil.MustMarshal(t, stmt)
 			},
 			policy: &policy.Policy{
 				Trust: &policy.TrustPolicy{
@@ -163,7 +153,7 @@ func TestVerify(t *testing.T) {
 				stmt := validStatement()
 				stmt.PredicateType = "https://example.com/other"
 
-				return mustMarshal(t, stmt)
+				return testutil.MustMarshal(t, stmt)
 			},
 			policy:     &policy.Policy{},
 			digest:     testDigest,
@@ -177,7 +167,7 @@ func TestVerify(t *testing.T) {
 			data: func(t *testing.T) []byte {
 				t.Helper()
 
-				return mustMarshal(t, validStatement())
+				return testutil.MustMarshal(t, validStatement())
 			},
 			policy:     &policy.Policy{},
 			digest:     "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
@@ -191,7 +181,7 @@ func TestVerify(t *testing.T) {
 			data: func(t *testing.T) []byte {
 				t.Helper()
 
-				return mustMarshal(t, validStatement())
+				return testutil.MustMarshal(t, validStatement())
 			},
 			policy:     &policy.Policy{},
 			digest:     "nocolon",
@@ -205,7 +195,7 @@ func TestVerify(t *testing.T) {
 			data: func(t *testing.T) []byte {
 				t.Helper()
 
-				return mustMarshal(t, validStatement())
+				return testutil.MustMarshal(t, validStatement())
 			},
 			policy: &policy.Policy{
 				Trust: &policy.TrustPolicy{
@@ -225,7 +215,7 @@ func TestVerify(t *testing.T) {
 			data: func(t *testing.T) []byte {
 				t.Helper()
 
-				return mustMarshal(t, validStatement())
+				return testutil.MustMarshal(t, validStatement())
 			},
 			policy:     &policy.Policy{},
 			digest:     testDigest,
@@ -239,7 +229,7 @@ func TestVerify(t *testing.T) {
 			data: func(t *testing.T) []byte {
 				t.Helper()
 
-				return mustMarshal(t, validStatement())
+				return testutil.MustMarshal(t, validStatement())
 			},
 			policy: &policy.Policy{
 				Trust: &policy.TrustPolicy{
@@ -260,7 +250,7 @@ func TestVerify(t *testing.T) {
 			data: func(t *testing.T) []byte {
 				t.Helper()
 
-				return mustMarshal(t, validStatement())
+				return testutil.MustMarshal(t, validStatement())
 			},
 			policy: &policy.Policy{
 				Trust: &policy.TrustPolicy{
@@ -283,7 +273,7 @@ func TestVerify(t *testing.T) {
 			data: func(t *testing.T) []byte {
 				t.Helper()
 
-				return mustMarshal(t, validStatement())
+				return testutil.MustMarshal(t, validStatement())
 			},
 			policy: &policy.Policy{
 				Trust: &policy.TrustPolicy{
@@ -304,7 +294,7 @@ func TestVerify(t *testing.T) {
 			data: func(t *testing.T) []byte {
 				t.Helper()
 
-				return mustMarshal(t, validStatement())
+				return testutil.MustMarshal(t, validStatement())
 			},
 			policy: &policy.Policy{
 				Trust: &policy.TrustPolicy{
@@ -330,7 +320,7 @@ func TestVerify(t *testing.T) {
 					testKeyWorkflow: testPlaceholder,
 				}
 
-				return mustMarshal(t, stmt)
+				return testutil.MustMarshal(t, stmt)
 			},
 			policy: &policy.Policy{
 				Trust: &policy.TrustPolicy{
@@ -356,7 +346,7 @@ func TestVerify(t *testing.T) {
 					testKeySource: 123,
 				}
 
-				return mustMarshal(t, stmt)
+				return testutil.MustMarshal(t, stmt)
 			},
 			policy: &policy.Policy{
 				Trust: &policy.TrustPolicy{
@@ -380,7 +370,7 @@ func TestVerify(t *testing.T) {
 				stmt := validStatement()
 				stmt.Predicate.BuildDefinition.ExternalParameters["customKey"] = testValue
 
-				return mustMarshal(t, stmt)
+				return testutil.MustMarshal(t, stmt)
 			},
 			policy: &policy.Policy{
 				Trust: &policy.TrustPolicy{
@@ -406,7 +396,7 @@ func TestVerify(t *testing.T) {
 				stmt := validStatement()
 				stmt.Predicate.BuildDefinition.ExternalParameters["customKey"] = testValue
 
-				return mustMarshal(t, stmt)
+				return testutil.MustMarshal(t, stmt)
 			},
 			policy: &policy.Policy{
 				Trust: &policy.TrustPolicy{
@@ -438,7 +428,7 @@ func TestVerify(t *testing.T) {
 					"buildType":     "release",
 				}
 
-				return mustMarshal(t, stmt)
+				return testutil.MustMarshal(t, stmt)
 			},
 			policy: &policy.Policy{
 				Trust: &policy.TrustPolicy{
@@ -466,7 +456,7 @@ func TestVerify(t *testing.T) {
 					testCustomParamKey: testValue,
 				}
 
-				return mustMarshal(t, stmt)
+				return testutil.MustMarshal(t, stmt)
 			},
 			policy: &policy.Policy{
 				Trust: &policy.TrustPolicy{
@@ -496,7 +486,7 @@ func TestVerify(t *testing.T) {
 					"unknown":          "bad",
 				}
 
-				return mustMarshal(t, stmt)
+				return testutil.MustMarshal(t, stmt)
 			},
 			policy: &policy.Policy{
 				Trust: &policy.TrustPolicy{
@@ -532,7 +522,7 @@ func TestVerify(t *testing.T) {
 					},
 				}
 
-				return mustMarshal(t, stmt)
+				return testutil.MustMarshal(t, stmt)
 			},
 			policy:     &policy.Policy{},
 			digest:     testDigest,
@@ -578,6 +568,8 @@ func TestVerify(t *testing.T) {
 func TestVerifyEdgeCases(t *testing.T) {
 	t.Parallel()
 
+	t.Cleanup(slsa.ResetMaxLevelWarnings)
+
 	t.Run("empty payload", func(t *testing.T) {
 		t.Parallel()
 
@@ -593,7 +585,7 @@ func TestVerifyEdgeCases(t *testing.T) {
 		t.Parallel()
 
 		result, err := slsa.Verify(
-			mustMarshal(t, validStatement()),
+			testutil.MustMarshal(t, validStatement()),
 			&policy.Policy{},
 			testDigest,
 		)
@@ -617,7 +609,7 @@ func TestVerifyEdgeCases(t *testing.T) {
 		stmt := validStatement()
 		stmt.Subject = []slsa.Subject{}
 
-		result, err := slsa.Verify(mustMarshal(t, stmt), &policy.Policy{}, testDigest)
+		result, err := slsa.Verify(testutil.MustMarshal(t, stmt), &policy.Policy{}, testDigest)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, false, result.Passed)
 		testutil.AssertEqual(t, types.StatusFail, result.Status)
@@ -634,7 +626,7 @@ func TestVerifyEdgeCases(t *testing.T) {
 			},
 		}
 
-		result, err := slsa.Verify(mustMarshal(t, stmt), &policy.Policy{}, testDigest)
+		result, err := slsa.Verify(testutil.MustMarshal(t, stmt), &policy.Policy{}, testDigest)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, false, result.Passed)
 	})
@@ -650,7 +642,7 @@ func TestVerifyEdgeCases(t *testing.T) {
 			},
 		}
 
-		result, err := slsa.Verify(mustMarshal(t, stmt), &policy.Policy{}, testDigest)
+		result, err := slsa.Verify(testutil.MustMarshal(t, stmt), &policy.Policy{}, testDigest)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, false, result.Passed)
 	})
@@ -658,7 +650,7 @@ func TestVerifyEdgeCases(t *testing.T) {
 	t.Run("empty digest string", func(t *testing.T) {
 		t.Parallel()
 
-		result, err := slsa.Verify(mustMarshal(t, validStatement()), &policy.Policy{}, "")
+		result, err := slsa.Verify(testutil.MustMarshal(t, validStatement()), &policy.Policy{}, "")
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, false, result.Passed)
 	})
@@ -666,7 +658,10 @@ func TestVerifyEdgeCases(t *testing.T) {
 	t.Run("digest with empty hash", func(t *testing.T) {
 		t.Parallel()
 
-		result, err := slsa.Verify(mustMarshal(t, validStatement()), &policy.Policy{}, "sha256:")
+		result, err := slsa.Verify(
+			testutil.MustMarshal(t, validStatement()),
+			&policy.Policy{}, "sha256:",
+		)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, false, result.Passed)
 	})
@@ -674,7 +669,9 @@ func TestVerifyEdgeCases(t *testing.T) {
 	t.Run("digest with empty algorithm", func(t *testing.T) {
 		t.Parallel()
 
-		result, err := slsa.Verify(mustMarshal(t, validStatement()), &policy.Policy{}, ":abc123")
+		result, err := slsa.Verify(
+			testutil.MustMarshal(t, validStatement()), &policy.Policy{}, ":abc123",
+		)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, false, result.Passed)
 	})
@@ -685,7 +682,7 @@ func TestVerifyEdgeCases(t *testing.T) {
 		stmt := validStatement()
 		stmt.Predicate.BuildDefinition.ExternalParameters = map[string]any{}
 
-		result, err := slsa.Verify(mustMarshal(t, stmt), &policy.Policy{
+		result, err := slsa.Verify(testutil.MustMarshal(t, stmt), &policy.Policy{
 			SLSA: &policy.SLSAPolicy{
 				RejectUnknownParameters: true,
 			},
@@ -700,7 +697,7 @@ func TestVerifyEdgeCases(t *testing.T) {
 		stmt := validStatement()
 		stmt.Predicate.BuildDefinition.ExternalParameters["extra"] = "data"
 
-		result, err := slsa.Verify(mustMarshal(t, stmt), &policy.Policy{}, testDigest)
+		result, err := slsa.Verify(testutil.MustMarshal(t, stmt), &policy.Policy{}, testDigest)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, true, result.Passed)
 	})
@@ -709,7 +706,7 @@ func TestVerifyEdgeCases(t *testing.T) {
 		t.Parallel()
 
 		result, err := slsa.Verify(
-			mustMarshal(t, validStatement()),
+			testutil.MustMarshal(t, validStatement()),
 			&policy.Policy{
 				Trust: &policy.TrustPolicy{
 					Builders: []policy.TrustedBuilder{
@@ -732,7 +729,7 @@ func TestVerifyEdgeCases(t *testing.T) {
 		stmt.Predicate.RunDetails.Builder.ID = ""
 
 		result, err := slsa.Verify(
-			mustMarshal(t, stmt),
+			testutil.MustMarshal(t, stmt),
 			&policy.Policy{
 				Trust: &policy.TrustPolicy{
 					Builders: []policy.TrustedBuilder{
@@ -750,7 +747,7 @@ func TestVerifyEdgeCases(t *testing.T) {
 		t.Parallel()
 
 		result, err := slsa.Verify(
-			mustMarshal(t, validStatement()),
+			testutil.MustMarshal(t, validStatement()),
 			&policy.Policy{
 				Trust: &policy.TrustPolicy{
 					Sources: []string{
@@ -773,7 +770,7 @@ func TestVerifyEdgeCases(t *testing.T) {
 		stmt.Predicate.BuildDefinition.ExternalParameters[testKeySource] = "github.com/example/repo/subdir"
 
 		result, err := slsa.Verify(
-			mustMarshal(t, stmt),
+			testutil.MustMarshal(t, stmt),
 			&policy.Policy{
 				Trust: &policy.TrustPolicy{
 					Sources: []string{testSourceGlob},
@@ -789,7 +786,7 @@ func TestVerifyEdgeCases(t *testing.T) {
 		t.Parallel()
 
 		result, err := slsa.Verify(
-			mustMarshal(t, validStatement()),
+			testutil.MustMarshal(t, validStatement()),
 			&policy.Policy{
 				Trust: &policy.TrustPolicy{},
 			},
@@ -803,7 +800,7 @@ func TestVerifyEdgeCases(t *testing.T) {
 		t.Parallel()
 
 		result, err := slsa.Verify(
-			mustMarshal(t, validStatement()),
+			testutil.MustMarshal(t, validStatement()),
 			&policy.Policy{
 				Trust: &policy.TrustPolicy{
 					BuildTypes: []string{
@@ -847,7 +844,7 @@ func TestVerifyEdgeCases(t *testing.T) {
 			},
 		}
 
-		result, err := slsa.Verify(mustMarshal(t, stmt), &policy.Policy{}, testDigest)
+		result, err := slsa.Verify(testutil.MustMarshal(t, stmt), &policy.Policy{}, testDigest)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, false, result.Passed)
 	})
@@ -856,7 +853,7 @@ func TestVerifyEdgeCases(t *testing.T) {
 		t.Parallel()
 
 		result, err := slsa.Verify(
-			mustMarshal(t, validStatement()),
+			testutil.MustMarshal(t, validStatement()),
 			&policy.Policy{
 				Trust: &policy.TrustPolicy{
 					Sources: []string{testSource},
@@ -875,7 +872,7 @@ func TestVerifyEdgeCases(t *testing.T) {
 		stmt.Predicate.BuildDefinition.ExternalParameters[testKeySource] = ""
 
 		result, err := slsa.Verify(
-			mustMarshal(t, stmt),
+			testutil.MustMarshal(t, stmt),
 			&policy.Policy{
 				Trust: &policy.TrustPolicy{
 					Sources: []string{testSourceGlob},
@@ -890,6 +887,8 @@ func TestVerifyEdgeCases(t *testing.T) {
 
 func TestVerifyMultiple(t *testing.T) {
 	t.Parallel()
+
+	t.Cleanup(slsa.ResetMaxLevelWarnings)
 
 	tests := []struct {
 		name               string
@@ -910,12 +909,12 @@ func TestVerifyMultiple(t *testing.T) {
 				return []attestation.VerifiedAttestation{
 					{
 						PredicateType: attestation.PredicateSLSAProvenanceV1,
-						Payload:       mustMarshal(t, badStmt),
+						Payload:       testutil.MustMarshal(t, badStmt),
 						Digest:        testDigest,
 					},
 					{
 						PredicateType: attestation.PredicateSLSAProvenanceV1,
-						Payload:       mustMarshal(t, goodStmt),
+						Payload:       testutil.MustMarshal(t, goodStmt),
 						Digest:        testDigest,
 					},
 				}
@@ -941,7 +940,7 @@ func TestVerifyMultiple(t *testing.T) {
 				return []attestation.VerifiedAttestation{
 					{
 						PredicateType: attestation.PredicateSLSAProvenanceV1,
-						Payload:       mustMarshal(t, badStmt),
+						Payload:       testutil.MustMarshal(t, badStmt),
 						Digest:        testDigest,
 					},
 				}
@@ -980,7 +979,7 @@ func TestVerifyMultiple(t *testing.T) {
 					},
 					{
 						PredicateType: attestation.PredicateSLSAProvenanceV1,
-						Payload:       mustMarshal(t, goodStmt),
+						Payload:       testutil.MustMarshal(t, goodStmt),
 						Digest:        testDigest,
 					},
 				}
@@ -1043,6 +1042,8 @@ func TestVerifyMultiple(t *testing.T) {
 func TestVerifyMultipleEdgeCases(t *testing.T) {
 	t.Parallel()
 
+	t.Cleanup(slsa.ResetMaxLevelWarnings)
+
 	t.Run("nil attestation slice", func(t *testing.T) {
 		t.Parallel()
 
@@ -1064,7 +1065,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		atts := []attestation.VerifiedAttestation{
 			{
 				PredicateType: attestation.PredicateSLSAProvenanceV1,
-				Payload:       mustMarshal(t, badStmt),
+				Payload:       testutil.MustMarshal(t, badStmt),
 				Digest:        testDigest,
 			},
 			{
@@ -1097,7 +1098,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		atts := []attestation.VerifiedAttestation{
 			{
 				PredicateType: attestation.PredicateSLSAProvenanceV1,
-				Payload:       mustMarshal(t, goodStmt),
+				Payload:       testutil.MustMarshal(t, goodStmt),
 				Digest:        testDigest,
 			},
 			{
@@ -1120,7 +1121,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		atts := []attestation.VerifiedAttestation{
 			{
 				PredicateType: attestation.PredicateSLSAProvenanceV1,
-				Payload:       mustMarshal(t, goodStmt),
+				Payload:       testutil.MustMarshal(t, goodStmt),
 				Digest:        testDigest,
 			},
 		}
@@ -1142,12 +1143,12 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		atts := []attestation.VerifiedAttestation{
 			{
 				PredicateType: attestation.PredicateSLSAProvenanceV1,
-				Payload:       mustMarshal(t, badStmt1),
+				Payload:       testutil.MustMarshal(t, badStmt1),
 				Digest:        testDigest,
 			},
 			{
 				PredicateType: attestation.PredicateSLSAProvenanceV1,
-				Payload:       mustMarshal(t, badStmt2),
+				Payload:       testutil.MustMarshal(t, badStmt2),
 				Digest:        testDigest,
 			},
 		}

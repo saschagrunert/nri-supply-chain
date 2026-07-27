@@ -43,21 +43,21 @@ type validateTest struct {
 func runValidateTests(t *testing.T, tests []validateTest) {
 	t.Helper()
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
+	for idx := range tests {
+		t.Run(tests[idx].name, func(t *testing.T) {
 			t.Parallel()
 
-			err := test.policy.Validate()
-			if test.wantErr && err == nil {
+			err := tests[idx].policy.Validate()
+			if tests[idx].wantErr && err == nil {
 				t.Error("expected error, got nil")
 			}
 
-			if !test.wantErr && err != nil {
+			if !tests[idx].wantErr && err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
 
-			if test.expectedErr != nil && !errors.Is(err, test.expectedErr) {
-				t.Errorf("expected error %v, got %v", test.expectedErr, err)
+			if tests[idx].expectedErr != nil && !errors.Is(err, tests[idx].expectedErr) {
+				t.Errorf("expected error %v, got %v", tests[idx].expectedErr, err)
 			}
 		})
 	}

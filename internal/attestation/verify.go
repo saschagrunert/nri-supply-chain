@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -140,6 +141,9 @@ func keyOnlyVerifierOpts(hasIssuers, requireTLog bool) []verify.VerifierOption {
 		return []verify.VerifierOption{verify.WithTransparencyLog(1)}
 	}
 
+	// Key-only without tlog skips timestamp verification. A compromised
+	// key cannot be time-bounded after revocation; require tlog in policy
+	// to mitigate.
 	return []verify.VerifierOption{verify.WithNoObserverTimestamps()}
 }
 
@@ -147,6 +151,9 @@ func buildKeyMaterial(keyPaths []string) (*root.TrustedPublicKeyMaterial, error)
 	verifiers := make(map[string]*root.ExpiringKey, len(keyPaths))
 
 	for _, keyPath := range keyPaths {
+		// SHA-256 is the only algorithm supported for key hint computation
+		// and artifact digest matching. Supporting additional algorithms
+		// would require policy-level configuration.
 		keyVerifier, err := signature.LoadVerifierFromPEMFile(keyPath, crypto.SHA256)
 		if err != nil {
 			return nil, fmt.Errorf("loading public key %q: %w", keyPath, err)
@@ -157,6 +164,8 @@ func buildKeyMaterial(keyPaths []string) (*root.TrustedPublicKeyMaterial, error)
 			return nil, fmt.Errorf("computing key hint for %q: %w", keyPath, err)
 		}
 
+		// Zero-value time.Time means no validity period bounds; the key
+		// is accepted regardless of signing time.
 		verifiers[hint] = root.NewExpiringKey(keyVerifier, time.Time{}, time.Time{})
 	}
 
@@ -184,24 +193,7 @@ func buildKeylessConfig(
 	opts *FetchOptions,
 	cachedRoot *trustedRootCache,
 ) (*root.TrustedRoot, []verify.VerifierOption, []verify.PolicyOption, error) {
-	var (
-		trustedRoot *root.TrustedRoot
-		err         error
-	)
-
-	if cachedRoot != nil {
-		trustedRoot, err = cachedRoot.get(ctx)
-	} else {
-		ctxErr := ctx.Err()
-		if ctxErr != nil {
-			return nil, nil, nil, fmt.Errorf(
-				"context canceled before fetching trusted root: %w", ctxErr,
-			)
-		}
-
-		trustedRoot, err = root.FetchTrustedRoot()
-	}
-
+	trustedRoot, err := fetchTrustedRootWithContext(ctx, cachedRoot)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("fetching sigstore trusted root: %w", err)
 	}
@@ -223,6 +215,50 @@ func buildKeylessConfig(
 	policyOpts := []verify.PolicyOption{verify.WithCertificateIdentity(certID)}
 
 	return trustedRoot, verifierOpts, policyOpts, nil
+}
+
+type trustedRootResult struct {
+	root *root.TrustedRoot
+	err  error
+}
+
+// fetchTrustedRootWithContext wraps root.FetchTrustedRoot with context
+// cancellation. On context cancel, the inner goroutine continues until
+// the HTTP request completes (the sigstore library does not accept a
+// context). The goroutine is bounded by HTTP timeouts and the buffered
+// channel prevents it from blocking on send.
+func fetchTrustedRootWithContext(
+	ctx context.Context, cachedRoot *trustedRootCache,
+) (*root.TrustedRoot, error) {
+	if cachedRoot != nil {
+		return cachedRoot.get(ctx)
+	}
+
+	ctxErr := ctx.Err()
+	if ctxErr != nil {
+		return nil, fmt.Errorf(
+			"context canceled before fetching trusted root: %w", ctxErr,
+		)
+	}
+
+	resultCh := make(chan trustedRootResult, 1)
+
+	go func() {
+		r, e := root.FetchTrustedRoot()
+		resultCh <- trustedRootResult{root: r, err: e}
+	}()
+
+	select {
+	case <-ctx.Done():
+		slog.WarnContext(ctx, "Context canceled while trusted root fetch is in progress; "+
+			"background goroutine will complete when the HTTP request finishes")
+
+		return nil, fmt.Errorf(
+			"context canceled during trusted root fetch: %w", ctx.Err(),
+		)
+	case res := <-resultCh:
+		return res.root, res.err
+	}
 }
 
 func buildCertificateIdentity(issuers, sanPatterns []string) (verify.CertificateIdentity, error) {
@@ -282,7 +318,7 @@ func ResetSANPatternWarnings() {
 }
 
 func warnNoSANPatterns(issuers []string) {
-	key := fmt.Sprintf("%d\x00", len(issuers)) + strings.Join(issuers, "\x00")
+	key := strconv.Itoa(len(issuers)) + "\x00" + strings.Join(issuers, "\x00")
 
 	if _, loaded := warnedSANPatterns.LoadOrStore(key, struct{}{}); loaded {
 		return

@@ -39,11 +39,11 @@ var version = "0.1.5"
 var logLevelVar slog.LevelVar //nolint:gochecknoglobals // shared between initLogging and reload
 
 const (
-	defaultNamespace = "default"
-	logLevelDebug    = "debug"
-	logLevelInfo     = "info"
-	logLevelWarn     = "warn"
-	logLevelError    = "error"
+	defaultPolicyLabel = "default"
+	logLevelDebug      = "debug"
+	logLevelInfo       = "info"
+	logLevelWarn       = "warn"
+	logLevelError      = "error"
 )
 
 type options struct {
@@ -104,24 +104,38 @@ func startPlugin(opts *options, cfg *config.Config) int {
 	met := metrics.New()
 	met.SetBuildInfo(version, runtime.Version())
 
+	ctx, cancel := context.WithCancel(context.Background())
+
+	slog.Info("Effective configuration",
+		"mode", cfg.Verification,
+		"policy_dir", cfg.PolicyDir,
+		"cache_ttl", cfg.CacheTTL.Duration,
+		"cache_failure_ttl", cfg.CacheFailureTTL.Duration,
+		"fetch_timeout", cfg.FetchTimeout.Duration,
+		"fetch_rate_limit", cfg.FetchRateLimit,
+		"fetch_failure_policy", cfg.FetchFailurePolicy,
+		"circuit_breaker_threshold", cfg.CircuitBreakerThreshold,
+		"circuit_breaker_cooldown", cfg.CircuitBreakerCooldown.Duration,
+		"metrics_addr", cfg.MetricsAddr,
+	)
+
 	var fetcher attestation.Fetcher
 	if cfg.Enabled() {
-		fetcher = verifier.NewFetcher(cfg)
+		fetcher = verifier.NewFetcher(ctx, cfg)
 	}
 
 	verif, err := verifier.New(cfg, met, fetcher)
 	if err != nil {
 		slog.Error("Failed to create verifier", "error", err)
+		cancel()
 
 		return 1
 	}
 
+	defer cancel()
 	defer verif.Stop()
 
 	plug := plugin.New(verif, met, opts.configPath, cfg.FetchTimeout.Duration)
-	ctx, cancel := context.WithCancel(context.Background())
-
-	defer cancel()
 
 	cleanupSignals := setupSignals(ctx, cancel, opts.configPath, verif, met, cfg, plug)
 	defer cleanupSignals()
@@ -154,7 +168,7 @@ func parseFlagsFrom(args []string) options {
 	validate := flagSet.Bool("validate", false, "validate config and policies, then exit")
 	verifyImage := flagSet.String("verify-image", "", "verify an image and exit")
 	verifyNamespace := flagSet.String(
-		"verify-namespace", defaultNamespace, "namespace for verification",
+		"verify-namespace", defaultPolicyLabel, "namespace for verification",
 	)
 	jsonSchema := flagSet.String(
 		"json-schema", "",
@@ -219,7 +233,7 @@ func runValidation(cfg *config.Config) int {
 	for ns, pol := range policies {
 		label := ns
 		if label == "" {
-			label = defaultNamespace
+			label = defaultPolicyLabel
 		}
 
 		err = pol.ValidateRuntime()

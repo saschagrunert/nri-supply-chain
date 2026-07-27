@@ -230,7 +230,7 @@ func (p *Plugin) CreateContainer(
 	slog.DebugContext(ctx, "NRI container info",
 		"container_id", ctr.GetId(),
 		"container_name", ctr.GetName(),
-		"annotations", annotations,
+		"annotations", filterRelevantAnnotations(annotations),
 		"labels", ctr.GetLabels(),
 	)
 
@@ -361,43 +361,93 @@ func (p *Plugin) collectPrewarmImages(
 	return images
 }
 
+type resolveResult struct {
+	img prewarmImage
+	ok  bool
+}
+
 func (p *Plugin) resolvePrewarmDigests(
 	ctx context.Context, images []prewarmImage,
 ) []prewarmImage {
-	resolved := make([]prewarmImage, 0, len(images))
-	seen := make(map[string]struct{})
+	results := make([]resolveResult, len(images))
+	sem := semaphore.NewWeighted(prewarmConcurrency)
+
+	var waitGroup sync.WaitGroup
 
 	for idx := range images {
-		img := images[idx]
+		if images[idx].digest != "" {
+			results[idx] = resolveResult{img: images[idx], ok: true}
 
-		if img.digest == "" {
-			resolveCtx, resolveCancel := context.WithTimeout(ctx, p.fetchTimeout)
-			dig, idxDig, resolveErr := p.digestResolver(resolveCtx, img.imageRef)
-
-			resolveCancel()
-
-			if resolveErr != nil {
-				slog.DebugContext(ctx, "Skipping prewarm, failed to resolve digest",
-					"container", img.container,
-					"image", img.imageRef,
-					"error", resolveErr,
-				)
-
-				continue
-			}
-
-			img.digest = dig
-			img.indexDigest = idxDig
+			continue
 		}
 
-		key := img.digest + "\x00" + img.namespace
-		if _, ok := seen[key]; ok {
+		waitGroup.Add(1)
+
+		go func(index int) {
+			defer waitGroup.Done()
+
+			acquireErr := sem.Acquire(ctx, 1)
+			if acquireErr != nil {
+				slog.DebugContext(ctx, "Skipping prewarm, context cancelled",
+					"image", images[index].imageRef,
+					"error", acquireErr,
+				)
+
+				return
+			}
+
+			defer sem.Release(1)
+
+			p.resolveOneDigest(ctx, &images[index], &results[index])
+		}(idx)
+	}
+
+	waitGroup.Wait()
+
+	return deduplicateResults(results)
+}
+
+func (p *Plugin) resolveOneDigest(
+	ctx context.Context, img *prewarmImage, result *resolveResult,
+) {
+	resolveCtx, resolveCancel := context.WithTimeout(ctx, p.fetchTimeout)
+	dig, idxDig, resolveErr := p.digestResolver(resolveCtx, img.imageRef)
+
+	resolveCancel()
+
+	if resolveErr != nil {
+		slog.DebugContext(ctx, "Skipping prewarm, failed to resolve digest",
+			"container", img.container,
+			"image", img.imageRef,
+			"error", resolveErr,
+		)
+
+		return
+	}
+
+	resolved := *img
+	resolved.digest = dig
+	resolved.indexDigest = idxDig
+	*result = resolveResult{img: resolved, ok: true}
+}
+
+func deduplicateResults(results []resolveResult) []prewarmImage {
+	resolved := make([]prewarmImage, 0, len(results))
+	seen := make(map[string]struct{})
+
+	for _, res := range results {
+		if !res.ok {
+			continue
+		}
+
+		key := res.img.digest + "\x00" + res.img.namespace
+		if _, exists := seen[key]; exists {
 			continue
 		}
 
 		seen[key] = struct{}{}
 
-		resolved = append(resolved, img)
+		resolved = append(resolved, res.img)
 	}
 
 	return resolved
@@ -463,7 +513,7 @@ func (p *Plugin) runPrewarmVerifications(
 				ctx, img.imageRef, img.digest, img.indexDigest, img.namespace,
 			)
 			if verifyErr != nil {
-				slog.Debug("Pre-warm verification failed",
+				slog.DebugContext(ctx, "Pre-warm verification failed",
 					"image", img.imageRef,
 					"error", verifyErr,
 				)
@@ -472,7 +522,7 @@ func (p *Plugin) runPrewarmVerifications(
 			}
 
 			count := verified.Add(1)
-			slog.Debug("Pre-warming cache progress",
+			slog.DebugContext(ctx, "Pre-warming cache progress",
 				"verified", count,
 				"total", total,
 			)
@@ -548,6 +598,27 @@ func resolveCRIOImage(annotations map[string]string) (imageRef, digest string) {
 	}
 
 	return imageRef, digest
+}
+
+var relevantAnnotationKeys = []string{ //nolint:gochecknoglobals // static lookup set
+	AnnotationImageName,
+	AnnotationImage,
+	AnnotationImageRef,
+	AnnotationImageRepoDigests,
+	AnnotationContainerdImage,
+	AnnotationContainerdImageRef,
+}
+
+func filterRelevantAnnotations(annotations map[string]string) map[string]string {
+	filtered := make(map[string]string, len(relevantAnnotationKeys))
+
+	for _, key := range relevantAnnotationKeys {
+		if val, ok := annotations[key]; ok {
+			filtered[key] = val
+		}
+	}
+
+	return filtered
 }
 
 func validDigestOrEmpty(ref string) string {

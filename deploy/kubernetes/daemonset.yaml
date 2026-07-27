@@ -17,6 +17,9 @@ data:
     cache_failure_ttl = "5m"
     policy_dir = "/etc/nri-supply-chain/policies"
     # Binds to all interfaces for Prometheus scraping (default is 127.0.0.1:9090).
+    # This exposes metrics (image references, namespaces, verification outcomes)
+    # on all interfaces. Consider restricting the NetworkPolicy ingress with a
+    # "from" selector to limit access to your Prometheus instances.
     metrics_addr = ":9090"
     circuit_breaker_threshold = 5
     circuit_breaker_cooldown = "30s"

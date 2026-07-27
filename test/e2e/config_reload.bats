@@ -12,9 +12,7 @@ setup_file() {
 		}
 	EOF
 
-	start_kubernix
-
-	wait_for_node_ready
+	start_kubernix_with_retry
 	write_nri_dropin
 	reload_runtime
 
@@ -28,14 +26,14 @@ teardown_file() {
 }
 
 @test "SIGHUP reloads config: change warn to enforce rejects pods" {
-	run_pod "before-reload" "registry.k8s.io/pause:3.10"
+	run_pod "before-reload" "$PAUSE_IMAGE"
 	wait_for_pod_status "before-reload" "Running"
 
 	write_plugin_config "enforce"
 	reload_plugin
 	assert_log_contains "Config reloaded successfully"
 
-	run_pod "after-reload" "registry.k8s.io/pause:3.10" || true
+	run_pod "after-reload" "$PAUSE_IMAGE" || true
 	assert_log_contains "Container rejected"
 
 	write_plugin_config "warn"
@@ -58,7 +56,7 @@ teardown_file() {
 
 	kubectl run "reload-policy-pod" \
 		--namespace "$ns" \
-		--image "registry.k8s.io/pause:3.10" \
+		--image "$PAUSE_IMAGE" \
 		--restart=Never \
 		--request-timeout="${KUBECTL_TIMEOUT}s"
 	wait_for_pod_status "reload-policy-pod" "Running" 60 "$ns"
@@ -148,13 +146,13 @@ teardown_file() {
 	write_plugin_config "enforce"
 	reload_plugin
 
-	run_pod "enforce-pod" "registry.k8s.io/pause:3.10" || true
+	run_pod "enforce-pod" "$PAUSE_IMAGE" || true
 	assert_log_contains "Container rejected"
 
 	write_plugin_config "disabled"
 	reload_plugin
 
-	run_pod "disabled-after" "registry.k8s.io/pause:3.10"
+	run_pod "disabled-after" "$PAUSE_IMAGE"
 	wait_for_pod_status "disabled-after" "Running"
 
 	write_plugin_config "warn"
@@ -165,7 +163,7 @@ teardown_file() {
 	write_plugin_config "disabled"
 	reload_plugin
 
-	run_pod "disabled-nolog" "registry.k8s.io/pause:3.10"
+	run_pod "disabled-nolog" "$PAUSE_IMAGE"
 	wait_for_pod_status "disabled-nolog" "Running"
 
 	# shellcheck disable=SC2034
@@ -174,7 +172,7 @@ teardown_file() {
 	write_plugin_config "warn"
 	reload_plugin
 
-	run_pod "warn-log" "registry.k8s.io/pause:3.10"
+	run_pod "warn-log" "$PAUSE_IMAGE"
 	wait_for_pod_status "warn-log" "Running"
 	assert_log_contains "Verification failed (warn mode, allowing)"
 }
@@ -184,10 +182,10 @@ teardown_file() {
 	write_plugin_config "warn"
 	start_plugin
 
-	run_pod "cache-hit-1" "registry.k8s.io/pause:3.10"
+	run_pod "cache-hit-1" "$PAUSE_IMAGE"
 	wait_for_pod_status "cache-hit-1" "Running"
 
-	run_pod "cache-hit-2" "registry.k8s.io/pause:3.10"
+	run_pod "cache-hit-2" "$PAUSE_IMAGE"
 	wait_for_pod_status "cache-hit-2" "Running"
 	wait_for_metrics "nri_supply_chain_cache_hits_total"
 
@@ -204,7 +202,7 @@ teardown_file() {
 	write_plugin_config "warn" "allow"
 	reload_plugin
 
-	run_pod "cache-after" "registry.k8s.io/pause:3.10"
+	run_pod "cache-after" "$PAUSE_IMAGE"
 	wait_for_pod_status "cache-after" "Running"
 	wait_for_metrics "nri_supply_chain_cache_misses_total"
 

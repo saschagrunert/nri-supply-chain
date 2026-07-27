@@ -20,90 +20,96 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
-func TestPassResult(t *testing.T) {
+var errTest = types.ErrInvalidAction
+
+func TestCheckResultConstructors(t *testing.T) {
 	t.Parallel()
 
-	result := types.PassResult(types.CheckTypeSLSA, "verified")
-
-	if result.Type != types.CheckTypeSLSA {
-		t.Errorf("expected type slsa, got %q", result.Type)
+	tests := []struct {
+		name       string
+		create     func() *types.CheckResult
+		wantType   types.CheckType
+		wantPassed bool
+		wantStatus types.CheckStatus
+		wantDetail string
+		wantErr    bool
+	}{
+		{
+			name:       "PassResult",
+			create:     func() *types.CheckResult { return types.PassResult(types.CheckTypeSLSA, "verified") },
+			wantType:   types.CheckTypeSLSA,
+			wantPassed: true,
+			wantStatus: types.StatusPass,
+			wantDetail: "verified",
+			wantErr:    false,
+		},
+		{
+			name:       "WarnResult",
+			create:     func() *types.CheckResult { return types.WarnResult(types.CheckTypeVEX, "under investigation") },
+			wantType:   types.CheckTypeVEX,
+			wantPassed: true,
+			wantStatus: types.StatusWarn,
+			wantDetail: "under investigation",
+			wantErr:    false,
+		},
+		{
+			name:       "FailResult",
+			create:     func() *types.CheckResult { return types.FailResult(types.CheckTypeVSA, "untrusted verifier", nil) },
+			wantType:   types.CheckTypeVSA,
+			wantPassed: false,
+			wantStatus: types.StatusFail,
+			wantDetail: "untrusted verifier",
+			wantErr:    false,
+		},
+		{
+			name:       "FailResult with error",
+			create:     func() *types.CheckResult { return types.FailResult(types.CheckTypeSLSA, "fetch failed", errTest) },
+			wantType:   types.CheckTypeSLSA,
+			wantPassed: false,
+			wantStatus: types.StatusFail,
+			wantDetail: "fetch failed",
+			wantErr:    true,
+		},
+		{
+			name:       "SoftFailResult",
+			create:     func() *types.CheckResult { return types.SoftFailResult(types.CheckTypeVSA, "stale verifier", nil) },
+			wantType:   types.CheckTypeVSA,
+			wantPassed: false,
+			wantStatus: types.StatusWarn,
+			wantDetail: "stale verifier",
+			wantErr:    false,
+		},
 	}
 
-	if !result.Passed {
-		t.Error("expected Passed to be true")
-	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 
-	if result.Status != types.StatusPass {
-		t.Errorf("expected status %q, got %q", types.StatusPass, result.Status)
-	}
+			result := test.create()
 
-	if result.Detail != "verified" {
-		t.Errorf("expected detail %q, got %q", "verified", result.Detail)
-	}
-}
+			if result.Type != test.wantType {
+				t.Errorf("expected type %q, got %q", test.wantType, result.Type)
+			}
 
-func TestWarnResult(t *testing.T) {
-	t.Parallel()
+			if result.Passed != test.wantPassed {
+				t.Errorf("expected Passed=%v, got Passed=%v", test.wantPassed, result.Passed)
+			}
 
-	result := types.WarnResult(types.CheckTypeVEX, "under investigation")
+			if result.Status != test.wantStatus {
+				t.Errorf("expected status %q, got %q", test.wantStatus, result.Status)
+			}
 
-	if result.Type != types.CheckTypeVEX {
-		t.Errorf("expected type vex, got %q", result.Type)
-	}
+			if result.Detail != test.wantDetail {
+				t.Errorf("expected detail %q, got %q", test.wantDetail, result.Detail)
+			}
 
-	if !result.Passed {
-		t.Error("expected Passed to be true for warn")
-	}
+			if test.wantErr && result.Err == nil {
+				t.Error("expected non-nil Err")
+			}
 
-	if result.Status != types.StatusWarn {
-		t.Errorf("expected status %q, got %q", types.StatusWarn, result.Status)
-	}
-
-	if result.Detail != "under investigation" {
-		t.Errorf("expected detail %q, got %q", "under investigation", result.Detail)
-	}
-}
-
-func TestFailResult(t *testing.T) {
-	t.Parallel()
-
-	result := types.FailResult(types.CheckTypeVSA, "untrusted verifier")
-
-	if result.Type != types.CheckTypeVSA {
-		t.Errorf("expected type vsa, got %q", result.Type)
-	}
-
-	if result.Passed {
-		t.Error("expected Passed to be false")
-	}
-
-	if result.Status != types.StatusFail {
-		t.Errorf("expected status %q, got %q", types.StatusFail, result.Status)
-	}
-
-	if result.Detail != "untrusted verifier" {
-		t.Errorf("expected detail %q, got %q", "untrusted verifier", result.Detail)
-	}
-}
-
-func TestSoftFailResult(t *testing.T) {
-	t.Parallel()
-
-	result := types.SoftFailResult(types.CheckTypeVSA, "stale verifier")
-
-	if result.Type != types.CheckTypeVSA {
-		t.Errorf("expected type vsa, got %q", result.Type)
-	}
-
-	if result.Passed {
-		t.Error("expected Passed to be false")
-	}
-
-	if result.Status != types.StatusWarn {
-		t.Errorf("expected status %q, got %q", types.StatusWarn, result.Status)
-	}
-
-	if result.Detail != "stale verifier" {
-		t.Errorf("expected detail %q, got %q", "stale verifier", result.Detail)
+			if !test.wantErr && result.Err != nil {
+				t.Errorf("expected nil Err, got %v", result.Err)
+			}
+		})
 	}
 }
