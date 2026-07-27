@@ -116,6 +116,8 @@ func startPlugin(opts *options, cfg *config.Config) int {
 		return 1
 	}
 
+	defer verif.Stop()
+
 	plug := plugin.New(verif, met, opts.configPath, cfg.FetchTimeout.Duration)
 	ctx, cancel := context.WithCancel(context.Background())
 

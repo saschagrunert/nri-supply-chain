@@ -20,6 +20,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1189,4 +1190,120 @@ func TestCancelPrewarm(t *testing.T) {
 	plug.CancelPrewarm()
 
 	waitForPrewarm(t, done)
+}
+
+func TestConcurrentCreateContainer(t *testing.T) {
+	t.Parallel()
+
+	plug := newTestPlugin(t, config.ModeDisabled, "")
+
+	const goroutines = 20
+
+	var wg sync.WaitGroup
+
+	wg.Add(goroutines)
+
+	for i := range goroutines {
+		go func() {
+			defer wg.Done()
+
+			idx := strconv.Itoa(i)
+			hexPad := "000000000000000000000000000000000000000000000000000000000000000"
+
+			pod := &api.PodSandbox{
+				Namespace: testNamespace,
+				Name:      "pod-" + idx,
+			}
+			ctr := &api.Container{
+				Name: "ctr-" + idx,
+				Annotations: map[string]string{
+					plugin.AnnotationImage:    "image-" + idx + ":latest",
+					plugin.AnnotationImageRef: "sha256:" + idx + hexPad[:64-len(idx)],
+				},
+			}
+
+			_, _, err := plug.CreateContainer(context.Background(), pod, ctr)
+			if err != nil {
+				t.Errorf("concurrent CreateContainer: %v", err)
+			}
+		}()
+	}
+
+	wg.Wait()
+}
+
+func TestConcurrentSynchronizeAndCancelPrewarm(t *testing.T) {
+	t.Parallel()
+
+	plug := newTestPlugin(t, config.ModeDisabled, "")
+
+	pods := []*api.PodSandbox{
+		{Id: testPodID, Namespace: testNamespace, Name: testPodName},
+	}
+
+	containers := []*api.Container{
+		{
+			Id:           "ctr-race-1",
+			PodSandboxId: testPodID,
+			Name:         "race-container",
+			Annotations: map[string]string{
+				plugin.AnnotationImage:    testImage,
+				plugin.AnnotationImageRef: testDigest,
+			},
+		},
+	}
+
+	const goroutines = 10
+
+	var wg sync.WaitGroup
+
+	wg.Add(goroutines * 2)
+
+	for range goroutines {
+		go func() {
+			defer wg.Done()
+
+			_, err := plug.Synchronize(context.Background(), pods, containers)
+			if err != nil {
+				t.Errorf("concurrent Synchronize: %v", err)
+			}
+		}()
+
+		go func() {
+			defer wg.Done()
+
+			plug.CancelPrewarm()
+		}()
+	}
+
+	wg.Wait()
+}
+
+func TestConcurrentSynchronizeReplacesPreviousPrewarm(t *testing.T) {
+	t.Parallel()
+
+	plug := newTestPlugin(t, config.ModeDisabled, "")
+
+	pods := []*api.PodSandbox{
+		{Id: testPodID, Namespace: testNamespace, Name: testPodName},
+	}
+
+	for i := range 5 {
+		idx := strconv.Itoa(i)
+
+		containers := []*api.Container{
+			{
+				Id:           "ctr-seq-" + idx,
+				PodSandboxId: testPodID,
+				Name:         "seq-container-" + idx,
+				Annotations: map[string]string{
+					plugin.AnnotationImage:    "image-" + idx + ":latest",
+					plugin.AnnotationImageRef: testDigest,
+				},
+			},
+		}
+
+		_, err := plug.Synchronize(context.Background(), pods, containers)
+		testutil.AssertNoError(t, err)
+	}
 }

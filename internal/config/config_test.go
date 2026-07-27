@@ -636,6 +636,29 @@ func TestConfigValidateFetchRateLimit(t *testing.T) {
 
 		testutil.AssertNoError(t, cfg.Validate())
 	})
+
+	t.Run("rate limit exceeding max rejected", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.FetchRateLimit = 10001.0
+
+		err := cfg.Validate()
+		if !errors.Is(err, config.ErrFetchRateLimitTooHigh) {
+			t.Errorf("expected ErrFetchRateLimitTooHigh, got %v", err)
+		}
+	})
+
+	t.Run("rate limit at max is valid", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.FetchRateLimit = 10000.0
+
+		testutil.AssertNoError(t, cfg.Validate())
+	})
 }
 
 func TestConfigValidateLogLevel(t *testing.T) {

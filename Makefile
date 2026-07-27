@@ -28,6 +28,7 @@ define verify_checksum
 endef
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || sed -n 's/^var version = "\(.*\)"/\1/p' cmd/nri-supply-chain/main.go)
+SOURCE_DATE_EPOCH ?= $(shell git log -1 --format=%ct 2>/dev/null || echo 0)
 BUILD_DIR := build
 GOLANGCI_LINT := $(BUILD_DIR)/golangci-lint
 ZEITGEIST := $(BUILD_DIR)/zeitgeist
@@ -77,7 +78,7 @@ help: ## Display this help
 .PHONY: build
 build: ## Build the nri-supply-chain binary (static)
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $(BUILD_DIR)/nri-supply-chain ./cmd/nri-supply-chain/
+	SOURCE_DATE_EPOCH=$(SOURCE_DATE_EPOCH) CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $(BUILD_DIR)/nri-supply-chain ./cmd/nri-supply-chain/
 
 PREFIX ?= /usr/local
 

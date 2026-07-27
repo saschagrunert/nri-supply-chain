@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -94,7 +95,10 @@ func handleReload(
 ) {
 	defer func() {
 		if r := recover(); r != nil {
-			slog.Error("Recovered panic in reload handler", "error", r)
+			slog.Error("Recovered panic in reload handler",
+				"error", r,
+				"stack", string(debug.Stack()),
+			)
 			met.ConfigReloadErrorsTotal.Inc()
 		}
 	}()

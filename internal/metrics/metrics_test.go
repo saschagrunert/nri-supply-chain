@@ -85,6 +85,10 @@ func TestNewMetrics(t *testing.T) {
 	if met.ConfigReloadErrorsTotal == nil {
 		t.Error("expected ConfigReloadErrorsTotal to be set")
 	}
+
+	if met.VerificationInterruptedTotal == nil {
+		t.Error("expected VerificationInterruptedTotal to be set")
+	}
 }
 
 func TestMetricsHandler(t *testing.T) {
@@ -162,6 +166,7 @@ func TestMetricsIncrement(t *testing.T) {
 	met.VerificationSkippedTotal.WithLabelValues("excluded", "default").Inc()
 	met.ConfigReloadsTotal.Inc()
 	met.ConfigReloadErrorsTotal.Inc()
+	met.VerificationInterruptedTotal.Inc()
 
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequestWithContext(
@@ -199,6 +204,7 @@ func TestMetricsIncrement(t *testing.T) {
 		`nri_supply_chain_verification_skipped_total{namespace="default",reason="excluded"} 1`,
 		`nri_supply_chain_config_reloads_total 1`,
 		`nri_supply_chain_config_reload_errors_total 1`,
+		`nri_supply_chain_verification_interrupted_total 1`,
 	} {
 		if !strings.Contains(bodyStr, expected) {
 			t.Errorf("expected %q in metrics output", expected)

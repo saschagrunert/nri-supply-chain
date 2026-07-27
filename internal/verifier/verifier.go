@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/semaphore"
@@ -68,9 +69,9 @@ type snapshot struct {
 
 // Verifier performs supply chain attestation verification on container images.
 type Verifier struct {
-	snapshot // embedded: fields shared with point-in-time snapshots
+	state atomic.Pointer[snapshot]
 
-	mu           sync.RWMutex
+	mu           sync.Mutex // serializes Reload; policyHashes is only accessed under mu
 	policyHashes map[string]string
 	inflight     singleflight.Group
 }
@@ -87,61 +88,60 @@ func NewFetcher(cfg *config.Config) *attestation.OCIFetcher {
 func New(cfg *config.Config, met *metrics.Metrics, fetcher attestation.Fetcher) (*Verifier, error) {
 	cfgCopy := *cfg
 
-	verif := &Verifier{
-		mu: sync.RWMutex{},
-		snapshot: snapshot{
-			config:   &cfgCopy,
-			policies: nil,
-			cache: cache.NewWithGauge(
-				cfgCopy.CacheTTL.Duration,
-				met.CacheEntriesTotal, met.CacheEvictionsTotal,
-			),
-			metrics: met,
-			fetcher: fetcher,
-			circuitBreakers: attestation.NewCircuitBreakerRegistry(
-				cfgCopy.CircuitBreakerThreshold,
-				cfgCopy.CircuitBreakerCooldown.Duration,
-			),
-			fetchSem:    semaphore.NewWeighted(maxConcurrentFetches),
-			hostSem:     &sync.Map{},
-			auditLogger: slog.Default(),
-		},
-		policyHashes: nil,
-		inflight:     singleflight.Group{},
-	}
-
 	if ociFetcher, ok := fetcher.(*attestation.OCIFetcher); ok {
 		ociFetcher.SetStaleRootCallback(met.TrustedRootStaleTotal.Inc)
 	}
 
+	policies, hashes, err := loadAndHashPolicies(&cfgCopy)
+	if err != nil {
+		return nil, err
+	}
+
 	if cfgCopy.Enabled() {
-		policies, err := policy.LoadAll(cfgCopy.PolicyDir)
-		if err != nil {
-			return nil, fmt.Errorf("loading policies: %w", err)
-		}
-
-		err = validatePoliciesRuntime(policies)
-		if err != nil {
-			return nil, err
-		}
-
 		err = validatePoliciesEnforce(cfgCopy.Verification, policies)
 		if err != nil {
 			return nil, err
 		}
 
-		hashes, err := hashPolicies(policies)
-		if err != nil {
-			return nil, err
-		}
-
-		verif.policies = policies
-		verif.policyHashes = hashes
-
 		WarnEnforceDefaults(&cfgCopy, policies)
 	}
 
+	snap := newSnapshot(&cfgCopy, policies, met, fetcher)
+
+	verif := &Verifier{
+		state:        atomic.Pointer[snapshot]{},
+		mu:           sync.Mutex{},
+		policyHashes: hashes,
+		inflight:     singleflight.Group{},
+	}
+	verif.state.Store(snap)
+
 	return verif, nil
+}
+
+func newSnapshot(
+	cfg *config.Config,
+	policies map[string]*policy.Policy,
+	met *metrics.Metrics,
+	fetcher attestation.Fetcher,
+) *snapshot {
+	return &snapshot{
+		config:   cfg,
+		policies: policies,
+		cache: cache.NewWithGauge(
+			cfg.CacheTTL.Duration,
+			met.CacheEntriesTotal, met.CacheEvictionsTotal,
+		),
+		metrics: met,
+		fetcher: fetcher,
+		circuitBreakers: attestation.NewCircuitBreakerRegistry(
+			cfg.CircuitBreakerThreshold,
+			cfg.CircuitBreakerCooldown.Duration,
+		),
+		fetchSem:    semaphore.NewWeighted(maxConcurrentFetches),
+		hostSem:     &sync.Map{},
+		auditLogger: slog.Default(),
+	}
 }
 
 // WarnEnforceDefaults logs warnings when enforce mode is used with
@@ -195,29 +195,31 @@ func WarnEnforceDefaults(cfg *config.Config, policies map[string]*policy.Policy)
 	}
 }
 
+// Stop releases resources held by the verifier, including the cache's
+// background eviction goroutine.
+func (v *Verifier) Stop() {
+	v.state.Load().cache.Stop()
+}
+
 // Enforcing returns true if the verifier is in enforce mode.
 func (v *Verifier) Enforcing() bool {
-	v.mu.RLock()
-	defer v.mu.RUnlock()
-
-	return v.config.Verification == config.ModeEnforce
+	return v.state.Load().config.Verification == config.ModeEnforce
 }
 
 // Ready returns true if the verifier is ready to serve requests.
 // When not ready, the second return value describes the reason.
 func (v *Verifier) Ready() (ready bool, reason string) {
-	v.mu.RLock()
-	defer v.mu.RUnlock()
+	state := v.state.Load()
 
-	if v.config == nil {
+	if state.config == nil {
 		return false, "no config loaded"
 	}
 
-	if !v.config.Enabled() {
+	if !state.config.Enabled() {
 		return true, ""
 	}
 
-	if len(v.policies) == 0 {
+	if len(state.policies) == 0 {
 		return false, "no policies loaded"
 	}
 
@@ -279,9 +281,9 @@ func (v *Verifier) Verify(
 
 	state.metrics.CacheMissesTotal.Inc()
 
-	result, err := v.verifyOnce(ctx, &state, pol, imageRef, digest, indexDigest, namespace)
+	result, err := v.verifyOnce(ctx, state, pol, imageRef, digest, indexDigest, namespace)
 	if err != nil {
-		return handleVerifyError(ctx, &state, imageRef, digest, namespace, err)
+		return handleVerifyError(ctx, state, imageRef, digest, namespace, err)
 	}
 
 	return applyEnforcement(ctx, state.config, result, imageRef)
@@ -325,86 +327,112 @@ func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 		return err
 	}
 
+	prev := v.state.Load()
 	policiesChanged := !policyHashesEqual(v.policyHashes, newHashes)
+	cacheInvalidated := cacheAffectingFieldsChanged(prev.config, &cfgCopy) || policiesChanged
+	newCache := reloadCache(prev, &cfgCopy, cacheInvalidated)
 
-	cacheInvalidated := cacheAffectingFieldsChanged(v.config, &cfgCopy) || policiesChanged
+	logReloadChanges(ctx, prev.config, &cfgCopy, v.policyHashes, newHashes, cacheInvalidated)
 
-	if cacheInvalidated {
-		v.cache = cache.NewWithGauge(
-			cfgCopy.CacheTTL.Duration,
-			v.metrics.CacheEntriesTotal, v.metrics.CacheEvictionsTotal,
-		)
-	}
+	circuitBreakers := v.reloadCircuitBreakers(prev, &cfgCopy)
+	fetcher := v.reloadFetcher(prev, &cfgCopy, newFetcher)
 
-	logReloadChanges(ctx, v.config, &cfgCopy, v.policyHashes, newHashes, cacheInvalidated)
-
-	v.updateCircuitBreakersLocked(&cfgCopy)
-	v.applyFetcherLocked(&cfgCopy, newFetcher)
-
-	v.config = &cfgCopy
-	v.policies = policies
-	v.policyHashes = newHashes
+	hostSem := prev.hostSem
 
 	if policiesChanged {
 		attestation.ResetSANPatternWarnings()
 		slsa.ResetMaxLevelWarnings()
 		glob.ResetCache()
-		v.hostSem.Clear()
+
+		hostSem = &sync.Map{}
 	}
+
+	v.state.Store(&snapshot{
+		config:          &cfgCopy,
+		policies:        policies,
+		cache:           newCache,
+		metrics:         prev.metrics,
+		fetcher:         fetcher,
+		circuitBreakers: circuitBreakers,
+		fetchSem:        prev.fetchSem,
+		hostSem:         hostSem,
+		auditLogger:     prev.auditLogger,
+	})
+	v.policyHashes = newHashes
 
 	WarnEnforceDefaults(&cfgCopy, policies)
 
 	return nil
 }
 
-// updateCircuitBreakersLocked replaces the circuit breaker registry only when
-// the threshold or cooldown settings change. Preserving the registry across
-// reloads prevents a burst of retries to failing registries after a config
-// reload that did not change breaker settings.
-func (v *Verifier) updateCircuitBreakersLocked(cfg *config.Config) {
-	if v.circuitBreakers != nil &&
-		v.config.CircuitBreakerThreshold == cfg.CircuitBreakerThreshold &&
-		v.config.CircuitBreakerCooldown.Duration == cfg.CircuitBreakerCooldown.Duration {
-		return
+func reloadCache(prev *snapshot, cfg *config.Config, invalidated bool) *cache.Cache {
+	if !invalidated {
+		return prev.cache
 	}
 
-	v.circuitBreakers = attestation.NewCircuitBreakerRegistry(
+	prev.cache.Stop()
+
+	return cache.NewWithGauge(
+		cfg.CacheTTL.Duration,
+		prev.metrics.CacheEntriesTotal, prev.metrics.CacheEvictionsTotal,
+	)
+}
+
+// reloadCircuitBreakers returns the existing circuit breaker registry if settings
+// are unchanged, or creates a new one. Preserving the registry across reloads
+// prevents a burst of retries to failing registries.
+func (v *Verifier) reloadCircuitBreakers(
+	prev *snapshot, cfg *config.Config,
+) *attestation.CircuitBreakerRegistry {
+	if prev.circuitBreakers != nil &&
+		prev.config.CircuitBreakerThreshold == cfg.CircuitBreakerThreshold &&
+		prev.config.CircuitBreakerCooldown.Duration == cfg.CircuitBreakerCooldown.Duration {
+		return prev.circuitBreakers
+	}
+
+	return attestation.NewCircuitBreakerRegistry(
 		cfg.CircuitBreakerThreshold,
 		cfg.CircuitBreakerCooldown.Duration,
 	)
 }
 
-// prepareFetcher creates a new fetcher outside the write lock when one is
-// needed (first enable). Returns nil when the existing fetcher can be reused.
+// prepareFetcher creates a new fetcher outside the lock when one is needed
+// (first enable). Returns nil when the existing fetcher can be reused.
 func (v *Verifier) prepareFetcher(ctx context.Context, cfg *config.Config) *attestation.OCIFetcher {
 	if !cfg.Enabled() {
 		return nil
 	}
 
-	v.mu.RLock()
-	hasFetcher := v.fetcher != nil
-	v.mu.RUnlock()
-
-	if hasFetcher {
+	if v.state.Load().fetcher != nil {
 		return nil
 	}
 
 	return createAndWarmFetcher(ctx, cfg)
 }
 
-// applyFetcherLocked assigns a pre-created fetcher or updates rate limits on
-// the existing one. Must be called with v.mu held for writing.
-func (v *Verifier) applyFetcherLocked(cfg *config.Config, newFetcher *attestation.OCIFetcher) {
+// reloadFetcher returns the fetcher to use for the new snapshot. If a new
+// fetcher was pre-created, it is configured and returned; otherwise the existing
+// fetcher is updated with the new rate limit.
+func (v *Verifier) reloadFetcher( //nolint:ireturn // returns prev.fetcher which is the Fetcher interface
+	prev *snapshot,
+	cfg *config.Config,
+	newFetcher *attestation.OCIFetcher,
+) attestation.Fetcher {
 	if !cfg.Enabled() {
-		return
+		return prev.fetcher
 	}
 
-	if v.fetcher == nil && newFetcher != nil {
-		newFetcher.SetStaleRootCallback(v.metrics.TrustedRootStaleTotal.Inc)
-		v.fetcher = newFetcher
-	} else if ociFetcher, ok := v.fetcher.(*attestation.OCIFetcher); ok {
+	if prev.fetcher == nil && newFetcher != nil {
+		newFetcher.SetStaleRootCallback(prev.metrics.TrustedRootStaleTotal.Inc)
+
+		return newFetcher
+	}
+
+	if ociFetcher, ok := prev.fetcher.(*attestation.OCIFetcher); ok {
 		ociFetcher.SetRateLimit(cfg.FetchRateLimit)
 	}
+
+	return prev.fetcher
 }
 
 func loadAndHashPolicies(
@@ -413,7 +441,7 @@ func loadAndHashPolicies(
 	if cfg.Enabled() {
 		policies, err = policy.LoadAll(cfg.PolicyDir)
 		if err != nil {
-			return nil, nil, fmt.Errorf("reloading policies: %w", err)
+			return nil, nil, fmt.Errorf("loading policies: %w", err)
 		}
 
 		err = validatePoliciesRuntime(policies)
@@ -496,6 +524,8 @@ func (v *Verifier) verifyOnce(
 
 	select {
 	case <-ctx.Done():
+		state.metrics.VerificationInterruptedTotal.Inc()
+
 		return nil, fmt.Errorf("verification interrupted: %w", ctx.Err())
 	case res := <-flightCh:
 		if res.Shared {
@@ -521,9 +551,6 @@ func (v *Verifier) verifyOnce(
 	}
 }
 
-func (v *Verifier) snap() snapshot {
-	v.mu.RLock()
-	defer v.mu.RUnlock()
-
-	return v.snapshot
+func (v *Verifier) snap() *snapshot {
+	return v.state.Load()
 }

@@ -70,19 +70,19 @@ func (m *mockFetcher) Fetch(
 	return m.attestations, m.err
 }
 
-func marshalJSON(t *testing.T, val any) []byte {
-	t.Helper()
+func marshalJSON(tb testing.TB, val any) []byte {
+	tb.Helper()
 
 	data, err := json.Marshal(val)
 	if err != nil {
-		t.Fatalf("marshalling: %v", err)
+		tb.Fatalf("marshalling: %v", err)
 	}
 
 	return data
 }
 
-func validSLSAPayload(t *testing.T) []byte {
-	t.Helper()
+func validSLSAPayload(tb testing.TB) []byte {
+	tb.Helper()
 
 	stmt := slsa.Statement{
 		Type: testInTotoStatementV1,
@@ -112,7 +112,7 @@ func validSLSAPayload(t *testing.T) []byte {
 		},
 	}
 
-	return marshalJSON(t, stmt)
+	return marshalJSON(tb, stmt)
 }
 
 func validVSAPayload(t *testing.T, result string) []byte {

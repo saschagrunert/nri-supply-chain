@@ -16,6 +16,7 @@ package verifier
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -140,6 +141,8 @@ func fetchAttestations(
 ) ([]attestation.VerifiedAttestation, string, error) {
 	opts := buildFetchOpts(pol, digest, state.config.FetchTimeout.Duration)
 
+	var indexErr error
+
 	// When the image resolved from a manifest list, try the index digest
 	// first: cosign attaches attestations to the manifest list digest.
 	if indexDigest != "" {
@@ -151,6 +154,8 @@ func fetchAttestations(
 		}
 
 		if err != nil {
+			indexErr = err
+
 			slog.DebugContext(ctx,
 				"Index digest fetch failed, falling back to platform digest",
 				"indexDigest", indexDigest,
@@ -168,7 +173,15 @@ func fetchAttestations(
 
 	attestations, err := state.fetcher.Fetch(ctx, imageRef, digest, opts)
 	if err != nil {
-		return nil, digest, fmt.Errorf("fetching attestations: %w", err)
+		platformErr := fmt.Errorf("fetching attestations: %w", err)
+		if indexErr != nil {
+			return nil, digest, errors.Join(
+				platformErr,
+				fmt.Errorf("index digest fetch also failed: %w", indexErr),
+			)
+		}
+
+		return nil, digest, platformErr
 	}
 
 	return attestations, digest, nil
