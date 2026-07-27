@@ -96,8 +96,8 @@ stop_kubernix() {
 		done
 		if kill -0 "$pid" 2>/dev/null; then
 			kill -9 "$pid" 2>/dev/null || true
-			wait "$pid" 2>/dev/null || true
 		fi
+		wait "$pid" 2>/dev/null || true
 	fi
 	pkill -f "${KUBERNIX_ROOT}" 2>/dev/null || true
 	sleep 1
