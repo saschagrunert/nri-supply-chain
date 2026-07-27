@@ -150,8 +150,9 @@ wait_for_node_ready() {
 		kubernix_pid=$(cat "${BATS_FILE_TMPDIR}/kubernix.pid")
 	fi
 
-	local elapsed=0
-	while [[ $elapsed -lt $NODE_READY_TIMEOUT ]]; do
+	local start_time
+	start_time=$(date +%s)
+	while (($(date +%s) - start_time < NODE_READY_TIMEOUT)); do
 		if [[ -n "$kubernix_pid" ]] && ! kill -0 "$kubernix_pid" 2>/dev/null; then
 			echo "ERROR: kubernix process (PID $kubernix_pid) died during startup" >&2
 			return 1
@@ -160,7 +161,6 @@ wait_for_node_ready() {
 			return 0
 		fi
 		sleep 2
-		elapsed=$((elapsed + 2))
 	done
 	echo "ERROR: Node not ready after ${NODE_READY_TIMEOUT}s" >&2
 	echo "DEBUG: kubectl get nodes:" >&2
@@ -172,13 +172,13 @@ wait_for_node_ready() {
 
 wait_for_service_account() {
 	local ns="${1}"
-	local elapsed=0
-	while [[ $elapsed -lt 30 ]]; do
+	local start_time
+	start_time=$(date +%s)
+	while (($(date +%s) - start_time < 30)); do
 		if kubectl get serviceaccount default -n "$ns" --request-timeout="${CURL_TIMEOUT}s" &>/dev/null; then
 			return 0
 		fi
 		sleep 1
-		elapsed=$((elapsed + 1))
 	done
 	echo "ERROR: Default service account not created in $ns after 30s" >&2
 	return 1
@@ -237,13 +237,13 @@ start_plugin() {
 		--log-level debug \
 		>"$PLUGIN_LOG" 2>&1 &
 	echo $! >"$PLUGIN_PID_FILE"
-	local elapsed=0
-	while [[ $elapsed -lt 10 ]]; do
+	local start_time
+	start_time=$(date +%s)
+	while (($(date +%s) - start_time < 10)); do
 		if grep -q "Connected to runtime" "$PLUGIN_LOG" 2>/dev/null; then
 			return 0
 		fi
 		sleep 1
-		elapsed=$((elapsed + 1))
 	done
 	echo "ERROR: plugin did not connect within 10s" >&2
 	return 1
@@ -272,15 +272,15 @@ reload_plugin() {
 		local before_count
 		before_count=$(grep -c "Config reloaded\|Config reload\|No config file" "$PLUGIN_LOG" 2>/dev/null || true)
 		kill -HUP "$(cat "$PLUGIN_PID_FILE")"
-		local elapsed=0
-		while [[ $elapsed -lt 10 ]]; do
+		local start_time
+		start_time=$(date +%s)
+		while (($(date +%s) - start_time < 10)); do
 			local after_count
 			after_count=$(grep -c "Config reloaded\|Config reload\|No config file" "$PLUGIN_LOG" 2>/dev/null || true)
 			if [[ "$after_count" -gt "$before_count" ]]; then
 				return 0
 			fi
 			sleep 1
-			elapsed=$((elapsed + 1))
 		done
 	fi
 }
@@ -302,9 +302,10 @@ wait_for_pod_status() {
 	local expected="$2"
 	local timeout="${3:-$POD_TIMEOUT}"
 	local ns="${4:-$TEST_NS}"
-	local elapsed=0
+	local start_time
+	start_time=$(date +%s)
 
-	while [[ $elapsed -lt $timeout ]]; do
+	while (($(date +%s) - start_time < timeout)); do
 		local status
 		status=$(kubectl get pod "$name" -n "$ns" -o jsonpath='{.status.phase}' --request-timeout="${CURL_TIMEOUT}s" 2>/dev/null || true)
 		if [[ "$status" == "$expected" ]]; then
@@ -318,7 +319,6 @@ wait_for_pod_status() {
 		fi
 
 		sleep 2
-		elapsed=$((elapsed + 2))
 	done
 
 	echo "ERROR: Pod $name did not reach status $expected after ${timeout}s (current: ${status:-unknown}, container: ${container_status:-unknown})" >&2
@@ -339,13 +339,13 @@ plugin_log_contains() {
 assert_log_contains() {
 	local pattern="$1"
 	local timeout="${2:-30}"
-	local elapsed=0
-	while [[ $elapsed -lt $timeout ]]; do
+	local start_time
+	start_time=$(date +%s)
+	while (($(date +%s) - start_time < timeout)); do
 		if plugin_log_contains "$pattern"; then
 			return 0
 		fi
 		sleep 1
-		elapsed=$((elapsed + 1))
 	done
 	echo "ASSERTION FAILED: plugin log does not contain '$pattern' after ${timeout}s" >&2
 	echo "=== Plugin log tail (from offset $LOG_OFFSET) ===" >&2
@@ -360,13 +360,13 @@ assert_pod_verdict() {
 	local ns="${3:-$TEST_NS}"
 	local timeout="${4:-60}"
 	local msg="Container ${verdict}"
-	local elapsed=0
-	while [[ $elapsed -lt $timeout ]]; do
+	local start_time
+	start_time=$(date +%s)
+	while (($(date +%s) - start_time < timeout)); do
 		if tail -c +"$((LOG_OFFSET + 1))" "$PLUGIN_LOG" | grep "${ns}/${pod_name}" | grep -q "${msg}"; then
 			return 0
 		fi
 		sleep 1
-		elapsed=$((elapsed + 1))
 	done
 	echo "ASSERTION FAILED: pod ${ns}/${pod_name} not ${verdict} after ${timeout}s" >&2
 	echo "=== Plugin log tail (from offset $LOG_OFFSET) ===" >&2
@@ -400,13 +400,13 @@ wait_for_metrics() {
 	local pattern="${1:-nri_supply_chain}"
 	local addr="${2:-localhost:9090}"
 	local timeout="${3:-10}"
-	local elapsed=0
-	while [[ $elapsed -lt $timeout ]]; do
+	local start_time
+	start_time=$(date +%s)
+	while (($(date +%s) - start_time < timeout)); do
 		if curl -sf --max-time "$CURL_TIMEOUT" "http://${addr}/metrics" 2>/dev/null | grep -q "$pattern"; then
 			return 0
 		fi
 		sleep 1
-		elapsed=$((elapsed + 1))
 	done
 	return 1
 }
@@ -438,13 +438,13 @@ export COSIGN_PASSWORD COSIGN_PUB
 start_registry() {
 	"$CRANE" registry serve --address ":${REGISTRY_PORT}" &
 	echo $! >"$REGISTRY_PID_FILE"
-	local elapsed=0
-	while [[ $elapsed -lt 10 ]]; do
+	local start_time
+	start_time=$(date +%s)
+	while (($(date +%s) - start_time < 10)); do
 		if curl -sf --max-time "$CURL_TIMEOUT" "http://${REGISTRY_HOST}/v2/" >/dev/null 2>&1; then
 			return 0
 		fi
 		sleep 1
-		elapsed=$((elapsed + 1))
 	done
 	echo "ERROR: Registry not reachable on ${REGISTRY_HOST} after 10s" >&2
 	return 1
@@ -680,9 +680,10 @@ deploy_daemonset() {
 
 wait_for_daemonset_ready() {
 	local timeout="${1:-180}"
-	local elapsed=0
+	local start_time
+	start_time=$(date +%s)
 	local stable=0
-	while [[ $elapsed -lt $timeout ]]; do
+	while (($(date +%s) - start_time < timeout)); do
 		local desired ready
 		desired=$(kubectl get daemonset nri-supply-chain -n "$DAEMONSET_NS" \
 			-o jsonpath='{.status.desiredNumberScheduled}' --request-timeout="${CURL_TIMEOUT}s" 2>/dev/null || echo "0")
@@ -701,14 +702,12 @@ wait_for_daemonset_ready() {
 						break
 					fi
 					sleep 2
-					elapsed=$((elapsed + 2))
 					continue
 				fi
 			fi
 		fi
 		stable=0
 		sleep 2
-		elapsed=$((elapsed + 2))
 	done
 
 	if [[ $stable -lt 3 ]]; then
@@ -730,7 +729,7 @@ wait_for_daemonset_ready() {
 	# drop causes it to exit, so this catches that race.
 	local pod
 	pod=$(get_daemonset_pod_name)
-	while [[ $elapsed -lt $timeout ]]; do
+	while (($(date +%s) - start_time < timeout)); do
 		local started_at
 		started_at=$(kubectl get pod "$pod" -n "$DAEMONSET_NS" \
 			-o jsonpath='{.status.containerStatuses[0].state.running.startedAt}' --request-timeout="${CURL_TIMEOUT}s" 2>/dev/null || true)
@@ -744,7 +743,6 @@ wait_for_daemonset_ready() {
 			fi
 		fi
 		sleep 3
-		elapsed=$((elapsed + 3))
 	done
 	echo "ERROR: DaemonSet container not stable after ${timeout}s" >&2
 	kubectl describe pod "$pod" -n "$DAEMONSET_NS" --request-timeout="${KUBECTL_TIMEOUT}s" 2>&1 >&2 || true
@@ -768,13 +766,13 @@ daemonset_log_contains() {
 assert_daemonset_log_contains() {
 	local pattern="$1"
 	local timeout="${2:-30}"
-	local elapsed=0
-	while [[ $elapsed -lt $timeout ]]; do
+	local start_time
+	start_time=$(date +%s)
+	while (($(date +%s) - start_time < timeout)); do
 		if daemonset_log_contains "$pattern"; then
 			return 0
 		fi
 		sleep 1
-		elapsed=$((elapsed + 1))
 	done
 	local pod
 	pod=$(get_daemonset_pod_name 2>/dev/null || echo "unknown")
@@ -791,13 +789,13 @@ start_metrics_portforward() {
 	kubectl port-forward "pod/${pod}" -n "$DAEMONSET_NS" \
 		"${DAEMONSET_METRICS_PORT}:9090" &
 	echo $! >"$METRICS_PORTFORWARD_PID_FILE"
-	local elapsed=0
-	while [[ $elapsed -lt 60 ]]; do
+	local start_time
+	start_time=$(date +%s)
+	while (($(date +%s) - start_time < 60)); do
 		if curl -sf --max-time "$CURL_TIMEOUT" "http://localhost:${DAEMONSET_METRICS_PORT}/healthz" >/dev/null 2>&1; then
 			return 0
 		fi
 		sleep 1
-		elapsed=$((elapsed + 1))
 	done
 	echo "ERROR: port-forward not ready after 60s" >&2
 	echo "=== Pod status ===" >&2
