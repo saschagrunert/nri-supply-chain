@@ -120,6 +120,11 @@ Use `vsa.minimumLevel` to enforce build level requirements.
 When multiple provenance attestations exist, verification passes if any single
 valid attestation from a trusted builder passes (any-pass semantics).
 
+If all provenance attestations fail to parse or verify (as opposed to being
+absent), the check always fails regardless of `missingPolicy`. The
+`missingPolicy` setting only controls behavior when no provenance attestation
+exists at all.
+
 For custom build systems, configure `knownParameters` to list expected
 `externalParameters` keys. See
 [policy.md](policy.md#custom-build-systems) for an example.
@@ -144,6 +149,10 @@ digest verification.
 
 When multiple VEX documents exist, the most restrictive result wins: any
 `affected` status causes failure.
+
+If all VEX documents fail to parse or verify (as opposed to being absent),
+the check always fails regardless of `missingPolicy`. The `missingPolicy`
+setting only controls behavior when no VEX attestation exists at all.
 
 ### VSA (Verification Summary Attestation)
 

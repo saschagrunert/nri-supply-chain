@@ -161,8 +161,8 @@ Trust roots for verification. All sub-fields are optional.
 
 | Field         | Type  | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ------------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `builders`    | array | Trusted SLSA provenance builders. Each entry has `id` (URI) and `maxLevel` (0-3). Note: `maxLevel` is only enforced by VSA verification (`vsa.minimumLevel`), not during SLSA provenance checks, because provenance attestations do not declare a build level.                                                                                                                                                                                                                                |
-| `verifiers`   | array | Trusted VSA verifiers. Each entry has `id` (URI) and an optional `key` (absolute path to PEM public key). When `key` is set, it is also used for Sigstore bundle signature verification. When `key` is omitted, bundles are verified via keyless (Fulcio/OIDC) using `issuers` and `sanPatterns`, which must be configured.                                                                                                                                                                   |
+| `builders`    | array | Trusted SLSA provenance builders. Each entry has `id` (URI) and `maxLevel` (0-3). Builder IDs must be unique within a policy. Note: `maxLevel` is only enforced by VSA verification (`vsa.minimumLevel`), not during SLSA provenance checks, because provenance attestations do not declare a build level.                                                                                                                                                                                    |
+| `verifiers`   | array | Trusted VSA verifiers. Each entry has `id` (URI) and an optional `key` (absolute path to PEM public key). Verifier IDs must be unique within a policy. When `key` is set, it is also used for Sigstore bundle signature verification. When `key` is omitted, bundles are verified via keyless (Fulcio/OIDC) using `issuers` and `sanPatterns`, which must be configured.                                                                                                                      |
 | `issuers`     | array | Trusted OIDC issuers for keyless (Fulcio) verification.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `sanPatterns` | array | Accepted certificate Subject Alternative Names. Supports glob patterns: `*` matches any non-`/` sequence, `**` matches any characters including `/`, `?` matches a single non-`/` character, `[...]` matches a character class. Use `**` for GitHub Actions OIDC SANs that include workflow paths (e.g., `https://github.com/org/repo/**`). Required when `issuers` is set in `enforce` mode. In `warn` mode, omitting this field accepts any SAN from a trusted issuer (with a log warning). |
 | `sources`     | array | Allowed source repository glob patterns. Supports the same glob syntax as `sanPatterns`: `*` matches non-`/` characters, `**` matches any characters including `/`.                                                                                                                                                                                                                                                                                                                           |
@@ -198,11 +198,11 @@ OpenVEX verification settings.
 
 Verification Summary Attestation settings.
 
-| Field          | Type   | Default | Description                                                 |
-| -------------- | ------ | ------- | ----------------------------------------------------------- |
-| `minimumLevel` | int    | `0`     | Minimum SLSA build level required (0-3)                     |
-| `maxAge`       | string | (none)  | Maximum age of VSA `timeVerified` (Go duration, e.g. `24h`) |
-| `policy`       | string | (none)  | Expected policy URI in the VSA                              |
+| Field          | Type   | Default | Description                                                                             |
+| -------------- | ------ | ------- | --------------------------------------------------------------------------------------- |
+| `minimumLevel` | int    | `0`     | Minimum SLSA build level required (0-3)                                                 |
+| `maxAge`       | string | (none)  | Maximum age of VSA `timeVerified` (Go duration, e.g. `24h`). Must be positive when set. |
+| `policy`       | string | (none)  | Expected policy URI in the VSA                                                          |
 
 ### `signatures` (object)
 
@@ -244,6 +244,11 @@ build level requirements via VSA verification.
 When multiple provenance attestations exist, verification passes if any single
 valid attestation from a trusted builder passes (any-pass semantics).
 
+If all provenance attestations fail to parse or verify (as opposed to being
+absent), the check always fails regardless of `missingPolicy`. The
+`missingPolicy` setting only controls behavior when no provenance attestation
+exists at all.
+
 #### Custom build systems
 
 For build systems other than GitHub Actions, configure `knownParameters` to
@@ -283,6 +288,10 @@ Product matching operates at the image level using digest comparison and PURL
 
 When multiple VEX documents exist, the most restrictive result wins: any
 `affected` status causes failure regardless of other documents.
+
+If all VEX documents fail to parse or verify (as opposed to being absent),
+the check always fails regardless of `missingPolicy`. The `missingPolicy`
+setting only controls behavior when no VEX attestation exists at all.
 
 ### VSA (Verification Summary Attestation)
 

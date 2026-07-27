@@ -1268,3 +1268,57 @@ func TestVerifyExcludeDoubleStarPattern(t *testing.T) {
 			result.Reason)
 	}
 }
+
+func TestVerifyWarnModeAllowsOnContextCancel(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{
+		"trust": {"builders": [{"id": "test", "maxLevel": 2}]},
+		"slsa": {"missingPolicy": "deny"}
+	}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+	cfg.CacheTTL = config.Duration{Duration: 0}
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	result, err := verif.Verify(ctx, "nginx:latest", testDigest, "", "default")
+	testutil.AssertNoError(t, err)
+
+	if !result.Allowed {
+		t.Errorf("expected allowed=true in warn mode on context cancel, got: %s", result.Reason)
+	}
+}
+
+func TestVerifyEnforceModeRejectsOnContextCancel(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{
+		"trust": {"builders": [{"id": "test", "maxLevel": 2}]},
+		"slsa": {"missingPolicy": "deny"}
+	}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+	cfg.PolicyDir = dir
+	cfg.CacheTTL = config.Duration{Duration: 0}
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = verif.Verify(ctx, "nginx:latest", testDigest, "", "default")
+	if err == nil {
+		t.Error("expected error in enforce mode on context cancel")
+	}
+}

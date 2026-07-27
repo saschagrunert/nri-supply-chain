@@ -278,10 +278,29 @@ func (v *Verifier) Verify(
 
 	result, err := v.verifyOnce(ctx, &state, pol, imageRef, digest, indexDigest, namespace)
 	if err != nil {
-		return nil, fmt.Errorf("verification: %w", err)
+		return handleVerifyError(ctx, &state, imageRef, digest, namespace, err)
 	}
 
 	return applyEnforcement(ctx, state.config, result, imageRef)
+}
+
+func handleVerifyError(
+	ctx context.Context, state *snapshot,
+	imageRef, digest, namespace string, err error,
+) (*types.Result, error) {
+	if state.config.Verification != config.ModeEnforce {
+		slog.WarnContext(ctx, "Verification error (warn mode, allowing)",
+			"image", imageRef,
+			"error", err,
+		)
+
+		return allowResult(
+			ctx, state.auditLogger, imageRef, digest,
+			namespace, fmt.Sprintf("verification error: %s", err),
+		), nil
+	}
+
+	return nil, fmt.Errorf("verification: %w", err)
 }
 
 // Reload reloads the verifier's configuration and policies.
@@ -292,6 +311,8 @@ func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 	if err != nil {
 		return err
 	}
+
+	newFetcher := v.prepareFetcher(ctx, &cfgCopy)
 
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -315,7 +336,7 @@ func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 	logReloadChanges(ctx, v.config, &cfgCopy, v.policyHashes, newHashes, cacheInvalidated)
 
 	v.updateCircuitBreakersLocked(&cfgCopy)
-	v.updateFetcherLocked(ctx, &cfgCopy)
+	v.applyFetcherLocked(&cfgCopy, newFetcher)
 
 	v.config = &cfgCopy
 	v.policies = policies
@@ -349,16 +370,34 @@ func (v *Verifier) updateCircuitBreakersLocked(cfg *config.Config) {
 	)
 }
 
-func (v *Verifier) updateFetcherLocked(ctx context.Context, cfg *config.Config) {
+// prepareFetcher creates a new fetcher outside the write lock when one is
+// needed (first enable). Returns nil when the existing fetcher can be reused.
+func (v *Verifier) prepareFetcher(ctx context.Context, cfg *config.Config) *attestation.OCIFetcher {
+	if !cfg.Enabled() {
+		return nil
+	}
+
+	v.mu.RLock()
+	hasFetcher := v.fetcher != nil
+	v.mu.RUnlock()
+
+	if hasFetcher {
+		return nil
+	}
+
+	return createAndWarmFetcher(ctx, cfg)
+}
+
+// applyFetcherLocked assigns a pre-created fetcher or updates rate limits on
+// the existing one. Must be called with v.mu held for writing.
+func (v *Verifier) applyFetcherLocked(cfg *config.Config, newFetcher *attestation.OCIFetcher) {
 	if !cfg.Enabled() {
 		return
 	}
 
-	if v.fetcher == nil {
-		fetcher := createAndWarmFetcher(ctx, cfg)
-		fetcher.SetStaleRootCallback(v.metrics.TrustedRootStaleTotal.Inc)
-
-		v.fetcher = fetcher
+	if v.fetcher == nil && newFetcher != nil {
+		newFetcher.SetStaleRootCallback(v.metrics.TrustedRootStaleTotal.Inc)
+		v.fetcher = newFetcher
 	} else if ociFetcher, ok := v.fetcher.(*attestation.OCIFetcher); ok {
 		ociFetcher.SetRateLimit(cfg.FetchRateLimit)
 	}

@@ -35,6 +35,7 @@ const (
 	testVEXContext    = "https://openvex.dev/ns/v0.2.0"
 	testInTotoType    = "https://in-toto.io/Statement/v1"
 	testPredicateType = "https://openvex.dev/ns"
+	testSubjectName   = "test-image"
 )
 
 type inTotoWrapper struct {
@@ -78,7 +79,7 @@ func wrapInToto(t *testing.T, doc any, digest string) []byte {
 		Type: testInTotoType,
 		Subject: []inTotoSubj{
 			{
-				Name:   "test-image",
+				Name:   testSubjectName,
 				Digest: map[string]string{testDigestAlgo: digest[len(testDigestAlgo)+1:]},
 			},
 		},
@@ -418,7 +419,7 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 					Digest: map[string]string{testDigestAlgo: "000000"},
 				},
 				{
-					Name:   "test-image",
+					Name:   testSubjectName,
 					Digest: map[string]string{testDigestAlgo: testDigest[len(testDigestAlgo)+1:]},
 				},
 			},
@@ -587,7 +588,7 @@ func TestVerifyStatementEdgeCases(t *testing.T) {
 		}
 	})
 
-	t.Run("under investigation with unknown policy action defaults allow", func(t *testing.T) {
+	t.Run("under investigation with unknown policy action defaults to warn", func(t *testing.T) {
 		t.Parallel()
 
 		doc := validVEXDoc(openvex.StatusUnderInvestigation)
@@ -605,7 +606,11 @@ func TestVerifyStatementEdgeCases(t *testing.T) {
 		}
 
 		if !result.Passed {
-			t.Errorf("expected pass for unknown action (defaults to allow), got: %s", result.Detail)
+			t.Errorf("expected pass for unknown action (defaults to warn), got: %s", result.Detail)
+		}
+
+		if result.Status != types.StatusWarn {
+			t.Errorf("expected warn status for unknown action, got %q", result.Status)
 		}
 	})
 
@@ -1063,6 +1068,38 @@ func TestVerifyInTotoNilSubjectWithDigest(t *testing.T) {
 	)
 	if !errors.Is(err, vex.ErrEmptySubjects) {
 		t.Errorf("expected ErrEmptySubjects for nil subjects with digest, got: %v", err)
+	}
+}
+
+func TestVerifySubjectsWithoutDigestRejected(t *testing.T) {
+	t.Parallel()
+
+	doc := validVEXDoc(openvex.StatusFixed)
+	predBytes := mustMarshal(t, doc)
+
+	wrapper := inTotoWrapper{
+		Type: testInTotoType,
+		Subject: []inTotoSubj{
+			{
+				Name:   testSubjectName,
+				Digest: map[string]string{testDigestAlgo: "abc123"},
+			},
+		},
+		PredicateType: testPredicateType,
+		Predicate:     predBytes,
+	}
+
+	att := mustMarshal(t, wrapper)
+
+	_, err := vex.Verify(
+		context.Background(), att,
+		&policy.Policy{}, testImageRef, "",
+	)
+	if !errors.Is(err, vex.ErrSubjectMismatch) {
+		t.Errorf(
+			"expected ErrSubjectMismatch when subjects present but no digest, got: %v",
+			err,
+		)
 	}
 }
 
