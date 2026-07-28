@@ -51,7 +51,7 @@ func TestNewLogger(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			updateLogLevel(test.level)
 
-			logger := newLogger()
+			logger := newLogger(false)
 			handler := logger.Handler()
 
 			if !handler.Enabled(context.Background(), test.want) {
@@ -65,6 +65,22 @@ func TestNewLogger(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+//nolint:paralleltest // modifies package-level logLevelVar
+func TestNewLoggerCLIMode(t *testing.T) {
+	updateLogLevel(logLevelInfo)
+
+	pluginLogger := newLogger(false)
+	cliLogger := newLogger(true)
+
+	if _, ok := pluginLogger.Handler().(*slog.JSONHandler); !ok {
+		t.Error("expected JSONHandler for plugin mode")
+	}
+
+	if _, ok := cliLogger.Handler().(*cliHandler); !ok {
+		t.Error("expected cliHandler for CLI mode")
 	}
 }
 
@@ -82,6 +98,7 @@ func TestSetupConfig(t *testing.T) {
 			logLevel:        "",
 			verifyImage:     "",
 			verifyNamespace: "",
+			outputFormat:    "",
 			showVersion:     false,
 			validate:        false,
 			jsonSchema:      "",
@@ -119,6 +136,7 @@ func TestSetupConfig(t *testing.T) {
 			logLevel:        "",
 			verifyImage:     "",
 			verifyNamespace: "",
+			outputFormat:    "",
 			showVersion:     false,
 			validate:        false,
 			jsonSchema:      "",
@@ -371,7 +389,7 @@ func TestWarnValidationEnforceDefaults(t *testing.T) {
 				return c
 			}(),
 			policies: map[string]*policy.Policy{
-				"prod": {
+				testNamespaceProd: {
 					SLSA: &policy.SLSAPolicy{
 						MissingPolicy: sctypes.ActionDeny,
 					},
@@ -452,18 +470,21 @@ func writeValidationPolicy(t *testing.T, dir, filename, content string) {
 
 //nolint:paralleltest // modifies package-level logLevelVar
 func TestInitLogging(t *testing.T) {
-	initLogging(logLevelDebug)
+	initLogging(logLevelDebug, false)
 
 	if logLevelVar.Level() != slog.LevelDebug {
 		t.Errorf("expected debug level, got %v", logLevelVar.Level())
 	}
 
-	initLogging("bogus")
+	initLogging("bogus", true)
 }
 
 const (
-	defaultPluginName = "supply-chain"
-	defaultPluginIdx  = "10"
+	defaultPluginName       = "supply-chain"
+	defaultPluginIdx        = "10"
+	testNamespaceProduction = "production"
+	testNamespaceProd       = "prod"
+	testConfigPath          = "/tmp/cfg.toml"
 )
 
 func defaultOpts() options {
@@ -472,9 +493,10 @@ func defaultOpts() options {
 		metricsAddr:     "",
 		pluginName:      defaultPluginName,
 		pluginIdx:       defaultPluginIdx,
-		logLevel:        logLevelInfo,
+		logLevel:        "",
 		verifyImage:     "",
 		verifyNamespace: verifier.DefaultPolicyLabel,
+		outputFormat:    outputFormatTable,
 		showVersion:     false,
 		validate:        false,
 		jsonSchema:      "",
@@ -576,10 +598,20 @@ func TestParseFlagsFrom(t *testing.T) {
 		},
 		{
 			name: "verify-namespace flag",
-			args: []string{"--verify-namespace", "production"},
+			args: []string{"--verify-namespace", testNamespaceProduction},
 			want: func() options {
 				o := defaultOpts()
-				o.verifyNamespace = "production"
+				o.verifyNamespace = testNamespaceProduction
+
+				return o
+			}(),
+		},
+		{
+			name: "output flag",
+			args: []string{"--output", "json"},
+			want: func() options {
+				o := defaultOpts()
+				o.outputFormat = outputFormatJSON
 
 				return o
 			}(),
@@ -597,7 +629,7 @@ func TestParseFlagsFrom(t *testing.T) {
 		{
 			name: "multiple flags combined",
 			args: []string{
-				"--config", "/tmp/cfg.toml",
+				"--config", testConfigPath,
 				"--metrics-addr", ":8080",
 				"--plugin-name", "sc",
 				"--plugin-idx", "5",
@@ -606,13 +638,14 @@ func TestParseFlagsFrom(t *testing.T) {
 				"--verify-namespace", "staging",
 			},
 			want: options{
-				configPath:      "/tmp/cfg.toml",
+				configPath:      testConfigPath,
 				metricsAddr:     ":8080",
 				pluginName:      "sc",
 				pluginIdx:       "5",
 				logLevel:        logLevelError,
 				verifyImage:     "registry.io/img:v1",
 				verifyNamespace: "staging",
+				outputFormat:    outputFormatTable,
 				showVersion:     false,
 				validate:        false,
 				jsonSchema:      "",
@@ -695,7 +728,7 @@ func TestUpdateLogLevel(t *testing.T) {
 func TestLogLevelDynamic(t *testing.T) {
 	updateLogLevel(logLevelInfo)
 
-	logger := newLogger()
+	logger := newLogger(false)
 	handler := logger.Handler()
 
 	// Info should be enabled at info level.
@@ -714,5 +747,48 @@ func TestLogLevelDynamic(t *testing.T) {
 	// The same handler should now reflect the new level.
 	if !handler.Enabled(context.Background(), slog.LevelDebug) {
 		t.Error("expected debug to be enabled after dynamic level change")
+	}
+}
+
+func TestEffectiveLogLevel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		flagLevel   string
+		configLevel string
+		want        string
+	}{
+		{
+			name:        "flag overrides config",
+			flagLevel:   logLevelDebug,
+			configLevel: logLevelError,
+			want:        logLevelDebug,
+		},
+		{
+			name:        "config used when flag empty",
+			flagLevel:   "",
+			configLevel: logLevelWarn,
+			want:        logLevelWarn,
+		},
+		{name: "default when both empty", flagLevel: "", configLevel: "", want: logLevelInfo},
+		{
+			name:        "flag used when config empty",
+			flagLevel:   logLevelError,
+			configLevel: "",
+			want:        logLevelError,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := effectiveLogLevel(test.flagLevel, test.configLevel)
+			if got != test.want {
+				t.Errorf("effectiveLogLevel(%q, %q) = %q, want %q",
+					test.flagLevel, test.configLevel, got, test.want)
+			}
+		})
 	}
 }

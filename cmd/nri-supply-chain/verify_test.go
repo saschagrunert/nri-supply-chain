@@ -42,30 +42,34 @@ import (
 )
 
 const (
-	testArchAmd64 = "amd64"
-	testArchArm64 = "arm64"
-	testArchS390x = "s390x"
-	testOSLinux   = "linux"
-	testOSZos     = "zos"
+	testArchAmd64  = "amd64"
+	testArchArm64  = "arm64"
+	testArchS390x  = "s390x"
+	testOSLinux    = "linux"
+	testOSZos      = "zos"
+	testImageNginx = "nginx:latest"
 )
 
 func TestOutputVerifyResultAllowed(t *testing.T) {
 	t.Parallel()
 
 	checks := []internaltypes.CheckResult{
-		{Type: "slsa", Passed: true, Status: "pass", Detail: "verified", Err: nil},
+		{
+			Type: internaltypes.CheckTypeSLSA, Passed: true,
+			Status: internaltypes.StatusPass, Detail: "verified", Err: nil,
+		},
 	}
 
 	const testDigest = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4" +
 		"e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
 
 	out := captureVerifyOutput(
-		t, "nginx:latest", testDigest,
+		t, testImageNginx, testDigest,
 		verifier.DefaultPolicyLabel, true, "verified", checks,
 	)
 
-	if out.Image != "nginx:latest" {
-		t.Errorf("Image = %q, want %q", out.Image, "nginx:latest")
+	if out.Image != testImageNginx {
+		t.Errorf("Image = %q, want %q", out.Image, testImageNginx)
 	}
 
 	if out.Digest != testDigest {
@@ -88,8 +92,12 @@ func TestOutputVerifyResultAllowed(t *testing.T) {
 		t.Fatalf("CheckResults length = %d, want 1", len(out.CheckResults))
 	}
 
-	if out.CheckResults[0].Type != "slsa" {
-		t.Errorf("CheckResults[0].Type = %q, want %q", out.CheckResults[0].Type, "slsa")
+	if out.CheckResults[0].Type != internaltypes.CheckTypeSLSA {
+		t.Errorf(
+			"CheckResults[0].Type = %q, want %q",
+			out.CheckResults[0].Type,
+			internaltypes.CheckTypeSLSA,
+		)
 	}
 }
 
@@ -101,7 +109,7 @@ func TestOutputVerifyResultDenied(t *testing.T) {
 
 	out := captureVerifyOutput(
 		t, "evil:latest", deniedDigest,
-		"prod", false, "failed checks", nil,
+		testNamespaceProd, false, "failed checks", nil,
 	)
 
 	if out.Allowed {
@@ -126,16 +134,21 @@ func captureVerifyOutput(
 
 	var buf bytes.Buffer
 
-	outputVerifyResult(&buf, imageRef, digest, namespace, allowed, reason, checks)
+	input := &verifyOutput{
+		Image: imageRef, Digest: digest, Namespace: namespace,
+		PolicyFile: "", Mode: "",
+		Allowed: allowed, Reason: reason, CheckResults: checks,
+	}
+	outputVerifyResult(&buf, outputFormatJSON, input)
 
-	var out verifyOutput
+	var parsed verifyOutput
 
-	err := json.Unmarshal(buf.Bytes(), &out)
+	err := json.Unmarshal(buf.Bytes(), &parsed)
 	if err != nil {
 		t.Fatalf("invalid JSON output: %v\nraw: %s", err, buf.String())
 	}
 
-	return out
+	return parsed
 }
 
 func TestResolveDigestInvalidRef(t *testing.T) {
@@ -405,6 +418,65 @@ func TestResolveDigestManifestListNoPlatformMatch(t *testing.T) {
 	}
 }
 
+func TestResolvePolicyFile(t *testing.T) {
+	t.Parallel()
+
+	policyDir := t.TempDir()
+
+	writeValidationPolicy(t, policyDir, "default.json", `{}`)
+	writeValidationPolicy(t, policyDir, "production.json", `{}`)
+
+	t.Run("namespace file exists", func(t *testing.T) {
+		t.Parallel()
+
+		got := resolvePolicyFile(policyDir, testNamespaceProduction)
+		want := filepath.Join(policyDir, "production.json")
+
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("falls back to default", func(t *testing.T) {
+		t.Parallel()
+
+		got := resolvePolicyFile(policyDir, "nonexistent")
+		want := filepath.Join(policyDir, "default.json")
+
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("empty dir falls back to default", func(t *testing.T) {
+		t.Parallel()
+
+		emptyDir := t.TempDir()
+		got := resolvePolicyFile(emptyDir, testNamespaceProduction)
+		want := filepath.Join(emptyDir, "default.json")
+
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+}
+
+func TestRunVerifyInvalidOutputFormat(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+
+	opts := &options{ //nolint:exhaustruct // test only sets relevant fields
+		verifyImage:     "img:v1",
+		verifyNamespace: verifier.DefaultPolicyLabel,
+		outputFormat:    "xml",
+	}
+
+	if code := runVerify(opts, cfg); code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+}
+
 func TestRunVerifyResolveDigestFails(t *testing.T) {
 	t.Parallel()
 
@@ -419,17 +491,10 @@ func TestRunVerifyResolveDigestFails(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = dir
 
-	opts := &options{
-		configPath:      "",
-		metricsAddr:     "",
-		pluginName:      "",
-		pluginIdx:       "",
-		logLevel:        "",
+	opts := &options{ //nolint:exhaustruct // test only sets relevant fields
 		verifyImage:     ":::invalid-ref",
 		verifyNamespace: verifier.DefaultPolicyLabel,
-		showVersion:     false,
-		validate:        false,
-		jsonSchema:      "",
+		outputFormat:    outputFormatJSON,
 	}
 
 	code := runVerify(opts, cfg)
@@ -442,17 +507,10 @@ func TestRunVerifyDisabledErrors(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.DefaultConfig()
-	opts := &options{
-		configPath:      "",
-		metricsAddr:     "",
-		pluginName:      "",
-		pluginIdx:       "",
-		logLevel:        "",
+	opts := &options{ //nolint:exhaustruct // test only sets relevant fields
 		verifyImage:     "example.com/test:latest",
 		verifyNamespace: verifier.DefaultPolicyLabel,
-		showVersion:     false,
-		validate:        false,
-		jsonSchema:      "",
+		outputFormat:    outputFormatJSON,
 	}
 
 	code := runVerify(opts, cfg)
@@ -490,17 +548,10 @@ func TestRunVerifyEnforceDenied(t *testing.T) {
 	cfg.Verification = config.ModeEnforce
 	cfg.PolicyDir = policyDir
 
-	opts := &options{
-		configPath:      "",
-		metricsAddr:     "",
-		pluginName:      "",
-		pluginIdx:       "",
-		logLevel:        "",
+	opts := &options{ //nolint:exhaustruct // test only sets relevant fields
 		verifyImage:     imgRef,
 		verifyNamespace: verifier.DefaultPolicyLabel,
-		showVersion:     false,
-		validate:        false,
-		jsonSchema:      "",
+		outputFormat:    outputFormatJSON,
 	}
 
 	out := captureRunVerify(t, opts, cfg)
@@ -522,17 +573,10 @@ func TestRunVerifyVerifierNewError(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = policyDir
 
-	opts := &options{
-		configPath:      "",
-		metricsAddr:     "",
-		pluginName:      "",
-		pluginIdx:       "",
-		logLevel:        "",
+	opts := &options{ //nolint:exhaustruct // test only sets relevant fields
 		verifyImage:     "test:latest",
 		verifyNamespace: verifier.DefaultPolicyLabel,
-		showVersion:     false,
-		validate:        false,
-		jsonSchema:      "",
+		outputFormat:    outputFormatJSON,
 	}
 
 	code := runVerify(opts, cfg)
@@ -571,17 +615,10 @@ func TestRunVerifyWarnModeWithChecks(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = policyDir
 
-	opts := &options{
-		configPath:      "",
-		metricsAddr:     "",
-		pluginName:      "",
-		pluginIdx:       "",
-		logLevel:        "",
+	opts := &options{ //nolint:exhaustruct // test only sets relevant fields
 		verifyImage:     imgRef,
 		verifyNamespace: verifier.DefaultPolicyLabel,
-		showVersion:     false,
-		validate:        false,
-		jsonSchema:      "",
+		outputFormat:    outputFormatJSON,
 	}
 
 	out := captureRunVerify(t, opts, cfg)
@@ -668,4 +705,105 @@ func findLastJSON(lines []string) string {
 	}
 
 	return strings.Join(jsonLines, "\n")
+}
+
+func TestOutputVerifyResultTableAllowed(t *testing.T) {
+	t.Parallel()
+
+	checks := []internaltypes.CheckResult{
+		{
+			Type: internaltypes.CheckTypeSLSA, Passed: true,
+			Status: internaltypes.StatusPass, Detail: "SLSA level 3", Err: nil,
+		},
+		{
+			Type: internaltypes.CheckTypeVEX, Passed: true,
+			Status: internaltypes.StatusWarn, Detail: "advisory found", Err: nil,
+		},
+	}
+
+	var buf bytes.Buffer
+
+	input := &verifyOutput{
+		Image: testImageNginx, Digest: "sha256:abc123", Namespace: testNamespaceProd,
+		PolicyFile: "/policies/prod.json", Mode: string(config.ModeWarn), Allowed: true,
+		Reason: "", CheckResults: checks,
+	}
+	outputVerifyResult(&buf, outputFormatTable, input)
+
+	got := buf.String()
+
+	for _, want := range []string{
+		testImageNginx,
+		"sha256:abc123",
+		testNamespaceProd,
+		"/policies/prod.json",
+		"ALLOWED",
+		"TYPE",
+		"STATUS",
+		"DETAIL",
+		"SLSA",
+		"SLSA level 3",
+		"VEX",
+		"advisory found",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("table output missing %q\ngot:\n%s", want, got)
+		}
+	}
+
+	if strings.Contains(got, "Reason") {
+		t.Errorf("should not contain Reason when reason is empty\ngot:\n%s", got)
+	}
+}
+
+func TestOutputVerifyResultTableDenied(t *testing.T) {
+	t.Parallel()
+
+	checks := []internaltypes.CheckResult{
+		{
+			Type: internaltypes.CheckTypeSLSA, Passed: false,
+			Status: internaltypes.StatusFail, Detail: "no attestation", Err: nil,
+		},
+	}
+
+	var buf bytes.Buffer
+
+	input := &verifyOutput{
+		Image: "evil:latest", Digest: "sha256:fff", Namespace: "default",
+		PolicyFile: "/policies/default.json", Mode: string(config.ModeEnforce), Allowed: false,
+		Reason: "verification failed", CheckResults: checks,
+	}
+	outputVerifyResult(&buf, outputFormatTable, input)
+
+	got := buf.String()
+
+	for _, want := range []string{
+		"DENIED",
+		"verification failed",
+		"SLSA",
+		"no attestation",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("table output missing %q\ngot:\n%s", want, got)
+		}
+	}
+}
+
+func TestOutputVerifyResultTableNoChecks(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	input := &verifyOutput{
+		Image: "img:v1", Digest: "sha256:aaa", Namespace: "ns",
+		PolicyFile: "/policies/ns.json", Mode: string(config.ModeWarn), Allowed: true,
+		Reason: "", CheckResults: nil,
+	}
+	outputVerifyResult(&buf, outputFormatTable, input)
+
+	got := buf.String()
+
+	if strings.Contains(got, "TYPE") {
+		t.Errorf("should not contain table header when no checks\ngot:\n%s", got)
+	}
 }

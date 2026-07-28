@@ -140,9 +140,11 @@ linters:
             - $gostd
             - github.com/BurntSushi/toml
             - github.com/containerd/nri
+            - github.com/fatih/color
             - github.com/fsnotify/fsnotify
             - github.com/google/go-containerregistry
             - github.com/invopop/jsonschema
+            - github.com/olekukonko/tablewriter
             - github.com/openvex/go-vex
             - github.com/prometheus/client_golang
             - github.com/saschagrunert/nri-supply-chain
