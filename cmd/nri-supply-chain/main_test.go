@@ -472,7 +472,7 @@ func defaultOpts() options {
 		pluginIdx:       defaultPluginIdx,
 		logLevel:        logLevelInfo,
 		verifyImage:     "",
-		verifyNamespace: defaultPolicyLabel,
+		verifyNamespace: verifier.DefaultPolicyLabel,
 		showVersion:     false,
 		validate:        false,
 		jsonSchema:      "",

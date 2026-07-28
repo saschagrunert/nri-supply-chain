@@ -39,11 +39,10 @@ var version = "0.1.5"
 var logLevelVar slog.LevelVar //nolint:gochecknoglobals // shared between initLogging and reload
 
 const (
-	defaultPolicyLabel = "default"
-	logLevelDebug      = "debug"
-	logLevelInfo       = "info"
-	logLevelWarn       = "warn"
-	logLevelError      = "error"
+	logLevelDebug = "debug"
+	logLevelInfo  = "info"
+	logLevelWarn  = "warn"
+	logLevelError = "error"
 )
 
 type options struct {
@@ -168,7 +167,7 @@ func parseFlagsFrom(args []string) options {
 	validate := flagSet.Bool("validate", false, "validate config and policies, then exit")
 	verifyImage := flagSet.String("verify-image", "", "verify an image and exit")
 	verifyNamespace := flagSet.String(
-		"verify-namespace", defaultPolicyLabel, "namespace for verification",
+		"verify-namespace", verifier.DefaultPolicyLabel, "namespace for verification",
 	)
 	jsonSchema := flagSet.String(
 		"json-schema", "",
@@ -233,7 +232,7 @@ func runValidation(cfg *config.Config) int {
 	for ns, pol := range policies {
 		label := ns
 		if label == "" {
-			label = defaultPolicyLabel
+			label = verifier.DefaultPolicyLabel
 		}
 
 		err = pol.ValidateRuntime()

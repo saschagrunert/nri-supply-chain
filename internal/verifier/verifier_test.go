@@ -708,55 +708,6 @@ func TestReloadClearsCacheWhenPolicyChanges(t *testing.T) {
 	}
 }
 
-const testDockerNginx = "docker.io/library/nginx:latest"
-
-func TestBuildDigestRef(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		imageRef string
-		digest   string
-		expected string
-	}{
-		{
-			name:     "empty digest returns imageRef",
-			imageRef: testDockerNginx,
-			digest:   "",
-			expected: testDockerNginx,
-		},
-		{
-			name:     "imageRef already has digest",
-			imageRef: "docker.io/library/nginx@sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
-			digest:   "sha256:b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3",
-			expected: "docker.io/library/nginx@sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
-		},
-		{
-			name:     "appends digest to tag ref",
-			imageRef: testDockerNginx,
-			digest:   testDigest,
-			expected: "index.docker.io/library/nginx@sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
-		},
-		{
-			name:     "invalid imageRef returns original",
-			imageRef: ":::invalid",
-			digest:   testDigest,
-			expected: ":::invalid",
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			got := verifier.ExportBuildDigestRef(test.imageRef, test.digest)
-			if got != test.expected {
-				t.Errorf("expected %q, got %q", test.expected, got)
-			}
-		})
-	}
-}
-
 func TestReady(t *testing.T) {
 	t.Parallel()
 

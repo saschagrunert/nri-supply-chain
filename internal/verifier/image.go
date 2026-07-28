@@ -91,24 +91,6 @@ func acquireHostSem(hostSem *sync.Map, host string) *semaphore.Weighted {
 	return val.(*semaphore.Weighted) //nolint:forcetypeassert // hostSem is private, only stores *Weighted
 }
 
-func buildDigestRef(imageRef, digest string) string {
-	if digest == "" || strings.Contains(imageRef, "@") {
-		return imageRef
-	}
-
-	ref, err := name.ParseReference(imageRef)
-	if err != nil {
-		slog.Debug("Failed to parse image reference for digest ref",
-			"image", imageRef,
-			"error", err,
-		)
-
-		return imageRef
-	}
-
-	return ref.Context().Digest(digest).String()
-}
-
 // digestRefFromParsed builds a digest reference string using a pre-parsed
 // reference, avoiding redundant parsing. Returns imageRef unchanged when
 // the parsed reference is nil (e.g. when the initial parse failed).

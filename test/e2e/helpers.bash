@@ -91,17 +91,31 @@ KUBERNIX_MAX_RETRIES=2
 KUBERNIX_RETRY_BUDGET=300
 
 wait_for_apiserver_ready() {
-	local timeout="${1:-60}"
+	local timeout="${1:-120}"
 	local start_time
 	start_time=$(date +%s)
 	while (($(date +%s) - start_time < timeout)); do
-		if kubectl get --raw /readyz --request-timeout="${CURL_TIMEOUT}s" &>/dev/null; then
+		if kubectl get --raw /healthz --request-timeout="${CURL_TIMEOUT}s" &>/dev/null; then
 			return 0
 		fi
 		sleep 2
 	done
-	echo "ERROR: API server readyz check failed after ${timeout}s" >&2
-	kubectl get --raw '/readyz?verbose' --request-timeout="${KUBECTL_TIMEOUT}s" 2>&1 >&2 || true
+	echo "ERROR: API server healthz check failed after ${timeout}s" >&2
+	kubectl get --raw '/healthz?verbose' --request-timeout="${KUBECTL_TIMEOUT}s" 2>&1 >&2 || true
+	return 1
+}
+
+wait_for_controller_manager() {
+	local timeout="${1:-30}"
+	local start_time
+	start_time=$(date +%s)
+	while (($(date +%s) - start_time < timeout)); do
+		if kubectl get serviceaccount default -n default --request-timeout="${CURL_TIMEOUT}s" &>/dev/null; then
+			return 0
+		fi
+		sleep 2
+	done
+	echo "ERROR: controller-manager not functional after ${timeout}s (default SA missing)" >&2
 	return 1
 }
 
@@ -124,7 +138,7 @@ start_kubernix_with_retry() {
 
 		start_kubernix "$@"
 
-		if wait_for_node_ready && wait_for_apiserver_ready; then
+		if wait_for_node_ready && wait_for_apiserver_ready && wait_for_controller_manager; then
 			return 0
 		fi
 	done
