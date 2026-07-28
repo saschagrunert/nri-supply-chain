@@ -16,6 +16,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -622,12 +624,34 @@ func TestParseFlagsFrom(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := parseFlagsFrom(test.args)
+			got, err := parseFlagsFrom(test.args)
+			if err != nil {
+				t.Fatalf("parseFlagsFrom(%v) unexpected error: %v", test.args, err)
+			}
+
 			if got != test.want {
 				t.Errorf("parseFlagsFrom(%v)\n got: %+v\nwant: %+v",
 					test.args, got, test.want)
 			}
 		})
+	}
+}
+
+func TestParseFlagsFromInvalidFlag(t *testing.T) {
+	t.Parallel()
+
+	_, err := parseFlagsFrom([]string{"--nonexistent-flag"})
+	if err == nil {
+		t.Fatal("expected error for invalid flag")
+	}
+}
+
+func TestParseFlagsFromHelp(t *testing.T) {
+	t.Parallel()
+
+	_, err := parseFlagsFrom([]string{"--help"})
+	if !errors.Is(err, flag.ErrHelp) {
+		t.Errorf("expected flag.ErrHelp, got %v", err)
 	}
 }
 

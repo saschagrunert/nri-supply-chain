@@ -303,10 +303,10 @@ func passResult() *types.CheckResult {
 	return types.PassResult(checkType, "SLSA provenance verified")
 }
 
-// ResetMaxLevelWarnings clears the deduplication state so that maxLevel
+// ResetWarnings clears the deduplication state so that maxLevel
 // and empty-trust warnings are re-emitted on the next verification cycle.
 // Call this after a config reload to ensure warnings reflect the new policy state.
-func ResetMaxLevelWarnings() {
+func ResetWarnings() {
 	warnedMaxLevel.Clear()
 	warnedEmptyTrust.Clear()
 }

@@ -92,7 +92,7 @@ func TestFetchCorruptedBundleJSON(t *testing.T) {
 				Digest:         testFetchDigest,
 			}
 
-			_, err := fetcher.Fetch(context.Background(), testFetchImageRef, testFetchDigest, opts)
+			_, err := fetcher.Fetch(context.Background(), testFetchImageRef, opts)
 
 			testutil.AssertError(t, err)
 		})
@@ -146,7 +146,7 @@ func TestFetchOversizedAttestation(t *testing.T) {
 		Digest:         testFetchDigest,
 	}
 
-	result, err := fetcher.Fetch(context.Background(), testFetchImageRef, testFetchDigest, opts)
+	result, err := fetcher.Fetch(context.Background(), testFetchImageRef, opts)
 	if err != nil {
 		return
 	}

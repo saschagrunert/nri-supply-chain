@@ -225,7 +225,11 @@ func (c *Config) Normalize() {
 		slog.Warn("cache_ttl is zero, verification result caching is disabled")
 	}
 
-	if c.CacheTTL.Duration == 0 {
+	if c.CacheTTL.Duration == 0 && c.CacheFailureTTL.Duration > 0 {
+		slog.Warn("cache_failure_ttl reset to zero because cache_ttl is zero",
+			"cache_failure_ttl", c.CacheFailureTTL.Duration,
+		)
+
 		c.CacheFailureTTL.Duration = 0
 	}
 

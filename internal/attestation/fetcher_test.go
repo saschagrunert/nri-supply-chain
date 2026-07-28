@@ -904,7 +904,7 @@ func TestFetch(t *testing.T) {
 			fetcher := attestation.NewTestOCIFetcherFull(tt.verifyFunc, tt.imageFetch, tt.referrers)
 
 			result, err := fetcher.Fetch(
-				ctx, testFetchImageRef, testFetchDigest, &attestation.FetchOptions{},
+				ctx, testFetchImageRef, &attestation.FetchOptions{Digest: testFetchDigest},
 			)
 
 			if tt.wantErr {
@@ -1130,7 +1130,7 @@ func TestFetchFallsBackToCosignTag(t *testing.T) {
 	)
 
 	result, err := fetcher.Fetch(
-		context.Background(), testFetchImageRef, testFetchDigest, &attestation.FetchOptions{},
+		context.Background(), testFetchImageRef, &attestation.FetchOptions{Digest: testFetchDigest},
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1232,9 +1232,9 @@ func TestFetchRetriesOnTransientError(t *testing.T) {
 		},
 	)
 
-	opts := &attestation.FetchOptions{Timeout: 5 * time.Second}
+	opts := &attestation.FetchOptions{Timeout: 5 * time.Second, Digest: digest}
 
-	_, err := fetcher.Fetch(context.Background(), ref, digest, opts)
+	_, err := fetcher.Fetch(context.Background(), ref, opts)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1267,9 +1267,9 @@ func TestFetchExhaustsAllRetries(t *testing.T) {
 		},
 	)
 
-	opts := &attestation.FetchOptions{Timeout: 10 * time.Second}
+	opts := &attestation.FetchOptions{Timeout: 10 * time.Second, Digest: digest}
 
-	_, err := fetcher.Fetch(context.Background(), ref, digest, opts)
+	_, err := fetcher.Fetch(context.Background(), ref, opts)
 	if err == nil {
 		t.Fatal("expected error when all retries are exhausted")
 	}
@@ -1409,7 +1409,7 @@ func TestFetchSkipsCosignTagWhenReferrersExist(t *testing.T) {
 	)
 
 	result, err := fetcher.Fetch(
-		context.Background(), testFetchImageRef, testFetchDigest, &attestation.FetchOptions{},
+		context.Background(), testFetchImageRef, &attestation.FetchOptions{Digest: testFetchDigest},
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

@@ -65,7 +65,7 @@ type mockFetcher struct {
 
 func (m *mockFetcher) Fetch(
 	_ context.Context,
-	_, _ string,
+	_ string,
 	_ *attestation.FetchOptions,
 ) ([]attestation.VerifiedAttestation, error) {
 	return m.attestations, m.err
@@ -700,7 +700,7 @@ type countingFetcher struct {
 
 func (f *countingFetcher) Fetch(
 	_ context.Context,
-	_, _ string,
+	_ string,
 	_ *attestation.FetchOptions,
 ) ([]attestation.VerifiedAttestation, error) {
 	f.calls.Add(1)
@@ -715,7 +715,7 @@ type failingFetcher struct {
 
 func (f *failingFetcher) Fetch(
 	_ context.Context,
-	_, _ string,
+	_ string,
 	_ *attestation.FetchOptions,
 ) ([]attestation.VerifiedAttestation, error) {
 	f.calls.Add(1)
@@ -1039,12 +1039,12 @@ type digestAwareFetcher struct {
 
 func (f *digestAwareFetcher) Fetch(
 	_ context.Context,
-	_, digest string,
-	_ *attestation.FetchOptions,
+	_ string,
+	opts *attestation.FetchOptions,
 ) ([]attestation.VerifiedAttestation, error) {
 	f.calls.Add(1)
 
-	if atts, ok := f.byDigest[digest]; ok {
+	if atts, ok := f.byDigest[opts.Digest]; ok {
 		return atts, nil
 	}
 

@@ -17,6 +17,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -63,7 +64,16 @@ func main() {
 }
 
 func run() int {
-	opts := parseFlags()
+	opts, err := parseFlags()
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+
+		slog.Error("Failed to parse flags", "error", err)
+
+		return 1
+	}
 
 	if opts.showVersion {
 		_, _ = fmt.Fprintln(os.Stdout, "nri-supply-chain v"+version)
@@ -149,12 +159,12 @@ func startPlugin(opts *options, cfg *config.Config) int {
 	return 0
 }
 
-func parseFlags() options {
+func parseFlags() (options, error) {
 	return parseFlagsFrom(os.Args[1:])
 }
 
-func parseFlagsFrom(args []string) options {
-	flagSet := flag.NewFlagSet("nri-supply-chain", flag.ExitOnError)
+func parseFlagsFrom(args []string) (options, error) {
+	flagSet := flag.NewFlagSet("nri-supply-chain", flag.ContinueOnError)
 
 	configPath := flagSet.String("config", "", "path to TOML config file")
 	metricsAddr := flagSet.String(
@@ -174,7 +184,10 @@ func parseFlagsFrom(args []string) options {
 		"print JSON Schema and exit (policy, result)",
 	)
 
-	_ = flagSet.Parse(args)
+	err := flagSet.Parse(args)
+	if err != nil {
+		return options{}, fmt.Errorf("parsing flags: %w", err)
+	}
 
 	return options{
 		configPath:      *configPath,
@@ -187,7 +200,7 @@ func parseFlagsFrom(args []string) options {
 		showVersion:     *showVersion,
 		validate:        *validate,
 		jsonSchema:      *jsonSchema,
-	}
+	}, nil
 }
 
 func setupConfig(opts *options) (*config.Config, error) {
@@ -349,12 +362,7 @@ func runPlugin(
 			"name", opts.pluginName, "index", opts.pluginIdx,
 		)
 
-		runErr := nriStub.Run(gctx)
-		if runErr != nil {
-			return fmt.Errorf("NRI plugin: %w", runErr)
-		}
-
-		return nil
+		return nriStub.Run(gctx)
 	})
 
 	group.Go(func() error {

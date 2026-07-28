@@ -16,9 +16,11 @@ package policy_test
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
@@ -1282,5 +1284,42 @@ func TestValidateVSAMaxAgeZero(t *testing.T) {
 	err := pol.Validate()
 	if !errors.Is(err, policy.ErrVSAMaxAgeNotPositive) {
 		t.Errorf("expected ErrVSAMaxAgeNotPositive, got %v", err)
+	}
+}
+
+func TestValidateVSAMaxAgeResolved(t *testing.T) {
+	t.Parallel()
+
+	pol := policy.Policy{
+		VSA: &policy.VSAPolicy{MaxAge: "24h"},
+	}
+
+	testutil.AssertNoError(t, pol.Validate())
+	testutil.AssertEqual(t, 24*time.Hour, pol.VSA.MaxAgeDuration)
+}
+
+func TestValidateVSANoMaxAgeSkipsResolve(t *testing.T) {
+	t.Parallel()
+
+	pol := policy.Policy{
+		VSA: &policy.VSAPolicy{},
+	}
+
+	testutil.AssertNoError(t, pol.Validate())
+	testutil.AssertEqual(t, time.Duration(0), pol.VSA.MaxAgeDuration)
+}
+
+func TestTooManyPolicyFiles(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	for i := range 1001 {
+		testutil.WritePolicy(t, dir, fmt.Sprintf("policy-%04d.json", i), "{}")
+	}
+
+	_, err := policy.LoadAll(dir)
+	if !errors.Is(err, policy.ErrTooManyPolicyFiles) {
+		t.Errorf("expected ErrTooManyPolicyFiles, got %v", err)
 	}
 }

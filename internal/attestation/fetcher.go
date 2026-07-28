@@ -248,25 +248,19 @@ func (f *OCIFetcher) Warm(ctx context.Context) error {
 }
 
 // Fetch discovers and returns verified attestations for the given image.
-// If opts.Digest is empty, it defaults to the digest parameter.
+// The digest used for reference parsing and attestation discovery is taken
+// from opts.Digest, which must be set by the caller.
 func (f *OCIFetcher) Fetch(
-	ctx context.Context, imageRef, digest string,
+	ctx context.Context, imageRef string,
 	opts *FetchOptions,
 ) ([]VerifiedAttestation, error) {
 	if opts == nil {
 		return nil, errNilFetchOptions
 	}
 
-	if digest == "" {
+	if opts.Digest == "" {
 		return nil, fmt.Errorf("%w for image %q", errEmptyDigest, imageRef)
 	}
-
-	fetchOpts := *opts
-	if fetchOpts.Digest == "" {
-		fetchOpts.Digest = digest
-	}
-
-	opts = &fetchOpts
 
 	if opts.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -275,7 +269,7 @@ func (f *OCIFetcher) Fetch(
 		defer cancel()
 	}
 
-	ref, err := parseDigestRef(imageRef, digest)
+	ref, err := parseDigestRef(imageRef, opts.Digest)
 	if err != nil {
 		return nil, fmt.Errorf("parsing image reference: %w", err)
 	}
@@ -285,7 +279,7 @@ func (f *OCIFetcher) Fetch(
 		remote.WithContext(ctx),
 	}
 
-	return f.fetchWithRetry(ctx, ref, digest, remoteOpts, opts)
+	return f.fetchWithRetry(ctx, ref, opts.Digest, remoteOpts, opts)
 }
 
 func retryJitter(base time.Duration) time.Duration {

@@ -20,15 +20,21 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
-// Bounded by the number of distinct glob patterns in loaded policy files.
-var compiledPatterns sync.Map //nolint:gochecknoglobals // cache compiled regexps
+const maxCachedPatterns = 10000
+
+var (
+	compiledPatterns sync.Map     //nolint:gochecknoglobals // cache compiled regexps
+	cachedCount      atomic.Int64 //nolint:gochecknoglobals // tracks compiledPatterns size
+)
 
 // ResetCache clears the compiled regexp cache. Call this after a config reload
 // so stale patterns from old policies do not persist.
 func ResetCache() {
 	compiledPatterns.Clear()
+	cachedCount.Store(0)
 }
 
 // Match reports whether text matches the glob pattern.
@@ -55,7 +61,11 @@ func compile(pattern string) (*regexp.Regexp, error) {
 		return nil, fmt.Errorf("compiling regexp: %w", err)
 	}
 
-	compiledPatterns.Store(pattern, compiled)
+	if cachedCount.Load() < maxCachedPatterns {
+		if _, loaded := compiledPatterns.LoadOrStore(pattern, compiled); !loaded {
+			cachedCount.Add(1)
+		}
+	}
 
 	return compiled, nil
 }

@@ -162,7 +162,7 @@ func fetchAttestations(
 	if indexDigest != "" {
 		indexOpts := buildFetchOpts(pol, indexDigest, state.config.FetchTimeout.Duration)
 
-		atts, err := state.fetcher.Fetch(ctx, imageRef, indexDigest, indexOpts)
+		atts, err := state.fetcher.Fetch(ctx, imageRef, indexOpts)
 		if err == nil && len(atts) > 0 {
 			return atts, indexDigest, nil
 		}
@@ -185,7 +185,7 @@ func fetchAttestations(
 		}
 	}
 
-	attestations, err := state.fetcher.Fetch(ctx, imageRef, digest, opts)
+	attestations, err := state.fetcher.Fetch(ctx, imageRef, opts)
 	if err != nil {
 		platformErr := fmt.Errorf("fetching attestations: %w", err)
 		if indexErr != nil {

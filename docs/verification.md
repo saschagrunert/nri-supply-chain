@@ -96,85 +96,33 @@ aspects of the supply chain:
 
 ### SLSA Provenance
 
-Verifies [SLSA](https://slsa.dev) provenance v1 attestations.
-
-Checks performed:
-
-- **Subject digest**: The provenance `subject[].digest` must match the image
-  digest.
-- **Builder trust**: `runDetails.builder.id` must appear in the policy's
-  `trust.builders` list.
-- **Build type**: If `trust.buildTypes` is configured, the
-  `buildDefinition.buildType` must match one of the allowed types.
-- **Source repository**: If `trust.sources` is configured, the `source` in
-  `externalParameters` must match an allowed glob pattern.
-- **Unknown parameters**: If `slsa.rejectUnknownParameters` is enabled,
-  unrecognized `externalParameters` fields cause rejection.
-
-See [policy.md](policy.md#slsa-object) for the full field reference.
-
-Note: `trust.builders[].maxLevel` is not checked during provenance
-verification because provenance attestations do not declare a build level.
-Use `vsa.minimumLevel` to enforce build level requirements.
-
-When multiple provenance attestations exist, verification passes if any single
-valid attestation from a trusted builder passes (any-pass semantics).
-
-If all provenance attestations fail to parse or verify (as opposed to being
-absent), the check always fails regardless of `missingPolicy`. The
-`missingPolicy` setting only controls behavior when no provenance attestation
-exists at all.
-
-For custom build systems, configure `knownParameters` to list expected
-`externalParameters` keys. See
-[policy.md](policy.md#custom-build-systems) for an example.
+Verifies [SLSA](https://slsa.dev) provenance v1 attestations against trusted
+builders and sources. When multiple attestations exist, any single valid one
+from a trusted builder is sufficient (any-pass semantics). See
+[policy.md](policy.md#slsa-provenance) for the full check list, field
+reference, and custom build system configuration.
 
 ### VEX (Vulnerability Exploitability eXchange)
 
-Verifies [OpenVEX](https://openvex.dev) v0.2.0 documents.
-
-Status handling:
-
-- `not_affected` or `fixed`: pass
-- `affected`: fail
-- `under_investigation`: controlled by `underInvestigationPolicy` (default:
-  allow)
-
-Product matching operates at the image level using digest comparison and PURL
-(`pkg:oci/...`) matching.
-
-VEX statements with empty subjects are rejected when an image digest is
-available. This prevents attestations that lack subject binding from bypassing
-digest verification.
-
-When multiple VEX documents exist, the most restrictive result wins: any
-`affected` status causes failure.
-
-If all VEX documents fail to parse or verify (as opposed to being absent),
-the check always fails regardless of `missingPolicy`. The `missingPolicy`
-setting only controls behavior when no VEX attestation exists at all.
+Verifies [OpenVEX](https://openvex.dev) v0.2.0 documents. When multiple VEX
+documents exist, the most restrictive result wins: any `affected` status
+causes failure. See [policy.md](policy.md#vex-vulnerability-exploitability-exchange)
+for status handling, product matching, and the field reference.
 
 ### VSA (Verification Summary Attestation)
 
 Verifies [SLSA VSA](https://slsa.dev/spec/v1.0/verification_summary) v1
-attestations. A VSA records the outcome of a prior SLSA and VEX verification
-performed by a trusted verifier. Because the verifier has already checked
-provenance and vulnerability status, a trusted PASSED VSA allows the plugin to
-skip those checks entirely. Checks verifier trust, verification result, build
-level, resource URI, SLSA version, policy match, and freshness. See
-[policy.md](policy.md#vsa-object) for the full field reference.
-
-VSA-first logic:
-
-- Trusted PASSED: short-circuits all other checks.
-- Trusted FAILED: hard reject, no fallback allowed.
-- Untrusted, stale, or missing: falls through to direct SLSA + VEX
-  verification.
+attestations. A VSA records the outcome of a prior verification performed by
+a trusted verifier. A trusted PASSED VSA short-circuits all other checks; a
+trusted FAILED VSA is a hard reject with no fallback. Untrusted, stale, or
+missing VSAs fall through to direct SLSA + VEX verification. See
+[policy.md](policy.md#vsa-verification-summary-attestation) for the full
+check list and field reference.
 
 ### Signature Verification
 
-The plugin supports keyless (Fulcio/OIDC) and key-based (PEM public key)
-verification modes, which can be used independently or together. See
+All attestations must be valid Sigstore bundles. The plugin supports keyless
+(Fulcio/OIDC) and key-based (PEM public key) modes. See
 [policy.md](policy.md#signature-verification) for configuration details.
 
 ## Other Standards
