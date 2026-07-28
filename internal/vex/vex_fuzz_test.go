@@ -33,6 +33,7 @@ func FuzzVerify(f *testing.F) {
 		vex.Verify(
 			context.Background(), data, &policy.Policy{},
 			"docker.io/library/nginx:latest", testDigest,
+			nil,
 		)
 	})
 }

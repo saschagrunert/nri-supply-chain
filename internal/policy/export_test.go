@@ -13,8 +13,3 @@
 // limitations under the License.
 
 package policy
-
-// ExportInitDerived exposes initDerived for external tests.
-func (p *Policy) ExportInitDerived() {
-	p.initDerived()
-}

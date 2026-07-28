@@ -56,6 +56,7 @@ setup() {
 
 teardown_file() {
 	stop_plugin
+	stop_registry
 	unconfigure_insecure_registry
 	stop_kubernix
 }

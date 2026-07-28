@@ -157,18 +157,9 @@ func WarnEnforceDefaults(cfg *config.Config, policies map[string]*policy.Policy)
 
 	switch cfg.FetchFailurePolicy {
 	case types.ActionDeny:
-	case types.ActionWarn:
+	case types.ActionWarn, types.ActionAllow:
 		slog.Warn(
-			"enforce mode with default fetch_failure_policy=warn allows containers on fetch failure; "+
-				"consider setting fetch_failure_policy=deny",
-			"fetch_failure_policy",
-			cfg.FetchFailurePolicy,
-			"circuit_breaker_threshold",
-			cfg.CircuitBreakerThreshold,
-		)
-	case types.ActionAllow:
-		slog.Warn(
-			"enforce mode with fetch_failure_policy=allow allows containers on fetch failure; "+
+			"enforce mode with permissive fetch_failure_policy allows containers on fetch failure; "+
 				"consider setting fetch_failure_policy=deny",
 			"fetch_failure_policy",
 			cfg.FetchFailurePolicy,
@@ -385,11 +376,7 @@ func (v *Verifier) handleCacheHit(
 		state.metrics.CacheFailureHitsTotal.Inc()
 	}
 
-	result := *cached
-	if len(cached.CheckResults) > 0 {
-		result.CheckResults = make([]types.CheckResult, len(cached.CheckResults))
-		copy(result.CheckResults, cached.CheckResults)
-	}
+	result := cached.Clone()
 
 	logResult(ctx, state.auditLogger, imageRef, digest, namespace, &result)
 	recordMetrics(state.metrics, &result, namespace)
@@ -587,11 +574,7 @@ func handleFlightResult(
 		return nil, fmt.Errorf("%w: %T", errUnexpectedVerifyResult, res.Val)
 	}
 
-	result := *shared
-	if len(shared.CheckResults) > 0 {
-		result.CheckResults = make([]types.CheckResult, len(shared.CheckResults))
-		copy(result.CheckResults, shared.CheckResults)
-	}
+	result := shared.Clone()
 
 	logResult(ctx, state.auditLogger, imageRef, digest, namespace, &result)
 	recordMetrics(state.metrics, &result, namespace)

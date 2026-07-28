@@ -11,7 +11,9 @@ patterns for the nri-supply-chain plugin.
   - [Step 2: Add trust roots](#step-2-add-trust-roots)
   - [Step 3: Tighten missing attestation behavior](#step-3-tighten-missing-attestation-behavior)
   - [Step 4: Add image excludes](#step-4-add-image-excludes)
+- [JSON Schema](#json-schema)
 - [Field Reference](#field-reference)
+  - [<code>inherits</code> (boolean)](#inherits-boolean)
   - [<code>trust</code> (object)](#trust-object)
   - [<code>exclude</code> (array of strings)](#exclude-array-of-strings)
   - [<code>slsa</code> (object)](#slsa-object)
@@ -43,9 +45,9 @@ per-namespace trust roots and verification requirements.
 
 - **`default.json`** applies to all namespaces unless overridden. Note that
   `default.json` is the fallback policy, not a namespace-specific policy for
-  the Kubernetes `default` namespace. To set a policy for the `default`
-  namespace specifically, create a separate file (the `default.json` filename
-  is reserved for the fallback).
+  the Kubernetes `default` namespace. Because the filename is reserved, the
+  `default` namespace always uses the fallback policy and cannot have a
+  separate override.
 - **`<namespace>.json`** overrides the default for that namespace. By default,
   this is a full replacement. Set `"inherits": true` to inherit unset fields
   from the default policy (see [Namespace Overrides](#namespace-overrides)).

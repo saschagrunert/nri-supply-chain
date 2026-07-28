@@ -109,6 +109,17 @@ func FailResult(checkType CheckType, detail string, err error) *CheckResult {
 	}
 }
 
+// Clone returns a shallow copy of the Result with a cloned CheckResults slice.
+func (r *Result) Clone() Result {
+	clone := *r
+	if len(r.CheckResults) > 0 {
+		clone.CheckResults = make([]CheckResult, len(r.CheckResults))
+		copy(clone.CheckResults, r.CheckResults)
+	}
+
+	return clone
+}
+
 // SoftFailResult returns a CheckResult that did not pass but is only a warning.
 // Used for inconclusive checks (e.g., untrusted or stale VSA verifier results)
 // that should not block container creation but are not counted as passing.

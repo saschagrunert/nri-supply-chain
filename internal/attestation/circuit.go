@@ -121,13 +121,6 @@ func (cb *CircuitBreaker) RecordFailure() bool {
 	return false
 }
 
-func (cb *CircuitBreaker) isOpen() bool {
-	cb.mu.RLock()
-	defer cb.mu.RUnlock()
-
-	return cb.state == circuitOpen
-}
-
 func (cb *CircuitBreaker) isClosed() bool {
 	cb.mu.RLock()
 	defer cb.mu.RUnlock()

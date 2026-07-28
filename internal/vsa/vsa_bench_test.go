@@ -34,6 +34,6 @@ func BenchmarkVerify(b *testing.B) {
 	b.ResetTimer()
 
 	for range b.N {
-		_, _ = vsa.Verify(data, pol, testImageRef)
+		_, _ = vsa.Verify(data, pol, testImageRef, nil)
 	}
 }
