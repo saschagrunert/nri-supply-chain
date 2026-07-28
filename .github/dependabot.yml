@@ -4,10 +4,14 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    labels:
+      - "size/XS"
   - package-ecosystem: gomod
     directory: /
     schedule:
       interval: weekly
+    labels:
+      - "size/XS"
     groups:
       golang-x:
         patterns:
@@ -28,3 +32,5 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    labels:
+      - "size/XS"
