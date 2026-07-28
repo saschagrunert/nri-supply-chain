@@ -41,7 +41,11 @@ Policy files are JSON documents stored in the `policy_dir` configured in the
 operational config (default: `/etc/nri-supply-chain/policies`). They define
 per-namespace trust roots and verification requirements.
 
-- **`default.json`** applies to all namespaces unless overridden.
+- **`default.json`** applies to all namespaces unless overridden. Note that
+  `default.json` is the fallback policy, not a namespace-specific policy for
+  the Kubernetes `default` namespace. To set a policy for the `default`
+  namespace specifically, create a separate file (the `default.json` filename
+  is reserved for the fallback).
 - **`<namespace>.json`** overrides the default for that namespace. By default,
   this is a full replacement. Set `"inherits": true` to inherit unset fields
   from the default policy (see [Namespace Overrides](#namespace-overrides)).

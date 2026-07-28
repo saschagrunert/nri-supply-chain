@@ -88,7 +88,7 @@ type Cache struct {
 	ttl       time.Duration
 	maxSize   int
 	gauge     prometheus.Gauge
-	evictions prometheus.Counter
+	evictions *prometheus.CounterVec
 	expHeap   expiryHeap
 	heapIndex map[key]*heapEntry
 	stopOnce  sync.Once
@@ -97,31 +97,14 @@ type Cache struct {
 
 // New creates a new verification result cache with the given TTL.
 func New(ttl time.Duration) *Cache {
-	c := &Cache{ //nolint:varnamelen // c is the standard receiver name for Cache
-		mu:        sync.RWMutex{},
-		entries:   make(map[key]entry),
-		ttl:       ttl,
-		maxSize:   DefaultMaxSize,
-		gauge:     nil,
-		evictions: nil,
-		expHeap:   nil,
-		heapIndex: make(map[key]*heapEntry),
-		stopOnce:  sync.Once{},
-		stopCh:    make(chan struct{}),
-	}
-
-	if ttl > 0 {
-		go c.backgroundEvict(evictionInterval(ttl))
-	}
-
-	return c
+	return NewWithGauge(ttl, nil, nil)
 }
 
 // NewWithGauge creates a cache that updates the given Prometheus gauge
 // on entry count changes and tracks evictions.
 func NewWithGauge(
 	ttl time.Duration,
-	gauge prometheus.Gauge, evictions prometheus.Counter,
+	gauge prometheus.Gauge, evictions *prometheus.CounterVec,
 ) *Cache {
 	if gauge != nil {
 		gauge.Set(0)
@@ -151,6 +134,7 @@ func NewWithGauge(
 // Returns nil if no valid cache entry exists.
 func (c *Cache) Get(digest, namespace string) *types.Result {
 	cacheKey := key{digest: digest, namespace: namespace}
+	now := time.Now()
 
 	c.mu.RLock()
 	cacheEntry, found := c.entries[cacheKey]
@@ -161,7 +145,7 @@ func (c *Cache) Get(digest, namespace string) *types.Result {
 		return nil
 	}
 
-	if !time.Now().After(cacheEntry.expiresAt) {
+	if !now.After(cacheEntry.expiresAt) {
 		result := cacheEntry.result
 
 		c.mu.RUnlock()
@@ -308,7 +292,7 @@ func (c *Cache) evictOldestLocked() {
 
 	delete(c.entries, popped.cacheKey)
 	delete(c.heapIndex, popped.cacheKey)
-	c.recordEviction()
+	c.recordEviction("capacity")
 }
 
 func (c *Cache) evictExpiredLocked() {
@@ -322,13 +306,13 @@ func (c *Cache) evictExpiredLocked() {
 
 		delete(c.entries, popped.cacheKey)
 		delete(c.heapIndex, popped.cacheKey)
-		c.recordEviction()
+		c.recordEviction("expired")
 	}
 }
 
-func (c *Cache) recordEviction() {
+func (c *Cache) recordEviction(reason string) {
 	if c.evictions != nil {
-		c.evictions.Inc()
+		c.evictions.WithLabelValues(reason).Inc()
 	}
 }
 

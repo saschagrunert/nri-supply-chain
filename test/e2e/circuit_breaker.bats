@@ -20,9 +20,7 @@ setup_file() {
 	start_registry
 	configure_insecure_registry
 
-	start_kubernix --log-level debug
-
-	wait_for_node_ready
+	start_kubernix_with_retry --log-level debug
 	write_nri_dropin
 	reload_runtime
 

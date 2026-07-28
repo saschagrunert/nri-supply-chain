@@ -160,6 +160,7 @@ linters:
         - 'github\.com/prometheus/client_golang/prometheus\..*'
         - 'github\.com/prometheus/client_golang/prometheus/promhttp\..*'
         - 'github\.com/saschagrunert/nri-supply-chain/internal/attestation\.FetchOptions'
+        - 'github\.com/saschagrunert/nri-supply-chain/internal/attestation\.VerifiedAttestation'
         - 'github\.com/saschagrunert/nri-supply-chain/internal/policy\..*'
         - 'github\.com/sigstore/sigstore-go/.*'
         - 'github\.com/sigstore/sigstore/.*'

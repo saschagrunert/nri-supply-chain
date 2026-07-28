@@ -304,7 +304,8 @@ func handleFileEvent(
 func isReloadEvent(event fsnotify.Event) bool {
 	return event.Has(fsnotify.Write) ||
 		event.Has(fsnotify.Create) ||
-		event.Has(fsnotify.Remove)
+		event.Has(fsnotify.Remove) ||
+		event.Has(fsnotify.Rename)
 }
 
 func handleShutdown(

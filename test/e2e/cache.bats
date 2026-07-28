@@ -12,9 +12,7 @@ setup_file() {
 		}
 	EOF
 
-	start_kubernix
-
-	wait_for_node_ready
+	start_kubernix_with_retry
 	write_nri_dropin
 	reload_runtime
 
@@ -28,11 +26,11 @@ teardown_file() {
 }
 
 @test "second pod with same image hits cache" {
-	run_pod "cache-first" "registry.k8s.io/pause:3.10"
+	run_pod "cache-first" "$PAUSE_IMAGE"
 	wait_for_pod_status "cache-first" "Running"
 	assert_pod_verdict "cache-first" "verified"
 
-	run_pod "cache-second" "registry.k8s.io/pause:3.10"
+	run_pod "cache-second" "$PAUSE_IMAGE"
 	wait_for_pod_status "cache-second" "Running"
 	wait_for_metrics "nri_supply_chain_cache_hits_total"
 
@@ -40,8 +38,10 @@ teardown_file() {
 	[[ "$status" -eq 0 ]]
 	echo "$output" | grep -q 'nri_supply_chain_cache_hits_total'
 
-	local hits
+	local hits misses
 	hits=$(echo "$output" | awk '/nri_supply_chain_cache_hits_total/ && !/^#/ {print $2; exit}')
+	misses=$(echo "$output" | awk '/nri_supply_chain_cache_misses_total/ && !/^#/ {print $2; exit}')
+	echo "# cache hits: ${hits:-0}, misses: ${misses:-0}" >&2
 	[[ "${hits:-0}" -gt 0 ]]
 }
 
@@ -55,7 +55,7 @@ teardown_file() {
 
 	kubectl run "cache-ns1-pod" \
 		--namespace "$ns1" \
-		--image "registry.k8s.io/pause:3.10" \
+		--image "$PAUSE_IMAGE" \
 		--restart=Never \
 		--request-timeout="${KUBECTL_TIMEOUT}s"
 	wait_for_pod_status "cache-ns1-pod" "Running" 60 "$ns1"
@@ -66,7 +66,7 @@ teardown_file() {
 
 	kubectl run "cache-ns2-pod" \
 		--namespace "$ns2" \
-		--image "registry.k8s.io/pause:3.10" \
+		--image "$PAUSE_IMAGE" \
 		--restart=Never \
 		--request-timeout="${KUBECTL_TIMEOUT}s"
 	wait_for_pod_status "cache-ns2-pod" "Running" 60 "$ns2"
@@ -75,6 +75,7 @@ teardown_file() {
 	local misses_after
 	misses_after=$(curl_metrics | awk '/nri_supply_chain_cache_misses_total/ && !/^#/ {print $2; exit}')
 
+	echo "# cache misses_before: ${misses_before:-0}, misses_after: ${misses_after:-0}" >&2
 	[[ "${misses_after:-0}" -gt "${misses_before:-0}" ]]
 }
 
@@ -89,18 +90,20 @@ teardown_file() {
 	EOF
 	start_plugin
 
-	run_pod "nocache-1" "registry.k8s.io/pause:3.10"
+	run_pod "nocache-1" "$PAUSE_IMAGE"
 	wait_for_pod_status "nocache-1" "Running"
 	assert_pod_verdict "nocache-1" "verified"
 
-	run_pod "nocache-2" "registry.k8s.io/pause:3.10"
+	run_pod "nocache-2" "$PAUSE_IMAGE"
 	wait_for_pod_status "nocache-2" "Running"
 	wait_for_metrics
 
 	run curl_metrics
 	[[ "$status" -eq 0 ]]
-	local hits
+	local hits misses
 	hits=$(echo "$output" | awk '/nri_supply_chain_cache_hits_total/ && !/^#/ {print $2; exit}')
+	misses=$(echo "$output" | awk '/nri_supply_chain_cache_misses_total/ && !/^#/ {print $2; exit}')
+	echo "# cache hits: ${hits:-0}, misses: ${misses:-0} (expect hits=0)" >&2
 	[[ "${hits:-0}" -eq 0 ]]
 
 	stop_plugin
@@ -119,24 +122,30 @@ teardown_file() {
 	EOF
 	start_plugin
 
-	run_pod "ttl-first" "registry.k8s.io/pause:3.10"
+	run_pod "ttl-first" "$PAUSE_IMAGE"
 	wait_for_pod_status "ttl-first" "Running"
 	assert_pod_verdict "ttl-first" "verified"
 
 	local misses_before
 	misses_before=$(curl_metrics | awk '/nri_supply_chain_cache_misses_total/ && !/^#/ {print $2; exit}')
+	misses_before="${misses_before:-0}"
 
-	# Cache eviction is lazy (only on Get), so wait for TTL + jitter to expire
-	sleep 5
+	# Cache eviction is lazy (only on Get), so poll until a new miss
+	# appears after the 3s TTL expires rather than using a fixed sleep.
+	local misses_after="$misses_before"
+	for i in $(seq 1 20); do
+		sleep 1
+		run_pod "ttl-second-$i" "$PAUSE_IMAGE"
+		wait_for_pod_status "ttl-second-$i" "Running"
+		misses_after=$(curl_metrics | awk '/nri_supply_chain_cache_misses_total/ && !/^#/ {print $2; exit}')
+		misses_after="${misses_after:-0}"
+		echo "# TTL poll $i: misses_before=${misses_before}, misses_after=${misses_after}" >&2
+		if [[ "${misses_after%.*}" -gt "${misses_before%.*}" ]]; then
+			break
+		fi
+	done
 
-	run_pod "ttl-second" "registry.k8s.io/pause:3.10"
-	wait_for_pod_status "ttl-second" "Running"
-	assert_pod_verdict "ttl-second" "verified"
-
-	local misses_after
-	misses_after=$(curl_metrics | awk '/nri_supply_chain_cache_misses_total/ && !/^#/ {print $2; exit}')
-
-	[[ "${misses_after:-0}" -gt "${misses_before:-0}" ]]
+	[[ "${misses_after%.*}" -gt "${misses_before%.*}" ]]
 
 	stop_plugin
 	write_plugin_config "warn"

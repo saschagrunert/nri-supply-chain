@@ -48,7 +48,8 @@ kubectl apply -f deploy/kubernetes/
 ```
 
 The manifests in `deploy/kubernetes/` include a Namespace, ServiceAccount,
-ConfigMap with example config and policy, NetworkPolicy, and the DaemonSet.
+ConfigMap with example config and policy, NetworkPolicy, PodDisruptionBudget,
+and the DaemonSet.
 Edit the ConfigMap to match your environment before deploying. See
 [config.md](config.md) for the full field reference.
 

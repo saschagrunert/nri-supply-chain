@@ -6,9 +6,7 @@ setup_file() {
 	mkdir -p "$KUBERNIX_ROOT" "$POLICY_DIR"
 	echo '{}' >"$POLICY_DIR/default.json"
 
-	start_kubernix
-
-	wait_for_node_ready
+	start_kubernix_with_retry
 	write_nri_dropin
 	reload_runtime
 
@@ -40,12 +38,12 @@ teardown_file() {
 }
 
 @test "pod with any image is admitted in warn mode" {
-	run_pod "lifecycle-pod" "registry.k8s.io/pause:3.10"
+	run_pod "lifecycle-pod" "$PAUSE_IMAGE"
 	wait_for_pod_status "lifecycle-pod" "Running"
 }
 
 @test "container verification is logged for admitted pod" {
-	run_pod "verified-pod" "registry.k8s.io/pause:3.10"
+	run_pod "verified-pod" "$PAUSE_IMAGE"
 	wait_for_pod_status "verified-pod" "Running"
 	assert_log_contains "Container verified"
 }
@@ -77,7 +75,7 @@ teardown_file() {
 		elapsed=$((elapsed + 1))
 	done
 
-	run_pod "debug-pod" "registry.k8s.io/pause:3.10"
+	run_pod "debug-pod" "$PAUSE_IMAGE"
 	wait_for_pod_status "debug-pod" "Running"
 	assert_log_contains "Verifying image"
 }

@@ -90,3 +90,9 @@ dependencies:
     refPaths:
       - path: Makefile
         match: ^GOVULNCHECK_VERSION
+
+  - name: pause
+    version: 3.10
+    refPaths:
+      - path: test/e2e/helpers.bash
+        match: "registry.k8s.io/pause:"

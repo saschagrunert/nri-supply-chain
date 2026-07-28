@@ -59,8 +59,8 @@ type Metrics struct {
 	TrustedRootStaleTotal prometheus.Counter
 	// CacheFailureHitsTotal counts cache hits that returned a previously cached failure result.
 	CacheFailureHitsTotal prometheus.Counter
-	// CacheEvictionsTotal counts cache entry evictions.
-	CacheEvictionsTotal prometheus.Counter
+	// CacheEvictionsTotal counts cache entry evictions by reason (expired, capacity).
+	CacheEvictionsTotal *prometheus.CounterVec
 	// BuildInfo exposes version and Go metadata as a constant gauge.
 	BuildInfo *prometheus.GaugeVec
 	// ConfigReloadsTotal counts successful configuration reloads.
@@ -117,9 +117,10 @@ func New() *Metrics {
 			"cache_failure_hits_total",
 			"Total number of cache hits that returned a previously cached failure result.",
 		),
-		CacheEvictionsTotal: newCounter(
+		CacheEvictionsTotal: newCounterVec(
 			"cache_evictions_total",
 			"Total number of cache entry evictions.",
+			"reason",
 		),
 		BuildInfo: newGaugeVec(
 			"build_info",

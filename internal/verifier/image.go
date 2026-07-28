@@ -53,23 +53,42 @@ func acquireFetchSlots(
 	}, nil
 }
 
+const maxHostSemEntries = 1000
+
 func acquireHostSem(hostSem *sync.Map, host string) *semaphore.Weighted {
 	if val, ok := hostSem.Load(host); ok {
 		return val.(*semaphore.Weighted) //nolint:forcetypeassert // hostSem is private, only stores *Weighted
 	}
 
-	val, _ := hostSem.LoadOrStore(host, semaphore.NewWeighted(maxConcurrentFetchesPerHost))
+	sem := semaphore.NewWeighted(maxConcurrentFetchesPerHost)
 
-	return val.(*semaphore.Weighted) //nolint:forcetypeassert // hostSem is private, only stores *Weighted
-}
-
-func registryHost(imageRef string) string {
-	ref, err := name.ParseReference(imageRef)
-	if err != nil {
-		return imageRef
+	val, loaded := hostSem.LoadOrStore(host, sem)
+	if loaded {
+		return val.(*semaphore.Weighted) //nolint:forcetypeassert // hostSem is private, only stores *Weighted
 	}
 
-	return ref.Context().RegistryStr()
+	count := 0
+
+	hostSem.Range(func(_, _ any) bool {
+		count++
+
+		return count <= maxHostSemEntries
+	})
+
+	// The just-stored entry is included in the Range count, so "more than
+	// maxHostSemEntries" means the map had maxHostSemEntries entries before
+	// this store. Between LoadOrStore and Delete, another goroutine can Load
+	// the entry and use the semaphore; this is acceptable since the overflow
+	// path only triggers at 1000+ distinct registry hosts.
+	if count > maxHostSemEntries {
+		hostSem.Delete(host)
+		slog.Warn("Per-host semaphore map at capacity, using untracked semaphore",
+			"host", host, "capacity", maxHostSemEntries)
+
+		return sem
+	}
+
+	return val.(*semaphore.Weighted) //nolint:forcetypeassert // hostSem is private, only stores *Weighted
 }
 
 func buildDigestRef(imageRef, digest string) string {
@@ -88,6 +107,25 @@ func buildDigestRef(imageRef, digest string) string {
 	}
 
 	return ref.Context().Digest(digest).String()
+}
+
+// digestRefFromParsed builds a digest reference string using a pre-parsed
+// reference, avoiding redundant parsing. Returns imageRef unchanged when
+// the parsed reference is nil (e.g. when the initial parse failed).
+func digestRefFromParsed(parsedRef name.Reference, imageRef, digest string) string {
+	if digest == "" || strings.Contains(imageRef, "@") {
+		return imageRef
+	}
+
+	if parsedRef == nil {
+		slog.Debug("Cannot build digest ref from nil parsed reference",
+			"image", imageRef,
+		)
+
+		return imageRef
+	}
+
+	return parsedRef.Context().Digest(digest).String()
 }
 
 // isExcluded checks whether imageRef matches any exclude glob pattern.

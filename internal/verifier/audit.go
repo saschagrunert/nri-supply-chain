@@ -69,6 +69,17 @@ func logResult(
 	imageRef, digest, namespace string,
 	result *types.Result,
 ) {
+	if len(result.CheckResults) == 0 {
+		decision := "denied"
+		if result.Allowed {
+			decision = "allowed"
+		}
+
+		logAuditDecision(ctx, logger, imageRef, digest, namespace, decision, result.Reason)
+
+		return
+	}
+
 	for _, checkResult := range result.CheckResults {
 		event := &auditEvent{
 			Image:     imageRef,

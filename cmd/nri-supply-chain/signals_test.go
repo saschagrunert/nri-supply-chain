@@ -206,7 +206,7 @@ func TestIsReloadEvent(t *testing.T) {
 		{name: "write", op: fsnotify.Write, want: true},
 		{name: "create", op: fsnotify.Create, want: true},
 		{name: "remove", op: fsnotify.Remove, want: true},
-		{name: "rename", op: fsnotify.Rename, want: false},
+		{name: "rename", op: fsnotify.Rename, want: true},
 		{name: "chmod", op: fsnotify.Chmod, want: false},
 	}
 

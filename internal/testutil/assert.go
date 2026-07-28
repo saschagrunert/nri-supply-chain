@@ -16,6 +16,7 @@
 package testutil
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -46,6 +47,18 @@ func AssertError(t *testing.T, err error) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
+}
+
+// MustMarshal marshals val to JSON, failing the test on error.
+func MustMarshal(t *testing.T, val any) []byte {
+	t.Helper()
+
+	data, err := json.Marshal(val)
+	if err != nil {
+		t.Fatalf("failed to marshal JSON: %v", err)
+	}
+
+	return data
 }
 
 const policyFileMode = 0o600

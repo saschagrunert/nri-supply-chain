@@ -17,9 +17,7 @@ setup_file() {
 		}
 	EOF
 
-	start_kubernix
-
-	wait_for_node_ready
+	start_kubernix_with_retry
 	write_nri_dropin
 	reload_runtime
 
@@ -33,36 +31,36 @@ teardown_file() {
 }
 
 @test "pod with unsigned image is admitted with warning" {
-	run_pod "unsigned-pod" "registry.k8s.io/pause:3.10"
+	run_pod "unsigned-pod" "$PAUSE_IMAGE"
 	wait_for_pod_status "unsigned-pod" "Running"
 	assert_log_contains "Verification failed (warn mode, allowing)"
 }
 
 @test "pod with image lacking provenance is admitted in warn mode" {
-	run_pod "noprov-pod" "registry.k8s.io/pause:3.10"
+	run_pod "noprov-pod" "$PAUSE_IMAGE"
 	wait_for_pod_status "noprov-pod" "Running"
 	assert_log_contains "Supply chain audit"
 }
 
 @test "pod with image lacking VEX is admitted with default allow" {
-	run_pod "novex-pod" "registry.k8s.io/pause:3.10"
+	run_pod "novex-pod" "$PAUSE_IMAGE"
 	wait_for_pod_status "novex-pod" "Running"
 }
 
 @test "multiple containers in one pod are each verified" {
 	kubectl run "multi-pod" \
 		--namespace "$TEST_NS" \
-		--image "registry.k8s.io/pause:3.10" \
+		--image "$PAUSE_IMAGE" \
 		--restart=Never \
 		--request-timeout="${KUBECTL_TIMEOUT}s" \
-		--overrides='{
-			"spec": {
-				"containers": [
-					{"name": "c1", "image": "registry.k8s.io/pause:3.10"},
-					{"name": "c2", "image": "registry.k8s.io/pause:3.10"}
+		--overrides="{
+			\"spec\": {
+				\"containers\": [
+					{\"name\": \"c1\", \"image\": \"${PAUSE_IMAGE}\"},
+					{\"name\": \"c2\", \"image\": \"${PAUSE_IMAGE}\"}
 				]
 			}
-		}'
+		}"
 
 	local count=0 elapsed=0
 	while [[ $elapsed -lt 30 ]]; do
@@ -79,18 +77,18 @@ teardown_file() {
 @test "init containers are verified" {
 	kubectl run "init-pod" \
 		--namespace "$TEST_NS" \
-		--image "registry.k8s.io/pause:3.10" \
+		--image "$PAUSE_IMAGE" \
 		--restart=Never \
 		--request-timeout="${KUBECTL_TIMEOUT}s" \
-		--overrides='{
-			"spec": {
-				"initContainers": [
-					{"name": "init", "image": "registry.k8s.io/pause:3.10"}
+		--overrides="{
+			\"spec\": {
+				\"initContainers\": [
+					{\"name\": \"init\", \"image\": \"${PAUSE_IMAGE}\"}
 				],
-				"containers": [
-					{"name": "main", "image": "registry.k8s.io/pause:3.10"}
+				\"containers\": [
+					{\"name\": \"main\", \"image\": \"${PAUSE_IMAGE}\"}
 				]
 			}
-		}'
+		}"
 	assert_log_contains "Container verified"
 }

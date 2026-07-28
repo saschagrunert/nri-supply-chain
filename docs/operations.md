@@ -9,6 +9,7 @@ internal limits, and security considerations.
 - [Health and Readiness Probes](#health-and-readiness-probes)
 - [Config Reload](#config-reload)
 - [Logging](#logging)
+  - [Audit Logging](#audit-logging)
 - [Troubleshooting](#troubleshooting)
 - [Monitoring and Alerting](#monitoring-and-alerting)
 - [Internal Limits](#internal-limits)
@@ -28,7 +29,7 @@ The plugin exposes Prometheus metrics at the configured
 | `nri_supply_chain_cache_hits_total`               | Counter   |                               | Cache hits                                                                           |
 | `nri_supply_chain_cache_misses_total`             | Counter   |                               | Cache misses                                                                         |
 | `nri_supply_chain_cache_entries`                  | Gauge     |                               | Current number of cached entries                                                     |
-| `nri_supply_chain_cache_evictions_total`          | Counter   |                               | Cache entry evictions (background sweep, TTL expiry, or capacity overflow)           |
+| `nri_supply_chain_cache_evictions_total`          | Counter   | `reason`                      | Cache entry evictions. `reason`: `expired`, `capacity`                               |
 | `nri_supply_chain_verification_skipped_total`     | Counter   | `reason`, `namespace`         | Containers allowed without verification. `reason`: `excluded`, `missing_annotations` |
 | `nri_supply_chain_fetch_errors_total`             | Counter   | `type`, `registry`            | Attestation fetch errors                                                             |
 | `nri_supply_chain_inflight_dedup_total`           | Counter   |                               | Deduplicated inflight verifications                                                  |
@@ -39,6 +40,7 @@ The plugin exposes Prometheus metrics at the configured
 | `nri_supply_chain_config_reloads_total`           | Counter   |                               | Successful config reloads                                                            |
 | `nri_supply_chain_verification_interrupted_total` | Counter   |                               | Verifications interrupted by context cancellation                                    |
 | `nri_supply_chain_config_reload_errors_total`     | Counter   |                               | Failed config reload attempts                                                        |
+| `nri_supply_chain_prewarm_duration_seconds`       | Histogram | `result`                      | Cache prewarm latency (buckets: 1, 5, 10, 30, 60, 120, 300)                          |
 
 ## Health and Readiness Probes
 
@@ -90,6 +92,14 @@ window are collapsed into a single reload, so editors that perform atomic saves
 The plugin outputs structured JSON logs to stderr. Set `--log-level debug` for
 detailed verification traces.
 
+### Audit Logging
+
+Every verification decision emits a structured log entry with the message
+`"Supply chain audit"`. These entries include the fields `image`, `digest`,
+`namespace`, `allowed`, `check` (e.g. `slsa`, `vex`, `vsa`), `status`,
+`detail`, `decision`, and `reason`. Filter for this message to build an audit
+trail of all container verification outcomes.
+
 ## Troubleshooting
 
 - **Container rejected unexpectedly**: Check logs at debug level. Verify the
@@ -134,6 +144,12 @@ groups:
         annotations:
           summary: Verification checks are failing (rejected in enforce, logged in warn).
 
+      - alert: VerificationInterrupted
+        expr: sum(increase(nri_supply_chain_verification_interrupted_total[5m])) > 0
+        for: 5m
+        annotations:
+          summary: Verifications are being interrupted by context cancellation.
+
       - alert: HighVerificationLatency
         expr: |
           histogram_quantile(0.99,
@@ -158,6 +174,7 @@ protect against resource exhaustion and unbounded processing.
 | Attestation size limit      | 10 MiB per attestation    | Attestation bundles larger than 10 MiB are rejected. A warning is logged with the actual size.                                                                                          |
 | Aggregate attestation limit | 50 MiB per image          | Total attestation payload per image is capped at 50 MiB. Once exceeded, remaining referrers or cosign layers are skipped with a warning.                                                |
 | Max referrers per image     | 50                        | Only the first 50 bundle-type referrers are processed. Additional referrers are skipped with a warning.                                                                                 |
+| Policy file size limit      | 1 MiB per file            | Policy files larger than 1 MiB are rejected during loading. The file is read through a size-limited reader and an error is returned if the limit is exceeded.                           |
 | Circuit breaker registry    | 1,000 hosts               | At most 1,000 per-host circuit breakers are tracked. When full, closed breakers are evicted first. If all are open, a shared overflow breaker is used for additional hosts.             |
 | Sigstore trusted root cache | 1h TTL, 24h max staleness | The root is refreshed every hour. If the Sigstore TUF mirror is unreachable, the stale root is used for up to 24 hours.                                                                 |
 | VSA clock skew tolerance    | 60 seconds                | A VSA with `timeVerified` up to 60 seconds in the future is accepted. Beyond that, it is rejected as a future timestamp.                                                                |

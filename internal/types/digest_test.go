@@ -22,8 +22,11 @@ import (
 )
 
 const (
+	algoSHA256  = "sha256"
+	algoSHA512  = "sha512"
 	hexBlock64  = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
 	hexBlock128 = hexBlock64 + hexBlock64
+	zeroBlock64 = "0000000000000000000000000000000000000000000000000000000000000000"
 )
 
 func TestParseDigest(t *testing.T) {
@@ -35,21 +38,21 @@ func TestParseDigest(t *testing.T) {
 		wantAlgo string
 		wantHash string
 	}{
-		{"valid sha256", "sha256:" + hexBlock64, "sha256", hexBlock64},
-		{"valid sha512", "sha512:" + hexBlock128, "sha512", hexBlock128},
+		{"valid sha256", algoSHA256 + ":" + hexBlock64, algoSHA256, hexBlock64},
+		{"valid sha512", algoSHA512 + ":" + hexBlock128, algoSHA512, hexBlock128},
 		{"valid sha3-256", "sha3-256:" + hexBlock64, "sha3-256", hexBlock64},
-		{"short hash rejected", "sha256:abcdef0123456789", "", ""},
+		{"short hash rejected", algoSHA256 + ":abcdef0123456789", "", ""},
 		{"missing colon", "sha256abc123", "", ""},
 		{"empty string", "", "", ""},
-		{"multiple colons rejected", "sha256:abc:def:ghi", "", ""},
+		{"multiple colons rejected", algoSHA256 + ":abc:def:ghi", "", ""},
 		{"colon only", ":", "", ""},
-		{"empty hash", "sha256:", "", ""},
+		{"empty hash", algoSHA256 + ":", "", ""},
 		{"empty algo", ":abc123", "", ""},
-		{"non-hex hash", "sha256:xyz123", "", ""},
-		{"uppercase hex rejected", "sha256:ABCDEF", "", ""},
+		{"non-hex hash", algoSHA256 + ":xyz123", "", ""},
+		{"uppercase hex rejected", algoSHA256 + ":ABCDEF", "", ""},
 		{"uppercase algo rejected", "SHA256:abc123", "", ""},
 		{"unrecognized algo rejected", "sha-256:abc123", "", ""},
-		{"hash with spaces rejected", "sha256:abc 123", "", ""},
+		{"hash with spaces rejected", algoSHA256 + ":abc 123", "", ""},
 	}
 
 	for _, test := range tests {
@@ -64,6 +67,81 @@ func TestParseDigest(t *testing.T) {
 
 			if hash != test.wantHash {
 				t.Errorf("hash = %q, want %q", hash, test.wantHash)
+			}
+		})
+	}
+}
+
+func TestMatchDigestInMap(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		imageDigest    string
+		subjectDigests map[string]string
+		want           bool
+	}{
+		{
+			name:           "exact match",
+			imageDigest:    algoSHA256 + ":" + hexBlock64,
+			subjectDigests: map[string]string{algoSHA256: hexBlock64},
+			want:           true,
+		},
+		{
+			name:           "no match different hash",
+			imageDigest:    algoSHA256 + ":" + hexBlock64,
+			subjectDigests: map[string]string{algoSHA256: zeroBlock64},
+			want:           false,
+		},
+		{
+			name:           "no match wrong algorithm",
+			imageDigest:    algoSHA256 + ":" + hexBlock64,
+			subjectDigests: map[string]string{algoSHA512: hexBlock64},
+			want:           false,
+		},
+		{
+			name:           "empty map",
+			imageDigest:    algoSHA256 + ":" + hexBlock64,
+			subjectDigests: map[string]string{},
+			want:           false,
+		},
+		{
+			name:           "empty digest",
+			imageDigest:    "",
+			subjectDigests: map[string]string{algoSHA256: hexBlock64},
+			want:           false,
+		},
+		{
+			name:           "invalid digest format",
+			imageDigest:    "nocolon",
+			subjectDigests: map[string]string{algoSHA256: hexBlock64},
+			want:           false,
+		},
+		{
+			name:        "multiple algorithms with match",
+			imageDigest: algoSHA256 + ":" + hexBlock64,
+			subjectDigests: map[string]string{
+				algoSHA512: hexBlock128,
+				algoSHA256: hexBlock64,
+			},
+			want: true,
+		},
+		{
+			name:           "nil map",
+			imageDigest:    algoSHA256 + ":" + hexBlock64,
+			subjectDigests: nil,
+			want:           false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := types.MatchDigestInMap(test.imageDigest, test.subjectDigests)
+			if got != test.want {
+				t.Errorf("MatchDigestInMap(%q, %v) = %v, want %v",
+					test.imageDigest, test.subjectDigests, got, test.want)
 			}
 		})
 	}

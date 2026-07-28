@@ -21,9 +21,7 @@ setup_file() {
 	generate_signing_key
 	configure_insecure_registry
 
-	start_kubernix
-
-	wait_for_node_ready
+	start_kubernix_with_retry
 	write_nri_dropin
 	reload_runtime
 
@@ -89,20 +87,20 @@ create_enforce_images() {
 }
 
 @test "pod with unsigned image is rejected in enforce mode" {
-	run_pod "rejected-pod" "registry.k8s.io/pause:3.10" || true
+	run_pod "rejected-pod" "$PAUSE_IMAGE" || true
 	assert_log_contains "Container rejected"
 	wait_for_pod_status "rejected-pod" "CreateContainerError"
 }
 
 @test "rejected container is logged" {
-	run_pod "logged-reject-pod" "registry.k8s.io/pause:3.10" || true
+	run_pod "logged-reject-pod" "$PAUSE_IMAGE" || true
 	assert_log_contains "Container rejected"
 }
 
 @test "multiple pods rejected in sequence without state leaks" {
-	run_pod "seq-reject-1" "registry.k8s.io/pause:3.10" || true
+	run_pod "seq-reject-1" "$PAUSE_IMAGE" || true
 	assert_pod_verdict "seq-reject-1" "rejected"
-	run_pod "seq-reject-2" "registry.k8s.io/pause:3.10" || true
+	run_pod "seq-reject-2" "$PAUSE_IMAGE" || true
 	assert_pod_verdict "seq-reject-2" "rejected"
 
 	local count
@@ -111,7 +109,7 @@ create_enforce_images() {
 }
 
 @test "rejection event surfaces in kubectl describe pod" {
-	run_pod "event-reject" "registry.k8s.io/pause:3.10" || true
+	run_pod "event-reject" "$PAUSE_IMAGE" || true
 
 	local found=false elapsed=0
 	while [[ $elapsed -lt 30 ]]; do
@@ -130,10 +128,10 @@ create_enforce_images() {
 }
 
 @test "ephemeral container via kubectl debug is verified" {
-	run_pod "debug-target" "registry.k8s.io/pause:3.10" || true
+	run_pod "debug-target" "$PAUSE_IMAGE" || true
 
 	kubectl debug "debug-target" -n "$TEST_NS" \
-		--image "registry.k8s.io/pause:3.10" \
+		--image "$PAUSE_IMAGE" \
 		--target "debug-target" \
 		--request-timeout="${KUBECTL_TIMEOUT}s" -- true 2>/dev/null || true
 
@@ -143,7 +141,7 @@ create_enforce_images() {
 @test "concurrent pod creation is handled without races" {
 	local pids=()
 	for i in $(seq 1 3); do
-		run_pod "concurrent-$i" "registry.k8s.io/pause:3.10" &
+		run_pod "concurrent-$i" "$PAUSE_IMAGE" &
 		pids+=($!)
 	done
 	for pid in "${pids[@]}"; do

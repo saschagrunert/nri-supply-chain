@@ -6,9 +6,7 @@ setup_file() {
 	mkdir -p "$KUBERNIX_ROOT" "$POLICY_DIR"
 	echo '{}' >"$POLICY_DIR/default.json"
 
-	start_kubernix
-
-	wait_for_node_ready
+	start_kubernix_with_retry
 	write_nri_dropin
 	reload_runtime
 
@@ -22,14 +20,16 @@ teardown_file() {
 }
 
 @test "pod with any image is admitted in disabled mode" {
-	run_pod "disabled-pod" "registry.k8s.io/pause:3.10"
+	run_pod "disabled-pod" "$PAUSE_IMAGE"
 	wait_for_pod_status "disabled-pod" "Running"
 }
 
 @test "no attestation fetch is attempted in disabled mode" {
-	run_pod "nofetch-pod" "registry.k8s.io/pause:3.10"
+	run_pod "nofetch-pod" "$PAUSE_IMAGE"
 	wait_for_pod_status "nofetch-pod" "Running"
-	sleep 2
+	# Wait for the NRI callback log entry to confirm the container was
+	# processed, then assert verification was never attempted.
+	assert_log_contains "NRI container info"
 	run ! plugin_log_contains "Verifying image"
 }
 

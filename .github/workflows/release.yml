@@ -53,7 +53,7 @@ jobs:
         run: make build/crane
       - name: Attest container image provenance
         env:
-          IMAGE: ghcr.io/saschagrunert/nri-supply-chain
+          IMAGE: ghcr.io/${{ github.repository }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           DIGEST=$(./build/crane digest "${IMAGE}:${VERSION}")
@@ -91,11 +91,11 @@ jobs:
       - name: Scan container image for vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ghcr.io/saschagrunert/nri-supply-chain:${{ steps.release.outputs.version }}
+          image-ref: ghcr.io/${{ github.repository }}:${{ steps.release.outputs.version }}
           exit-code: "1"
       - name: Attest container image VEX
         env:
-          IMAGE: ghcr.io/saschagrunert/nri-supply-chain
+          IMAGE: ghcr.io/${{ github.repository }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           DIGEST=$(./build/crane digest "${IMAGE}:${VERSION}")
@@ -123,7 +123,7 @@ jobs:
             "${IMAGE}@${DIGEST}"
       - name: Verify container image before VSA
         env:
-          IMAGE: ghcr.io/saschagrunert/nri-supply-chain
+          IMAGE: ghcr.io/${{ github.repository }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p /tmp/verify-policies
@@ -145,9 +145,12 @@ jobs:
           ./dist/nri-supply-chain_linux_amd64_v1/nri-supply-chain \
             --config /tmp/verify-config.toml \
             --verify-image "${IMAGE}:${VERSION}"
+      # This self-attestation VSA is for bootstrapping only. Because the same
+      # workflow that builds the image also attests it, the VSA is not
+      # independently verifiable per SLSA requirements.
       - name: Attest container image VSA
         env:
-          IMAGE: ghcr.io/saschagrunert/nri-supply-chain
+          IMAGE: ghcr.io/${{ github.repository }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           DIGEST=$(./build/crane digest "${IMAGE}:${VERSION}")

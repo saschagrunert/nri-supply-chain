@@ -39,7 +39,10 @@ import (
 	"golang.org/x/time/rate"
 )
 
-var errUnexpectedFetchResult = errors.New("fetcher: unexpected singleflight result type")
+var (
+	errUnexpectedFetchResult = errors.New("fetcher: unexpected singleflight result type")
+	errNilFetchOptions       = errors.New("fetch options must not be nil")
+)
 
 const (
 	maxAttestationSize      = 10 << 20 // 10 MiB
@@ -81,17 +84,23 @@ func (c *trustedRootCache) get(ctx context.Context) (*root.TrustedRoot, error) {
 		return nil, fmt.Errorf("context canceled before fetching trusted root: %w", err)
 	}
 
-	result, fetchErr, _ := c.inflight.Do("trusted-root", c.refreshRoot)
-	if fetchErr != nil {
-		return nil, fmt.Errorf("trusted root refresh: %w", fetchErr)
-	}
+	ch := c.inflight.DoChan("trusted-root", c.refreshRoot)
 
-	tr, ok := result.(*root.TrustedRoot)
-	if !ok {
-		return nil, fmt.Errorf("%w: %T", errUnexpectedFetchResult, result)
-	}
+	select {
+	case <-ctx.Done():
+		return nil, fmt.Errorf("context canceled during trusted root refresh: %w", ctx.Err())
+	case res := <-ch:
+		if res.Err != nil {
+			return nil, fmt.Errorf("trusted root refresh: %w", res.Err)
+		}
 
-	return tr, nil
+		tr, ok := res.Val.(*root.TrustedRoot)
+		if !ok {
+			return nil, fmt.Errorf("%w: %T", errUnexpectedFetchResult, res.Val)
+		}
+
+		return tr, nil
+	}
 }
 
 func (c *trustedRootCache) refreshRoot() (any, error) {
@@ -244,6 +253,14 @@ func (f *OCIFetcher) Fetch(
 	ctx context.Context, imageRef, digest string,
 	opts *FetchOptions,
 ) ([]VerifiedAttestation, error) {
+	if opts == nil {
+		return nil, errNilFetchOptions
+	}
+
+	if digest == "" {
+		return nil, fmt.Errorf("%w for image %q", errEmptyDigest, imageRef)
+	}
+
 	fetchOpts := *opts
 	if fetchOpts.Digest == "" {
 		fetchOpts.Digest = digest
@@ -268,12 +285,7 @@ func (f *OCIFetcher) Fetch(
 		remote.WithContext(ctx),
 	}
 
-	attestations, err := f.fetchWithRetry(ctx, ref, digest, remoteOpts, opts)
-	if err != nil {
-		return nil, err
-	}
-
-	return attestations, nil
+	return f.fetchWithRetry(ctx, ref, digest, remoteOpts, opts)
 }
 
 func retryJitter(base time.Duration) time.Duration {
@@ -336,7 +348,10 @@ func (f *OCIFetcher) fetchWithRetry(
 		lastErr = err
 	}
 
-	return nil, lastErr
+	return nil, fmt.Errorf(
+		"attestation fetch failed after %d attempts: %w",
+		fetchMaxRetries+1, lastErr,
+	)
 }
 
 func (f *OCIFetcher) fetchOnce(
@@ -409,9 +424,15 @@ func (f *OCIFetcher) cosignTagFallback(
 		ctx, ref, digest, remoteOpts, fetchOpts,
 	)
 	if tagErr != nil {
-		slog.DebugContext(ctx, "Cosign tag-based discovery failed",
-			"error", tagErr,
-		)
+		if isAuthError(tagErr) {
+			slog.WarnContext(ctx, "Cosign tag-based discovery failed with auth error",
+				"error", tagErr,
+			)
+		} else {
+			slog.DebugContext(ctx, "Cosign tag-based discovery failed",
+				"error", tagErr,
+			)
+		}
 
 		return nil, nil
 	}
@@ -517,7 +538,7 @@ func (f *OCIFetcher) processCosignLayer(
 			"error", readErr,
 		)
 
-		return VerifiedAttestation{PredicateType: "", Payload: nil, Digest: ""}, false
+		return VerifiedAttestation{}, false
 	}
 
 	defer func() {
@@ -535,7 +556,7 @@ func (f *OCIFetcher) processCosignLayer(
 			"error", dataErr,
 		)
 
-		return VerifiedAttestation{PredicateType: "", Payload: nil, Digest: ""}, false
+		return VerifiedAttestation{}, false
 	}
 
 	if int64(len(data)) > maxAttestationSize {
@@ -544,7 +565,7 @@ func (f *OCIFetcher) processCosignLayer(
 			"limit", maxAttestationSize,
 		)
 
-		return VerifiedAttestation{PredicateType: "", Payload: nil, Digest: ""}, false
+		return VerifiedAttestation{}, false
 	}
 
 	payload, verifyErr := f.verifyBundle(ctx, data, fetchOpts)
@@ -553,7 +574,7 @@ func (f *OCIFetcher) processCosignLayer(
 			"error", verifyErr,
 		)
 
-		return VerifiedAttestation{PredicateType: "", Payload: nil, Digest: ""}, false
+		return VerifiedAttestation{}, false
 	}
 
 	predicateType := extractPredicateType(payload)
@@ -660,6 +681,14 @@ func isRegistryNotFound(err error) bool {
 		transportErr.StatusCode == http.StatusNotFound
 }
 
+func isAuthError(err error) bool {
+	var transportErr *transport.Error
+
+	return errors.As(err, &transportErr) &&
+		(transportErr.StatusCode == http.StatusUnauthorized ||
+			transportErr.StatusCode == http.StatusForbidden)
+}
+
 func (f *OCIFetcher) processDescriptor(
 	ctx context.Context, desc *ociV1.Descriptor,
 	ref name.Digest, digest, predicateType string, remoteOpts []remote.Option,
@@ -674,7 +703,7 @@ func (f *OCIFetcher) processDescriptor(
 			"error", err,
 		)
 
-		return VerifiedAttestation{PredicateType: "", Payload: nil, Digest: ""}, false
+		return VerifiedAttestation{}, false
 	}
 
 	if predicateType == "" {
@@ -686,7 +715,7 @@ func (f *OCIFetcher) processDescriptor(
 			"digest", desc.Digest.String(),
 		)
 
-		return VerifiedAttestation{PredicateType: "", Payload: nil, Digest: ""}, false
+		return VerifiedAttestation{}, false
 	}
 
 	payload, extractErr := f.extractPayloadFromImage(ctx, img, fetchOpts)
@@ -696,7 +725,7 @@ func (f *OCIFetcher) processDescriptor(
 			"error", extractErr,
 		)
 
-		return VerifiedAttestation{PredicateType: "", Payload: nil, Digest: ""}, false
+		return VerifiedAttestation{}, false
 	}
 
 	if payloadPredType := extractPredicateType(payload); payloadPredType != "" {

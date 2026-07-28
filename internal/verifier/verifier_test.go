@@ -36,7 +36,7 @@ func TestNewFetcher(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 
-	fetcher := verifier.NewFetcher(cfg)
+	fetcher := verifier.NewFetcher(context.Background(), cfg)
 	if fetcher == nil {
 		t.Fatal("expected non-nil OCIFetcher from NewFetcher")
 	}
@@ -849,7 +849,7 @@ func TestResultHasFailures(t *testing.T) {
 				Reason:  "partial",
 				CheckResults: []types.CheckResult{{
 					Type: types.CheckTypeSLSA, Passed: false,
-					Status: types.StatusFail, Detail: "err",
+					Status: types.StatusFail, Detail: "err", Err: nil,
 				}},
 			},
 			expected: true,
@@ -861,7 +861,7 @@ func TestResultHasFailures(t *testing.T) {
 				Reason:  "ok",
 				CheckResults: []types.CheckResult{{
 					Type: types.CheckTypeSLSA, Passed: true,
-					Status: types.StatusPass, Detail: "ok",
+					Status: types.StatusPass, Detail: "ok", Err: nil,
 				}},
 			},
 			expected: false,
@@ -904,7 +904,7 @@ func TestResultShouldUseShorterTTL(t *testing.T) {
 				Reason:  "ok",
 				CheckResults: []types.CheckResult{{
 					Type: types.CheckTypeFetch, Passed: true,
-					Status: types.StatusWarn, Detail: "fetch failed",
+					Status: types.StatusWarn, Detail: "fetch failed", Err: nil,
 				}},
 			},
 			expected: true,
@@ -916,7 +916,7 @@ func TestResultShouldUseShorterTTL(t *testing.T) {
 				Reason:  "ok",
 				CheckResults: []types.CheckResult{{
 					Type: types.CheckTypeSLSA, Passed: true,
-					Status: types.StatusPass, Detail: "ok",
+					Status: types.StatusPass, Detail: "ok", Err: nil,
 				}},
 			},
 			expected: false,
@@ -1092,7 +1092,7 @@ func TestCombineResults(t *testing.T) {
 		},
 		{
 			name:        "slsa fails",
-			slsa:        types.FailResult(types.CheckTypeSLSA, "missing"),
+			slsa:        types.FailResult(types.CheckTypeSLSA, "missing", nil),
 			vex:         types.PassResult(types.CheckTypeVEX, "ok"),
 			wantAllowed: false,
 			wantReason:  "missing",
@@ -1100,8 +1100,8 @@ func TestCombineResults(t *testing.T) {
 		},
 		{
 			name:        "both fail",
-			slsa:        types.FailResult(types.CheckTypeSLSA, "slsa bad"),
-			vex:         types.FailResult(types.CheckTypeVEX, "vex bad"),
+			slsa:        types.FailResult(types.CheckTypeSLSA, "slsa bad", nil),
+			vex:         types.FailResult(types.CheckTypeVEX, "vex bad", nil),
 			wantAllowed: false,
 			wantReason:  "slsa bad; vex bad",
 			wantChecks:  2,
@@ -1153,7 +1153,7 @@ func TestApplyCheckResult(t *testing.T) {
 		t.Parallel()
 
 		result := &types.Result{Allowed: true, Reason: "existing", CheckResults: nil}
-		check := types.FailResult(testCheckType, "new failure")
+		check := types.FailResult(testCheckType, "new failure", nil)
 		verifier.ExportApplyCheckResult(result, check)
 
 		if result.Allowed {

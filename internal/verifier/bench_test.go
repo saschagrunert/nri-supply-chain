@@ -72,15 +72,3 @@ func BenchmarkBinAttestationsLarge(b *testing.B) {
 		binAttestations(attestations)
 	}
 }
-
-func BenchmarkRegistryHost(b *testing.B) {
-	for range b.N {
-		registryHost("docker.io/library/nginx:latest")
-	}
-}
-
-func BenchmarkRegistryHostWithPort(b *testing.B) {
-	for range b.N {
-		registryHost("myregistry.example.com:5000/myimage:v1")
-	}
-}

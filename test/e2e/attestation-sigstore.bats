@@ -9,9 +9,7 @@ setup_file() {
 	generate_signing_key
 	configure_insecure_registry
 
-	start_kubernix
-
-	wait_for_node_ready
+	start_kubernix_with_retry
 
 	write_nri_dropin
 	reload_runtime

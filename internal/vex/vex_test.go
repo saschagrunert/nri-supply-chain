@@ -24,6 +24,7 @@ import (
 	openvex "github.com/openvex/go-vex/pkg/vex"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
+	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 	"github.com/saschagrunert/nri-supply-chain/internal/vex"
 )
@@ -73,7 +74,7 @@ func validVEXDoc(status openvex.Status) openvex.VEX {
 func wrapInToto(t *testing.T, doc any, digest string) []byte {
 	t.Helper()
 
-	predBytes := mustMarshal(t, doc)
+	predBytes := testutil.MustMarshal(t, doc)
 
 	wrapper := inTotoWrapper{
 		Type: testInTotoType,
@@ -87,18 +88,7 @@ func wrapInToto(t *testing.T, doc any, digest string) []byte {
 		Predicate:     predBytes,
 	}
 
-	return mustMarshal(t, wrapper)
-}
-
-func mustMarshal(t *testing.T, val any) []byte {
-	t.Helper()
-
-	data, err := json.Marshal(val)
-	if err != nil {
-		t.Fatalf("marshalling: %v", err)
-	}
-
-	return data
+	return testutil.MustMarshal(t, wrapper)
 }
 
 func TestVerify(t *testing.T) {
@@ -370,7 +360,7 @@ func TestVerifyMalformedPayloads(t *testing.T) {
 		t.Parallel()
 
 		doc := validVEXDoc(openvex.StatusFixed)
-		att := mustMarshal(t, doc)
+		att := testutil.MustMarshal(t, doc)
 
 		result, err := vex.Verify(
 			context.Background(), att,
@@ -409,7 +399,7 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 		t.Parallel()
 
 		doc := validVEXDoc(openvex.StatusNotAffected)
-		predBytes := mustMarshal(t, doc)
+		predBytes := testutil.MustMarshal(t, doc)
 
 		wrapper := inTotoWrapper{
 			Type: testInTotoType,
@@ -427,7 +417,7 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 			Predicate:     predBytes,
 		}
 
-		att := mustMarshal(t, wrapper)
+		att := testutil.MustMarshal(t, wrapper)
 
 		result, err := vex.Verify(
 			context.Background(), att,
@@ -446,7 +436,7 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 		t.Parallel()
 
 		doc := validVEXDoc(openvex.StatusNotAffected)
-		predBytes := mustMarshal(t, doc)
+		predBytes := testutil.MustMarshal(t, doc)
 
 		wrapper := inTotoWrapper{
 			Type: testInTotoType,
@@ -464,7 +454,7 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 			Predicate:     predBytes,
 		}
 
-		att := mustMarshal(t, wrapper)
+		att := testutil.MustMarshal(t, wrapper)
 
 		_, err := vex.Verify(
 			context.Background(), att,
@@ -605,12 +595,12 @@ func TestVerifyStatementEdgeCases(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		if !result.Passed {
-			t.Errorf("expected pass for unknown action (defaults to warn), got: %s", result.Detail)
+		if result.Passed {
+			t.Errorf("expected fail for unknown action (defaults to deny), got: %s", result.Detail)
 		}
 
-		if result.Status != types.StatusWarn {
-			t.Errorf("expected warn status for unknown action, got %q", result.Status)
+		if result.Status != types.StatusFail {
+			t.Errorf("expected fail status for unknown action, got %q", result.Status)
 		}
 	})
 
@@ -991,7 +981,7 @@ func TestVerifyInTotoEmptySubjectWithDigest(t *testing.T) {
 	t.Parallel()
 
 	doc := validVEXDoc(openvex.StatusFixed)
-	predBytes := mustMarshal(t, doc)
+	predBytes := testutil.MustMarshal(t, doc)
 
 	wrapper := inTotoWrapper{
 		Type:          testInTotoType,
@@ -1000,7 +990,7 @@ func TestVerifyInTotoEmptySubjectWithDigest(t *testing.T) {
 		Predicate:     predBytes,
 	}
 
-	att := mustMarshal(t, wrapper)
+	att := testutil.MustMarshal(t, wrapper)
 
 	_, err := vex.Verify(
 		context.Background(), att,
@@ -1018,7 +1008,7 @@ func TestVerifyInTotoEmptySubjectWithoutDigest(t *testing.T) {
 	t.Parallel()
 
 	doc := validVEXDoc(openvex.StatusFixed)
-	predBytes := mustMarshal(t, doc)
+	predBytes := testutil.MustMarshal(t, doc)
 
 	wrapper := inTotoWrapper{
 		Type:          testInTotoType,
@@ -1027,7 +1017,7 @@ func TestVerifyInTotoEmptySubjectWithoutDigest(t *testing.T) {
 		Predicate:     predBytes,
 	}
 
-	att := mustMarshal(t, wrapper)
+	att := testutil.MustMarshal(t, wrapper)
 
 	// When no digest is available, empty subjects should be allowed (skip subject binding).
 	result, err := vex.Verify(
@@ -1047,7 +1037,7 @@ func TestVerifyInTotoNilSubjectWithDigest(t *testing.T) {
 	t.Parallel()
 
 	doc := validVEXDoc(openvex.StatusFixed)
-	predBytes := mustMarshal(t, doc)
+	predBytes := testutil.MustMarshal(t, doc)
 
 	wrapper := struct {
 		Type          string          `json:"_type"` //nolint:tagliatelle // In-toto spec field name.
@@ -1059,7 +1049,7 @@ func TestVerifyInTotoNilSubjectWithDigest(t *testing.T) {
 		Predicate:     predBytes,
 	}
 
-	att := mustMarshal(t, wrapper)
+	att := testutil.MustMarshal(t, wrapper)
 
 	// nil subject with a digest available should be rejected
 	_, err := vex.Verify(
@@ -1075,7 +1065,7 @@ func TestVerifySubjectsWithoutDigestRejected(t *testing.T) {
 	t.Parallel()
 
 	doc := validVEXDoc(openvex.StatusFixed)
-	predBytes := mustMarshal(t, doc)
+	predBytes := testutil.MustMarshal(t, doc)
 
 	wrapper := inTotoWrapper{
 		Type: testInTotoType,
@@ -1089,7 +1079,7 @@ func TestVerifySubjectsWithoutDigestRejected(t *testing.T) {
 		Predicate:     predBytes,
 	}
 
-	att := mustMarshal(t, wrapper)
+	att := testutil.MustMarshal(t, wrapper)
 
 	_, err := vex.Verify(
 		context.Background(), att,

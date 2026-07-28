@@ -20,9 +20,7 @@ setup_file() {
 	start_registry
 	configure_insecure_registry
 
-	start_kubernix
-
-	wait_for_node_ready
+	start_kubernix_with_retry
 	write_nri_dropin
 	reload_runtime
 
@@ -141,7 +139,7 @@ teardown_file() {
 	# quickly (no external network dependency). System images from
 	# registry.k8s.io are excluded in the DaemonSet policy.
 	local test_image="${REGISTRY_HOST}/test/ds-verify:latest"
-	timeout "$CMD_TIMEOUT" "$CRANE" copy registry.k8s.io/pause:3.10 "$test_image" --insecure
+	timeout "$CMD_TIMEOUT" "$CRANE" copy "$PAUSE_IMAGE" "$test_image" --insecure
 
 	kubectl run ds-verify-pod \
 		--namespace "$test_ns" \

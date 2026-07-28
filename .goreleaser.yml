@@ -2,6 +2,9 @@ version: 2
 
 project_name: nri-supply-chain
 
+gomod:
+  proxy: true
+
 builds:
   - main: ./cmd/nri-supply-chain/
     binary: nri-supply-chain

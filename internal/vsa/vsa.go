@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -227,10 +226,9 @@ func verifyResourceURI(resourceURI, imageRef string) error {
 	}
 
 	if !strings.Contains(resourceURI, "@") {
-		slog.Warn("VSA resource URI is tag-based, not digest-pinned; "+
-			"the VSA applies to the entire repository",
-			"resourceURI", resourceURI,
-			"imageRef", imageRef,
+		return fmt.Errorf(
+			"%w: resource URI %q is tag-based (not digest-pinned)",
+			ErrResourceMismatch, resourceURI,
 		)
 	}
 
@@ -374,28 +372,30 @@ func passResult() *VerifyResult {
 
 func failResult(detail string) *VerifyResult {
 	return &VerifyResult{
-		Check:      types.FailResult(checkType, detail),
+		Check:      types.FailResult(checkType, detail, nil),
 		HardReject: false,
 	}
 }
 
 func hardRejectResult() *VerifyResult {
 	return &VerifyResult{
-		Check:      types.FailResult(checkType, "trusted verifier reported FAILED verification"),
+		Check: types.FailResult(
+			checkType, "trusted verifier reported FAILED verification", nil,
+		),
 		HardReject: true,
 	}
 }
 
 func untrustedResult(detail string) *VerifyResult {
 	return &VerifyResult{
-		Check:      types.SoftFailResult(checkType, detail),
+		Check:      types.SoftFailResult(checkType, detail, nil),
 		HardReject: false,
 	}
 }
 
 func staleResult(detail string) *VerifyResult {
 	return &VerifyResult{
-		Check:      types.SoftFailResult(checkType, detail),
+		Check:      types.SoftFailResult(checkType, detail, nil),
 		HardReject: false,
 	}
 }
