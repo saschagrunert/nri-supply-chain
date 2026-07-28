@@ -47,9 +47,9 @@ Deploy as a DaemonSet to run the plugin on every node in the cluster:
 kubectl apply -f deploy/kubernetes/
 ```
 
-The manifests in `deploy/kubernetes/` include a Namespace, ServiceAccount,
-ConfigMap with example config and policy, NetworkPolicy, PodDisruptionBudget,
-and the DaemonSet.
+The single manifest `deploy/kubernetes/daemonset.yaml` bundles a Namespace,
+ServiceAccount, ConfigMap with example config and policy, NetworkPolicy,
+PodDisruptionBudget, and the DaemonSet.
 Edit the ConfigMap to match your environment before deploying. See
 [config.md](config.md) for the full field reference.
 

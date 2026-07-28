@@ -54,17 +54,10 @@ func applyEnforcement(
 		"reason", result.Reason,
 	)
 
-	checkResults := result.CheckResults
-	if len(checkResults) > 0 {
-		checkResults = make([]types.CheckResult, len(result.CheckResults))
-		copy(checkResults, result.CheckResults)
-	}
+	cloned := result.Clone()
+	cloned.Allowed = true
 
-	return &types.Result{
-		Allowed:      true,
-		Reason:       result.Reason,
-		CheckResults: checkResults,
-	}, nil
+	return &cloned, nil
 }
 
 func runChecks(
@@ -75,17 +68,8 @@ func runChecks(
 		return runChecksWithoutFetcher(pol, state.metrics, imageRef)
 	}
 
-	// Parse the image reference once and reuse it for host extraction and
-	// digest-ref construction, avoiding redundant parsing.
 	parsedRef, parseErr := name.ParseReference(imageRef)
-
-	var host string
-	if parseErr != nil {
-		host = imageRef
-	} else {
-		host = parsedRef.Context().RegistryStr()
-	}
-
+	host := registryHost(parsedRef, parseErr, imageRef)
 	breaker := registryBreakerByHost(state.circuitBreakers, host)
 
 	if breaker != nil && !breaker.Allow() {
@@ -125,7 +109,24 @@ func runChecks(
 		return vsaResult
 	}
 
-	return runParallelChecks(ctx, &bins, pol, state.metrics, imageRef, attestDigest, namespace)
+	return runParallelChecks(
+		ctx,
+		&bins,
+		pol,
+		state.metrics,
+		imageRef,
+		attestDigest,
+		namespace,
+		parsedRef,
+	)
+}
+
+func registryHost(parsed name.Reference, parseErr error, imageRef string) string {
+	if parseErr != nil {
+		return imageRef
+	}
+
+	return parsed.Context().RegistryStr()
 }
 
 func runChecksWithoutFetcher(
@@ -270,7 +271,7 @@ func checkVSA(
 	var passed *vsa.VerifyResult
 
 	for idx := range vsaAttestations {
-		vsaResult, err := vsa.Verify(vsaAttestations[idx].Payload, pol, digestRef)
+		vsaResult, err := vsa.Verify(vsaAttestations[idx].Payload, pol, digestRef, nil)
 		if err != nil {
 			slog.WarnContext(ctx, "VSA verification error", "error", err)
 
@@ -304,6 +305,7 @@ func checkVSA(
 func runParallelChecks(
 	ctx context.Context, bins *attestationBins,
 	pol *policy.Policy, met *metrics.Metrics, imageRef, digest, namespace string,
+	parsedRef name.Reference,
 ) *types.Result {
 	var (
 		slsaResult *types.CheckResult
@@ -342,7 +344,7 @@ func runParallelChecks(
 			}
 		}()
 
-		vexResult = runVEXCheck(ctx, bins.vex, pol, met, imageRef, digest, namespace)
+		vexResult = runVEXCheck(ctx, bins.vex, pol, met, imageRef, digest, namespace, parsedRef)
 	}()
 
 	waitGroup.Wait()
@@ -400,6 +402,7 @@ func runVEXCheck(
 	ctx context.Context,
 	vexAtts []attestation.VerifiedAttestation,
 	pol *policy.Policy, met *metrics.Metrics, imageRef, digest, namespace string,
+	parsedRef name.Reference,
 ) *types.CheckResult {
 	start := time.Now()
 
@@ -427,7 +430,7 @@ func runVEXCheck(
 		payloads = append(payloads, vexAtts[idx].Payload)
 	}
 
-	result, err := vex.VerifyMultiple(ctx, payloads, pol, imageRef, digest)
+	result, err := vex.VerifyMultiple(ctx, payloads, pol, imageRef, digest, parsedRef)
 	if err != nil {
 		slog.ErrorContext(ctx, "VEX verification error",
 			"error", err,

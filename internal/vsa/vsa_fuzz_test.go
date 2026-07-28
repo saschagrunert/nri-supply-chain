@@ -54,6 +54,6 @@ func FuzzVerify(f *testing.F) {
 	}
 
 	f.Fuzz(func(_ *testing.T, data []byte) {
-		vsa.Verify(data, pol, testImageRef)
+		vsa.Verify(data, pol, testImageRef, nil)
 	})
 }

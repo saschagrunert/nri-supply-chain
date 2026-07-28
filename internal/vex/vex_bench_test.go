@@ -66,6 +66,6 @@ func BenchmarkVerify(b *testing.B) {
 	b.ResetTimer()
 
 	for range b.N {
-		_, _ = vex.Verify(ctx, att, pol, testImageRef, testDigest)
+		_, _ = vex.Verify(ctx, att, pol, testImageRef, testDigest, nil)
 	}
 }

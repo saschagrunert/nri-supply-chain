@@ -56,9 +56,11 @@ type inTotoSubject struct {
 }
 
 // Verify checks a VEX attestation against the given policy.
+// When parsedImageRef is non-nil it is used instead of re-parsing imageRef.
 func Verify(
 	ctx context.Context,
 	att []byte, pol *policy.Policy, imageRef, imageDigest string,
+	parsedImageRef name.Reference,
 ) (*types.CheckResult, error) {
 	predicate, err := verifySubjectAndExtract(att, imageDigest)
 	if err != nil {
@@ -75,7 +77,7 @@ func Verify(
 		hasUnderInvestigation bool
 	)
 
-	purl := buildOCIPURL(imageRef, imageDigest)
+	purl := buildOCIPURL(imageRef, imageDigest, parsedImageRef)
 
 	for idx := range doc.Statements {
 		stmt := &doc.Statements[idx]
@@ -122,11 +124,13 @@ func vulnerabilityName(stmt *openvex.Statement) string {
 
 // VerifyMultiple checks multiple VEX documents. Most restrictive wins:
 // any affected statement causes failure.
+// When parsedImageRef is non-nil it is used instead of re-parsing imageRef.
 func VerifyMultiple(
 	ctx context.Context,
 	attestations [][]byte,
 	pol *policy.Policy,
 	imageRef, imageDigest string,
+	parsedImageRef name.Reference,
 ) (*types.CheckResult, error) {
 	var (
 		failDetails           []string
@@ -136,7 +140,7 @@ func VerifyMultiple(
 	)
 
 	for _, att := range attestations {
-		result, err := Verify(ctx, att, pol, imageRef, imageDigest)
+		result, err := Verify(ctx, att, pol, imageRef, imageDigest, parsedImageRef)
 		if err != nil {
 			parseErrors = append(parseErrors, err.Error())
 
@@ -246,10 +250,15 @@ func matchesImage(ctx context.Context, stmt *openvex.Statement, imageDigest, pur
 	return false
 }
 
-func buildOCIPURL(imageRef, imageDigest string) string {
-	ref, err := name.ParseReference(imageRef)
-	if err != nil {
-		return ""
+func buildOCIPURL(imageRef, imageDigest string, parsedImageRef name.Reference) string {
+	ref := parsedImageRef
+	if ref == nil {
+		var err error
+
+		ref, err = name.ParseReference(imageRef)
+		if err != nil {
+			return ""
+		}
 	}
 
 	repo := ref.Context()

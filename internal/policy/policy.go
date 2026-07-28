@@ -276,8 +276,6 @@ func MergeWithDefault(namespace, defaultPol *Policy) *Policy {
 		merged.Signatures = &sigCopy
 	}
 
-	merged.initDerived()
-
 	return merged
 }
 
@@ -455,8 +453,6 @@ func Load(policyPath string) (*Policy, error) {
 			"invalid policy file %q: %w", policyPath, err,
 		)
 	}
-
-	pol.initDerived()
 
 	return &pol, nil
 }
@@ -759,10 +755,4 @@ func (p *Policy) validateVSA() error {
 	}
 
 	return nil
-}
-
-func (p *Policy) initDerived() {
-	if p.VSA != nil && p.VSA.MaxAge != "" {
-		p.VSA.MaxAgeDuration, _ = time.ParseDuration(p.VSA.MaxAge)
-	}
 }

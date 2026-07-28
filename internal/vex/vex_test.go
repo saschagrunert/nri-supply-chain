@@ -268,6 +268,7 @@ func TestVerify(t *testing.T) {
 			result, err := vex.Verify(
 				context.Background(), att,
 				test.pol, testImageRef, testDigest,
+				nil,
 			)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -294,6 +295,7 @@ func TestVerifyMalformedPayloads(t *testing.T) {
 		_, err := vex.Verify(
 			context.Background(), []byte{},
 			&policy.Policy{}, testImageRef, testDigest,
+			nil,
 		)
 
 		if !errors.Is(err, vex.ErrInvalidVEX) {
@@ -307,6 +309,7 @@ func TestVerifyMalformedPayloads(t *testing.T) {
 		_, err := vex.Verify(
 			context.Background(), nil,
 			&policy.Policy{}, testImageRef, testDigest,
+			nil,
 		)
 
 		if !errors.Is(err, vex.ErrInvalidVEX) {
@@ -320,6 +323,7 @@ func TestVerifyMalformedPayloads(t *testing.T) {
 		_, err := vex.Verify(
 			context.Background(), []byte(`{"subject":[`),
 			&policy.Policy{}, testImageRef, testDigest,
+			nil,
 		)
 
 		if !errors.Is(err, vex.ErrInvalidVEX) {
@@ -333,6 +337,7 @@ func TestVerifyMalformedPayloads(t *testing.T) {
 		_, err := vex.Verify(
 			context.Background(), []byte("{}"),
 			&policy.Policy{}, testImageRef, testDigest,
+			nil,
 		)
 
 		if !errors.Is(err, vex.ErrEmptySubjects) {
@@ -346,6 +351,7 @@ func TestVerifyMalformedPayloads(t *testing.T) {
 		result, err := vex.Verify(
 			context.Background(), []byte("{}"),
 			&policy.Policy{}, testImageRef, "",
+			nil,
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -365,6 +371,7 @@ func TestVerifyMalformedPayloads(t *testing.T) {
 		result, err := vex.Verify(
 			context.Background(), att,
 			&policy.Policy{}, testImageRef, "",
+			nil,
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -388,6 +395,7 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 		_, err := vex.Verify(
 			context.Background(), att,
 			&policy.Policy{}, testImageRef, "nocolon",
+			nil,
 		)
 
 		if !errors.Is(err, vex.ErrSubjectMismatch) {
@@ -422,6 +430,7 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 		result, err := vex.Verify(
 			context.Background(), att,
 			&policy.Policy{}, testImageRef, testDigest,
+			nil,
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -459,6 +468,7 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 		_, err := vex.Verify(
 			context.Background(), att,
 			&policy.Policy{}, testImageRef, testDigest,
+			nil,
 		)
 
 		if !errors.Is(err, vex.ErrSubjectMismatch) {
@@ -522,6 +532,7 @@ func TestVerifyStatementEdgeCases(t *testing.T) {
 		result, err := vex.Verify(
 			context.Background(), att,
 			&policy.Policy{}, testImageRef, testDigest,
+			nil,
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -545,6 +556,7 @@ func TestVerifyStatementEdgeCases(t *testing.T) {
 		result, err := vex.Verify(
 			context.Background(), att,
 			&policy.Policy{}, testImageRef, testDigest,
+			nil,
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -564,6 +576,7 @@ func TestVerifyStatementEdgeCases(t *testing.T) {
 		result, err := vex.Verify(
 			context.Background(), att,
 			&policy.Policy{}, testImageRef, testDigest,
+			nil,
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -590,6 +603,7 @@ func TestVerifyStatementEdgeCases(t *testing.T) {
 				VEX: &policy.VEXPolicy{UnderInvestigationPolicy: "unknown_action"},
 			},
 			testImageRef, testDigest,
+			nil,
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -613,6 +627,7 @@ func TestVerifyStatementEdgeCases(t *testing.T) {
 		result, err := vex.Verify(
 			context.Background(), att,
 			&policy.Policy{}, testImageRef, testDigest,
+			nil,
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -633,6 +648,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		result, err := vex.VerifyMultiple(
 			context.Background(), nil,
 			&policy.Policy{}, testImageRef, testDigest,
+			nil,
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -655,6 +671,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		result, err := vex.VerifyMultiple(
 			context.Background(), attestations,
 			&policy.Policy{}, testImageRef, testDigest,
+			nil,
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -688,6 +705,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 				VEX: &policy.VEXPolicy{UnderInvestigationPolicy: types.ActionWarn},
 			},
 			testImageRef, testDigest,
+			nil,
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -719,6 +737,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		result, err := vex.VerifyMultiple(
 			context.Background(), attestations,
 			&policy.Policy{}, testImageRef, testDigest,
+			nil,
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -741,6 +760,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		result, err := vex.VerifyMultiple(
 			context.Background(), attestations,
 			&policy.Policy{}, testImageRef, testDigest,
+			nil,
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -758,6 +778,7 @@ func TestVerifyInvalidJSON(t *testing.T) {
 	_, err := vex.Verify(
 		context.Background(), []byte("not json"),
 		&policy.Policy{}, testImageRef, testDigest,
+		nil,
 	)
 	if !errors.Is(err, vex.ErrInvalidVEX) {
 		t.Errorf("expected ErrInvalidVEX, got %v", err)
@@ -772,6 +793,7 @@ func TestVerifyCheckType(t *testing.T) {
 	result, err := vex.Verify(
 		context.Background(), wrapInToto(t, doc, testDigest),
 		&policy.Policy{}, testImageRef, testDigest,
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -811,6 +833,7 @@ func TestVerifyPURLSingleSegmentRepo(t *testing.T) {
 	result, err := vex.Verify(
 		context.Background(), wrapInToto(t, doc, digest),
 		&policy.Policy{}, imageRef, digest,
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -881,6 +904,7 @@ func TestVerifyMultiple(t *testing.T) {
 			result, err := vex.VerifyMultiple(
 				context.Background(), attestations,
 				test.pol, testImageRef, testDigest,
+				nil,
 			)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -911,6 +935,7 @@ func TestVerifyMultipleSkipsInvalid(t *testing.T) {
 	result, err := vex.VerifyMultiple(
 		context.Background(), attestations,
 		&policy.Policy{}, testImageRef, testDigest,
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -956,6 +981,7 @@ func TestVerifyInTotoWrapped(t *testing.T) {
 			result, err := vex.Verify(
 				context.Background(), att,
 				&policy.Policy{}, testImageRef, test.digest,
+				nil,
 			)
 
 			if test.wantErr != nil {
@@ -995,6 +1021,7 @@ func TestVerifyInTotoEmptySubjectWithDigest(t *testing.T) {
 	_, err := vex.Verify(
 		context.Background(), att,
 		&policy.Policy{}, testImageRef, testDigest,
+		nil,
 	)
 	if !errors.Is(err, vex.ErrEmptySubjects) {
 		t.Errorf(
@@ -1023,6 +1050,7 @@ func TestVerifyInTotoEmptySubjectWithoutDigest(t *testing.T) {
 	result, err := vex.Verify(
 		context.Background(), att,
 		&policy.Policy{}, testImageRef, "",
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1055,6 +1083,7 @@ func TestVerifyInTotoNilSubjectWithDigest(t *testing.T) {
 	_, err := vex.Verify(
 		context.Background(), att,
 		&policy.Policy{}, testImageRef, testDigest,
+		nil,
 	)
 	if !errors.Is(err, vex.ErrEmptySubjects) {
 		t.Errorf("expected ErrEmptySubjects for nil subjects with digest, got: %v", err)
@@ -1084,6 +1113,7 @@ func TestVerifySubjectsWithoutDigestRejected(t *testing.T) {
 	_, err := vex.Verify(
 		context.Background(), att,
 		&policy.Policy{}, testImageRef, "",
+		nil,
 	)
 	if !errors.Is(err, vex.ErrSubjectMismatch) {
 		t.Errorf(
@@ -1104,6 +1134,7 @@ func TestVerifyMultipleAllInvalid(t *testing.T) {
 	result, err := vex.VerifyMultiple(
 		context.Background(), attestations,
 		&policy.Policy{}, testImageRef, testDigest,
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

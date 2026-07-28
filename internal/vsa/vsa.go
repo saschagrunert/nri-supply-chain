@@ -113,7 +113,13 @@ type VerifyResult struct {
 
 // Verify checks a VSA attestation against the given policy.
 // HardReject is true when a trusted verifier reports FAILED, preventing fallback to direct verification.
-func Verify(att []byte, pol *policy.Policy, imageRef string) (*VerifyResult, error) {
+// When parsedImageRef is non-nil it is used instead of re-parsing imageRef.
+func Verify(
+	att []byte,
+	pol *policy.Policy,
+	imageRef string,
+	parsedImageRef name.Reference,
+) (*VerifyResult, error) {
 	var stmt Statement
 
 	err := json.Unmarshal(att, &stmt)
@@ -141,7 +147,7 @@ func Verify(att []byte, pol *policy.Policy, imageRef string) (*VerifyResult, err
 		return failResult(err.Error()), nil
 	}
 
-	err = verifyResourceURI(stmt.Predicate.ResourceURI, imageRef)
+	err = verifyResourceURI(stmt.Predicate.ResourceURI, imageRef, parsedImageRef)
 	if err != nil {
 		return failResult(err.Error()), nil
 	}
@@ -216,7 +222,7 @@ func extractLevelNumber(level string) int {
 	return num
 }
 
-func verifyResourceURI(resourceURI, imageRef string) error {
+func verifyResourceURI(resourceURI, imageRef string, parsedImageRef name.Reference) error {
 	if resourceURI == "" {
 		return fmt.Errorf("%w: empty resource URI", ErrResourceMismatch)
 	}
@@ -237,7 +243,7 @@ func verifyResourceURI(resourceURI, imageRef string) error {
 		return fmt.Errorf("%w: invalid resource URI %q: %w", ErrResourceMismatch, resourceURI, err)
 	}
 
-	normalizedImage, err := normalizeRef(imageRef)
+	normalizedImage, err := normalizeImageRef(imageRef, parsedImageRef)
 	if err != nil {
 		return fmt.Errorf("%w: invalid image ref %q: %w", ErrResourceMismatch, imageRef, err)
 	}
@@ -247,6 +253,18 @@ func verifyResourceURI(resourceURI, imageRef string) error {
 	}
 
 	return nil
+}
+
+func normalizeImageRef(imageRef string, parsed name.Reference) (string, error) {
+	if parsed == nil {
+		return normalizeRef(imageRef)
+	}
+
+	if digest, ok := parsed.(name.Digest); ok {
+		return digest.String(), nil
+	}
+
+	return parsed.Context().String(), nil
 }
 
 func normalizeRef(ref string) (string, error) {
