@@ -5,9 +5,11 @@ go 1.26.5
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/containerd/nri v0.12.1
+	github.com/fatih/color v1.19.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/google/go-containerregistry v0.21.7
 	github.com/invopop/jsonschema v0.14.0
+	github.com/olekukonko/tablewriter v0.0.5
 	github.com/openvex/go-vex v0.2.8
 	github.com/prometheus/client_golang v1.24.1
 	github.com/sigstore/protobuf-specs v0.5.1
@@ -25,6 +27,7 @@ require (
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/clipperhouse/uax29/v2 v2.6.0 // indirect
 	github.com/containerd/log v0.1.0 // indirect
 	github.com/containerd/ttrpc v1.2.7 // indirect
 	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467 // indirect
@@ -65,6 +68,9 @@ require (
 	github.com/klauspost/compress v1.19.1 // indirect
 	github.com/knqyf263/go-plugin v0.9.0 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
+	github.com/mattn/go-colorable v0.1.14 // indirect
+	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/mattn/go-runewidth v0.0.19 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/oklog/ulid/v2 v2.1.1 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect

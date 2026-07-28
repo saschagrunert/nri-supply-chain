@@ -47,6 +47,8 @@ func VerifyResultJSONSchema() ([]byte, error) {
 			Image:        "",
 			Digest:       "",
 			Namespace:    "",
+			PolicyFile:   "",
+			Mode:         "",
 			Allowed:      false,
 			Reason:       "",
 			CheckResults: nil,

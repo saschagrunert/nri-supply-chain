@@ -56,7 +56,8 @@ teardown() {
 	local ref="${VERIFY_IMAGE}@${VERIFY_DIGEST}"
 	run timeout "$CMD_TIMEOUT" "$BINARY" \
 		--config "$PLUGIN_CONFIG" \
-		--verify-image "$ref"
+		--verify-image "$ref" \
+		--output json
 	echo "# verify-image output: $output" >&2
 	[[ "$status" -eq 0 ]]
 	echo "$output" | grep -q '"allowed": true'
@@ -71,7 +72,8 @@ teardown() {
 
 	run timeout "$CMD_TIMEOUT" "$BINARY" \
 		--config "$PLUGIN_CONFIG" \
-		--verify-image "$ref"
+		--verify-image "$ref" \
+		--output json
 	echo "# verify-image output: $output" >&2
 	[[ "$status" -ne 0 ]]
 	echo "$output" | grep -q '"allowed": false'
@@ -82,7 +84,8 @@ teardown() {
 	local json_out
 	json_out=$(timeout "$CMD_TIMEOUT" "$BINARY" \
 		--config "$PLUGIN_CONFIG" \
-		--verify-image "$ref" 2>/dev/null)
+		--verify-image "$ref" \
+		--output json 2>/dev/null)
 	echo "$json_out" | python3 -c "import sys, json; json.load(sys.stdin)"
 }
 
@@ -90,10 +93,22 @@ teardown() {
 	local ref="${VERIFY_IMAGE}@${VERIFY_DIGEST}"
 	run timeout "$CMD_TIMEOUT" "$BINARY" \
 		--config "$PLUGIN_CONFIG" \
-		--verify-image "$ref"
+		--verify-image "$ref" \
+		--output json
 	[[ "$status" -eq 0 ]]
 	echo "$output" | grep -q "\"digest\":"
 	echo "$output" | grep -q "\"image\":"
+}
+
+@test "verify-image default table output shows ALLOWED" {
+	local ref="${VERIFY_IMAGE}@${VERIFY_DIGEST}"
+	run timeout "$CMD_TIMEOUT" "$BINARY" \
+		--config "$PLUGIN_CONFIG" \
+		--verify-image "$ref"
+	echo "# verify-image output: $output" >&2
+	[[ "$status" -eq 0 ]]
+	echo "$output" | grep -q "ALLOWED"
+	echo "$output" | grep -q "Image:"
 }
 
 @test "verify-image with disabled verification fails" {

@@ -44,6 +44,9 @@ const (
 	logLevelInfo  = "info"
 	logLevelWarn  = "warn"
 	logLevelError = "error"
+
+	outputFormatTable = "table"
+	outputFormatJSON  = "json"
 )
 
 type options struct {
@@ -54,6 +57,7 @@ type options struct {
 	logLevel        string
 	verifyImage     string
 	verifyNamespace string
+	outputFormat    string
 	showVersion     bool
 	validate        bool
 	jsonSchema      string
@@ -85,8 +89,6 @@ func run() int {
 		return printJSONSchema(opts.jsonSchema)
 	}
 
-	initLogging(opts.logLevel)
-
 	cfg, err := setupConfig(&opts)
 	if err != nil {
 		slog.Error("Setup failed", "error", err)
@@ -94,9 +96,8 @@ func run() int {
 		return 1
 	}
 
-	if cfg.LogLevel != "" {
-		updateLogLevel(cfg.LogLevel)
-	}
+	cliMode := opts.verifyImage != "" || opts.validate
+	initLogging(effectiveLogLevel(opts.logLevel, cfg.LogLevel), cliMode)
 
 	if opts.validate {
 		return runValidation(cfg)
@@ -166,41 +167,51 @@ func parseFlags() (options, error) {
 func parseFlagsFrom(args []string) (options, error) {
 	flagSet := flag.NewFlagSet("nri-supply-chain", flag.ContinueOnError)
 
-	configPath := flagSet.String("config", "", "path to TOML config file")
-	metricsAddr := flagSet.String(
-		"metrics-addr", "", "metrics HTTP listen address (overrides config)",
-	)
-	pluginName := flagSet.String("plugin-name", "supply-chain", "NRI plugin name")
-	pluginIdx := flagSet.String("plugin-idx", "10", "NRI plugin index")
-	logLevel := flagSet.String("log-level", logLevelInfo, "log level (debug, info, warn, error)")
-	showVersion := flagSet.Bool("version", false, "print version and exit")
-	validate := flagSet.Bool("validate", false, "validate config and policies, then exit")
-	verifyImage := flagSet.String("verify-image", "", "verify an image and exit")
-	verifyNamespace := flagSet.String(
-		"verify-namespace", verifier.DefaultPolicyLabel, "namespace for verification",
-	)
-	jsonSchema := flagSet.String(
-		"json-schema", "",
-		"print JSON Schema and exit (policy, result)",
-	)
+	var opts options
+
+	registerFlags(flagSet, &opts)
 
 	err := flagSet.Parse(args)
 	if err != nil {
 		return options{}, fmt.Errorf("parsing flags: %w", err)
 	}
 
-	return options{
-		configPath:      *configPath,
-		metricsAddr:     *metricsAddr,
-		pluginName:      *pluginName,
-		pluginIdx:       *pluginIdx,
-		logLevel:        *logLevel,
-		verifyImage:     *verifyImage,
-		verifyNamespace: *verifyNamespace,
-		showVersion:     *showVersion,
-		validate:        *validate,
-		jsonSchema:      *jsonSchema,
-	}, nil
+	return opts, nil
+}
+
+func registerFlags(flagSet *flag.FlagSet, opts *options) {
+	flagSet.StringVar(&opts.configPath, "config", "", "path to TOML config file")
+	flagSet.StringVar(
+		&opts.metricsAddr,
+		"metrics-addr",
+		"",
+		"metrics HTTP listen address (overrides config)",
+	)
+	flagSet.StringVar(&opts.pluginName, "plugin-name", "supply-chain", "NRI plugin name")
+	flagSet.StringVar(&opts.pluginIdx, "plugin-idx", "10", "NRI plugin index")
+	flagSet.StringVar(
+		&opts.logLevel, "log-level", "",
+		"log level: debug, info, warn, error (default: info)",
+	)
+	flagSet.BoolVar(&opts.showVersion, "version", false, "print version and exit")
+	flagSet.BoolVar(&opts.validate, "validate", false, "validate config and policies, then exit")
+	flagSet.StringVar(&opts.verifyImage, "verify-image", "", "verify an image and exit")
+	flagSet.StringVar(
+		&opts.verifyNamespace,
+		"verify-namespace",
+		verifier.DefaultPolicyLabel,
+		"namespace for verification",
+	)
+	flagSet.StringVar(
+		&opts.outputFormat,
+		"output",
+		outputFormatTable,
+		"output format for --verify-image (table, json)",
+	)
+	flagSet.StringVar(
+		&opts.jsonSchema, "json-schema", "",
+		"print JSON Schema and exit (policy, result)",
+	)
 }
 
 func setupConfig(opts *options) (*config.Config, error) {
@@ -294,9 +305,21 @@ func loadConfig(path string) (*config.Config, error) {
 	return config.DefaultConfig(), nil
 }
 
-func initLogging(level string) {
+func effectiveLogLevel(flagLevel, configLevel string) string {
+	if flagLevel != "" {
+		return flagLevel
+	}
+
+	if configLevel != "" {
+		return configLevel
+	}
+
+	return logLevelInfo
+}
+
+func initLogging(level string, cliMode bool) {
 	updateLogLevel(level)
-	slog.SetDefault(newLogger())
+	slog.SetDefault(newLogger(cliMode))
 
 	if parseLogLevel(level) == nil {
 		slog.Warn("Unrecognized log level, defaulting to info", "level", level)
@@ -332,7 +355,11 @@ func parseLogLevel(level string) *slog.Level {
 	return &parsed
 }
 
-func newLogger() *slog.Logger {
+func newLogger(cliMode bool) *slog.Logger {
+	if cliMode {
+		return slog.New(newCLIHandler(os.Stderr, &logLevelVar))
+	}
+
 	return slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
 		Level: &logLevelVar,
 	}))

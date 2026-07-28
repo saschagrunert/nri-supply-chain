@@ -67,7 +67,22 @@ must pass verification.
      --verify-image ghcr.io/saschagrunert/nri-supply-chain:0.1.5
    ```
 
-   The output is JSON with per-check details:
+   The default output is a colored table:
+
+   ```text
+   Image: ghcr.io/saschagrunert/nri-supply-chain:0.1.5
+   Digest: sha256:1a8b39eeff74b8bb3e20c7f9fa773d4a9935241f7cc4e1217067c8186c2cee3c
+   Namespace: default
+   Policy: /etc/nri-supply-chain/policies/default.json
+   Mode: warn
+   Result: ALLOWED
+
+   TYPE   STATUS   DETAIL
+   SLSA   pass     SLSA provenance verified
+   VEX    pass     VEX verification passed
+   ```
+
+   Use `--output json` for machine-readable output:
 
    ```json
    {
@@ -116,24 +131,19 @@ must pass verification.
 
    <!-- /quickstart-policy-vsa -->
 
-   With this policy the output becomes:
+   With this policy the default table output becomes:
 
-   ```json
-   {
-     "image": "ghcr.io/saschagrunert/nri-supply-chain:0.1.5",
-     "digest": "sha256:1a8b39eeff74b8bb3e20c7f9fa773d4a9935241f7cc4e1217067c8186c2cee3c",
-     "namespace": "default",
-     "allowed": true,
-     "reason": "VSA verification passed, skipping direct verification",
-     "checkResults": [
-       {
-         "type": "vsa",
-         "passed": true,
-         "status": "pass",
-         "detail": "VSA verification passed"
-       }
-     ]
-   }
+   ```text
+   Image: ghcr.io/saschagrunert/nri-supply-chain:0.1.5
+   Digest: sha256:1a8b39eeff74b8bb3e20c7f9fa773d4a9935241f7cc4e1217067c8186c2cee3c
+   Namespace: default
+   Policy: /etc/nri-supply-chain/policies/default.json
+   Mode: warn
+   Result: ALLOWED
+   Reason: VSA verification passed, skipping direct verification
+
+   TYPE   STATUS   DETAIL
+   VSA    pass     VSA verification passed
    ```
 
    In `enforce` mode images that fail verification are rejected. Use

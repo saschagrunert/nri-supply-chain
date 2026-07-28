@@ -111,6 +111,7 @@ examples, see [policy.md](policy.md).
 --validate            Validate config and policies, then exit
 --verify-image        Verify a specific image and exit (requires --config)
 --verify-namespace    Namespace for verification (default: default)
+--output              Output format for --verify-image: table, json (default: table)
 --json-schema         Print JSON Schema and exit (policy, result)
 ```
 
@@ -121,7 +122,22 @@ verification enabled):
 nri-supply-chain --config config.toml --verify-image ghcr.io/myorg/myimage:v1.0
 ```
 
-The output is JSON with per-check details:
+The default output is a colored table:
+
+```text
+Image: ghcr.io/myorg/myimage:v1.0
+Digest: sha256:abc123...
+Namespace: default
+Policy: /etc/nri-supply-chain/policies/default.json
+Mode: warn
+Result: ALLOWED
+
+TYPE   STATUS   DETAIL
+SLSA   pass     SLSA level 3 verified
+VEX    pass     no known vulnerabilities
+```
+
+Use `--output json` for machine-readable JSON output:
 
 ```json
 {
