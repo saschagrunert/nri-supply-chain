@@ -139,11 +139,15 @@ func captureVerifyOutput(
 		PolicyFile: "", Mode: "",
 		Allowed: allowed, Reason: reason, CheckResults: checks,
 	}
-	outputVerifyResult(&buf, outputFormatJSON, input)
+
+	err := outputVerifyResult(&buf, outputFormatJSON, input)
+	if err != nil {
+		t.Fatalf("outputVerifyResult failed: %v", err)
+	}
 
 	var parsed verifyOutput
 
-	err := json.Unmarshal(buf.Bytes(), &parsed)
+	err = json.Unmarshal(buf.Bytes(), &parsed)
 	if err != nil {
 		t.Fatalf("invalid JSON output: %v\nraw: %s", err, buf.String())
 	}
@@ -728,7 +732,11 @@ func TestOutputVerifyResultTableAllowed(t *testing.T) {
 		PolicyFile: "/policies/prod.json", Mode: string(config.ModeWarn), Allowed: true,
 		Reason: "", CheckResults: checks,
 	}
-	outputVerifyResult(&buf, outputFormatTable, input)
+
+	err := outputVerifyResult(&buf, outputFormatTable, input)
+	if err != nil {
+		t.Fatalf("outputVerifyResult failed: %v", err)
+	}
 
 	got := buf.String()
 
@@ -773,7 +781,11 @@ func TestOutputVerifyResultTableDenied(t *testing.T) {
 		PolicyFile: "/policies/default.json", Mode: string(config.ModeEnforce), Allowed: false,
 		Reason: "verification failed", CheckResults: checks,
 	}
-	outputVerifyResult(&buf, outputFormatTable, input)
+
+	err := outputVerifyResult(&buf, outputFormatTable, input)
+	if err != nil {
+		t.Fatalf("outputVerifyResult failed: %v", err)
+	}
 
 	got := buf.String()
 
@@ -799,7 +811,11 @@ func TestOutputVerifyResultTableNoChecks(t *testing.T) {
 		PolicyFile: "/policies/ns.json", Mode: string(config.ModeWarn), Allowed: true,
 		Reason: "", CheckResults: nil,
 	}
-	outputVerifyResult(&buf, outputFormatTable, input)
+
+	err := outputVerifyResult(&buf, outputFormatTable, input)
+	if err != nil {
+		t.Fatalf("outputVerifyResult failed: %v", err)
+	}
 
 	got := buf.String()
 
