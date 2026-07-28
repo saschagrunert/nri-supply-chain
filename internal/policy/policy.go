@@ -37,6 +37,7 @@ import (
 const (
 	maxSLSALevel      = 3
 	maxPolicyFileSize = 1 << 20
+	maxPolicyFiles    = 1000
 )
 
 var (
@@ -97,6 +98,10 @@ var (
 
 	// ErrPolicyFileTooLarge indicates a policy file exceeds the size limit.
 	ErrPolicyFileTooLarge = errors.New("policy file exceeds size limit")
+
+	// ErrTooManyPolicyFiles indicates the policy directory contains more
+	// files than the allowed maximum.
+	ErrTooManyPolicyFiles = errors.New("policy directory contains too many files")
 )
 
 // Policy defines the trust roots and per-namespace verification settings.
@@ -183,7 +188,7 @@ type VSAPolicy struct {
 	MinimumLevel int `json:"minimumLevel,omitempty"`
 	// MaxAge is the maximum age of a VSA's timeVerified before it's considered stale.
 	MaxAge string `json:"maxAge,omitempty"`
-	// MaxAgeDuration is the parsed form of MaxAge, set during validation.
+	// MaxAgeDuration is the parsed form of MaxAge, resolved after validation.
 	MaxAgeDuration time.Duration `json:"-"`
 	// Policy is the expected policy URI in the VSA.
 	Policy string `json:"policy,omitempty"`
@@ -243,7 +248,7 @@ func (p *Policy) Hash() (string, error) {
 // top-level section (Trust, Exclude, SLSA, VEX, VSA, Signatures) is
 // replaced entirely if set in the namespace policy. The Inherits field is
 // cleared on the result. Inherited structs are shallow-copied to prevent
-// mutations (e.g. Validate writing MaxAgeDuration) from affecting the default.
+// mutations from affecting the default.
 func MergeWithDefault(namespace, defaultPol *Policy) *Policy {
 	merged := clonePolicy(defaultPol)
 
@@ -346,7 +351,14 @@ func (p *Policy) Validate() error {
 		return err
 	}
 
-	return p.validateVSA()
+	err = p.validateVSA()
+	if err != nil {
+		return err
+	}
+
+	p.resolveVSADuration()
+
+	return nil
 }
 
 // ValidateEnforce runs additional checks required for enforce mode.
@@ -491,9 +503,20 @@ func loadPolicyFiles(policyDir string) (map[string]*Policy, error) {
 		)
 	}
 
+	var jsonCount int
+
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
+		}
+
+		jsonCount++
+
+		if jsonCount > maxPolicyFiles {
+			return nil, fmt.Errorf(
+				"%w: %q contains more than %d JSON files",
+				ErrTooManyPolicyFiles, policyDir, maxPolicyFiles,
+			)
 		}
 
 		fullPath := filepath.Join(policyDir, entry.Name())
@@ -750,9 +773,22 @@ func (p *Policy) validateVSA() error {
 		if maxAge <= 0 {
 			return fmt.Errorf("%w, got %q", ErrVSAMaxAgeNotPositive, p.VSA.MaxAge)
 		}
-
-		p.VSA.MaxAgeDuration = maxAge
 	}
 
 	return nil
+}
+
+// resolveVSADuration parses MaxAge into MaxAgeDuration. Safe to call only
+// after validateVSA, which guarantees the duration string is valid.
+func (p *Policy) resolveVSADuration() {
+	if p.VSA == nil || p.VSA.MaxAge == "" {
+		return
+	}
+
+	maxAge, err := time.ParseDuration(p.VSA.MaxAge)
+	if err != nil {
+		return
+	}
+
+	p.VSA.MaxAgeDuration = maxAge
 }

@@ -72,7 +72,7 @@ type VerifiedAttestation struct {
 // Fetcher discovers and verifies attestations for a container image.
 type Fetcher interface {
 	Fetch(
-		ctx context.Context, imageRef, digest string, opts *FetchOptions,
+		ctx context.Context, imageRef string, opts *FetchOptions,
 	) ([]VerifiedAttestation, error)
 }
 

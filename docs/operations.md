@@ -179,6 +179,8 @@ protect against resource exhaustion and unbounded processing.
 | Sigstore trusted root cache | 1h TTL, 24h max staleness | The root is refreshed every hour. If the Sigstore TUF mirror is unreachable, the stale root is used for up to 24 hours.                                                                 |
 | VSA clock skew tolerance    | 60 seconds                | A VSA with `timeVerified` up to 60 seconds in the future is accepted. Beyond that, it is rejected as a future timestamp.                                                                |
 | Digest resolve timeout      | 1 second                  | Image digest resolution during NRI callbacks is capped at 1 second to stay under containerd's ttrpc timeout. The `--verify-image` CLI path uses the configured `fetch_timeout` instead. |
+| Policy file count limit     | 1,000 files               | At most 1,000 JSON policy files are loaded from the policy directory. If the count exceeds this limit, policy loading fails with an error.                                              |
+| Glob pattern cache          | 10,000 patterns           | Compiled glob patterns are cached for reuse. Once the cache holds 10,000 entries, new patterns still compile and match but are not cached.                                              |
 
 **Sigstore trusted root refresh.** For keyless (Fulcio) verification, the
 plugin fetches the Sigstore trusted root from the TUF mirror on startup and

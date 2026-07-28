@@ -46,11 +46,11 @@ const (
 // Result represents the outcome of a supply chain verification.
 type Result struct {
 	// Allowed indicates whether the image passed verification.
-	Allowed bool
+	Allowed bool `json:"allowed"`
 	// Reason provides details about the verification decision.
-	Reason string
+	Reason string `json:"reason,omitempty"`
 	// CheckResults contains per-check outcomes for audit logging.
-	CheckResults []CheckResult
+	CheckResults []CheckResult `json:"checkResults,omitempty"`
 }
 
 // CheckResult represents the outcome of an individual verification check.
@@ -64,13 +64,13 @@ type Result struct {
 // Always use the constructor functions to keep Passed and Status consistent.
 type CheckResult struct {
 	// Type is the check type (e.g., CheckTypeSLSA, CheckTypeVEX, CheckTypeVSA).
-	Type CheckType
+	Type CheckType `json:"type"`
 	// Passed indicates whether this check passed.
-	Passed bool
+	Passed bool `json:"passed"`
 	// Status is the check outcome: StatusPass, StatusWarn, or StatusFail.
-	Status CheckStatus
+	Status CheckStatus `json:"status"`
 	// Detail provides additional information about the check result.
-	Detail string
+	Detail string `json:"detail,omitempty"`
 	// Err is the underlying error that caused a failure, if any.
 	// Excluded from JSON serialization because errors are not JSON-marshalable.
 	Err error `json:"-"`

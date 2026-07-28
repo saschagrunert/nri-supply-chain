@@ -602,6 +602,32 @@ func TestConfigValidateIdempotent(t *testing.T) {
 	}
 }
 
+func TestConfigNormalizeZeroCacheTTLResetsFailureTTL(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.CacheTTL = config.Duration{Duration: 0}
+	cfg.CacheFailureTTL = config.Duration{Duration: 5 * time.Minute}
+
+	cfg.Normalize()
+
+	if cfg.CacheFailureTTL.Duration != 0 {
+		t.Errorf("expected CacheFailureTTL reset to 0, got %v", cfg.CacheFailureTTL.Duration)
+	}
+}
+
+func TestConfigNormalizeZeroCacheTTLSkipsWhenFailureTTLAlsoZero(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.CacheTTL = config.Duration{Duration: 0}
+	cfg.CacheFailureTTL = config.Duration{Duration: 0}
+
+	cfg.Normalize()
+
+	testutil.AssertEqual(t, time.Duration(0), cfg.CacheFailureTTL.Duration)
+}
+
 func TestConfigValidateFetchRateLimit(t *testing.T) {
 	t.Parallel()
 

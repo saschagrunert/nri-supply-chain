@@ -21,6 +21,8 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
@@ -31,19 +33,12 @@ import (
 )
 
 type verifyOutput struct {
-	Image        string       `json:"image"`
-	Digest       string       `json:"digest"`
-	Namespace    string       `json:"namespace"`
-	Allowed      bool         `json:"allowed"`
-	Reason       string       `json:"reason,omitempty"`
-	CheckResults []checkEntry `json:"checkResults,omitempty"`
-}
-
-type checkEntry struct {
-	Type   string `json:"type"`
-	Passed bool   `json:"passed"`
-	Status string `json:"status"`
-	Detail string `json:"detail,omitempty"`
+	Image        string              `json:"image"`
+	Digest       string              `json:"digest"`
+	Namespace    string              `json:"namespace"`
+	Allowed      bool                `json:"allowed"`
+	Reason       string              `json:"reason,omitempty"`
+	CheckResults []types.CheckResult `json:"checkResults,omitempty"`
 }
 
 type resolvedDigest struct {
@@ -65,8 +60,11 @@ func runVerifyTo(writer io.Writer, opts *options, cfg *config.Config) int {
 		return 1
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	met := metrics.New()
-	fetcher := verifier.NewFetcher(context.Background(), cfg)
+	fetcher := verifier.NewFetcher(ctx, cfg)
 
 	verif, err := verifier.New(cfg, met, fetcher)
 	if err != nil {
@@ -77,7 +75,7 @@ func runVerifyTo(writer io.Writer, opts *options, cfg *config.Config) int {
 
 	defer verif.Stop()
 
-	resolved, err := resolveDigest(imageRef, cfg.FetchTimeout.Duration)
+	resolved, err := resolveDigest(ctx, imageRef, cfg.FetchTimeout.Duration)
 	if err != nil {
 		slog.Error("Failed to resolve image digest", "image", imageRef, "error", err)
 
@@ -87,15 +85,16 @@ func runVerifyTo(writer io.Writer, opts *options, cfg *config.Config) int {
 	digest := resolved.digest
 
 	result, err := verif.Verify(
-		context.Background(), imageRef, digest, resolved.indexDigest, namespace,
+		ctx, imageRef, digest, resolved.indexDigest, namespace,
 	)
-	if err != nil {
-		slog.Error("Verification failed", "image", imageRef, "error", err)
+
+	var checks []types.CheckResult
+	if result != nil {
+		checks = result.CheckResults
 	}
 
-	checks := convertCheckResults(result)
-
 	if err != nil {
+		slog.Error("Verification failed", "image", imageRef, "error", err)
 		outputVerifyResult(writer, imageRef, digest, namespace, false, err.Error(), checks)
 
 		return 1
@@ -112,27 +111,10 @@ func runVerifyTo(writer io.Writer, opts *options, cfg *config.Config) int {
 	return 0
 }
 
-func convertCheckResults(result *types.Result) []checkEntry {
-	if result == nil {
-		return nil
-	}
-
-	checks := make([]checkEntry, 0, len(result.CheckResults))
-
-	for _, cr := range result.CheckResults {
-		checks = append(checks, checkEntry{
-			Type:   string(cr.Type),
-			Passed: cr.Passed,
-			Status: string(cr.Status),
-			Detail: cr.Detail,
-		})
-	}
-
-	return checks
-}
-
-func resolveDigest(imageRef string, timeout time.Duration) (resolvedDigest, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+func resolveDigest(
+	parent context.Context, imageRef string, timeout time.Duration,
+) (resolvedDigest, error) {
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
 	digest, indexDigest, err := registry.ResolveWithDefaultKeychain(ctx, imageRef)
@@ -146,7 +128,7 @@ func resolveDigest(imageRef string, timeout time.Duration) (resolvedDigest, erro
 func outputVerifyResult(
 	writer io.Writer,
 	imageRef, digest, namespace string,
-	allowed bool, reason string, checks []checkEntry,
+	allowed bool, reason string, checks []types.CheckResult,
 ) {
 	out := verifyOutput{
 		Image:        imageRef,

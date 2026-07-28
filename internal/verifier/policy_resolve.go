@@ -130,8 +130,8 @@ func logReloadChanges(
 	prevHashes, nextHashes map[string]string,
 	cacheInvalidated bool,
 ) {
-	attrs := []any{
-		"cache_invalidated", cacheInvalidated,
+	attrs := []slog.Attr{
+		slog.Bool("cache_invalidated", cacheInvalidated),
 	}
 
 	if prev.Verification != next.Verification {
@@ -140,7 +140,10 @@ func logReloadChanges(
 			"mode_next", next.Verification,
 		)
 
-		attrs = append(attrs, "mode_prev", prev.Verification, "mode_next", next.Verification)
+		attrs = append(attrs,
+			slog.String("mode_prev", string(prev.Verification)),
+			slog.String("mode_next", string(next.Verification)),
+		)
 	}
 
 	changed := 0
@@ -166,8 +169,8 @@ func logReloadChanges(
 	}
 
 	if changed > 0 {
-		attrs = append(attrs, "policies_changed", changed)
+		attrs = append(attrs, slog.Int("policies_changed", changed))
 	}
 
-	slog.InfoContext(ctx, "Config reload applied", attrs...)
+	slog.LogAttrs(ctx, slog.LevelInfo, "Config reload applied", attrs...)
 }

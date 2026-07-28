@@ -33,7 +33,7 @@ type mockFetcher struct {
 }
 
 func (m *mockFetcher) Fetch(
-	_ context.Context, _, _ string, _ *attestation.FetchOptions,
+	_ context.Context, _ string, _ *attestation.FetchOptions,
 ) ([]attestation.VerifiedAttestation, error) {
 	return m.attestations, m.err
 }
@@ -108,9 +108,10 @@ func TestMockFetcher(t *testing.T) {
 			ctx := context.Background()
 			opts := &attestation.FetchOptions{
 				Timeout: 30 * time.Second,
+				Digest:  testDigest,
 			}
 
-			result, err := fetcher.Fetch(ctx, "nginx:latest", testDigest, opts)
+			result, err := fetcher.Fetch(ctx, "nginx:latest", opts)
 
 			if tt.wantErr != nil {
 				if !errors.Is(err, tt.wantErr) {

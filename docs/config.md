@@ -157,7 +157,7 @@ nri-supply-chain --json-schema result
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$ref": "#/$defs/verifyOutput",
   "$defs": {
-    "checkEntry": {
+    "CheckResult": {
       "properties": {
         "type": {
           "type": "string"
@@ -195,7 +195,7 @@ nri-supply-chain --json-schema result
         },
         "checkResults": {
           "items": {
-            "$ref": "#/$defs/checkEntry"
+            "$ref": "#/$defs/CheckResult"
           },
           "type": "array"
         }

@@ -77,3 +77,59 @@ func BenchmarkCacheGetParallel(b *testing.B) {
 		}
 	})
 }
+
+func BenchmarkCacheSetParallel(b *testing.B) {
+	testCache := cache.New(time.Hour)
+	result := &types.Result{Allowed: true, Reason: "ok", CheckResults: nil}
+
+	b.ResetTimer()
+
+	b.RunParallel(func(pb *testing.PB) {
+		idx := 0
+
+		for pb.Next() {
+			testCache.Set(fmt.Sprintf("sha256:%d", idx), "default", result)
+			idx++
+		}
+	})
+}
+
+func BenchmarkCacheGetSetParallel(b *testing.B) {
+	testCache := cache.New(time.Hour)
+	result := &types.Result{Allowed: true, Reason: "ok", CheckResults: nil}
+
+	const prefillSize = 100
+
+	for idx := range prefillSize {
+		testCache.Set(fmt.Sprintf("sha256:%d", idx), "default", result)
+	}
+
+	b.ResetTimer()
+
+	b.RunParallel(func(pb *testing.PB) {
+		idx := 0
+
+		for pb.Next() {
+			digest := fmt.Sprintf("sha256:%d", idx%prefillSize)
+
+			if idx%2 == 0 {
+				testCache.Get(digest, "default")
+			} else {
+				testCache.Set(digest, "default", result)
+			}
+
+			idx++
+		}
+	})
+}
+
+func BenchmarkCacheSetWithTTLOverride(b *testing.B) {
+	testCache := cache.New(time.Hour)
+	result := &types.Result{Allowed: false, Reason: "fetch failed", CheckResults: nil}
+
+	b.ResetTimer()
+
+	for idx := range b.N {
+		testCache.SetWithTTL(fmt.Sprintf("sha256:%d", idx), "default", result, 5*time.Minute)
+	}
+}

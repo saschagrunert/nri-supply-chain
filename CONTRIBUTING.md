@@ -1,7 +1,7 @@
 # Contributing Guidelines
 
 Welcome to nri-supply-chain! We are excited about the prospect of you joining
-our community. This project abides by the [code of conduct](code-of-conduct.md).
+our community. This project abides by the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## Getting Started
 

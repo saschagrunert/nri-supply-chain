@@ -16,6 +16,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -36,6 +37,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/types"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
+	internaltypes "github.com/saschagrunert/nri-supply-chain/internal/types"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
@@ -50,8 +52,8 @@ const (
 func TestOutputVerifyResultAllowed(t *testing.T) {
 	t.Parallel()
 
-	checks := []checkEntry{
-		{Type: "slsa", Passed: true, Status: "pass", Detail: "verified"},
+	checks := []internaltypes.CheckResult{
+		{Type: "slsa", Passed: true, Status: "pass", Detail: "verified", Err: nil},
 	}
 
 	const testDigest = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4" +
@@ -118,7 +120,7 @@ func TestOutputVerifyResultDenied(t *testing.T) {
 func captureVerifyOutput(
 	t *testing.T,
 	imageRef, digest, namespace string,
-	allowed bool, reason string, checks []checkEntry,
+	allowed bool, reason string, checks []internaltypes.CheckResult,
 ) verifyOutput {
 	t.Helper()
 
@@ -139,7 +141,7 @@ func captureVerifyOutput(
 func TestResolveDigestInvalidRef(t *testing.T) {
 	t.Parallel()
 
-	_, err := resolveDigest(":::invalid", 30*time.Second)
+	_, err := resolveDigest(context.Background(), ":::invalid", 30*time.Second)
 	if err == nil {
 		t.Fatal("expected error for invalid image reference")
 	}
@@ -157,7 +159,7 @@ func TestResolveDigestNetworkError(t *testing.T) {
 	addr := server.Listener.Addr().String()
 	server.Close()
 
-	_, err := resolveDigest(addr+"/test:latest", 30*time.Second)
+	_, err := resolveDigest(context.Background(), addr+"/test:latest", 30*time.Second)
 	if err == nil {
 		t.Fatal("expected error for unreachable registry")
 	}
@@ -188,7 +190,7 @@ func TestResolveDigestSuccess(t *testing.T) {
 		t.Fatalf("pushing test image: %v", err)
 	}
 
-	resolved, err := resolveDigest(imgRef, 30*time.Second)
+	resolved, err := resolveDigest(context.Background(), imgRef, 30*time.Second)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -264,7 +266,7 @@ func TestResolveDigestManifestList(t *testing.T) {
 
 	// resolveDigest should return a platform-specific image digest, not the
 	// index digest.
-	resolved, err := resolveDigest(imgRef, 30*time.Second)
+	resolved, err := resolveDigest(context.Background(), imgRef, 30*time.Second)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -337,7 +339,7 @@ func TestResolveDigestManifestListDockerMediaType(t *testing.T) {
 		t.Fatalf("pushing index: %v", err)
 	}
 
-	resolved, err := resolveDigest(imgRef, 30*time.Second)
+	resolved, err := resolveDigest(context.Background(), imgRef, 30*time.Second)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -393,7 +395,7 @@ func TestResolveDigestManifestListNoPlatformMatch(t *testing.T) {
 		t.Fatalf("pushing index: %v", err)
 	}
 
-	_, err = resolveDigest(imgRef, 30*time.Second)
+	_, err = resolveDigest(context.Background(), imgRef, 30*time.Second)
 	if err == nil {
 		t.Fatal("expected error for no matching platform")
 	}

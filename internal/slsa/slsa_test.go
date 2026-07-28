@@ -78,7 +78,7 @@ func validStatement() slsa.Statement {
 func TestVerify(t *testing.T) {
 	t.Parallel()
 
-	t.Cleanup(slsa.ResetMaxLevelWarnings)
+	t.Cleanup(slsa.ResetWarnings)
 
 	tests := []struct {
 		name       string
@@ -568,7 +568,7 @@ func TestVerify(t *testing.T) {
 func TestVerifyEdgeCases(t *testing.T) {
 	t.Parallel()
 
-	t.Cleanup(slsa.ResetMaxLevelWarnings)
+	t.Cleanup(slsa.ResetWarnings)
 
 	t.Run("empty payload", func(t *testing.T) {
 		t.Parallel()
@@ -888,7 +888,7 @@ func TestVerifyEdgeCases(t *testing.T) {
 func TestVerifyMultiple(t *testing.T) {
 	t.Parallel()
 
-	t.Cleanup(slsa.ResetMaxLevelWarnings)
+	t.Cleanup(slsa.ResetWarnings)
 
 	tests := []struct {
 		name               string
@@ -1042,7 +1042,7 @@ func TestVerifyMultiple(t *testing.T) {
 func TestVerifyMultipleEdgeCases(t *testing.T) {
 	t.Parallel()
 
-	t.Cleanup(slsa.ResetMaxLevelWarnings)
+	t.Cleanup(slsa.ResetWarnings)
 
 	t.Run("nil attestation slice", func(t *testing.T) {
 		t.Parallel()

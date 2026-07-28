@@ -335,7 +335,7 @@ func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 
 	if policiesChanged {
 		attestation.ResetSANPatternWarnings()
-		slsa.ResetMaxLevelWarnings()
+		slsa.ResetWarnings()
 		glob.ResetCache()
 
 		hostSem = &sync.Map{}
