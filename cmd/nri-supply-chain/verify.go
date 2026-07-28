@@ -29,6 +29,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/olekukonko/tablewriter"
+	"github.com/olekukonko/tablewriter/tw"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
@@ -70,10 +71,6 @@ func runVerifyTo(writer io.Writer, opts *options, cfg *config.Config) int {
 		return 1
 	}
 
-	imageRef := opts.verifyImage
-	namespace := opts.verifyNamespace
-	policyFile := resolvePolicyFile(cfg.PolicyDir, namespace)
-
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -85,6 +82,17 @@ func runVerifyTo(writer io.Writer, opts *options, cfg *config.Config) int {
 	}
 
 	defer verif.Stop()
+
+	return executeVerify(ctx, writer, opts, cfg, verif)
+}
+
+func executeVerify(
+	ctx context.Context, writer io.Writer,
+	opts *options, cfg *config.Config, verif *verifier.Verifier,
+) int {
+	imageRef := opts.verifyImage
+	namespace := opts.verifyNamespace
+	policyFile := resolvePolicyFile(cfg.PolicyDir, namespace)
 
 	resolved, err := resolveDigest(ctx, imageRef, cfg.FetchTimeout.Duration)
 	if err != nil {
@@ -103,14 +111,24 @@ func runVerifyTo(writer io.Writer, opts *options, cfg *config.Config) int {
 		slog.Error("Verification failed", "image", imageRef, "error", err)
 
 		out.Reason = err.Error()
-		outputVerifyResult(writer, opts.outputFormat, out)
+
+		outErr := outputVerifyResult(writer, opts.outputFormat, out)
+		if outErr != nil {
+			slog.Error("Failed to write output", "error", outErr)
+		}
 
 		return 1
 	}
 
 	out.Allowed = result.Allowed
 	out.Reason = result.Reason
-	outputVerifyResult(writer, opts.outputFormat, out)
+
+	outErr := outputVerifyResult(writer, opts.outputFormat, out)
+	if outErr != nil {
+		slog.Error("Failed to write output", "error", outErr)
+
+		return 1
+	}
 
 	if !result.Allowed {
 		return 1
@@ -184,23 +202,25 @@ func newVerifyOutput(
 	}
 }
 
-func outputVerifyResult(writer io.Writer, format string, out *verifyOutput) {
+func outputVerifyResult(writer io.Writer, format string, out *verifyOutput) error {
 	switch format {
 	case outputFormatJSON:
-		outputVerifyJSON(writer, out)
+		return outputVerifyJSON(writer, out)
 	default:
-		outputVerifyTable(writer, out)
+		return outputVerifyTable(writer, out)
 	}
 }
 
-func outputVerifyJSON(writer io.Writer, out *verifyOutput) {
+func outputVerifyJSON(writer io.Writer, out *verifyOutput) error {
 	enc := json.NewEncoder(writer)
 	enc.SetIndent("", "  ")
 
-	encErr := enc.Encode(out)
-	if encErr != nil {
-		slog.Error("Failed to encode verify output", "error", encErr)
+	err := enc.Encode(out)
+	if err != nil {
+		return fmt.Errorf("encoding JSON output: %w", err)
 	}
+
+	return nil
 }
 
 //nolint:gochecknoglobals // reusable color formatters
@@ -212,7 +232,7 @@ var (
 	colorItalic = color.New(color.Italic)
 )
 
-func outputVerifyTable(writer io.Writer, out *verifyOutput) {
+func outputVerifyTable(writer io.Writer, out *verifyOutput) error {
 	_, _ = fmt.Fprintf(writer, "%s %s\n", colorBold.Sprint("Image:"), out.Image)
 	_, _ = fmt.Fprintf(writer, "%s %s\n", colorBold.Sprint("Digest:"), out.Digest)
 	_, _ = fmt.Fprintf(writer, "%s %s\n",
@@ -233,25 +253,40 @@ func outputVerifyTable(writer io.Writer, out *verifyOutput) {
 	}
 
 	if len(out.CheckResults) == 0 {
-		return
+		return nil
 	}
 
 	_, _ = fmt.Fprintln(writer)
 
-	renderCheckTable(writer, out.CheckResults)
+	return renderCheckTable(writer, out.CheckResults)
 }
 
-func renderCheckTable(writer io.Writer, checks []types.CheckResult) {
-	table := tablewriter.NewWriter(writer)
-	table.SetHeader([]string{"Type", "Status", "Detail"})
-	table.SetAutoWrapText(false)
-	table.SetBorder(false)
-	table.SetColumnSeparator("")
-	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
-	table.SetAlignment(tablewriter.ALIGN_LEFT)
-	table.SetHeaderLine(false)
-	table.SetTablePadding("   ")
-	table.SetNoWhiteSpace(true)
+func renderCheckTable(writer io.Writer, checks []types.CheckResult) error {
+	padding := tw.Padding{Left: "", Right: "   "}
+
+	table := tablewriter.NewTable(writer,
+		tablewriter.WithHeader([]string{"Type", "Status", "Detail"}),
+		tablewriter.WithHeaderAlignment(tw.AlignLeft),
+		tablewriter.WithRowAlignment(tw.AlignLeft),
+		tablewriter.WithRowAutoWrap(tw.WrapNone),
+		tablewriter.WithPadding(padding),
+		tablewriter.WithRendition(tw.Rendition{
+			Borders: tw.Border{
+				Left: tw.Off, Right: tw.Off, Top: tw.Off, Bottom: tw.Off,
+			},
+			Settings: tw.Settings{
+				Separators: tw.Separators{
+					BetweenColumns: tw.Off,
+					ShowHeader:     tw.Off,
+				},
+				Lines: tw.Lines{
+					ShowHeaderLine: tw.Off,
+					ShowTop:        tw.Off,
+					ShowBottom:     tw.Off,
+				},
+			},
+		}),
+	)
 
 	for _, check := range checks {
 		detail := check.Detail
@@ -261,14 +296,22 @@ func renderCheckTable(writer io.Writer, checks []types.CheckResult) {
 
 		status := colorStatus(check.Status)
 
-		table.Append([]string{
+		err := table.Append([]string{
 			strings.ToUpper(string(check.Type)),
 			status,
 			detail,
 		})
+		if err != nil {
+			return fmt.Errorf("appending table row: %w", err)
+		}
 	}
 
-	table.Render()
+	err := table.Render()
+	if err != nil {
+		return fmt.Errorf("rendering table: %w", err)
+	}
+
+	return nil
 }
 
 func colorMode(mode string) string {

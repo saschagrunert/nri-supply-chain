@@ -145,6 +145,7 @@ linters:
             - github.com/google/go-containerregistry
             - github.com/invopop/jsonschema
             - github.com/olekukonko/tablewriter
+            - github.com/olekukonko/tablewriter/tw
             - github.com/openvex/go-vex
             - github.com/prometheus/client_golang
             - github.com/saschagrunert/nri-supply-chain
@@ -160,6 +161,7 @@ linters:
         - 'github\.com/google/go-containerregistry/.*'
         - 'github\.com/openvex/go-vex/.*'
         - 'github\.com/prometheus/client_golang/prometheus\..*'
+        - 'github\.com/olekukonko/tablewriter/tw\..*'
         - 'github\.com/prometheus/client_golang/prometheus/promhttp\..*'
         - 'github\.com/saschagrunert/nri-supply-chain/internal/attestation\.FetchOptions'
         - 'github\.com/saschagrunert/nri-supply-chain/internal/attestation\.VerifiedAttestation'
