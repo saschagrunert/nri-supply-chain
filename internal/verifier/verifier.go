@@ -50,9 +50,11 @@ var (
 const (
 	maxConcurrentFetches        = 50
 	maxConcurrentFetchesPerHost = 10
-	defaultPolicyLabel          = "default"
 	warmTimeout                 = 30 * time.Second
 	maxVerificationTimeout      = 5 * time.Minute
+
+	// DefaultPolicyLabel is the display label used for the default (namespace-less) policy.
+	DefaultPolicyLabel = "default"
 )
 
 type snapshot struct {
@@ -178,7 +180,7 @@ func WarnEnforceDefaults(cfg *config.Config, policies map[string]*policy.Policy)
 	for ns, pol := range policies {
 		label := ns
 		if label == "" {
-			label = defaultPolicyLabel
+			label = DefaultPolicyLabel
 		}
 
 		if pol.SLSAMissingPolicy() == types.ActionAllow {

@@ -36,6 +36,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/types"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
+	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
 const (
@@ -58,7 +59,7 @@ func TestOutputVerifyResultAllowed(t *testing.T) {
 
 	out := captureVerifyOutput(
 		t, "nginx:latest", testDigest,
-		defaultPolicyLabel, true, "verified", checks,
+		verifier.DefaultPolicyLabel, true, "verified", checks,
 	)
 
 	if out.Image != "nginx:latest" {
@@ -69,8 +70,8 @@ func TestOutputVerifyResultAllowed(t *testing.T) {
 		t.Errorf("Digest = %q, want %q", out.Digest, testDigest)
 	}
 
-	if out.Namespace != defaultPolicyLabel {
-		t.Errorf("Namespace = %q, want %q", out.Namespace, defaultPolicyLabel)
+	if out.Namespace != verifier.DefaultPolicyLabel {
+		t.Errorf("Namespace = %q, want %q", out.Namespace, verifier.DefaultPolicyLabel)
 	}
 
 	if !out.Allowed {
@@ -423,7 +424,7 @@ func TestRunVerifyResolveDigestFails(t *testing.T) {
 		pluginIdx:       "",
 		logLevel:        "",
 		verifyImage:     ":::invalid-ref",
-		verifyNamespace: defaultPolicyLabel,
+		verifyNamespace: verifier.DefaultPolicyLabel,
 		showVersion:     false,
 		validate:        false,
 		jsonSchema:      "",
@@ -446,7 +447,7 @@ func TestRunVerifyDisabledErrors(t *testing.T) {
 		pluginIdx:       "",
 		logLevel:        "",
 		verifyImage:     "example.com/test:latest",
-		verifyNamespace: defaultPolicyLabel,
+		verifyNamespace: verifier.DefaultPolicyLabel,
 		showVersion:     false,
 		validate:        false,
 		jsonSchema:      "",
@@ -494,7 +495,7 @@ func TestRunVerifyEnforceDenied(t *testing.T) {
 		pluginIdx:       "",
 		logLevel:        "",
 		verifyImage:     imgRef,
-		verifyNamespace: defaultPolicyLabel,
+		verifyNamespace: verifier.DefaultPolicyLabel,
 		showVersion:     false,
 		validate:        false,
 		jsonSchema:      "",
@@ -526,7 +527,7 @@ func TestRunVerifyVerifierNewError(t *testing.T) {
 		pluginIdx:       "",
 		logLevel:        "",
 		verifyImage:     "test:latest",
-		verifyNamespace: defaultPolicyLabel,
+		verifyNamespace: verifier.DefaultPolicyLabel,
 		showVersion:     false,
 		validate:        false,
 		jsonSchema:      "",
@@ -575,7 +576,7 @@ func TestRunVerifyWarnModeWithChecks(t *testing.T) {
 		pluginIdx:       "",
 		logLevel:        "",
 		verifyImage:     imgRef,
-		verifyNamespace: defaultPolicyLabel,
+		verifyNamespace: verifier.DefaultPolicyLabel,
 		showVersion:     false,
 		validate:        false,
 		jsonSchema:      "",

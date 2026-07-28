@@ -124,8 +124,14 @@ jobs:
       - name: Collect debug logs
         if: failure() || cancelled()
         run: |
-          sudo dmesg -T 2>/dev/null | tail -50 || true
-          sudo find /tmp -maxdepth 4 -path '*/kubernix/*' -name '*.log' -exec sh -c 'echo "=== {} ===" && tail -100 "$1"' _ {} \; 2>/dev/null || true
+          KUBECONFIG=$(sudo find /tmp "$RUNNER_TEMP" -maxdepth 8 -name 'admin.kubeconfig' -path '*/kubernix/*' 2>/dev/null | head -1)
+          if [ -n "$KUBECONFIG" ]; then
+            export KUBECONFIG
+            echo "=== kubectl get nodes ===" && sudo -E kubectl get nodes -o wide --request-timeout=5s 2>&1 || true
+            echo "=== kubectl get pods --all-namespaces ===" && sudo -E kubectl get pods --all-namespaces -o wide --request-timeout=5s 2>&1 || true
+            echo "=== kubectl get events ===" && sudo -E kubectl get events --all-namespaces --sort-by='.lastTimestamp' --request-timeout=5s 2>&1 | tail -50 || true
+          fi
+          sudo find /tmp "$RUNNER_TEMP" -maxdepth 8 -name '*.log' \( -path '*/kubernix/*' -o -path '*/plugin.log' \) -exec sh -c 'echo "=== {} ===" && tail -200 "$1"' _ {} \; 2>/dev/null || true
 
   test-fuzz:
     name: fuzz / ${{ matrix.name }}

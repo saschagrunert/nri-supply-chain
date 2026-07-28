@@ -746,14 +746,16 @@ func (p *Policy) validateVSA() error {
 	}
 
 	if p.VSA.MaxAge != "" {
-		d, err := time.ParseDuration(p.VSA.MaxAge)
+		maxAge, err := time.ParseDuration(p.VSA.MaxAge)
 		if err != nil {
 			return fmt.Errorf("invalid vsa.maxAge %q: %w", p.VSA.MaxAge, err)
 		}
 
-		if d <= 0 {
+		if maxAge <= 0 {
 			return fmt.Errorf("%w, got %q", ErrVSAMaxAgeNotPositive, p.VSA.MaxAge)
 		}
+
+		p.VSA.MaxAgeDuration = maxAge
 	}
 
 	return nil
@@ -761,7 +763,6 @@ func (p *Policy) validateVSA() error {
 
 func (p *Policy) initDerived() {
 	if p.VSA != nil && p.VSA.MaxAge != "" {
-		// Validate() already rejects invalid durations, so the error is safe to discard.
 		p.VSA.MaxAgeDuration, _ = time.ParseDuration(p.VSA.MaxAge)
 	}
 }

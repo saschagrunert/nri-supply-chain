@@ -61,7 +61,7 @@ func validatePoliciesRuntime(policies map[string]*policy.Policy) error {
 		if err != nil {
 			label := ns
 			if label == "" {
-				label = defaultPolicyLabel
+				label = DefaultPolicyLabel
 			}
 
 			return fmt.Errorf("policy %q: %w", label, err)
@@ -83,7 +83,7 @@ func validatePoliciesEnforce(
 		if err != nil {
 			label := ns
 			if label == "" {
-				label = defaultPolicyLabel
+				label = DefaultPolicyLabel
 			}
 
 			return fmt.Errorf("policy %q: %w", label, err)
