@@ -169,7 +169,7 @@ skipped.
 The full JSON Schema for policy files can be printed with:
 
 ```console
-nri-supply-chain --json-schema policy
+nri-supply-chain json-schema policy
 ```
 
 <details>

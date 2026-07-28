@@ -169,24 +169,24 @@ verify-mdtoc: $(MDTOC) ## Verify table of contents in docs
 .PHONY: verify-jsonschema
 verify-jsonschema: build ## Verify JSON Schemas in docs match CLI output
 	@command -v jq >/dev/null 2>&1 || { echo "ERROR: jq is required for verify-jsonschema"; exit 1; }
-	@generated=$$($(BUILD_DIR)/nri-supply-chain --json-schema policy | jq -S .); \
+	@generated=$$($(BUILD_DIR)/nri-supply-chain json-schema policy | jq -S .); \
 	[ -n "$$generated" ] || { echo "ERROR: empty policy schema output"; exit 1; }; \
 	embedded=$$(sed -n '/<!-- jsonschema-start -->/,/<!-- jsonschema-end -->/p' docs/policy.md \
 		| sed -n '/^```json$$/,/^```$$/p' | sed '1d;$$d' | jq -S .); \
 	[ -n "$$embedded" ] || { echo "ERROR: no schema found in docs/policy.md"; exit 1; }; \
 	if [ "$$generated" != "$$embedded" ]; then \
 		echo "ERROR: JSON Schema in docs/policy.md is out of date."; \
-		echo "Run 'nri-supply-chain --json-schema policy' and update the schema section."; \
+		echo "Run 'nri-supply-chain json-schema policy' and update the schema section."; \
 		exit 1; \
 	fi
-	@generated=$$($(BUILD_DIR)/nri-supply-chain --json-schema result | jq -S .); \
+	@generated=$$($(BUILD_DIR)/nri-supply-chain json-schema result | jq -S .); \
 	[ -n "$$generated" ] || { echo "ERROR: empty result schema output"; exit 1; }; \
 	embedded=$$(sed -n '/<!-- verify-jsonschema-start -->/,/<!-- verify-jsonschema-end -->/p' docs/config.md \
 		| sed -n '/^```json$$/,/^```$$/p' | sed '1d;$$d' | jq -S .); \
 	[ -n "$$embedded" ] || { echo "ERROR: no schema found in docs/config.md"; exit 1; }; \
 	if [ "$$generated" != "$$embedded" ]; then \
 		echo "ERROR: JSON Schema in docs/config.md is out of date."; \
-		echo "Run 'nri-supply-chain --json-schema result' and update the schema section."; \
+		echo "Run 'nri-supply-chain json-schema result' and update the schema section."; \
 		exit 1; \
 	fi
 

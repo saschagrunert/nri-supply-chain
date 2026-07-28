@@ -15,12 +15,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
-	"errors"
-	"flag"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,7 +44,7 @@ func TestNewLogger(t *testing.T) {
 		{name: logLevelInfo, level: logLevelInfo, want: slog.LevelInfo},
 		{name: logLevelWarn, level: logLevelWarn, want: slog.LevelWarn},
 		{name: logLevelError, level: logLevelError, want: slog.LevelError},
-		{name: "unrecognized defaults to info", level: "bogus", want: slog.LevelInfo},
+		{name: "unrecognized defaults to info", level: testBogusLevel, want: slog.LevelInfo},
 	}
 
 	for _, test := range tests {
@@ -87,30 +87,16 @@ func TestNewLoggerCLIMode(t *testing.T) {
 func TestSetupConfig(t *testing.T) {
 	t.Parallel()
 
-	t.Run("metricsAddr override", func(t *testing.T) {
+	t.Run("default config path", func(t *testing.T) {
 		t.Parallel()
 
-		opts := &options{
-			configPath:      "",
-			metricsAddr:     ":9999",
-			pluginName:      "",
-			pluginIdx:       "",
-			logLevel:        "",
-			verifyImage:     "",
-			verifyNamespace: "",
-			outputFormat:    "",
-			showVersion:     false,
-			validate:        false,
-			jsonSchema:      "",
-		}
-
-		cfg, err := setupConfig(opts)
+		cfg, err := setupConfig(defaultConfigPath)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		if cfg.MetricsAddr != ":9999" {
-			t.Errorf("expected :9999, got %s", cfg.MetricsAddr)
+		if cfg == nil {
+			t.Fatal("expected config, got nil")
 		}
 	})
 
@@ -128,21 +114,7 @@ func TestSetupConfig(t *testing.T) {
 			t.Fatalf("writing config: %v", err)
 		}
 
-		opts := &options{
-			configPath:      configPath,
-			metricsAddr:     "",
-			pluginName:      "",
-			pluginIdx:       "",
-			logLevel:        "",
-			verifyImage:     "",
-			verifyNamespace: "",
-			outputFormat:    "",
-			showVersion:     false,
-			validate:        false,
-			jsonSchema:      "",
-		}
-
-		_, err = setupConfig(opts)
+		_, err = setupConfig(configPath)
 		if err == nil {
 			t.Fatal("expected error for nonexistent policy dir")
 		}
@@ -177,10 +149,10 @@ func newDisabledPlugin(t *testing.T) *plugin.Plugin {
 func TestLoadConfig(t *testing.T) {
 	t.Parallel()
 
-	t.Run("default config", func(t *testing.T) {
+	t.Run("default config path missing", func(t *testing.T) {
 		t.Parallel()
 
-		cfg, err := loadConfig("")
+		cfg, err := loadConfig(defaultConfigPath)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -522,215 +494,299 @@ func TestInitLogging(t *testing.T) {
 		t.Errorf("expected debug level, got %v", logLevelVar.Level())
 	}
 
-	initLogging("bogus", true)
+	initLogging(testBogusLevel, true)
 }
 
 const (
-	defaultPluginName       = "supply-chain"
-	defaultPluginIdx        = "10"
 	testNamespaceProduction = "production"
 	testNamespaceProd       = "prod"
-	testConfigPath          = "/tmp/cfg.toml"
+	testBogusLevel          = "bogus"
+	testFlagConfig          = "--config"
 )
 
-func defaultOpts() options {
-	return options{
-		configPath:      "",
-		metricsAddr:     "",
-		pluginName:      defaultPluginName,
-		pluginIdx:       defaultPluginIdx,
-		logLevel:        "",
-		verifyImage:     "",
-		verifyNamespace: verifier.DefaultPolicyLabel,
-		outputFormat:    outputFormatTable,
-		showVersion:     false,
-		validate:        false,
-		jsonSchema:      "",
+func TestVersionSubcommand(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	cmd := newRootCmd()
+	cmd.SetOut(&buf)
+	cmd.SetArgs([]string{cmdVersion})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := "nri-supply-chain " + version + "\n"
+	if buf.String() != want {
+		t.Errorf("expected %q, got %q", want, buf.String())
 	}
 }
 
-func TestParseFlagsFrom(t *testing.T) {
+func TestVersionFlag(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name string
-		args []string
-		want options
-	}{
-		{
-			name: "defaults with empty args",
-			args: []string{},
-			want: defaultOpts(),
-		},
-		{
-			name: "config flag",
-			args: []string{"--config", "/etc/nri/config.toml"},
-			want: func() options {
-				o := defaultOpts()
-				o.configPath = "/etc/nri/config.toml"
+	var buf bytes.Buffer
 
-				return o
-			}(),
-		},
-		{
-			name: "metrics-addr flag",
-			args: []string{"--metrics-addr", ":9090"},
-			want: func() options {
-				o := defaultOpts()
-				o.metricsAddr = ":9090"
+	cmd := newRootCmd()
+	cmd.SetOut(&buf)
+	cmd.SetArgs([]string{"--version"})
 
-				return o
-			}(),
-		},
-		{
-			name: "plugin-name flag",
-			args: []string{"--plugin-name", "custom"},
-			want: func() options {
-				o := defaultOpts()
-				o.pluginName = "custom"
-
-				return o
-			}(),
-		},
-		{
-			name: "plugin-idx flag",
-			args: []string{"--plugin-idx", "42"},
-			want: func() options {
-				o := defaultOpts()
-				o.pluginIdx = "42"
-
-				return o
-			}(),
-		},
-		{
-			name: "log-level flag",
-			args: []string{"--log-level", logLevelDebug},
-			want: func() options {
-				o := defaultOpts()
-				o.logLevel = logLevelDebug
-
-				return o
-			}(),
-		},
-		{
-			name: "version flag",
-			args: []string{"--version"},
-			want: func() options {
-				o := defaultOpts()
-				o.showVersion = true
-
-				return o
-			}(),
-		},
-		{
-			name: "validate flag",
-			args: []string{"--validate"},
-			want: func() options {
-				o := defaultOpts()
-				o.validate = true
-
-				return o
-			}(),
-		},
-		{
-			name: "verify-image flag",
-			args: []string{"--verify-image", "quay.io/test:latest"},
-			want: func() options {
-				o := defaultOpts()
-				o.verifyImage = "quay.io/test:latest"
-
-				return o
-			}(),
-		},
-		{
-			name: "verify-namespace flag",
-			args: []string{"--verify-namespace", testNamespaceProduction},
-			want: func() options {
-				o := defaultOpts()
-				o.verifyNamespace = testNamespaceProduction
-
-				return o
-			}(),
-		},
-		{
-			name: "output flag",
-			args: []string{"--output", "json"},
-			want: func() options {
-				o := defaultOpts()
-				o.outputFormat = outputFormatJSON
-
-				return o
-			}(),
-		},
-		{
-			name: "json-schema flag",
-			args: []string{"--json-schema", schemaPolicy},
-			want: func() options {
-				o := defaultOpts()
-				o.jsonSchema = schemaPolicy
-
-				return o
-			}(),
-		},
-		{
-			name: "multiple flags combined",
-			args: []string{
-				"--config", testConfigPath,
-				"--metrics-addr", ":8080",
-				"--plugin-name", "sc",
-				"--plugin-idx", "5",
-				"--log-level", logLevelError,
-				"--verify-image", "registry.io/img:v1",
-				"--verify-namespace", "staging",
-			},
-			want: options{
-				configPath:      testConfigPath,
-				metricsAddr:     ":8080",
-				pluginName:      "sc",
-				pluginIdx:       "5",
-				logLevel:        logLevelError,
-				verifyImage:     "registry.io/img:v1",
-				verifyNamespace: "staging",
-				outputFormat:    outputFormatTable,
-				showVersion:     false,
-				validate:        false,
-				jsonSchema:      "",
-			},
-		},
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			got, err := parseFlagsFrom(test.args)
-			if err != nil {
-				t.Fatalf("parseFlagsFrom(%v) unexpected error: %v", test.args, err)
-			}
-
-			if got != test.want {
-				t.Errorf("parseFlagsFrom(%v)\n got: %+v\nwant: %+v",
-					test.args, got, test.want)
-			}
-		})
+	if !strings.Contains(buf.String(), version) {
+		t.Errorf("expected version in output, got: %s", buf.String())
 	}
 }
 
-func TestParseFlagsFromInvalidFlag(t *testing.T) {
+func TestHelpFlag(t *testing.T) {
 	t.Parallel()
 
-	_, err := parseFlagsFrom([]string{"--nonexistent-flag"})
+	var buf bytes.Buffer
+
+	cmd := newRootCmd()
+	cmd.SetOut(&buf)
+	cmd.SetArgs([]string{"--help"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := buf.String()
+
+	if !strings.Contains(got, "Usage") {
+		t.Errorf("expected Usage in help output, got: %s", got)
+	}
+
+	if !strings.Contains(got, cmdVerify) {
+		t.Errorf("expected verify subcommand in help, got: %s", got)
+	}
+}
+
+func TestVerifyRequiresArg(t *testing.T) {
+	t.Parallel()
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{cmdVerify})
+
+	err := cmd.Execute()
 	if err == nil {
-		t.Fatal("expected error for invalid flag")
+		t.Fatal("expected error when verify called without image arg")
 	}
 }
 
-func TestParseFlagsFromHelp(t *testing.T) {
+func TestUnknownSubcommand(t *testing.T) {
 	t.Parallel()
 
-	_, err := parseFlagsFrom([]string{"--help"})
-	if !errors.Is(err, flag.ErrHelp) {
-		t.Errorf("expected flag.ErrHelp, got %v", err)
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"nonexistent"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for unknown subcommand")
+	}
+}
+
+func TestJSONSchemaSubcommand(t *testing.T) {
+	t.Parallel()
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{cmdJSONSchema, "policy"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestJSONSchemaInvalidType(t *testing.T) {
+	t.Parallel()
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{cmdJSONSchema, testBogusLevel})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for invalid schema type")
+	}
+}
+
+func TestJSONSchemaRequiresArg(t *testing.T) {
+	t.Parallel()
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{cmdJSONSchema})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when json-schema called without type arg")
+	}
+}
+
+func TestPersistentFlags(t *testing.T) {
+	t.Parallel()
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{testFlagConfig, "/some/path", cmdVersion})
+
+	var buf bytes.Buffer
+
+	cmd.SetOut(&buf)
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	configFlag := cmd.PersistentFlags().Lookup("config")
+	if configFlag.Value.String() != "/some/path" {
+		t.Errorf("expected config=/some/path, got %s", configFlag.Value.String())
+	}
+}
+
+func TestShortFlags(t *testing.T) {
+	t.Parallel()
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"-c", "/cfg.toml", "-l", "debug", cmdVersion})
+
+	var buf bytes.Buffer
+
+	cmd.SetOut(&buf)
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	configFlag := cmd.PersistentFlags().Lookup("config")
+	if configFlag.Value.String() != "/cfg.toml" {
+		t.Errorf("expected config=/cfg.toml, got %s", configFlag.Value.String())
+	}
+
+	logLevelFlag := cmd.PersistentFlags().Lookup("log-level")
+	if logLevelFlag.Value.String() != "debug" {
+		t.Errorf("expected log-level=debug, got %s", logLevelFlag.Value.String())
+	}
+}
+
+func TestValidateSubcommandDisabled(t *testing.T) {
+	t.Parallel()
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{cmdValidate})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateSubcommandWithConfig(t *testing.T) {
+	t.Parallel()
+
+	policyDir := filepath.Join(t.TempDir(), "policies")
+
+	err := os.MkdirAll(policyDir, 0o750)
+	if err != nil {
+		t.Fatalf("creating policy dir: %v", err)
+	}
+
+	writeValidationPolicy(t, policyDir, "default.json",
+		`{"slsa": {"missingPolicy": "allow"}}`)
+
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	writeTestConfig(t, configPath, policyDir, "warn")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{testFlagConfig, configPath, cmdValidate})
+
+	err = cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateSubcommandSetupFailure(t *testing.T) {
+	t.Parallel()
+
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	writeTestConfig(t, configPath, "/nonexistent/policies", "warn")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{testFlagConfig, configPath, cmdValidate})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for setup failure")
+	}
+}
+
+func TestVerifySubcommandSetupFailure(t *testing.T) {
+	t.Parallel()
+
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	writeTestConfig(t, configPath, "/nonexistent/policies", "warn")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{testFlagConfig, configPath, cmdVerify, "example.com/img:v1"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for setup failure")
+	}
+}
+
+func TestVerifySubcommandDisabledConfig(t *testing.T) {
+	t.Parallel()
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{cmdVerify, "example.com/img:v1"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for disabled verification")
+	}
+}
+
+func TestRootCommandSetupFailure(t *testing.T) {
+	t.Parallel()
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{testFlagConfig, "/nonexistent/config.toml"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for nonexistent config")
+	}
+}
+
+func TestVerifySubcommandTooManyArgs(t *testing.T) {
+	t.Parallel()
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{cmdVerify, "img:v1", "extra"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for too many args")
+	}
+}
+
+func TestJSONSchemaTooManyArgs(t *testing.T) {
+	t.Parallel()
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{cmdJSONSchema, "policy", "extra"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for too many args")
 	}
 }
 
@@ -756,7 +812,7 @@ func TestUpdateLogLevel(t *testing.T) {
 		{name: logLevelInfo, level: logLevelInfo, want: slog.LevelInfo},
 		{name: logLevelWarn, level: logLevelWarn, want: slog.LevelWarn},
 		{name: logLevelError, level: logLevelError, want: slog.LevelError},
-		{name: "unrecognized defaults to info", level: "bogus", want: slog.LevelInfo},
+		{name: "unrecognized defaults to info", level: testBogusLevel, want: slog.LevelInfo},
 	}
 
 	for _, test := range tests {

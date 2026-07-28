@@ -474,13 +474,7 @@ func TestRunVerifyInvalidOutputFormat(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 
-	opts := &options{ //nolint:exhaustruct // test only sets relevant fields
-		verifyImage:     "img:v1",
-		verifyNamespace: verifier.DefaultPolicyLabel,
-		outputFormat:    "xml",
-	}
-
-	if code := runVerify(opts, cfg); code != exitError {
+	if code := runVerify("img:v1", verifier.DefaultPolicyLabel, "xml", cfg); code != exitError {
 		t.Errorf("exit code = %d, want %d", code, exitError)
 	}
 }
@@ -499,13 +493,7 @@ func TestRunVerifyResolveDigestFails(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = dir
 
-	opts := &options{ //nolint:exhaustruct // test only sets relevant fields
-		verifyImage:     ":::invalid-ref",
-		verifyNamespace: verifier.DefaultPolicyLabel,
-		outputFormat:    outputFormatJSON,
-	}
-
-	code := runVerify(opts, cfg)
+	code := runVerify(":::invalid-ref", verifier.DefaultPolicyLabel, outputFormatJSON, cfg)
 	if code != exitError {
 		t.Errorf("exit code = %d, want %d", code, exitError)
 	}
@@ -515,13 +503,8 @@ func TestRunVerifyDisabledErrors(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.DefaultConfig()
-	opts := &options{ //nolint:exhaustruct // test only sets relevant fields
-		verifyImage:     "example.com/test:latest",
-		verifyNamespace: verifier.DefaultPolicyLabel,
-		outputFormat:    outputFormatJSON,
-	}
 
-	code := runVerify(opts, cfg)
+	code := runVerify("example.com/test:latest", verifier.DefaultPolicyLabel, outputFormatJSON, cfg)
 	if code != exitError {
 		t.Errorf("expected exit code %d for disabled verification, got %d", exitError, code)
 	}
@@ -586,15 +569,9 @@ func TestRunVerifyExitCodes(t *testing.T) {
 			cfg.Verification = test.mode
 			cfg.PolicyDir = policyDir
 
-			opts := &options{ //nolint:exhaustruct // test only sets relevant fields
-				verifyImage:     imgRef,
-				verifyNamespace: verifier.DefaultPolicyLabel,
-				outputFormat:    outputFormatJSON,
-			}
-
 			var buf bytes.Buffer
 
-			code := runVerifyTo(&buf, opts, cfg)
+			code := runVerifyTo(&buf, imgRef, verifier.DefaultPolicyLabel, outputFormatJSON, cfg)
 			if code != test.wantCode {
 				t.Errorf("exit code = %d, want %d", code, test.wantCode)
 			}
@@ -655,13 +632,7 @@ func TestRunVerifyVerifierNewError(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = policyDir
 
-	opts := &options{ //nolint:exhaustruct // test only sets relevant fields
-		verifyImage:     "test:latest",
-		verifyNamespace: verifier.DefaultPolicyLabel,
-		outputFormat:    outputFormatJSON,
-	}
-
-	code := runVerify(opts, cfg)
+	code := runVerify("test:latest", verifier.DefaultPolicyLabel, outputFormatJSON, cfg)
 	if code != exitError {
 		t.Errorf("exit code = %d, want %d", code, exitError)
 	}
@@ -697,13 +668,7 @@ func TestRunVerifyWarnModeWithChecks(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = policyDir
 
-	opts := &options{ //nolint:exhaustruct // test only sets relevant fields
-		verifyImage:     imgRef,
-		verifyNamespace: verifier.DefaultPolicyLabel,
-		outputFormat:    outputFormatJSON,
-	}
-
-	out, code := captureRunVerify(t, opts, cfg)
+	out, code := captureRunVerify(t, imgRef, verifier.DefaultPolicyLabel, outputFormatJSON, cfg)
 
 	if code != exitSuccess {
 		t.Errorf("expected exit code %d, got %d", exitSuccess, code)
@@ -719,13 +684,15 @@ func TestRunVerifyWarnModeWithChecks(t *testing.T) {
 }
 
 func captureRunVerify(
-	t *testing.T, opts *options, cfg *config.Config,
+	t *testing.T,
+	imageRef, namespace, outputFormat string,
+	cfg *config.Config,
 ) (out verifyOutput, exitCode int) {
 	t.Helper()
 
 	var buf bytes.Buffer
 
-	code := runVerifyTo(&buf, opts, cfg)
+	code := runVerifyTo(&buf, imageRef, namespace, outputFormat, cfg)
 
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
 	lastJSON := findLastJSON(lines)

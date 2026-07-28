@@ -100,7 +100,7 @@ func TestPolicyJSONSchemaMatchesDocs(t *testing.T) {
 	if !bytes.Equal(generatedNorm, embeddedNorm) {
 		t.Errorf(
 			"JSON Schema in %s is out of date.\n"+
-				"Run 'nri-supply-chain --json-schema policy' and update the "+
+				"Run 'nri-supply-chain json-schema policy' and update the "+
 				"section between %s and %s",
 			policyDocPath, jsonSchemaStartTag, jsonSchemaEndTag,
 		)
@@ -186,7 +186,7 @@ func TestVerifyResultJSONSchemaMatchesDocs(t *testing.T) {
 	if !bytes.Equal(generatedNorm, embeddedNorm) {
 		t.Errorf(
 			"JSON Schema in %s is out of date.\n"+
-				"Run 'nri-supply-chain --json-schema result' and update the "+
+				"Run 'nri-supply-chain json-schema result' and update the "+
 				"section between %s and %s",
 			configDocPath, startTag, endTag,
 		)

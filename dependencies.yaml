@@ -5,7 +5,7 @@ dependencies:
       - path: cmd/nri-supply-chain/main.go
         match: ^var version
       - path: README.md
-        match: verify-image.*nri-supply-chain
+        match: "^\\s+verify ghcr.*nri-supply-chain:"
       - path: README.md
         match: '"image".*nri-supply-chain:'
       - path: deploy/kubernetes/daemonset.yaml

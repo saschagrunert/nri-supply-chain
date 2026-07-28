@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 BINARY="${BINARY:-build/nri-supply-chain}"
-QUICKSTART_IMAGE=$(grep -o -- '--verify-image [^ ]*' README.md | head -1 | awk '{print $2}')
+QUICKSTART_IMAGE=$(grep -oE 'verify [^ ]+/[^ ]+:[^ ]+' README.md | head -1 | awk '{print $2}')
 export QUICKSTART_IMAGE
 
 setup() {
