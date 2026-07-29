@@ -256,7 +256,7 @@ func checkVSA(
 	parsedRef name.Reference,
 ) *types.Result {
 	if len(vsaAttestations) == 0 {
-		return nil
+		return checkVSAMissing(pol, imageRef, met)
 	}
 
 	start := time.Now()
@@ -300,6 +300,29 @@ func checkVSA(
 	}
 
 	return nil
+}
+
+func checkVSAMissing(
+	pol *policy.Policy, imageRef string, met *metrics.Metrics,
+) *types.Result {
+	missingPolicy := pol.VSAMissingPolicy()
+	if missingPolicy == types.ActionAllow {
+		return nil
+	}
+
+	met.VerificationDuration.WithLabelValues(string(types.CheckTypeVSA)).Observe(0)
+
+	check := handleMissingAttestation(
+		missingPolicy,
+		types.CheckTypeVSA,
+		"no VSA attestation found for image "+imageRef,
+	)
+
+	return &types.Result{
+		Allowed:      check.Passed,
+		Reason:       check.Detail,
+		CheckResults: []types.CheckResult{*check},
+	}
 }
 
 func runParallelChecks(

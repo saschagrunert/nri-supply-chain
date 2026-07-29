@@ -184,6 +184,8 @@ type VEXPolicy struct {
 
 // VSAPolicy contains Verification Summary Attestation settings.
 type VSAPolicy struct {
+	// MissingPolicy controls behavior when no VSA attestation is found.
+	MissingPolicy types.Action `json:"missingPolicy,omitempty"`
 	// MinimumLevel is the minimum SLSA level required in VSA verifiedLevels (0-3).
 	MinimumLevel int `json:"minimumLevel,omitempty"`
 	// MaxAge is the maximum age of a VSA's timeVerified before it's considered stale.
@@ -217,6 +219,17 @@ func (p *Policy) SLSAMissingPolicy() types.Action {
 func (p *Policy) VEXMissingPolicy() types.Action {
 	if p.VEX != nil && p.VEX.MissingPolicy != "" {
 		return p.VEX.MissingPolicy
+	}
+
+	return types.ActionAllow
+}
+
+// VSAMissingPolicy returns the effective VSA missing policy.
+// Defaults to allow so that the plugin falls through to direct SLSA+VEX
+// verification when no VSA attestation is found.
+func (p *Policy) VSAMissingPolicy() types.Action {
+	if p.VSA != nil && p.VSA.MissingPolicy != "" {
+		return p.VSA.MissingPolicy
 	}
 
 	return types.ActionAllow
@@ -821,6 +834,15 @@ func (p *Policy) validateVSA() error {
 	}
 
 	var errs []error
+
+	if p.VSA.MissingPolicy != "" {
+		err := types.ValidateAction(
+			"vsa.missingPolicy", p.VSA.MissingPolicy,
+		)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("validating vsa missing policy: %w", err))
+		}
+	}
 
 	if p.VSA.MinimumLevel < 0 || p.VSA.MinimumLevel > maxSLSALevel {
 		errs = append(errs, fmt.Errorf(
