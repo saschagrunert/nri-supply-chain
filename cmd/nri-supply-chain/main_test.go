@@ -457,6 +457,52 @@ func TestWarnValidationEnforceDefaults(t *testing.T) {
 	}
 }
 
+func TestRunValidationMultipleErrors(t *testing.T) {
+	t.Parallel()
+
+	policyDir := filepath.Join(t.TempDir(), "policies")
+
+	err := os.MkdirAll(policyDir, 0o750)
+	if err != nil {
+		t.Fatalf("creating policy dir: %v", err)
+	}
+
+	writeValidationPolicy(t, policyDir, "a.json",
+		`{"trust":{"verifiers":[{"id":"v1","key":"/nonexistent/a.pub"}]}}`)
+	writeValidationPolicy(t, policyDir, "b.json",
+		`{"trust":{"verifiers":[{"id":"v2","key":"/nonexistent/b.pub"}]}}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = policyDir
+
+	if code := runValidation(cfg); code != 1 {
+		t.Errorf("expected exit code 1, got %d", code)
+	}
+}
+
+func TestRunValidationMultiplePolicyLoadErrors(t *testing.T) {
+	t.Parallel()
+
+	policyDir := filepath.Join(t.TempDir(), "policies")
+
+	err := os.MkdirAll(policyDir, 0o750)
+	if err != nil {
+		t.Fatalf("creating policy dir: %v", err)
+	}
+
+	writeValidationPolicy(t, policyDir, "a.json", `{invalid}`)
+	writeValidationPolicy(t, policyDir, "b.json", `{also invalid}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = policyDir
+
+	if code := runValidation(cfg); code != 1 {
+		t.Errorf("expected exit code 1, got %d", code)
+	}
+}
+
 func writeValidationPolicy(t *testing.T, dir, filename, content string) {
 	t.Helper()
 
