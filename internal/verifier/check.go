@@ -104,21 +104,35 @@ func runChecks(
 
 	bins := binAttestations(attestations)
 
-	vsaResult := checkVSA(ctx, bins.vsa, pol, imageRef, attestDigest, state.metrics, parsedRef)
+	return runVSAAndParallelChecks(
+		ctx, &bins, pol, state.metrics, imageRef, attestDigest, namespace, parsedRef,
+	)
+}
+
+func runVSAAndParallelChecks(
+	ctx context.Context, bins *attestationBins,
+	pol *policy.Policy, met *metrics.Metrics,
+	imageRef, digest, namespace string, parsedRef name.Reference,
+) *types.Result {
+	vsaResult := checkVSA(ctx, bins.vsa, pol, imageRef, digest, met, parsedRef)
 	if vsaResult != nil {
 		return vsaResult
 	}
 
-	return runParallelChecks(
-		ctx,
-		&bins,
-		pol,
-		state.metrics,
-		imageRef,
-		attestDigest,
-		namespace,
-		parsedRef,
-	)
+	if len(bins.vsa) == 0 {
+		denied := checkVSAMissing(pol, imageRef, met)
+		if denied != nil {
+			return denied
+		}
+	}
+
+	result := runParallelChecks(ctx, bins, pol, met, imageRef, digest, namespace, parsedRef)
+
+	if len(bins.vsa) == 0 {
+		prependVSAWarning(result, pol, "no VSA attestation found for image "+imageRef)
+	}
+
+	return result
 }
 
 func registryHost(parsed name.Reference, parseErr error, imageRef string) string {
@@ -134,6 +148,20 @@ func runChecksWithoutFetcher(
 ) *types.Result {
 	detail := "no attestation fetcher configured for image " + imageRef
 
+	vsaMissing := pol.VSAMissingPolicy()
+
+	met.VerificationDuration.WithLabelValues(string(types.CheckTypeVSA)).Observe(0)
+
+	if vsaMissing != types.ActionAllow && vsaMissing != types.ActionWarn {
+		check := handleMissingAttestation(vsaMissing, types.CheckTypeVSA, detail)
+
+		return &types.Result{
+			Allowed:      check.Passed,
+			Reason:       check.Detail,
+			CheckResults: []types.CheckResult{*check},
+		}
+	}
+
 	slsaResult := handleMissingAttestation(
 		pol.SLSAMissingPolicy(), types.CheckTypeSLSA, detail,
 	)
@@ -146,7 +174,11 @@ func runChecksWithoutFetcher(
 
 	met.VerificationDuration.WithLabelValues(string(types.CheckTypeVEX)).Observe(0)
 
-	return combineResults(slsaResult, vexResult)
+	result := combineResults(slsaResult, vexResult)
+
+	prependVSAWarning(result, pol, detail)
+
+	return result
 }
 
 func timedFetchAttestations(
@@ -270,7 +302,7 @@ func checkVSA(
 	parsedRef name.Reference,
 ) *types.Result {
 	if len(vsaAttestations) == 0 {
-		return checkVSAMissing(pol, imageRef, met)
+		return nil
 	}
 
 	start := time.Now()
@@ -320,11 +352,12 @@ func checkVSAMissing(
 	pol *policy.Policy, imageRef string, met *metrics.Metrics,
 ) *types.Result {
 	missingPolicy := pol.VSAMissingPolicy()
-	if missingPolicy == types.ActionAllow {
-		return nil
-	}
 
 	met.VerificationDuration.WithLabelValues(string(types.CheckTypeVSA)).Observe(0)
+
+	if missingPolicy == types.ActionAllow || missingPolicy == types.ActionWarn {
+		return nil
+	}
 
 	check := handleMissingAttestation(
 		missingPolicy,
@@ -337,6 +370,18 @@ func checkVSAMissing(
 		Reason:       check.Detail,
 		CheckResults: []types.CheckResult{*check},
 	}
+}
+
+func prependVSAWarning(result *types.Result, pol *policy.Policy, detail string) {
+	if pol.VSAMissingPolicy() != types.ActionWarn {
+		return
+	}
+
+	vsaCheck := handleMissingAttestation(types.ActionWarn, types.CheckTypeVSA, detail)
+	result.CheckResults = append(
+		[]types.CheckResult{*vsaCheck}, result.CheckResults...,
+	)
+	applyCheckResult(result, vsaCheck)
 }
 
 func runParallelChecks(
