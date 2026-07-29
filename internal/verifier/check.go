@@ -89,8 +89,8 @@ func runChecks(
 		defer release()
 	}
 
-	attestations, attestDigest, fetchErr := fetchAttestations(
-		ctx, state, imageRef, digest, indexDigest, pol,
+	attestations, attestDigest, fetchErr := timedFetchAttestations(
+		ctx, state, imageRef, digest, indexDigest, pol, host,
 	)
 	if fetchErr != nil {
 		recordBreakerFailure(ctx, breaker, state.metrics, host, state.config.FetchFailurePolicy)
@@ -147,6 +147,20 @@ func runChecksWithoutFetcher(
 	met.VerificationDuration.WithLabelValues(string(types.CheckTypeVEX)).Observe(0)
 
 	return combineResults(slsaResult, vexResult)
+}
+
+func timedFetchAttestations(
+	ctx context.Context, state *snapshot,
+	imageRef, digest, indexDigest string, pol *policy.Policy, host string,
+) ([]attestation.VerifiedAttestation, string, error) {
+	start := time.Now()
+
+	defer func() {
+		state.metrics.FetchDuration.WithLabelValues(host).
+			Observe(time.Since(start).Seconds())
+	}()
+
+	return fetchAttestations(ctx, state, imageRef, digest, indexDigest, pol)
 }
 
 func fetchAttestations(

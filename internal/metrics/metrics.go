@@ -69,6 +69,8 @@ type Metrics struct {
 	ConfigReloadErrorsTotal prometheus.Counter
 	// VerificationInterruptedTotal counts verifications interrupted by context cancellation.
 	VerificationInterruptedTotal prometheus.Counter
+	// FetchDuration measures attestation fetch latency by registry.
+	FetchDuration *prometheus.HistogramVec
 	// PrewarmDurationSeconds measures cache pre-warming duration.
 	PrewarmDurationSeconds *prometheus.HistogramVec
 	registry               *prometheus.Registry
@@ -140,6 +142,7 @@ func New() *Metrics {
 			"verification_interrupted_total",
 			"Total number of verifications interrupted by context cancellation.",
 		),
+		FetchDuration:          newFetchDuration(),
 		PrewarmDurationSeconds: newPrewarmDuration(),
 		registry:               prometheus.NewRegistry(),
 	}
@@ -215,6 +218,21 @@ func newVerificationDuration() *prometheus.HistogramVec {
 	)
 }
 
+func newFetchDuration() *prometheus.HistogramVec {
+	return prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "fetch_duration_seconds",
+			Help:      "Duration of attestation fetches from OCI registries in seconds.",
+			Buckets: sortedBuckets(
+				slices.Clone(prometheus.DefBuckets),
+				bucketFetchMid, bucketFetchTimeout,
+			),
+		},
+		[]string{labelRegistry},
+	)
+}
+
 func newPrewarmDuration() *prometheus.HistogramVec {
 	return prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -273,6 +291,7 @@ func (m *Metrics) register() {
 		m.ConfigReloadsTotal,
 		m.ConfigReloadErrorsTotal,
 		m.VerificationInterruptedTotal,
+		m.FetchDuration,
 		m.PrewarmDurationSeconds,
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{
 			PidFn:        nil,
