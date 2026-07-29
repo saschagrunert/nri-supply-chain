@@ -9,6 +9,7 @@ MDTOC_VERSION = v1.4.0
 COSIGN_VERSION = 3.1.2
 CRANE_VERSION = 0.21.7
 GOVULNCHECK_VERSION = v1.6.0
+PRETTIER_VERSION = 3.9.6
 
 # SHA-256 checksums for downloaded CI tools (linux/amd64).
 KUBERNIX_SHA256 = 93a6d0a9b9fa09e51e7187a186a289deb7761392b953db1f49d130b700891ade
@@ -141,7 +142,7 @@ e2e: build $(KUBERNIX) $(COSIGN) $(CRANE) ## Run bats e2e tests (requires root a
 ##@ Verification
 
 .PHONY: verify-all
-verify-all: lint verify-shfmt verify-shellcheck verify-mdtoc verify-jsonschema verify-tidy verify-dependencies govulncheck ## Run all verification targets
+verify-all: lint verify-shfmt verify-shellcheck verify-mdtoc verify-jsonschema verify-tidy verify-dependencies govulncheck verify-prettier ## Run all verification targets
 
 .PHONY: lint
 lint: $(GOLANGCI_LINT) ## Run golangci-lint
@@ -197,6 +198,10 @@ verify-tidy: ## Verify go.mod is tidy
 .PHONY: verify-dependencies
 verify-dependencies: $(ZEITGEIST) ## Verify external dependencies
 	$(ZEITGEIST) validate --local-only --base-path . --config dependencies.yaml
+
+.PHONY: verify-prettier
+verify-prettier: ## Verify file formatting with prettier
+	npx prettier@$(PRETTIER_VERSION) --check .
 
 $(ZEITGEIST):
 	@mkdir -p $(BUILD_DIR)
