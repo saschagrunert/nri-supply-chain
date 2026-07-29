@@ -532,6 +532,71 @@ func TestVerifyWithFetcher(t *testing.T) {
 			wantCheckLen: 0,
 		},
 		{
+			name: "VSA missing deny rejects",
+			policyJSON: `{
+				"vsa": {"missingPolicy": "deny"}
+			}`,
+			mode: config.ModeEnforce,
+			fetcher: &mockFetcher{
+				attestations: []attestation.VerifiedAttestation{},
+				err:          nil,
+			},
+			fetchFailurePolicy: "",
+			setupPayloads:      nil,
+			wantAllowed:        false,
+			wantErr:            verifier.ErrVerificationFailed,
+			wantCheckLen:       0,
+		},
+		{
+			name: "VSA missing warn allows with warning",
+			policyJSON: `{
+				"vsa": {"missingPolicy": "warn"}
+			}`,
+			mode: config.ModeEnforce,
+			fetcher: &mockFetcher{
+				attestations: []attestation.VerifiedAttestation{},
+				err:          nil,
+			},
+			fetchFailurePolicy: "",
+			setupPayloads:      nil,
+			wantAllowed:        true,
+			wantErr:            nil,
+			wantCheckLen:       1,
+		},
+		{
+			name: "VSA missing allow falls through",
+			policyJSON: `{
+				"slsa": {"missingPolicy": "allow"},
+				"vsa": {"missingPolicy": "allow"}
+			}`,
+			mode: config.ModeEnforce,
+			fetcher: &mockFetcher{
+				attestations: []attestation.VerifiedAttestation{},
+				err:          nil,
+			},
+			fetchFailurePolicy: "",
+			setupPayloads:      nil,
+			wantAllowed:        true,
+			wantErr:            nil,
+			wantCheckLen:       0,
+		},
+		{
+			name: "VSA missing empty falls through",
+			policyJSON: `{
+				"slsa": {"missingPolicy": "allow"}
+			}`,
+			mode: config.ModeEnforce,
+			fetcher: &mockFetcher{
+				attestations: []attestation.VerifiedAttestation{},
+				err:          nil,
+			},
+			fetchFailurePolicy: "",
+			setupPayloads:      nil,
+			wantAllowed:        true,
+			wantErr:            nil,
+			wantCheckLen:       0,
+		},
+		{
 			name: "VEX parse error fails",
 			policyJSON: `{
 				"trust": {"builders": [{"id": "https://github.com/actions/runner", "maxLevel": 2}]},

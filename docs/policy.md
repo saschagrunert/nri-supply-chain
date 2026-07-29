@@ -310,6 +310,9 @@ nri-supply-chain --json-schema policy
     },
     "VSAPolicy": {
       "properties": {
+        "missingPolicy": {
+          "type": "string"
+        },
         "minimumLevel": {
           "type": "integer"
         },
@@ -384,11 +387,12 @@ OpenVEX verification settings.
 
 Verification Summary Attestation settings.
 
-| Field          | Type   | Default | Description                                                                             |
-| -------------- | ------ | ------- | --------------------------------------------------------------------------------------- |
-| `minimumLevel` | int    | `0`     | Minimum SLSA build level required (0-3)                                                 |
-| `maxAge`       | string | (none)  | Maximum age of VSA `timeVerified` (Go duration, e.g. `24h`). Must be positive when set. |
-| `policy`       | string | (none)  | Expected policy URI in the VSA                                                          |
+| Field           | Type   | Default | Description                                                                             |
+| --------------- | ------ | ------- | --------------------------------------------------------------------------------------- |
+| `missingPolicy` | string | `allow` | Behavior when no VSA attestation is found: `allow`, `warn`, `deny`                      |
+| `minimumLevel`  | int    | `0`     | Minimum SLSA build level required (0-3)                                                 |
+| `maxAge`        | string | (none)  | Maximum age of VSA `timeVerified` (Go duration, e.g. `24h`). Must be positive when set. |
+| `policy`        | string | (none)  | Expected policy URI in the VSA                                                          |
 
 ### `signatures` (object)
 
@@ -499,8 +503,11 @@ VSA-first logic:
 
 - Trusted PASSED: short-circuits all other checks.
 - Trusted FAILED: hard reject, no fallback allowed.
-- Untrusted, stale, or missing: falls through to direct SLSA + VEX
-  verification.
+- Untrusted or stale: falls through to direct SLSA + VEX verification.
+- Missing: controlled by `vsa.missingPolicy`. When set to `allow` (the
+  default) or left empty, falls through to direct SLSA + VEX verification.
+  When set to `warn`, allows with a warning. When set to `deny`, rejects
+  immediately without fallback.
 
 ### Signature Verification
 

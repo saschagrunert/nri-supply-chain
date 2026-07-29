@@ -29,10 +29,12 @@ import (
 )
 
 const (
-	testBuilderID    = "test"
-	testInvalidValue = "invalid"
-	testVerifierID   = "https://example.com/v"
-	testIssuerURL    = "https://accounts.google.com"
+	testBuilderID              = "test"
+	testInvalidValue           = "invalid"
+	testVerifierID             = "https://example.com/v"
+	testIssuerURL              = "https://accounts.google.com"
+	testEmptyMissingPolicyName = "empty missing policy defaults to allow"
+	testExplicitDenyName       = "explicit deny"
 )
 
 type validateTest struct {
@@ -307,7 +309,7 @@ func TestSLSAMissingPolicy(t *testing.T) {
 			expected: types.ActionAllow,
 		},
 		{
-			name: "empty missing policy defaults to allow",
+			name: testEmptyMissingPolicyName,
 			policy: policy.Policy{
 				Trust: nil, Exclude: nil,
 				SLSA: &policy.SLSAPolicy{
@@ -318,7 +320,7 @@ func TestSLSAMissingPolicy(t *testing.T) {
 			expected: types.ActionAllow,
 		},
 		{
-			name: "explicit deny",
+			name: testExplicitDenyName,
 			policy: policy.Policy{
 				Trust: nil, Exclude: nil,
 				SLSA: &policy.SLSAPolicy{
@@ -355,7 +357,7 @@ func TestVEXMissingPolicy(t *testing.T) {
 			expected: types.ActionAllow,
 		},
 		{
-			name: "empty missing policy defaults to allow",
+			name: testEmptyMissingPolicyName,
 			policy: policy.Policy{
 				Trust: nil, Exclude: nil, SLSA: nil,
 				VEX: &policy.VEXPolicy{
@@ -367,7 +369,7 @@ func TestVEXMissingPolicy(t *testing.T) {
 			expected: types.ActionAllow,
 		},
 		{
-			name: "explicit deny",
+			name: testExplicitDenyName,
 			policy: policy.Policy{
 				Trust: nil, Exclude: nil, SLSA: nil,
 				VEX: &policy.VEXPolicy{
@@ -385,6 +387,59 @@ func TestVEXMissingPolicy(t *testing.T) {
 			t.Parallel()
 
 			if got := test.policy.VEXMissingPolicy(); got != test.expected {
+				t.Errorf("expected %q, got %q", test.expected, got)
+			}
+		})
+	}
+}
+
+func TestVSAMissingPolicy(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		policy   policy.Policy
+		expected types.Action
+	}{
+		{
+			name:     "nil vsa defaults to allow",
+			policy:   emptyPolicy(),
+			expected: types.ActionAllow,
+		},
+		{
+			name: testEmptyMissingPolicyName,
+			policy: policy.Policy{
+				Trust: nil, Exclude: nil, SLSA: nil, VEX: nil,
+				VSA:        &policy.VSAPolicy{MissingPolicy: ""},
+				Signatures: nil,
+			},
+			expected: types.ActionAllow,
+		},
+		{
+			name: testExplicitDenyName,
+			policy: policy.Policy{
+				Trust: nil, Exclude: nil, SLSA: nil, VEX: nil,
+				VSA:        &policy.VSAPolicy{MissingPolicy: types.ActionDeny},
+				Signatures: nil,
+			},
+			expected: types.ActionDeny,
+		},
+		{
+			name: "explicit warn",
+			policy: policy.Policy{
+				Trust: nil, Exclude: nil, SLSA: nil, VEX: nil,
+				VSA:        &policy.VSAPolicy{MissingPolicy: types.ActionWarn},
+				Signatures: nil,
+			},
+			expected: types.ActionWarn,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := test.policy.VSAMissingPolicy(); got != test.expected {
 				t.Errorf("expected %q, got %q", test.expected, got)
 			}
 		})
@@ -565,6 +620,53 @@ func TestPolicyValidateVEXPolicies(t *testing.T) {
 	})
 }
 
+func TestPolicyValidateVSAMissingPolicy(t *testing.T) {
+	t.Parallel()
+
+	runValidateTests(t, []validateTest{
+		{
+			name: "valid VSA missing policy deny",
+			policy: policy.Policy{
+				Trust: nil, Exclude: nil, SLSA: nil, VEX: nil,
+				VSA:        &policy.VSAPolicy{MissingPolicy: types.ActionDeny},
+				Signatures: nil,
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name: "valid VSA missing policy warn",
+			policy: policy.Policy{
+				Trust: nil, Exclude: nil, SLSA: nil, VEX: nil,
+				VSA:        &policy.VSAPolicy{MissingPolicy: types.ActionWarn},
+				Signatures: nil,
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name: "valid VSA missing policy allow",
+			policy: policy.Policy{
+				Trust: nil, Exclude: nil, SLSA: nil, VEX: nil,
+				VSA:        &policy.VSAPolicy{MissingPolicy: types.ActionAllow},
+				Signatures: nil,
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name: "invalid VSA missing policy",
+			policy: policy.Policy{
+				Trust: nil, Exclude: nil, SLSA: nil, VEX: nil,
+				VSA:        &policy.VSAPolicy{MissingPolicy: testInvalidValue},
+				Signatures: nil,
+			},
+			wantErr:     true,
+			expectedErr: types.ErrInvalidAction,
+		},
+	})
+}
+
 func TestPolicyValidateVSAValid(t *testing.T) {
 	t.Parallel()
 
@@ -692,6 +794,7 @@ func defaultTestPolicy() *policy.Policy {
 			UnderInvestigationPolicy: "",
 		},
 		VSA: &policy.VSAPolicy{
+			MissingPolicy:  "",
 			MinimumLevel:   2,
 			MaxAge:         "",
 			MaxAgeDuration: 0,
