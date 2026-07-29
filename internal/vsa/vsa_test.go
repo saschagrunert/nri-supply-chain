@@ -59,7 +59,7 @@ func trustedPolicy() *policy.Policy {
 	return &policy.Policy{
 		Trust: &policy.TrustPolicy{
 			Verifiers: []policy.TrustedVerifier{
-				{ID: testVerifierID, Key: testVerifierKey},
+				{ID: testVerifierID, Keys: []string{testVerifierKey}},
 			},
 		},
 		VSA: &policy.VSAPolicy{
@@ -153,7 +153,7 @@ func TestVerify(t *testing.T) {
 			pol: &policy.Policy{
 				Trust: &policy.TrustPolicy{
 					Verifiers: []policy.TrustedVerifier{
-						{ID: testVerifierID, Key: testVerifierKey},
+						{ID: testVerifierID, Keys: []string{testVerifierKey}},
 					},
 				},
 			},
@@ -249,7 +249,7 @@ func TestVerify(t *testing.T) {
 			pol: &policy.Policy{
 				Trust: &policy.TrustPolicy{
 					Verifiers: []policy.TrustedVerifier{
-						{ID: testVerifierID, Key: testVerifierKey},
+						{ID: testVerifierID, Keys: []string{testVerifierKey}},
 					},
 				},
 			},
@@ -308,7 +308,7 @@ func TestVerify(t *testing.T) {
 			pol: &policy.Policy{
 				Trust: &policy.TrustPolicy{
 					Verifiers: []policy.TrustedVerifier{
-						{ID: testVerifierID, Key: testVerifierKey},
+						{ID: testVerifierID, Keys: []string{testVerifierKey}},
 					},
 				},
 				VSA: &policy.VSAPolicy{
@@ -334,7 +334,7 @@ func TestVerify(t *testing.T) {
 			pol: &policy.Policy{
 				Trust: &policy.TrustPolicy{
 					Verifiers: []policy.TrustedVerifier{
-						{ID: testVerifierID, Key: testVerifierKey},
+						{ID: testVerifierID, Keys: []string{testVerifierKey}},
 					},
 				},
 			},
@@ -393,7 +393,7 @@ func TestVerify(t *testing.T) {
 			pol: &policy.Policy{
 				Trust: &policy.TrustPolicy{
 					Verifiers: []policy.TrustedVerifier{
-						{ID: testVerifierID, Key: testVerifierKey},
+						{ID: testVerifierID, Keys: []string{testVerifierKey}},
 					},
 				},
 				VSA: &policy.VSAPolicy{MaxAge: "not-a-duration"},
@@ -521,8 +521,8 @@ func TestVerifyVerifierEdgeCases(t *testing.T) {
 		pol := &policy.Policy{
 			Trust: &policy.TrustPolicy{
 				Verifiers: []policy.TrustedVerifier{
-					{ID: "https://other.example.com", Key: "/etc/keys/other.pub"},
-					{ID: testVerifierID, Key: testVerifierKey},
+					{ID: "https://other.example.com", Keys: []string{"/etc/keys/other.pub"}},
+					{ID: testVerifierID, Keys: []string{testVerifierKey}},
 				},
 			},
 		}
@@ -725,7 +725,7 @@ func TestVerifyVersionEdgeCases(t *testing.T) {
 		pol := &policy.Policy{
 			Trust: &policy.TrustPolicy{
 				Verifiers: []policy.TrustedVerifier{
-					{ID: testVerifierID, Key: testVerifierKey},
+					{ID: testVerifierID, Keys: []string{testVerifierKey}},
 				},
 			},
 			VSA: &policy.VSAPolicy{MinimumLevel: 2},
@@ -875,7 +875,7 @@ func TestVerifyResourceURINormalized(t *testing.T) {
 	pol := &policy.Policy{
 		Trust: &policy.TrustPolicy{
 			Verifiers: []policy.TrustedVerifier{
-				{ID: testVerifierID, Key: testVerifierKey},
+				{ID: testVerifierID, Keys: []string{testVerifierKey}},
 			},
 		},
 	}

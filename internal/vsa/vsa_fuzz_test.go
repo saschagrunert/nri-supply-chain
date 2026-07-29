@@ -48,7 +48,7 @@ func FuzzVerify(f *testing.F) {
 	pol := &policy.Policy{
 		Trust: &policy.TrustPolicy{
 			Verifiers: []policy.TrustedVerifier{
-				{ID: testVerifierID, Key: "/tmp/nonexistent.pub"},
+				{ID: testVerifierID, Keys: []string{"/tmp/nonexistent.pub"}},
 			},
 		},
 	}

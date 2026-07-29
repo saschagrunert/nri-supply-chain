@@ -26,7 +26,7 @@ EOF
 {
     "trust": {
         "builders": [{"id": "https://github.com/actions/runner", "maxLevel": 3}],
-        "verifiers": [{"id": "https://example.com/verifier", "key": "/etc/keys/v.pub"}],
+        "verifiers": [{"id": "https://example.com/verifier", "keys": ["/etc/keys/v.pub"]}],
         "sources": ["github.com/myorg/*"],
         "buildTypes": ["https://actions.github.io/buildtypes/workflow/v1"]
     },
@@ -258,7 +258,7 @@ EOF
 	cat >"$TEST_DIR/policies/default.json" <<EOF
 {
     "trust": {
-        "verifiers": [{"id": "https://example.com/v", "key": "relative/path.pub"}]
+        "verifiers": [{"id": "https://example.com/v", "keys": ["relative/path.pub"]}]
     }
 }
 EOF
@@ -350,7 +350,7 @@ EOF
 	cat >"$TEST_DIR/policies/default.json" <<EOF
 {
     "trust": {
-        "verifiers": [{"id": "https://example.com/v", "key": "/keys/v.pub"}]
+        "verifiers": [{"id": "https://example.com/v", "keys": ["/keys/v.pub"]}]
     },
     "vsa": {
         "minimumLevel": 3,

@@ -59,7 +59,7 @@ create_enforce_images() {
 			{
 			  "trust": {
 			    "builders": [{"id": "https://test-builder.example.com", "maxLevel": 3}],
-			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
+			    "verifiers": [{"id": "test-verifier", "keys": ["${COSIGN_PUB}"]}]
 			  },
 			  "slsa": {"missingPolicy": "deny"},
 			  "vex": {"missingPolicy": "allow"},

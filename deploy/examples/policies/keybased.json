@@ -3,7 +3,7 @@
     "verifiers": [
       {
         "id": "build-signer",
-        "key": "/etc/nri-supply-chain/keys/cosign.pub"
+        "keys": ["/etc/nri-supply-chain/keys/cosign.pub"]
       }
     ]
   },

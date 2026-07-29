@@ -93,6 +93,9 @@ var (
 	// ErrDuplicateVerifierID indicates a duplicate verifier ID in the trust policy.
 	ErrDuplicateVerifierID = errors.New("duplicate verifier id")
 
+	// ErrDuplicateVerifierKey indicates a duplicate key path in a verifier's keys array.
+	ErrDuplicateVerifierKey = errors.New("duplicate verifier key")
+
 	// ErrVSAMaxAgeNotPositive indicates a non-positive VSA maxAge value.
 	ErrVSAMaxAgeNotPositive = errors.New("vsa.maxAge must be positive")
 
@@ -161,11 +164,13 @@ type TrustedBuilder struct {
 type TrustedVerifier struct {
 	// ID is the verifier identity URI.
 	ID string `json:"id"`
-	// Key is the absolute path to the verifier's public key file (PEM-encoded).
-	// Used for Sigstore bundle signature verification. Optional for keyless
-	// verification; when empty, trust.issuers must be configured so bundles
-	// can be verified via Fulcio/OIDC.
-	Key string `json:"key,omitempty"`
+	// Keys is a list of absolute paths to verifier public key files
+	// (PEM-encoded). Used for Sigstore bundle signature verification.
+	// During key rotation both old and new keys can be listed so that
+	// attestations signed by either key are accepted. Optional for
+	// keyless verification; when empty, trust.issuers must be configured
+	// so bundles can be verified via Fulcio/OIDC.
+	Keys []string `json:"keys,omitempty"`
 }
 
 // SLSAPolicy contains SLSA provenance verification settings.
@@ -345,6 +350,11 @@ func cloneTrust(tp *TrustPolicy) *TrustPolicy {
 	trust := *tp
 	trust.Builders = slices.Clone(trust.Builders)
 	trust.Verifiers = slices.Clone(trust.Verifiers)
+
+	for idx := range trust.Verifiers {
+		trust.Verifiers[idx].Keys = slices.Clone(trust.Verifiers[idx].Keys)
+	}
+
 	trust.Issuers = slices.Clone(trust.Issuers)
 	trust.SANPatterns = slices.Clone(trust.SANPatterns)
 	trust.Sources = slices.Clone(trust.Sources)
@@ -419,38 +429,44 @@ func (p *Policy) ValidateRuntime() error {
 	var errs []error
 
 	for idx, verif := range p.Trust.Verifiers {
-		if verif.Key == "" {
-			continue
-		}
-
-		info, err := os.Lstat(verif.Key)
-		if err != nil {
-			errs = append(errs, fmt.Errorf(
-				"trust.verifiers[%d] %q: key file %q: %w",
-				idx, verif.ID, verif.Key, err,
-			))
-
-			continue
-		}
-
-		if info.Mode()&os.ModeSymlink != 0 {
-			errs = append(errs, fmt.Errorf(
-				"trust.verifiers[%d] %q: key path %q: %w (symlinks are not allowed)",
-				idx, verif.ID, verif.Key, ErrNotRegularFile,
-			))
-
-			continue
-		}
-
-		if !info.Mode().IsRegular() {
-			errs = append(errs, fmt.Errorf(
-				"trust.verifiers[%d] %q: key path %q: %w",
-				idx, verif.ID, verif.Key, ErrNotRegularFile,
-			))
+		for kidx, key := range verif.Keys {
+			err := validateKeyFile(
+				idx, verif.ID, key,
+				fmt.Sprintf("keys[%d] file", kidx),
+			)
+			if err != nil {
+				errs = append(errs, err)
+			}
 		}
 	}
 
 	return errors.Join(errs...)
+}
+
+func validateKeyFile(idx int, verifierID, keyPath, label string) error {
+	info, err := os.Lstat(keyPath)
+	if err != nil {
+		return fmt.Errorf(
+			"trust.verifiers[%d] %q: %s %q: %w",
+			idx, verifierID, label, keyPath, err,
+		)
+	}
+
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf(
+			"trust.verifiers[%d] %q: %s %q: %w (symlinks are not allowed)",
+			idx, verifierID, label, keyPath, ErrNotRegularFile,
+		)
+	}
+
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf(
+			"trust.verifiers[%d] %q: %s %q: %w",
+			idx, verifierID, label, keyPath, ErrNotRegularFile,
+		)
+	}
+
+	return nil
 }
 
 // Load loads and validates a policy file from disk.
@@ -728,26 +744,60 @@ func (p *Policy) validateVerifiers() error {
 
 		seenVerifiers[verif.ID] = true
 
-		if verif.Key == "" {
-			if len(p.Trust.Issuers) == 0 {
-				errs = append(errs, fmt.Errorf(
-					"%w: trust.verifiers[%d] %q",
-					ErrKeylessVerifierRequiresIssuers, idx, verif.ID,
-				))
-			}
+		errs = append(errs, validateVerifierKeys(p, idx, &verif)...)
+	}
+
+	return errors.Join(errs...)
+}
+
+func validateVerifierKeys(
+	pol *Policy, idx int, verif *TrustedVerifier,
+) []error {
+	var errs []error
+
+	if len(verif.Keys) == 0 {
+		if len(pol.Trust.Issuers) == 0 {
+			errs = append(errs, fmt.Errorf(
+				"%w: trust.verifiers[%d] %q",
+				ErrKeylessVerifierRequiresIssuers, idx, verif.ID,
+			))
+		}
+
+		return errs
+	}
+
+	seen := make(map[string]bool, len(verif.Keys))
+
+	for kidx, key := range verif.Keys {
+		if key == "" {
+			errs = append(errs, fmt.Errorf(
+				"%w in trust.verifiers[%d].keys[%d]",
+				ErrEmptyValue, idx, kidx,
+			))
 
 			continue
 		}
 
-		if !filepath.IsAbs(verif.Key) {
+		if seen[key] {
 			errs = append(errs, fmt.Errorf(
-				"%w: trust.verifiers[%d] %q: got %q",
-				ErrVerifierKeyNotAbsolute, idx, verif.ID, verif.Key,
+				"%w %q at trust.verifiers[%d].keys[%d]",
+				ErrDuplicateVerifierKey, key, idx, kidx,
+			))
+
+			continue
+		}
+
+		seen[key] = true
+
+		if !filepath.IsAbs(key) {
+			errs = append(errs, fmt.Errorf(
+				"%w: trust.verifiers[%d] %q: keys[%d] got %q",
+				ErrVerifierKeyNotAbsolute, idx, verif.ID, kidx, key,
 			))
 		}
 	}
 
-	return errors.Join(errs...)
+	return errs
 }
 
 func validateGlobPatterns(field string, patterns []string) error {

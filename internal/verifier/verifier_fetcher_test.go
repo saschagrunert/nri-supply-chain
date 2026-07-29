@@ -247,7 +247,7 @@ func TestVerifyWithFetcher(t *testing.T) {
 			policyJSON: `{
 				"trust": {
 					"builders": [{"id": "https://github.com/actions/runner", "maxLevel": 2}],
-					"verifiers": [{"id": "https://example.com/verifier", "key": "/etc/keys/v.pub"}]
+					"verifiers": [{"id": "https://example.com/verifier", "keys": ["/etc/keys/v.pub"]}]
 				},
 				"slsa": {"missingPolicy": "deny"}
 			}`,
@@ -275,7 +275,7 @@ func TestVerifyWithFetcher(t *testing.T) {
 		{
 			name: "VSA failed hard reject",
 			policyJSON: `{
-				"trust": {"verifiers": [{"id": "https://example.com/verifier", "key": "/etc/keys/v.pub"}]}
+				"trust": {"verifiers": [{"id": "https://example.com/verifier", "keys": ["/etc/keys/v.pub"]}]}
 			}`,
 			mode: config.ModeEnforce,
 			fetcher: &mockFetcher{
@@ -303,7 +303,7 @@ func TestVerifyWithFetcher(t *testing.T) {
 			policyJSON: `{
 				"trust": {
 					"builders": [{"id": "https://github.com/actions/runner", "maxLevel": 2}],
-					"verifiers": [{"id": "https://other-verifier.example.com", "key": "/etc/keys/v.pub"}]
+					"verifiers": [{"id": "https://other-verifier.example.com", "keys": ["/etc/keys/v.pub"]}]
 				}
 			}`,
 			mode: config.ModeEnforce,
@@ -338,7 +338,7 @@ func TestVerifyWithFetcher(t *testing.T) {
 			policyJSON: `{
 				"trust": {
 					"builders": [{"id": "https://github.com/actions/runner", "maxLevel": 2}],
-					"verifiers": [{"id": "https://example.com/verifier", "key": "/etc/keys/v.pub"}]
+					"verifiers": [{"id": "https://example.com/verifier", "keys": ["/etc/keys/v.pub"]}]
 				}
 			}`,
 			mode: config.ModeEnforce,

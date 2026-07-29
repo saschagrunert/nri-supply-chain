@@ -1155,7 +1155,7 @@ func TestNewValidateRuntimeError(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WritePolicy(t, dir, "default.json", `{
 		"trust": {
-			"verifiers": [{"id": "v1", "key": "/nonexistent/key.pub"}]
+			"verifiers": [{"id": "v1", "keys": ["/nonexistent/key.pub"]}]
 		}
 	}`)
 
