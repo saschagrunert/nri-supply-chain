@@ -17,6 +17,11 @@ package verifier_test
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -31,14 +36,35 @@ import (
 const testDigest = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4" +
 	"e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
 
+const testTUFMirrorURL = "https://tuf.example.com"
+
 func TestNewFetcher(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.DefaultConfig()
 
-	fetcher := verifier.NewFetcher(context.Background(), cfg)
+	fetcher, err := verifier.NewFetcher(context.Background(), cfg)
+	testutil.AssertNoError(t, err)
+
 	if fetcher == nil {
 		t.Fatal("expected non-nil OCIFetcher from NewFetcher")
+	}
+}
+
+func TestNewFetcherEmptyTUFRoot(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	rootPath := filepath.Join(dir, "root.json")
+	testutil.AssertNoError(t, os.WriteFile(rootPath, []byte{}, 0o600))
+
+	cfg := config.DefaultConfig()
+	cfg.Sigstore.TUFMirror = testTUFMirrorURL
+	cfg.Sigstore.TUFRoot = rootPath
+
+	_, err := verifier.NewFetcher(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("expected error for empty TUF root file")
 	}
 }
 
@@ -661,6 +687,123 @@ func TestReloadClearsCacheWhenCacheFailureTTLChanges(t *testing.T) {
 
 	if verifier.ExportCacheAffectingFieldsChanged(cfg, same) {
 		t.Error("expected no cache invalidation when CacheFailureTTL is unchanged")
+	}
+}
+
+func TestReloadClearsCacheWhenTUFMirrorChanges(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+	cfg.CacheTTL = config.Duration{Duration: time.Hour}
+
+	// Verify that changing Sigstore.TUFMirror triggers cache invalidation.
+	changed := config.DefaultConfig()
+	changed.Verification = cfg.Verification
+	changed.PolicyDir = cfg.PolicyDir
+	changed.CacheTTL = cfg.CacheTTL
+	changed.CacheFailureTTL = cfg.CacheFailureTTL
+	changed.FetchFailurePolicy = cfg.FetchFailurePolicy
+	changed.FetchTimeout = cfg.FetchTimeout
+	changed.Sigstore.TUFMirror = testTUFMirrorURL
+
+	if !verifier.ExportCacheAffectingFieldsChanged(cfg, changed) {
+		t.Error("expected cache invalidation when Sigstore.TUFMirror changes")
+	}
+
+	// Confirm no invalidation when TUFMirror is the same.
+	same := config.DefaultConfig()
+	same.Verification = cfg.Verification
+	same.PolicyDir = cfg.PolicyDir
+	same.CacheTTL = cfg.CacheTTL
+	same.CacheFailureTTL = cfg.CacheFailureTTL
+	same.FetchFailurePolicy = cfg.FetchFailurePolicy
+	same.FetchTimeout = cfg.FetchTimeout
+	same.Sigstore.TUFMirror = cfg.Sigstore.TUFMirror
+
+	if verifier.ExportCacheAffectingFieldsChanged(cfg, same) {
+		t.Error("expected no cache invalidation when Sigstore.TUFMirror is unchanged")
+	}
+}
+
+func TestReloadClearsCacheWhenTUFRootChanges(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+	cfg.CacheTTL = config.Duration{Duration: time.Hour}
+	cfg.Sigstore.TUFMirror = testTUFMirrorURL
+
+	// Verify that changing Sigstore.TUFRoot triggers cache invalidation.
+	changed := config.DefaultConfig()
+	changed.Verification = cfg.Verification
+	changed.PolicyDir = cfg.PolicyDir
+	changed.CacheTTL = cfg.CacheTTL
+	changed.CacheFailureTTL = cfg.CacheFailureTTL
+	changed.FetchFailurePolicy = cfg.FetchFailurePolicy
+	changed.FetchTimeout = cfg.FetchTimeout
+	changed.Sigstore.TUFMirror = cfg.Sigstore.TUFMirror
+	changed.Sigstore.TUFRoot = "/etc/sigstore/root.json"
+
+	if !verifier.ExportCacheAffectingFieldsChanged(cfg, changed) {
+		t.Error("expected cache invalidation when Sigstore.TUFRoot changes")
+	}
+
+	// Confirm no invalidation when TUFRoot is the same.
+	same := config.DefaultConfig()
+	same.Verification = cfg.Verification
+	same.PolicyDir = cfg.PolicyDir
+	same.CacheTTL = cfg.CacheTTL
+	same.CacheFailureTTL = cfg.CacheFailureTTL
+	same.FetchFailurePolicy = cfg.FetchFailurePolicy
+	same.FetchTimeout = cfg.FetchTimeout
+	same.Sigstore.TUFMirror = cfg.Sigstore.TUFMirror
+	same.Sigstore.TUFRoot = cfg.Sigstore.TUFRoot
+
+	if verifier.ExportCacheAffectingFieldsChanged(cfg, same) {
+		t.Error("expected no cache invalidation when Sigstore.TUFRoot is unchanged")
+	}
+}
+
+func TestReloadCreatesFetcherWhenTUFMirrorChanges(t *testing.T) {
+	t.Parallel()
+
+	var requestReceived atomic.Bool
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestReceived.Store(true)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	newCfg := config.DefaultConfig()
+	newCfg.Verification = config.ModeWarn
+	newCfg.PolicyDir = dir
+	newCfg.Sigstore.TUFMirror = server.URL
+
+	err = verif.Reload(context.Background(), newCfg)
+	testutil.AssertNoError(t, err)
+
+	if !requestReceived.Load() {
+		t.Error("expected TUF mirror to be contacted after Reload with new TUF mirror config")
 	}
 }
 

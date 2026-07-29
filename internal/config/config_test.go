@@ -26,6 +26,8 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
+const testTUFMirrorURL = "https://tuf.example.com"
+
 func TestDefaultConfig(t *testing.T) {
 	t.Parallel()
 
@@ -828,4 +830,312 @@ func TestConfigValidateCacheCollectsMultipleErrors(t *testing.T) {
 	if !errors.Is(err, config.ErrCacheFailureTTLNegative) {
 		t.Errorf("expected ErrCacheFailureTTLNegative, got %v", err)
 	}
+}
+
+func TestDefaultConfigSigstore(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	testutil.AssertEqual(t, "", cfg.Sigstore.TUFMirror)
+	testutil.AssertEqual(t, "", cfg.Sigstore.TUFRoot)
+}
+
+func TestConfigValidateTUFMirror(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		mirror  string
+		wantErr bool
+	}{
+		{name: "empty is valid", mirror: "", wantErr: false},
+		{name: "valid https URL", mirror: testTUFMirrorURL, wantErr: false},
+		{name: "valid http URL", mirror: "http://tuf.local:8080", wantErr: false},
+		{name: "valid URL with path", mirror: "https://tuf.example.com/repo", wantErr: false},
+		{name: "missing scheme", mirror: "tuf.example.com", wantErr: true},
+		{name: "invalid scheme", mirror: "ftp://tuf.example.com", wantErr: true},
+		{name: "missing host", mirror: "https://", wantErr: true},
+		{name: "bare path", mirror: "/some/path", wantErr: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := config.DefaultConfig()
+			cfg.Sigstore.TUFMirror = test.mirror
+
+			err := cfg.Validate()
+			if test.wantErr && err == nil {
+				t.Error("expected error, got nil")
+			}
+
+			if !test.wantErr && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+
+			if test.wantErr && err != nil && !errors.Is(err, config.ErrInvalidTUFMirror) {
+				t.Errorf("expected ErrInvalidTUFMirror, got %v", err)
+			}
+		})
+	}
+}
+
+func TestLoadFromStringSigstore(t *testing.T) {
+	t.Parallel()
+
+	t.Run("valid tuf_mirror", func(t *testing.T) {
+		t.Parallel()
+
+		cfg, err := config.LoadFromString(`
+[sigstore]
+tuf_mirror = "https://tuf.example.com"
+`)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, testTUFMirrorURL, cfg.Sigstore.TUFMirror)
+	})
+
+	t.Run("empty sigstore section", func(t *testing.T) {
+		t.Parallel()
+
+		cfg, err := config.LoadFromString(`
+[sigstore]
+`)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, "", cfg.Sigstore.TUFMirror)
+	})
+
+	t.Run("unknown key in sigstore section", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := config.LoadFromString(`
+[sigstore]
+tuf_mirror = "https://tuf.example.com"
+unknown_field = "value"
+`)
+		testutil.AssertError(t, err)
+
+		if !errors.Is(err, config.ErrUnknownConfigKeys) {
+			t.Errorf("expected ErrUnknownConfigKeys, got %v", err)
+		}
+	})
+
+	t.Run("invalid tuf_mirror URL", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := config.LoadFromString(`
+[sigstore]
+tuf_mirror = "not-a-url"
+`)
+		testutil.AssertError(t, err)
+
+		if !errors.Is(err, config.ErrInvalidTUFMirror) {
+			t.Errorf("expected ErrInvalidTUFMirror, got %v", err)
+		}
+	})
+
+	t.Run("valid tuf_root absolute path", func(t *testing.T) {
+		t.Parallel()
+
+		cfg, err := config.LoadFromString(`
+[sigstore]
+tuf_mirror = "https://tuf.example.com"
+tuf_root = "/etc/sigstore/root.json"
+`)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, "/etc/sigstore/root.json", cfg.Sigstore.TUFRoot)
+	})
+
+	t.Run("tuf_root without tuf_mirror rejected", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := config.LoadFromString(`
+[sigstore]
+tuf_root = "/etc/sigstore/root.json"
+`)
+		testutil.AssertError(t, err)
+
+		if !errors.Is(err, config.ErrTUFRootRequiresMirror) {
+			t.Errorf("expected ErrTUFRootRequiresMirror, got %v", err)
+		}
+	})
+
+	t.Run("tuf_root relative path rejected", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := config.LoadFromString(`
+[sigstore]
+tuf_root = "relative/root.json"
+`)
+		testutil.AssertError(t, err)
+
+		if !errors.Is(err, config.ErrTUFRootNotAbsolute) {
+			t.Errorf("expected ErrTUFRootNotAbsolute, got %v", err)
+		}
+	})
+
+	t.Run("both tuf_mirror and tuf_root valid", func(t *testing.T) {
+		t.Parallel()
+
+		cfg, err := config.LoadFromString(`
+[sigstore]
+tuf_mirror = "https://tuf.example.com"
+tuf_root = "/etc/sigstore/root.json"
+`)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, testTUFMirrorURL, cfg.Sigstore.TUFMirror)
+		testutil.AssertEqual(t, "/etc/sigstore/root.json", cfg.Sigstore.TUFRoot)
+	})
+}
+
+func TestConfigValidateTUFRoot(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		root        string
+		mirror      string
+		wantErr     bool
+		expectedErr error
+	}{
+		{
+			name: "empty root is valid", root: "",
+			mirror: "", wantErr: false, expectedErr: nil,
+		},
+		{
+			name: "absolute path is valid", root: "/etc/sigstore/root.json",
+			mirror: testTUFMirrorURL, wantErr: false, expectedErr: nil,
+		},
+		{
+			name: "relative path rejected", root: "relative/root.json",
+			mirror: testTUFMirrorURL, wantErr: true, expectedErr: config.ErrTUFRootNotAbsolute,
+		},
+		{
+			name: "bare filename rejected", root: "root.json",
+			mirror: testTUFMirrorURL, wantErr: true, expectedErr: config.ErrTUFRootNotAbsolute,
+		},
+		{
+			name: "root without mirror rejected", root: "/etc/sigstore/root.json",
+			mirror: "", wantErr: true, expectedErr: config.ErrTUFRootRequiresMirror,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := config.DefaultConfig()
+			cfg.Sigstore.TUFRoot = test.root
+			cfg.Sigstore.TUFMirror = test.mirror
+
+			err := cfg.Validate()
+			if test.wantErr && err == nil {
+				t.Error("expected error, got nil")
+			}
+
+			if !test.wantErr && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+
+			if test.expectedErr != nil && err != nil && !errors.Is(err, test.expectedErr) {
+				t.Errorf("expected %v, got %v", test.expectedErr, err)
+			}
+		})
+	}
+}
+
+func TestConfigValidateRuntimeTUFRoot(t *testing.T) {
+	t.Parallel()
+
+	t.Run("existing file passes", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		rootPath := filepath.Join(dir, "root.json")
+		testutil.AssertNoError(t, os.WriteFile(rootPath, []byte(`{}`), 0o600))
+
+		policyDir := filepath.Join(dir, "policies")
+		testutil.AssertNoError(t, os.MkdirAll(policyDir, 0o750))
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.PolicyDir = policyDir
+		cfg.Sigstore.TUFRoot = rootPath
+
+		testutil.AssertNoError(t, cfg.ValidateRuntime())
+	})
+
+	t.Run("missing file fails", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.PolicyDir = dir
+		cfg.Sigstore.TUFRoot = filepath.Join(dir, "nonexistent-root.json")
+
+		err := cfg.ValidateRuntime()
+		testutil.AssertError(t, err)
+
+		if !errors.Is(err, config.ErrTUFRootNotFound) {
+			t.Errorf("expected ErrTUFRootNotFound, got %v", err)
+		}
+	})
+
+	t.Run("empty file fails", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		rootPath := filepath.Join(dir, "root.json")
+		testutil.AssertNoError(t, os.WriteFile(rootPath, []byte{}, 0o600))
+
+		policyDir := filepath.Join(dir, "policies")
+		testutil.AssertNoError(t, os.MkdirAll(policyDir, 0o750))
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.PolicyDir = policyDir
+		cfg.Sigstore.TUFRoot = rootPath
+
+		err := cfg.ValidateRuntime()
+		testutil.AssertError(t, err)
+
+		if !errors.Is(err, config.ErrTUFRootEmpty) {
+			t.Errorf("expected ErrTUFRootEmpty, got %v", err)
+		}
+	})
+
+	t.Run("directory fails", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+
+		policyDir := filepath.Join(dir, "policies")
+		testutil.AssertNoError(t, os.MkdirAll(policyDir, 0o750))
+
+		rootDir := filepath.Join(dir, "rootdir")
+		testutil.AssertNoError(t, os.MkdirAll(rootDir, 0o750))
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.PolicyDir = policyDir
+		cfg.Sigstore.TUFRoot = rootDir
+
+		err := cfg.ValidateRuntime()
+		testutil.AssertError(t, err)
+
+		if !errors.Is(err, config.ErrTUFRootNotRegularFile) {
+			t.Errorf("expected ErrTUFRootNotRegularFile, got %v", err)
+		}
+	})
+
+	t.Run("disabled mode skips tuf_root check", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Sigstore.TUFRoot = "/nonexistent/root.json"
+
+		testutil.AssertNoError(t, cfg.ValidateRuntime())
+	})
 }

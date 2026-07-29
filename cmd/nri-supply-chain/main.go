@@ -134,8 +134,17 @@ func startPlugin(opts *options, cfg *config.Config) int {
 	)
 
 	var fetcher attestation.Fetcher
+
 	if cfg.Enabled() {
-		fetcher = verifier.NewFetcher(ctx, cfg)
+		var err error
+
+		fetcher, err = verifier.NewFetcher(ctx, cfg)
+		if err != nil {
+			slog.Error("Failed to create fetcher", "error", err)
+			cancel()
+
+			return exitError
+		}
 	}
 
 	verif, err := verifier.New(cfg, met, fetcher)

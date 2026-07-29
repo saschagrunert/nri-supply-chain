@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -83,7 +84,7 @@ type Verifier struct {
 // Sigstore trusted root. The context bounds the warm-up; pass the application
 // context so startup can be cancelled. Tests that need the "no fetcher"
 // code path should pass nil to New directly.
-func NewFetcher(ctx context.Context, cfg *config.Config) *attestation.OCIFetcher {
+func NewFetcher(ctx context.Context, cfg *config.Config) (*attestation.OCIFetcher, error) {
 	return createAndWarmFetcher(ctx, cfg)
 }
 
@@ -320,7 +321,10 @@ func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 		return err
 	}
 
-	newFetcher := v.prepareFetcher(ctx, &cfgCopy)
+	newFetcher, err := v.prepareFetcher(ctx, &cfgCopy)
+	if err != nil {
+		return err
+	}
 
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -425,14 +429,21 @@ func (v *Verifier) reloadCircuitBreakers(
 }
 
 // prepareFetcher creates a new fetcher outside the lock when one is needed
-// (first enable). Returns nil when the existing fetcher can be reused.
-func (v *Verifier) prepareFetcher(ctx context.Context, cfg *config.Config) *attestation.OCIFetcher {
+// (first enable or TUF config change). Returns (nil, nil) when the existing
+// fetcher can be reused.
+func (v *Verifier) prepareFetcher(
+	ctx context.Context, cfg *config.Config,
+) (*attestation.OCIFetcher, error) {
 	if !cfg.Enabled() {
-		return nil
+		return nil, nil //nolint:nilnil // nil fetcher means reuse existing
 	}
 
-	if v.state.Load().fetcher != nil {
-		return nil
+	prev := v.state.Load()
+
+	if prev.fetcher != nil &&
+		prev.config.Sigstore.TUFMirror == cfg.Sigstore.TUFMirror &&
+		prev.config.Sigstore.TUFRoot == cfg.Sigstore.TUFRoot {
+		return nil, nil //nolint:nilnil // no config change, reuse existing
 	}
 
 	return createAndWarmFetcher(ctx, cfg)
@@ -450,7 +461,7 @@ func (v *Verifier) reloadFetcher( //nolint:ireturn // returns prev.fetcher which
 		return prev.fetcher
 	}
 
-	if prev.fetcher == nil && newFetcher != nil {
+	if newFetcher != nil {
 		newFetcher.SetStaleRootCallback(prev.metrics.TrustedRootStaleTotal.Inc)
 
 		return newFetcher
@@ -486,8 +497,13 @@ func loadAndHashPolicies(
 	return policies, hashes, nil
 }
 
-func createAndWarmFetcher(ctx context.Context, cfg *config.Config) *attestation.OCIFetcher {
-	ociFetcher := attestation.NewOCIFetcher()
+func createAndWarmFetcher(
+	ctx context.Context, cfg *config.Config,
+) (*attestation.OCIFetcher, error) {
+	ociFetcher, err := createFetcher(cfg)
+	if err != nil {
+		return nil, err
+	}
 
 	if cfg.FetchRateLimit > 0 {
 		ociFetcher.SetRateLimit(cfg.FetchRateLimit)
@@ -504,7 +520,37 @@ func createAndWarmFetcher(ctx context.Context, cfg *config.Config) *attestation.
 		)
 	}
 
-	return ociFetcher
+	return ociFetcher, nil
+}
+
+func createFetcher(cfg *config.Config) (*attestation.OCIFetcher, error) {
+	if cfg.Sigstore.TUFMirror == "" {
+		return attestation.NewOCIFetcher(), nil
+	}
+
+	tufRootBytes, err := readTUFRootBytes(cfg.Sigstore.TUFRoot)
+	if err != nil {
+		return nil, err
+	}
+
+	return attestation.NewOCIFetcherWithTUFMirror(cfg.Sigstore.TUFMirror, tufRootBytes), nil
+}
+
+func readTUFRootBytes(path string) ([]byte, error) {
+	if path == "" {
+		return nil, nil
+	}
+
+	data, err := os.ReadFile(path) //nolint:gosec // path is validated by config.ValidateRuntime
+	if err != nil {
+		return nil, fmt.Errorf("reading custom TUF root %q: %w", path, err)
+	}
+
+	if len(data) == 0 {
+		return nil, fmt.Errorf("%w: %q", config.ErrTUFRootEmpty, path)
+	}
+
+	return data, nil
 }
 
 func cacheAffectingFieldsChanged(prev, next *config.Config) bool {
@@ -513,7 +559,9 @@ func cacheAffectingFieldsChanged(prev, next *config.Config) bool {
 		prev.CacheTTL.Duration != next.CacheTTL.Duration ||
 		prev.CacheFailureTTL.Duration != next.CacheFailureTTL.Duration ||
 		prev.FetchFailurePolicy != next.FetchFailurePolicy ||
-		prev.FetchTimeout.Duration != next.FetchTimeout.Duration
+		prev.FetchTimeout.Duration != next.FetchTimeout.Duration ||
+		prev.Sigstore.TUFMirror != next.Sigstore.TUFMirror ||
+		prev.Sigstore.TUFRoot != next.Sigstore.TUFRoot
 }
 
 func (v *Verifier) verifyOnce(
