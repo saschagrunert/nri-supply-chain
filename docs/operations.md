@@ -22,26 +22,30 @@ internal limits, and security considerations.
 The plugin exposes Prometheus metrics at the configured
 [`metrics_addr`](config.md):
 
-| Metric                                            | Type      | Labels                        | Description                                                                          |
-| ------------------------------------------------- | --------- | ----------------------------- | ------------------------------------------------------------------------------------ |
-| `nri_supply_chain_verification_total`             | Counter   | `type`, `result`, `namespace` | Total verification attempts. `result`: `pass`, `warn`, `fail`                        |
-| `nri_supply_chain_verification_duration_seconds`  | Histogram | `type`                        | Verification latency                                                                 |
-| `nri_supply_chain_cache_hits_total`               | Counter   |                               | Cache hits                                                                           |
-| `nri_supply_chain_cache_misses_total`             | Counter   |                               | Cache misses                                                                         |
-| `nri_supply_chain_cache_entries`                  | Gauge     |                               | Current number of cached entries                                                     |
-| `nri_supply_chain_cache_evictions_total`          | Counter   | `reason`                      | Cache entry evictions. `reason`: `expired`, `capacity`                               |
-| `nri_supply_chain_verification_skipped_total`     | Counter   | `reason`, `namespace`         | Containers allowed without verification. `reason`: `excluded`, `missing_annotations` |
-| `nri_supply_chain_fetch_duration_seconds`         | Histogram | `registry`                    | Attestation fetch latency per registry                                               |
-| `nri_supply_chain_fetch_errors_total`             | Counter   | `type`, `registry`            | Attestation fetch errors                                                             |
-| `nri_supply_chain_inflight_dedup_total`           | Counter   |                               | Deduplicated inflight verifications                                                  |
-| `nri_supply_chain_circuit_breaker_trips_total`    | Counter   | `registry`                    | Circuit breaker open events                                                          |
-| `nri_supply_chain_trusted_root_stale_total`       | Counter   |                               | Stale trusted root served from cache                                                 |
-| `nri_supply_chain_cache_failure_hits_total`       | Counter   |                               | Cache hits returning a cached failure                                                |
-| `nri_supply_chain_build_info`                     | Gauge     | `version`, `goversion`        | Build metadata (set once at startup)                                                 |
-| `nri_supply_chain_config_reloads_total`           | Counter   |                               | Successful config reloads                                                            |
-| `nri_supply_chain_verification_interrupted_total` | Counter   |                               | Verifications interrupted by context cancellation                                    |
-| `nri_supply_chain_config_reload_errors_total`     | Counter   |                               | Failed config reload attempts                                                        |
-| `nri_supply_chain_prewarm_duration_seconds`       | Histogram | `result`                      | Cache prewarm latency (buckets: 1, 5, 10, 30, 60, 120, 300)                          |
+| Metric                                            | Type      | Labels                        | Description                                                                                          |
+| ------------------------------------------------- | --------- | ----------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `nri_supply_chain_verification_total`             | Counter   | `type`, `result`, `namespace` | Total verification attempts. `result`: `pass`, `warn`, `fail`                                        |
+| `nri_supply_chain_verification_duration_seconds`  | Histogram | `type`                        | Verification latency                                                                                 |
+| `nri_supply_chain_cache_hits_total`               | Counter   |                               | Cache hits                                                                                           |
+| `nri_supply_chain_cache_misses_total`             | Counter   |                               | Cache misses                                                                                         |
+| `nri_supply_chain_cache_entries`                  | Gauge     |                               | Current number of cached entries                                                                     |
+| `nri_supply_chain_cache_evictions_total`          | Counter   | `reason`                      | Cache entry evictions. `reason`: `expired`, `capacity`                                               |
+| `nri_supply_chain_verification_skipped_total`     | Counter   | `reason`, `namespace`         | Containers allowed without verification. `reason`: `excluded`, `missing_annotations`, `not_included` |
+| `nri_supply_chain_fetch_duration_seconds`         | Histogram | `registry`                    | Attestation fetch latency per registry                                                               |
+| `nri_supply_chain_fetch_errors_total`             | Counter   | `type`, `registry`            | Attestation fetch errors                                                                             |
+| `nri_supply_chain_inflight_dedup_total`           | Counter   |                               | Deduplicated inflight verifications                                                                  |
+| `nri_supply_chain_circuit_breaker_trips_total`    | Counter   | `registry`                    | Circuit breaker open events                                                                          |
+| `nri_supply_chain_trusted_root_stale_total`       | Counter   |                               | Stale trusted root served from cache                                                                 |
+| `nri_supply_chain_cache_failure_hits_total`       | Counter   |                               | Cache hits returning a cached failure                                                                |
+| `nri_supply_chain_build_info`                     | Gauge     | `version`, `goversion`        | Build metadata (set once at startup)                                                                 |
+| `nri_supply_chain_config_reloads_total`           | Counter   |                               | Successful config reloads                                                                            |
+| `nri_supply_chain_verification_interrupted_total` | Counter   |                               | Verifications interrupted by context cancellation                                                    |
+| `nri_supply_chain_config_reload_errors_total`     | Counter   |                               | Failed config reload attempts                                                                        |
+| `nri_supply_chain_prewarm_duration_seconds`       | Histogram | `result`                      | Cache prewarm latency (buckets: 1, 5, 10, 30, 60, 120, 300)                                          |
+
+When `include` is configured, the include check runs before the exclude check.
+Images that do not match any include pattern are counted as `not_included` even
+if they also match an exclude pattern.
 
 ## Health and Readiness Probes
 

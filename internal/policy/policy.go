@@ -111,6 +111,12 @@ type Policy struct {
 	Inherits *bool `json:"inherits,omitempty"`
 	// Trust contains trust roots for verification (builders, verifiers, issuers, etc.).
 	Trust *TrustPolicy `json:"trust,omitempty"`
+	// Include is a list of glob patterns for images that require verification.
+	// When set, only images matching at least one pattern are verified; all
+	// others skip verification. When empty, all images are eligible for
+	// verification (the default). If both Include and Exclude are set,
+	// Exclude takes precedence: an image matching both is skipped.
+	Include []string `json:"include,omitempty"`
 	// Exclude is a list of glob patterns for images that skip verification.
 	Exclude []string `json:"exclude,omitempty"`
 	// SLSA contains SLSA provenance verification settings.
@@ -258,7 +264,7 @@ func (p *Policy) Hash() (string, error) {
 
 // MergeWithDefault creates a new policy by starting from a copy of the default
 // policy and overriding fields that are set in the namespace policy. Each
-// top-level section (Trust, Exclude, SLSA, VEX, VSA, Signatures) is
+// top-level section (Trust, Include, Exclude, SLSA, VEX, VSA, Signatures) is
 // replaced entirely if set in the namespace policy. The Inherits field is
 // cleared on the result. Inherited structs are shallow-copied to prevent
 // mutations from affecting the default.
@@ -267,6 +273,10 @@ func MergeWithDefault(namespace, defaultPol *Policy) *Policy {
 
 	if namespace.Trust != nil {
 		merged.Trust = cloneTrust(namespace.Trust)
+	}
+
+	if namespace.Include != nil {
+		merged.Include = slices.Clone(namespace.Include)
 	}
 
 	if namespace.Exclude != nil {
@@ -299,6 +309,7 @@ func MergeWithDefault(namespace, defaultPol *Policy) *Policy {
 
 func clonePolicy(pol *Policy) *Policy {
 	clone := &Policy{
+		Include: slices.Clone(pol.Include),
 		Exclude: slices.Clone(pol.Exclude),
 	}
 
@@ -347,6 +358,11 @@ func (p *Policy) Validate() error {
 	var errs []error
 
 	err := p.validateTrust()
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	err = p.validateInclude()
 	if err != nil {
 		errs = append(errs, err)
 	}
@@ -765,6 +781,10 @@ func warnEmptyTrust(trust *TrustPolicy) {
 	if len(trust.Builders) == 0 && len(trust.Verifiers) == 0 && len(trust.Issuers) == 0 {
 		slog.Warn("trust section is configured but has no builders, verifiers, or issuers")
 	}
+}
+
+func (p *Policy) validateInclude() error {
+	return validateGlobPatterns("include", p.Include)
 }
 
 func (p *Policy) validateExclude() error {

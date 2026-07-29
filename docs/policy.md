@@ -10,11 +10,12 @@ patterns for the nri-supply-chain plugin.
   - [Step 1: Allow everything](#step-1-allow-everything)
   - [Step 2: Add trust roots](#step-2-add-trust-roots)
   - [Step 3: Tighten missing attestation behavior](#step-3-tighten-missing-attestation-behavior)
-  - [Step 4: Add image excludes](#step-4-add-image-excludes)
+  - [Step 4: Add image includes and excludes](#step-4-add-image-includes-and-excludes)
 - [JSON Schema](#json-schema)
 - [Field Reference](#field-reference)
   - [<code>inherits</code> (boolean)](#inherits-boolean)
   - [<code>trust</code> (object)](#trust-object)
+  - [<code>include</code> (array of strings)](#include-array-of-strings)
   - [<code>exclude</code> (array of strings)](#exclude-array-of-strings)
   - [<code>slsa</code> (object)](#slsa-object)
   - [<code>vex</code> (object)](#vex-object)
@@ -27,7 +28,7 @@ patterns for the nri-supply-chain plugin.
   - [VSA (Verification Summary Attestation)](#vsa-verification-summary-attestation)
   - [Signature Verification](#signature-verification)
 - [Pattern Matching](#pattern-matching)
-  - [<code>exclude</code> and <code>trust.sources</code>](#exclude-and-trustsources)
+  - [<code>include</code>, <code>exclude</code>, and <code>trust.sources</code>](#include-exclude-and-trustsources)
   - [<code>trust.sanPatterns</code>](#trustsanpatterns)
 - [Namespace Overrides](#namespace-overrides)
 - [Deployment Patterns](#deployment-patterns)
@@ -130,13 +131,15 @@ provenance:
 }
 ```
 
-### Step 4: Add image excludes
+### Step 4: Add image includes and excludes
 
-Skip verification for known base images or internal tooling:
+Restrict verification to specific images with `include`, and skip known
+base images or internal tooling with `exclude`:
 
 ```json
 {
-  "exclude": ["gcr.io/distroless/*", "registry.k8s.io/**"],
+  "include": ["docker.io/myorg/**"],
+  "exclude": ["docker.io/myorg/internal/*"],
   "trust": {
     "builders": [
       {
@@ -152,6 +155,13 @@ Skip verification for known base images or internal tooling:
   }
 }
 ```
+
+When `include` is set, only images matching at least one pattern are verified.
+Images that do not match any `include` pattern are allowed without
+verification. When `include` is empty or omitted, all images are eligible
+for verification (the default behavior). If both `include` and `exclude`
+are configured, `exclude` takes precedence: an image matching both is
+skipped.
 
 ## JSON Schema
 
@@ -178,6 +188,12 @@ nri-supply-chain --json-schema policy
         },
         "trust": {
           "$ref": "#/$defs/TrustPolicy"
+        },
+        "include": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "exclude": {
           "items": {
@@ -356,6 +372,15 @@ Trust roots for verification. All sub-fields are optional.
 | `sanPatterns` | array | Accepted certificate Subject Alternative Names. Supports glob patterns: `*` matches any non-`/` sequence, `**` matches any characters including `/`, `?` matches a single non-`/` character, `[...]` matches a character class. Use `**` for GitHub Actions OIDC SANs that include workflow paths (e.g., `https://github.com/org/repo/**`). Required when `issuers` is set in `enforce` mode. In `warn` mode, omitting this field accepts any SAN from a trusted issuer (with a log warning). |
 | `sources`     | array | Allowed source repository glob patterns. Supports the same glob syntax as `sanPatterns`: `*` matches non-`/` characters, `**` matches any characters including `/`.                                                                                                                                                                                                                                                                                                                           |
 | `buildTypes`  | array | Accepted build type URIs for SLSA provenance.                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+
+### `include` (array of strings)
+
+Glob patterns for images that require verification. When set, only images
+matching at least one pattern are verified; all others are allowed without
+verification. When empty or omitted, all images are eligible for verification
+(the default). Uses the same glob syntax as `exclude`: `*` matches any
+non-`/` sequence, `**` matches any characters including `/`. If both
+`include` and `exclude` are set, `exclude` takes precedence.
 
 ### `exclude` (array of strings)
 
@@ -541,7 +566,7 @@ verification and optional for key-based.
 The plugin uses glob patterns in several contexts, with slightly different
 semantics:
 
-### `exclude` and `trust.sources`
+### `include`, `exclude`, and `trust.sources`
 
 These fields support glob patterns with the same syntax as `sanPatterns`:
 
@@ -583,8 +608,8 @@ A file named `<namespace>.json` in the policy directory overrides
 `default.json` for pods in that namespace.
 
 By default, the override is a full replacement. If a namespace policy sets
-`"inherits": true`, unset top-level fields (`trust`, `exclude`, `slsa`,
-`vex`, `vsa`, `signatures`) are inherited from the default policy. Each
+`"inherits": true`, unset top-level fields (`trust`, `include`, `exclude`,
+`slsa`, `vex`, `vsa`, `signatures`) are inherited from the default policy. Each
 top-level section that is set in the namespace policy replaces the default's
 section entirely. The default policy itself cannot set `inherits`.
 
@@ -641,8 +666,9 @@ Example: `default.json` requires provenance, but `dev.json` allows everything:
 }
 ```
 
-In this example, `staging.json` inherits `trust`, `exclude`, `slsa`,
-`vsa`, and `signatures` from `default.json` but replaces the `vex` section.
+In this example, `staging.json` inherits `trust`, `include`, `exclude`,
+`slsa`, `vsa`, and `signatures` from `default.json` but replaces the `vex`
+section.
 
 ## Deployment Patterns
 

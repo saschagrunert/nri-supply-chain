@@ -133,6 +133,34 @@ func isExcluded(ctx context.Context, excludedImages []string, imageRef string) b
 	return false
 }
 
+// isIncluded checks whether imageRef matches any include glob pattern.
+// Returns true if the include list is empty (all images are eligible) or
+// if the image matches at least one pattern.
+func isIncluded(ctx context.Context, includedImages []string, imageRef string) bool {
+	if len(includedImages) == 0 {
+		return true
+	}
+
+	for _, pattern := range includedImages {
+		matched, err := glob.Match(pattern, imageRef)
+		if err != nil {
+			slog.DebugContext(ctx, "Malformed include pattern",
+				"pattern", pattern,
+				"image", imageRef,
+				"error", err,
+			)
+
+			continue
+		}
+
+		if matched {
+			return true
+		}
+	}
+
+	return false
+}
+
 func registryBreakerByHost(
 	registry *attestation.CircuitBreakerRegistry, host string,
 ) *attestation.CircuitBreaker {

@@ -33,6 +33,7 @@ const (
 	testInvalidValue           = "invalid"
 	testVerifierID             = "https://example.com/v"
 	testIssuerURL              = "https://accounts.google.com"
+	testIncludePattern         = "docker.io/myorg/**"
 	testEmptyMissingPolicyName = "empty missing policy defaults to allow"
 	testExplicitDenyName       = "explicit deny"
 )
@@ -195,6 +196,31 @@ func TestPolicyValidateVerifiers(t *testing.T) {
 					Issuers: nil, Sources: nil, BuildTypes: nil,
 				},
 				Exclude: nil, SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+	})
+}
+
+func TestPolicyValidateInclude(t *testing.T) {
+	t.Parallel()
+
+	runValidateTests(t, []validateTest{
+		{
+			name: "valid include pattern single star",
+			policy: policy.Policy{
+				Trust: nil, Include: []string{"gcr.io/org/*"}, Exclude: nil,
+				SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name: "valid include pattern double star",
+			policy: policy.Policy{
+				Trust: nil, Include: []string{"registry.k8s.io/**"}, Exclude: nil,
+				SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
 			},
 			wantErr:     false,
 			expectedErr: nil,
@@ -783,6 +809,7 @@ func defaultTestPolicy() *policy.Policy {
 			Sources:     nil,
 			BuildTypes:  nil,
 		},
+		Include: []string{testIncludePattern},
 		Exclude: []string{"gcr.io/default/*"},
 		SLSA: &policy.SLSAPolicy{
 			MissingPolicy:           types.ActionDeny,
@@ -808,8 +835,8 @@ func defaultTestPolicy() *policy.Policy {
 
 func mergedEmptyNamespace() *policy.Policy {
 	nsPol := &policy.Policy{
-		Inherits: nil, Trust: nil, Exclude: nil, SLSA: nil,
-		VEX: nil, VSA: nil, Signatures: nil,
+		Inherits: nil, Trust: nil, Include: nil, Exclude: nil,
+		SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
 	}
 
 	return policy.MergeWithDefault(nsPol, defaultTestPolicy())
@@ -830,6 +857,16 @@ func TestMergeWithDefaultInheritsTrust(t *testing.T) {
 	if merged.Trust == nil ||
 		merged.Trust.Builders[0].ID != "default-builder" {
 		t.Error("expected default Trust to be inherited")
+	}
+}
+
+func TestMergeWithDefaultInheritsInclude(t *testing.T) {
+	t.Parallel()
+
+	merged := mergedEmptyNamespace()
+	if len(merged.Include) != 1 ||
+		merged.Include[0] != testIncludePattern {
+		t.Error("expected default Include to be inherited")
 	}
 }
 
@@ -909,6 +946,24 @@ func TestMergeWithDefaultTrustOverride(t *testing.T) {
 
 	if merged.SLSA.MissingPolicy != types.ActionDeny {
 		t.Error("expected default SLSA to be preserved")
+	}
+}
+
+func TestMergeWithDefaultIncludeOverride(t *testing.T) {
+	t.Parallel()
+
+	nsPol := &policy.Policy{
+		Inherits: nil, Trust: nil,
+		Include: []string{"ns-include/*"},
+		Exclude: nil,
+		SLSA:    nil, VEX: nil, VSA: nil, Signatures: nil,
+	}
+
+	merged := policy.MergeWithDefault(nsPol, defaultTestPolicy())
+
+	if len(merged.Include) != 1 ||
+		merged.Include[0] != "ns-include/*" {
+		t.Error("expected namespace Include to override default")
 	}
 }
 
@@ -1034,6 +1089,30 @@ func TestLoadAllInheritsMergesWithDefault(t *testing.T) {
 	if len(staging.Exclude) != 1 ||
 		staging.Exclude[0] != "default-exclude/*" {
 		t.Error("expected Exclude to be inherited from default")
+	}
+}
+
+func TestLoadAllInheritsInclude(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	writeFile(t, filepath.Join(dir, "default.json"), `{
+		"include": ["docker.io/myorg/**"],
+		"slsa": {"missingPolicy": "deny"}
+	}`)
+	writeFile(t, filepath.Join(dir, "staging.json"), `{
+		"inherits": true,
+		"slsa": {"missingPolicy": "allow"}
+	}`)
+
+	policies, err := policy.LoadAll(dir)
+	testutil.AssertNoError(t, err)
+
+	staging := policies["staging"]
+	if len(staging.Include) != 1 ||
+		staging.Include[0] != testIncludePattern {
+		t.Error("expected Include to be inherited from default")
 	}
 }
 
