@@ -441,6 +441,34 @@ func TestVerifyWithFetcher(t *testing.T) {
 			wantCheckLen:       0,
 		},
 		{
+			name: "no fetcher VSA missing deny short-circuits",
+			policyJSON: `{
+				"slsa": {"missingPolicy": "allow"},
+				"vsa": {"missingPolicy": "deny"}
+			}`,
+			mode:               config.ModeEnforce,
+			fetcher:            nil,
+			fetchFailurePolicy: "",
+			setupPayloads:      nil,
+			wantAllowed:        false,
+			wantErr:            verifier.ErrVerificationFailed,
+			wantCheckLen:       1,
+		},
+		{
+			name: "no fetcher VSA missing warn prepends warning",
+			policyJSON: `{
+				"slsa": {"missingPolicy": "allow"},
+				"vsa": {"missingPolicy": "warn"}
+			}`,
+			mode:               config.ModeEnforce,
+			fetcher:            nil,
+			fetchFailurePolicy: "",
+			setupPayloads:      nil,
+			wantAllowed:        true,
+			wantErr:            nil,
+			wantCheckLen:       3,
+		},
+		{
 			name:       "parallel SLSA and VEX",
 			policyJSON: policyTrustRunnerJSON,
 			mode:       config.ModeEnforce,
@@ -561,7 +589,7 @@ func TestVerifyWithFetcher(t *testing.T) {
 			setupPayloads:      nil,
 			wantAllowed:        true,
 			wantErr:            nil,
-			wantCheckLen:       1,
+			wantCheckLen:       3,
 		},
 		{
 			name: "VSA missing allow falls through",
@@ -594,6 +622,23 @@ func TestVerifyWithFetcher(t *testing.T) {
 			setupPayloads:      nil,
 			wantAllowed:        true,
 			wantErr:            nil,
+			wantCheckLen:       0,
+		},
+		{
+			name: "VSA missing warn does not skip SLSA deny",
+			policyJSON: `{
+				"vsa": {"missingPolicy": "warn"},
+				"slsa": {"missingPolicy": "deny"}
+			}`,
+			mode: config.ModeEnforce,
+			fetcher: &mockFetcher{
+				attestations: []attestation.VerifiedAttestation{},
+				err:          nil,
+			},
+			fetchFailurePolicy: "",
+			setupPayloads:      nil,
+			wantAllowed:        false,
+			wantErr:            verifier.ErrVerificationFailed,
 			wantCheckLen:       0,
 		},
 		{
