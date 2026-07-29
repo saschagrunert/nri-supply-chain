@@ -99,34 +99,47 @@ type Plugin struct {
 	prewarmDone    func()
 	prewarmMu      sync.Mutex
 	prewarmCancel  context.CancelFunc
+	transportCache atomic.Pointer[registry.TransportCache]
 }
 
 // New creates a new Plugin with the given verifier, metrics, and config file path.
 func New(
-	v ImageVerifier, met *metrics.Metrics, configPath string, fetchTimeout time.Duration,
+	v ImageVerifier, met *metrics.Metrics, configPath string,
+	fetchTimeout time.Duration, cache *registry.TransportCache,
 ) *Plugin {
-	return &Plugin{
+	plug := &Plugin{
 		verifier:       v,
 		metrics:        met,
 		configPath:     configPath,
 		connected:      atomic.Bool{},
-		digestResolver: defaultDigestResolver,
+		digestResolver: nil,
 		fetchTimeout:   fetchTimeout,
 		prewarmDone:    nil,
 		prewarmMu:      sync.Mutex{},
 		prewarmCancel:  nil,
+		transportCache: atomic.Pointer[registry.TransportCache]{},
+	}
+
+	if cache != nil {
+		plug.transportCache.Store(cache)
+	}
+
+	plug.digestResolver = plug.registryAwareResolver
+
+	return plug
+}
+
+// SetTransportCache replaces the plugin's transport cache with a new one,
+// typically called during config reload when registries change.
+func (p *Plugin) SetTransportCache(cache *registry.TransportCache) {
+	if old := p.transportCache.Swap(cache); old != nil {
+		old.CloseIdleConnections()
 	}
 }
 
-func defaultDigestResolver(
-	ctx context.Context, imageRef string,
-) (digest, indexDigest string, err error) {
-	digest, indexDigest, err = registry.ResolveWithDefaultKeychain(ctx, imageRef)
-	if err != nil {
-		return "", "", fmt.Errorf("resolving digest: %w", err)
-	}
-
-	return digest, indexDigest, nil
+// TransportCache returns the current transport cache, or nil if none is set.
+func (p *Plugin) TransportCache() *registry.TransportCache {
+	return p.transportCache.Load()
 }
 
 // Connected returns true if the plugin has successfully connected to the NRI runtime.
@@ -263,6 +276,19 @@ func (p *Plugin) CreateContainer(
 	)
 
 	return nil, nil, nil
+}
+
+func (p *Plugin) registryAwareResolver(
+	ctx context.Context, imageRef string,
+) (digest, indexDigest string, err error) {
+	digest, indexDigest, err = registry.ResolveWithRegistries(
+		ctx, imageRef, p.transportCache.Load(),
+	)
+	if err != nil {
+		return "", "", fmt.Errorf("resolving digest: %w", err)
+	}
+
+	return digest, indexDigest, nil
 }
 
 func (p *Plugin) handleMissingAnnotations(

@@ -82,7 +82,7 @@ func TestServeMetricsReadyzVerifierNotReady(t *testing.T) {
 		t.Fatalf("creating verifier: %v", err)
 	}
 
-	testPlug := plugin.New(v, met, "", 30*time.Second)
+	testPlug := plugin.New(v, met, "", 30*time.Second, nil)
 
 	// Connect the plugin so Connected() returns true.
 	_, configErr := testPlug.Configure(context.Background(), "", "cri-o", "1.32")

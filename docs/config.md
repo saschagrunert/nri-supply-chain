@@ -7,6 +7,7 @@ nri-supply-chain plugin.
 
 - [Operational Config](#operational-config)
 - [Private Sigstore Instances](#private-sigstore-instances)
+- [Registries](#registries)
 - [Policy Files](#policy-files)
 - [CLI Flags](#cli-flags)
 
@@ -99,6 +100,67 @@ When `tuf_mirror` or `tuf_root` is changed via config reload, the plugin
 creates a new fetcher with the updated settings and invalidates the
 verification cache. Changes to the file content at the same `tuf_root` path
 are not detected; update the config value to force a re-read.
+
+## Registries
+
+Use the `[[registries]]` TOML array to configure registry mirrors, custom TLS
+CA certificates, and insecure connections. Each entry matches images by their
+registry host prefix.
+
+```toml
+[[registries]]
+prefix = "ghcr.io"
+mirror = "mirror.internal.example.com"
+
+[[registries]]
+prefix = "registry.internal.example.com"
+ca_cert = "/etc/ssl/certs/internal-ca.pem"
+
+[[registries]]
+prefix = "dev-registry.local"
+insecure = true
+```
+
+| Field      | Default | Description                                                       |
+| ---------- | ------- | ----------------------------------------------------------------- |
+| `prefix`   | (none)  | Registry host to match exactly (required)                         |
+| `mirror`   | (none)  | Replacement registry host for matched images                      |
+| `ca_cert`  | (none)  | Absolute path to a PEM-encoded CA certificate bundle              |
+| `insecure` | `false` | Skip TLS certificate verification (not recommended in production) |
+
+When multiple `[[registries]]` entries are present, the first entry whose
+`prefix` matches the image's registry host exactly is used. For example,
+a prefix of `ghcr.io` matches images from `ghcr.io` but not from
+`ghcr.io.example.com`. Each prefix must be unique across all entries.
+
+When `mirror` is set, the plugin rewrites the image reference to pull from the
+mirror registry while preserving the repository path, tag, and digest. For
+example, `ghcr.io/myorg/myimage:v1.0` with mirror `mirror.internal.example.com`
+becomes `mirror.internal.example.com/myorg/myimage:v1.0`.
+
+When `ca_cert` is set, the plugin loads the PEM-encoded certificates and adds
+them to the system certificate pool for connections to the matched registry. The
+path must be absolute and the file must exist at startup (validated during
+runtime validation).
+
+Setting `insecure = true` disables TLS certificate verification for the matched
+registry. A warning is logged at startup. This should only be used for
+development and testing. When running in `enforce` mode, an additional warning
+is emitted because insecure connections undermine the integrity guarantees that
+enforcement provides.
+
+**Trust considerations for mirrors:** When configuring a mirror, be aware that
+the mirror serves both images and their supply chain attestations. A compromised
+or misconfigured mirror could serve valid-looking attestations for tampered
+images. Ensure mirror registries are operated with the same level of trust as
+the original registry. Use `ca_cert` to pin trusted CA certificates for mirrors
+that use internal PKI, and avoid `insecure = true` for mirrors serving images
+verified in `enforce` mode.
+
+**Transport settings and mirrors:** The `ca_cert` and `insecure` fields on a
+registry entry apply to the actual connection target. When a `mirror` is set,
+that target is the mirror host, not the original registry. Configure `ca_cert`
+with the mirror's CA certificate when the mirror uses internal PKI.
 
 ## Policy Files
 

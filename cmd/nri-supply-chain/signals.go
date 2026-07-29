@@ -28,6 +28,7 @@ import (
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
+	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
@@ -37,7 +38,7 @@ func setupSignals(
 	ctx context.Context, cancel context.CancelFunc,
 	configPath string, verif *verifier.Verifier,
 	met *metrics.Metrics, cfg *config.Config,
-	plug prewarmCanceller,
+	plug pluginReloader,
 ) func() {
 	sighup := make(chan os.Signal, 1)
 	signal.Notify(sighup, syscall.SIGHUP)
@@ -47,8 +48,8 @@ func setupSignals(
 
 	done := make(chan struct{})
 
-	cleanupWatch, watcher := setupFileWatch(ctx, configPath, cfg.PolicyDir, verif, met)
-	setupReload(ctx, configPath, verif, met, sighup, watcher)
+	cleanupWatch, watcher := setupFileWatch(ctx, configPath, cfg.PolicyDir, verif, met, plug)
+	setupReload(ctx, configPath, verif, met, plug, sighup, watcher)
 	handleShutdown(ctx, cancel, sigterm, done)
 
 	return func() {
@@ -64,13 +65,16 @@ func setupSignals(
 	}
 }
 
-type prewarmCanceller interface {
+type pluginReloader interface {
 	CancelPrewarm()
+	SetTransportCache(tc *registry.TransportCache)
+	TransportCache() *registry.TransportCache
 }
 
 func setupReload(
 	ctx context.Context, configPath string, verif *verifier.Verifier,
-	met *metrics.Metrics, sigCh <-chan os.Signal, watcher *fsnotify.Watcher,
+	met *metrics.Metrics, plug pluginReloader,
+	sigCh <-chan os.Signal, watcher *fsnotify.Watcher,
 ) {
 	go func() {
 		for {
@@ -80,7 +84,7 @@ func setupReload(
 			case <-sigCh:
 			}
 
-			handleReload(ctx, configPath, verif, met, watcher)
+			handleReload(ctx, configPath, verif, met, plug, watcher)
 		}
 	}()
 }
@@ -88,7 +92,7 @@ func setupReload(
 func handleReload(
 	ctx context.Context, configPath string,
 	verif *verifier.Verifier, met *metrics.Metrics,
-	watcher *fsnotify.Watcher,
+	plug pluginReloader, watcher *fsnotify.Watcher,
 ) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -116,26 +120,16 @@ func handleReload(
 		return
 	}
 
-	if newCfg.Enabled() {
-		err = newCfg.ValidateRuntime()
-		if err != nil {
-			met.ConfigReloadErrorsTotal.Inc()
-			slog.Error("Config reload validation failed", "error", err)
+	err = newCfg.ValidateRuntime()
+	if err != nil {
+		met.ConfigReloadErrorsTotal.Inc()
+		slog.Error("Config reload validation failed", "error", err)
 
-			return
-		}
+		return
 	}
 
-	if newCfg.LogLevel != "" {
-		if parsed := parseLogLevel(newCfg.LogLevel); parsed != nil {
-			current := logLevelVar.Level()
-
-			if current != *parsed {
-				logLevelVar.Set(*parsed)
-				slog.Info("Log level changed", "from", current, "to", *parsed)
-			}
-		}
-	}
+	applyLogLevel(newCfg.LogLevel)
+	newCfg.WarnInsecureRegistries()
 
 	reloadErr := verif.Reload(ctx, newCfg)
 	if reloadErr != nil {
@@ -145,6 +139,47 @@ func handleReload(
 		met.ConfigReloadsTotal.Inc()
 		slog.Info("Config reloaded successfully")
 		updatePolicyDirWatch(watcher, configPath, newCfg.PolicyDir)
+
+		if plug != nil {
+			updatePluginRegistries(plug, newCfg.Registries, verif.TransportCache())
+		}
+	}
+}
+
+func applyLogLevel(level string) {
+	if level == "" {
+		return
+	}
+
+	parsed := parseLogLevel(level)
+	if parsed == nil {
+		return
+	}
+
+	current := logLevelVar.Level()
+	if current != *parsed {
+		logLevelVar.Set(*parsed)
+		slog.Info("Log level changed", "from", current, "to", *parsed)
+	}
+}
+
+func updatePluginRegistries(
+	plug pluginReloader, registries []config.Registry, shared *registry.TransportCache,
+) {
+	var oldRegistries []config.Registry
+
+	if cache := plug.TransportCache(); cache != nil {
+		oldRegistries = cache.Registries()
+	}
+
+	if !config.RegistriesChanged(oldRegistries, registries) {
+		return
+	}
+
+	if shared != nil && !config.RegistriesChanged(shared.Registries(), registries) {
+		plug.SetTransportCache(shared)
+	} else {
+		plug.SetTransportCache(registry.NewTransportCacheOrNil(registries))
 	}
 }
 
@@ -196,6 +231,7 @@ func updatePolicyDirWatch(watcher *fsnotify.Watcher, configPath, newPolicyDir st
 func setupFileWatch(
 	ctx context.Context, configPath, policyDir string,
 	verif *verifier.Verifier, met *metrics.Metrics,
+	plug pluginReloader,
 ) (func(), *fsnotify.Watcher) {
 	if !shouldUseConfigFile(configPath) {
 		return func() {}, nil
@@ -226,7 +262,7 @@ func setupFileWatch(
 		}
 	}
 
-	go runFileWatch(ctx, watcher, configPath, verif, met)
+	go runFileWatch(ctx, watcher, configPath, verif, met, plug)
 
 	return func() {
 		closeErr := watcher.Close()
@@ -239,7 +275,7 @@ func setupFileWatch(
 func runFileWatch(
 	ctx context.Context, watcher *fsnotify.Watcher,
 	configPath string, verif *verifier.Verifier,
-	met *metrics.Metrics,
+	met *metrics.Metrics, plug pluginReloader,
 ) {
 	var debounce *time.Timer
 
@@ -259,7 +295,7 @@ func runFileWatch(
 				return
 			}
 
-			debounce = handleFileEvent(ctx, event, debounce, configPath, verif, met, watcher)
+			debounce = handleFileEvent(ctx, event, debounce, configPath, verif, met, plug, watcher)
 
 		case watchErr, ok := <-watcher.Errors:
 			if !ok {
@@ -277,7 +313,7 @@ func handleFileEvent(
 	ctx context.Context, event fsnotify.Event,
 	debounce *time.Timer, configPath string,
 	verif *verifier.Verifier, met *metrics.Metrics,
-	watcher *fsnotify.Watcher,
+	plug pluginReloader, watcher *fsnotify.Watcher,
 ) *time.Timer {
 	if !isReloadEvent(event) {
 		return debounce
@@ -294,7 +330,7 @@ func handleFileEvent(
 			return
 		}
 
-		handleReload(ctx, configPath, verif, met, watcher)
+		handleReload(ctx, configPath, verif, met, plug, watcher)
 	})
 }
 

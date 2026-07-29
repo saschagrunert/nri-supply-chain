@@ -31,6 +31,16 @@ const (
 	testModeUnknown  config.VerificationMode = "unknown"
 )
 
+const (
+	testPrefixDockerIO = "docker.io"
+	testPrefixGHCR     = "ghcr.io"
+)
+
+const (
+	testRegistryGHCR   = "ghcr.io"
+	testMirrorInternal = "mirror.internal"
+)
+
 func TestDefaultConfig(t *testing.T) {
 	t.Parallel()
 
@@ -633,6 +643,29 @@ func TestConfigNormalizeZeroCacheTTLSkipsWhenFailureTTLAlsoZero(t *testing.T) {
 	testutil.AssertEqual(t, time.Duration(0), cfg.CacheFailureTTL.Duration)
 }
 
+func TestNormalizeDockerIOPrefix(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Registries = []config.Registry{
+		{
+			Prefix:   testPrefixDockerIO,
+			Mirror:   "mirror.internal.example.com",
+			CACert:   "",
+			Insecure: false,
+		},
+	}
+
+	cfg.Normalize()
+
+	if cfg.Registries[0].Prefix != "index.docker.io" {
+		t.Errorf(
+			"expected prefix normalized to %q, got %q",
+			"index.docker.io", cfg.Registries[0].Prefix,
+		)
+	}
+}
+
 func TestConfigValidateFetchRateLimit(t *testing.T) {
 	t.Parallel()
 
@@ -814,6 +847,209 @@ func TestConfigValidateCollectsMultipleErrors(t *testing.T) {
 	if !errors.Is(err, config.ErrCircuitBreakerCooldown) {
 		t.Errorf("expected ErrCircuitBreakerCooldown, got %v", err)
 	}
+}
+
+func TestConfigValidateRegistries(t *testing.T) {
+	t.Parallel()
+
+	t.Run("valid registry", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Registries = []config.Registry{
+			{Prefix: testRegistryGHCR, Mirror: testMirrorInternal, CACert: "", Insecure: false},
+		}
+
+		testutil.AssertNoError(t, cfg.Validate())
+	})
+
+	t.Run("empty prefix rejected", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Registries = []config.Registry{
+			{Prefix: "", Mirror: testMirrorInternal, CACert: "", Insecure: false},
+		}
+
+		err := cfg.Validate()
+		if !errors.Is(err, config.ErrRegistryPrefixEmpty) {
+			t.Errorf("expected ErrRegistryPrefixEmpty, got %v", err)
+		}
+	})
+
+	t.Run("relative ca_cert rejected", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Registries = []config.Registry{
+			{Prefix: testRegistryGHCR, Mirror: "", CACert: "relative/path.pem", Insecure: false},
+		}
+
+		err := cfg.Validate()
+		if !errors.Is(err, config.ErrRegistryCACertNotAbsolute) {
+			t.Errorf("expected ErrRegistryCACertNotAbsolute, got %v", err)
+		}
+	})
+
+	t.Run("absolute ca_cert accepted", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Registries = []config.Registry{
+			{Prefix: testRegistryGHCR, Mirror: "", CACert: "/etc/ssl/ca.pem", Insecure: false},
+		}
+
+		testutil.AssertNoError(t, cfg.Validate())
+	})
+
+	t.Run("insecure emits warning but is valid", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Registries = []config.Registry{
+			{Prefix: "dev-registry.local", Mirror: "", CACert: "", Insecure: true},
+		}
+
+		testutil.AssertNoError(t, cfg.Validate())
+	})
+
+	t.Run("multiple errors collected", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Registries = []config.Registry{
+			{Prefix: "", Mirror: "mirror", CACert: "", Insecure: false},
+			{Prefix: testRegistryGHCR, Mirror: "", CACert: "relative.pem", Insecure: false},
+		}
+
+		err := cfg.Validate()
+		testutil.AssertError(t, err)
+
+		if !errors.Is(err, config.ErrRegistryPrefixEmpty) {
+			t.Errorf("expected ErrRegistryPrefixEmpty, got %v", err)
+		}
+
+		if !errors.Is(err, config.ErrRegistryCACertNotAbsolute) {
+			t.Errorf("expected ErrRegistryCACertNotAbsolute, got %v", err)
+		}
+	})
+
+	t.Run("duplicate prefix rejected", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Registries = []config.Registry{
+			{Prefix: testRegistryGHCR, Mirror: testMirrorInternal, CACert: "", Insecure: false},
+			{
+				Prefix: testRegistryGHCR, Mirror: "other-mirror.example.com",
+				CACert: "", Insecure: false,
+			},
+		}
+
+		err := cfg.Validate()
+		if !errors.Is(err, config.ErrDuplicateRegistryPrefix) {
+			t.Errorf("expected ErrDuplicateRegistryPrefix, got %v", err)
+		}
+	})
+
+	t.Run("docker.io and index.docker.io treated as duplicate", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Registries = []config.Registry{
+			{
+				Prefix:   testPrefixDockerIO,
+				Mirror:   "mirror-a.example.com",
+				CACert:   "",
+				Insecure: false,
+			},
+			{
+				Prefix:   "index.docker.io",
+				Mirror:   "mirror-b.example.com",
+				CACert:   "",
+				Insecure: false,
+			},
+		}
+
+		err := cfg.Validate()
+		if !errors.Is(err, config.ErrDuplicateRegistryPrefix) {
+			t.Errorf("expected ErrDuplicateRegistryPrefix, got %v", err)
+		}
+	})
+}
+
+func TestConfigValidateRuntimeRegistryCACert(t *testing.T) {
+	t.Parallel()
+
+	t.Run("existing ca_cert passes", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		certPath := filepath.Join(dir, "ca.pem")
+		testutil.AssertNoError(t, os.WriteFile(certPath, []byte("cert"), 0o600))
+
+		cfg := config.DefaultConfig()
+		cfg.Registries = []config.Registry{
+			{Prefix: testRegistryGHCR, Mirror: "", CACert: certPath, Insecure: false},
+		}
+
+		testutil.AssertNoError(t, cfg.ValidateRuntime())
+	})
+
+	t.Run("missing ca_cert fails", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Registries = []config.Registry{
+			{Prefix: testRegistryGHCR, Mirror: "", CACert: "/nonexistent/ca.pem", Insecure: false},
+		}
+
+		err := cfg.ValidateRuntime()
+		if !errors.Is(err, config.ErrRegistryCACertNotFound) {
+			t.Errorf("expected ErrRegistryCACertNotFound, got %v", err)
+		}
+	})
+
+	t.Run("no ca_cert skips check", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Registries = []config.Registry{
+			{Prefix: testRegistryGHCR, Mirror: testMirrorInternal, CACert: "", Insecure: false},
+		}
+
+		testutil.AssertNoError(t, cfg.ValidateRuntime())
+	})
+}
+
+func TestLoadFromStringRegistries(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.LoadFromString(`
+[[registries]]
+prefix = "ghcr.io"
+mirror = "mirror.internal.example.com"
+
+[[registries]]
+prefix = "registry.internal.example.com"
+ca_cert = "/etc/ssl/certs/internal-ca.pem"
+insecure = false
+`)
+	testutil.AssertNoError(t, err)
+
+	if len(cfg.Registries) != 2 {
+		t.Fatalf("expected 2 registries, got %d", len(cfg.Registries))
+	}
+
+	testutil.AssertEqual(t, testRegistryGHCR, cfg.Registries[0].Prefix)
+	testutil.AssertEqual(t, "mirror.internal.example.com", cfg.Registries[0].Mirror)
+	testutil.AssertEqual(t, "", cfg.Registries[0].CACert)
+	testutil.AssertEqual(t, false, cfg.Registries[0].Insecure)
+
+	testutil.AssertEqual(t, "registry.internal.example.com", cfg.Registries[1].Prefix)
+	testutil.AssertEqual(t, "", cfg.Registries[1].Mirror)
+	testutil.AssertEqual(t, "/etc/ssl/certs/internal-ca.pem", cfg.Registries[1].CACert)
+	testutil.AssertEqual(t, false, cfg.Registries[1].Insecure)
 }
 
 func TestConfigValidateCacheCollectsMultipleErrors(t *testing.T) {
@@ -1210,5 +1446,199 @@ func TestStrictnessOrdering(t *testing.T) {
 
 	if warn >= enforce {
 		t.Errorf("expected warn (%d) < enforce (%d)", warn, enforce)
+	}
+}
+
+func TestWarnInsecureRegistriesEnforceMode(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+	cfg.Registries = []config.Registry{
+		{
+			Prefix:   "insecure.example.com",
+			Mirror:   "mirror.example.com",
+			CACert:   "",
+			Insecure: true,
+		},
+	}
+
+	// Should not panic; the warning is logged via slog.
+	cfg.WarnInsecureRegistries()
+}
+
+func TestNormalizePrefixViaValidation(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = t.TempDir()
+	cfg.Registries = []config.Registry{
+		{
+			Prefix:   testPrefixDockerIO,
+			Mirror:   "mirror1.example.com",
+			CACert:   "",
+			Insecure: false,
+		},
+		{
+			Prefix:   testPrefixDockerIO,
+			Mirror:   "mirror2.example.com",
+			CACert:   "",
+			Insecure: false,
+		},
+	}
+
+	err := cfg.Validate()
+	if !errors.Is(err, config.ErrDuplicateRegistryPrefix) {
+		t.Errorf(
+			"expected duplicate prefix error for docker.io entries, got %v",
+			err,
+		)
+	}
+}
+
+func TestNormalizePrefixCaseInsensitive(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = t.TempDir()
+	cfg.Registries = []config.Registry{
+		{Prefix: "GHCR.IO", Mirror: "MIRROR.INTERNAL", CACert: "", Insecure: false},
+	}
+
+	err := cfg.Validate()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	cfg.Normalize()
+
+	if cfg.Registries[0].Prefix != testPrefixGHCR {
+		t.Errorf("Prefix = %q, want %q (lowercased)", cfg.Registries[0].Prefix, testPrefixGHCR)
+	}
+
+	if cfg.Registries[0].Mirror != testMirrorInternal {
+		t.Errorf("Mirror = %q, want %q (lowercased)", cfg.Registries[0].Mirror, testMirrorInternal)
+	}
+}
+
+func TestNormalizeDuplicateCaseInsensitive(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = t.TempDir()
+	cfg.Registries = []config.Registry{
+		{Prefix: testPrefixGHCR, Mirror: "mirror1.internal", CACert: "", Insecure: false},
+		{Prefix: "GHCR.IO", Mirror: "mirror2.internal", CACert: "", Insecure: false},
+	}
+
+	err := cfg.Validate()
+	if !errors.Is(err, config.ErrDuplicateRegistryPrefix) {
+		t.Errorf("expected duplicate prefix error for case-variant entries, got %v", err)
+	}
+}
+
+func TestValidateRegistryPrefixInvalid(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		prefix string
+	}{
+		{"scheme in prefix", "https://registry.example.com"},
+		{"slash in prefix", "registry.example.com/path"},
+		{"space in prefix", "registry example.com"},
+		{"consecutive dots", "a..b"},
+		{"leading dot", ".example.com"},
+		{"trailing dot", "example.com."},
+		{"dots only", "..."},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := config.DefaultConfig()
+			cfg.Verification = config.ModeWarn
+			cfg.PolicyDir = t.TempDir()
+			cfg.Registries = []config.Registry{
+				{Prefix: tc.prefix, Mirror: "mirror.internal", CACert: "", Insecure: false},
+			}
+
+			err := cfg.Validate()
+			if !errors.Is(err, config.ErrRegistryPrefixInvalid) {
+				t.Errorf("expected ErrRegistryPrefixInvalid for %q, got %v",
+					tc.prefix, err)
+			}
+		})
+	}
+}
+
+func TestValidateRegistryMirrorInvalid(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = t.TempDir()
+	cfg.Registries = []config.Registry{
+		{Prefix: testPrefixGHCR, Mirror: "https://mirror.internal", CACert: "", Insecure: false},
+	}
+
+	err := cfg.Validate()
+	if !errors.Is(err, config.ErrRegistryMirrorInvalid) {
+		t.Errorf("expected ErrRegistryMirrorInvalid, got %v", err)
+	}
+}
+
+func TestValidateRegistryMirrorSameAsPrefix(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = t.TempDir()
+	cfg.Registries = []config.Registry{
+		{Prefix: testPrefixGHCR, Mirror: "ghcr.io", CACert: "", Insecure: false},
+	}
+
+	err := cfg.Validate()
+	if !errors.Is(err, config.ErrRegistryMirrorSameAsPrefix) {
+		t.Errorf("expected ErrRegistryMirrorSameAsPrefix, got %v", err)
+	}
+}
+
+func TestRegistriesChanged(t *testing.T) {
+	t.Parallel()
+
+	reg := config.Registry{
+		Prefix: testPrefixGHCR, Mirror: "mirror.internal", CACert: "", Insecure: false,
+	}
+
+	tests := []struct {
+		name string
+		prev []config.Registry
+		next []config.Registry
+		want bool
+	}{
+		{name: "both nil", prev: nil, next: nil, want: false},
+		{name: "both empty", prev: []config.Registry{}, next: []config.Registry{}, want: false},
+		{name: "nil vs empty", prev: nil, next: []config.Registry{}, want: false},
+		{name: "added", prev: nil, next: []config.Registry{reg}, want: true},
+		{name: "removed", prev: []config.Registry{reg}, next: nil, want: true},
+		{name: "equal", prev: []config.Registry{reg}, next: []config.Registry{reg}, want: false},
+		{name: "mirror changed", prev: []config.Registry{reg}, next: []config.Registry{
+			{Prefix: testPrefixGHCR, Mirror: "other.internal", CACert: "", Insecure: false},
+		}, want: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := config.RegistriesChanged(test.prev, test.next); got != test.want {
+				t.Errorf("RegistriesChanged() = %v, want %v", got, test.want)
+			}
+		})
 	}
 }

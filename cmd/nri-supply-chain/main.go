@@ -32,6 +32,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/plugin"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
+	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
@@ -274,14 +275,7 @@ func newJSONSchemaCmd() *cobra.Command {
 	}
 }
 
-func startPlugin(
-	configPath, pluginName, pluginIdx string, cfg *config.Config,
-) int {
-	met := metrics.New()
-	met.SetBuildInfo(version, runtime.Version())
-
-	ctx, cancel := context.WithCancel(context.Background())
-
+func logEffectiveConfig(configPath string, cfg *config.Config) {
 	slog.Info("Effective configuration",
 		"config", configPath,
 		"mode", cfg.Verification,
@@ -295,13 +289,28 @@ func startPlugin(
 		"circuit_breaker_cooldown", cfg.CircuitBreakerCooldown.Duration,
 		"metrics_addr", cfg.MetricsAddr,
 	)
+}
+
+func startPlugin(
+	configPath, pluginName, pluginIdx string, cfg *config.Config,
+) int {
+	met := metrics.New()
+	met.SetBuildInfo(version, runtime.Version())
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	logEffectiveConfig(configPath, cfg)
+
+	cfg.WarnInsecureRegistries()
+
+	transportCache := registry.NewTransportCacheOrNil(cfg.Registries)
 
 	var fetcher attestation.Fetcher
 
 	if cfg.Enabled() {
 		var err error
 
-		fetcher, err = verifier.NewFetcher(ctx, cfg)
+		fetcher, err = verifier.NewFetcher(ctx, cfg, transportCache)
 		if err != nil {
 			slog.Error("Failed to create fetcher", "error", err)
 			cancel()
@@ -321,7 +330,7 @@ func startPlugin(
 	defer cancel()
 	defer verif.Stop()
 
-	plug := plugin.New(verif, met, configPath, cfg.FetchTimeout.Duration)
+	plug := plugin.New(verif, met, configPath, cfg.FetchTimeout.Duration, transportCache)
 
 	cleanupSignals := setupSignals(ctx, cancel, configPath, verif, met, cfg, plug)
 	defer cleanupSignals()

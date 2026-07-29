@@ -143,7 +143,7 @@ func newDisabledPlugin(t *testing.T) *plugin.Plugin {
 		t.Fatalf("creating verifier: %v", err)
 	}
 
-	return plugin.New(v, met, "", 30*time.Second)
+	return plugin.New(v, met, "", 30*time.Second, nil)
 }
 
 func TestLoadConfig(t *testing.T) {

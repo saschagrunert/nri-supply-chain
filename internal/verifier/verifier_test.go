@@ -32,6 +32,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
+	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
@@ -67,7 +68,7 @@ func TestNewFetcher(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 
-	fetcher, err := verifier.NewFetcher(context.Background(), cfg)
+	fetcher, err := verifier.NewFetcher(context.Background(), cfg, nil)
 	testutil.AssertNoError(t, err)
 
 	if fetcher == nil {
@@ -86,9 +87,32 @@ func TestNewFetcherEmptyTUFRoot(t *testing.T) {
 	cfg.Sigstore.TUFMirror = testTUFMirrorURL
 	cfg.Sigstore.TUFRoot = rootPath
 
-	_, err := verifier.NewFetcher(context.Background(), cfg)
+	_, err := verifier.NewFetcher(context.Background(), cfg, nil)
 	if err == nil {
 		t.Fatal("expected error for empty TUF root file")
+	}
+}
+
+func TestNewFetcherWithSharedCache(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Registries = []config.Registry{
+		{
+			Prefix:   "docker.io",
+			Mirror:   "mirror.example.com",
+			CACert:   "",
+			Insecure: false,
+		},
+	}
+
+	cache := registry.NewTransportCache(cfg.Registries)
+
+	fetcher, err := verifier.NewFetcher(context.Background(), cfg, cache)
+	testutil.AssertNoError(t, err)
+
+	if fetcher == nil {
+		t.Fatal("expected non-nil OCIFetcher from NewFetcher with shared cache")
 	}
 }
 
@@ -828,6 +852,62 @@ func TestReloadCreatesFetcherWhenTUFMirrorChanges(t *testing.T) {
 
 	if !requestReceived.Load() {
 		t.Error("expected TUF mirror to be contacted after Reload with new TUF mirror config")
+	}
+}
+
+func TestCacheAffectingFieldsChangedRegistries(t *testing.T) {
+	t.Parallel()
+
+	base := config.DefaultConfig()
+	base.Verification = config.ModeWarn
+	base.PolicyDir = t.TempDir()
+
+	withRegistries := config.DefaultConfig()
+	withRegistries.Verification = base.Verification
+	withRegistries.PolicyDir = base.PolicyDir
+	withRegistries.FetchTimeout = base.FetchTimeout
+	withRegistries.CacheTTL = base.CacheTTL
+	withRegistries.CacheFailureTTL = base.CacheFailureTTL
+	withRegistries.FetchFailurePolicy = base.FetchFailurePolicy
+	withRegistries.Registries = []config.Registry{
+		{
+			Prefix:   "ghcr.io",
+			Mirror:   "mirror.internal",
+			CACert:   "",
+			Insecure: false,
+		},
+	}
+
+	if !verifier.ExportCacheAffectingFieldsChanged(base, withRegistries) {
+		t.Error("expected cache invalidation when registries are added")
+	}
+
+	if verifier.ExportCacheAffectingFieldsChanged(base, base) {
+		t.Error("expected no cache invalidation when registries are unchanged")
+	}
+
+	modifiedMirror := config.DefaultConfig()
+	modifiedMirror.Verification = base.Verification
+	modifiedMirror.PolicyDir = base.PolicyDir
+	modifiedMirror.FetchTimeout = base.FetchTimeout
+	modifiedMirror.CacheTTL = base.CacheTTL
+	modifiedMirror.CacheFailureTTL = base.CacheFailureTTL
+	modifiedMirror.FetchFailurePolicy = base.FetchFailurePolicy
+	modifiedMirror.Registries = []config.Registry{
+		{
+			Prefix:   "ghcr.io",
+			Mirror:   "other-mirror.internal",
+			CACert:   "",
+			Insecure: false,
+		},
+	}
+
+	if !verifier.ExportCacheAffectingFieldsChanged(withRegistries, modifiedMirror) {
+		t.Error("expected cache invalidation when registry mirror changes")
+	}
+
+	if !verifier.ExportCacheAffectingFieldsChanged(withRegistries, base) {
+		t.Error("expected cache invalidation when registries are removed")
 	}
 }
 
