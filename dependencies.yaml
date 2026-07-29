@@ -91,6 +91,12 @@ dependencies:
       - path: Makefile
         match: ^GOVULNCHECK_VERSION
 
+  - name: prettier
+    version: 3.9.6
+    refPaths:
+      - path: Makefile
+        match: ^PRETTIER_VERSION
+
   - name: pause
     version: 3.10
     refPaths:
