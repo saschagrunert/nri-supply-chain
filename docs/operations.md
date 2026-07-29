@@ -31,6 +31,7 @@ The plugin exposes Prometheus metrics at the configured
 | `nri_supply_chain_cache_entries`                  | Gauge     |                               | Current number of cached entries                                                     |
 | `nri_supply_chain_cache_evictions_total`          | Counter   | `reason`                      | Cache entry evictions. `reason`: `expired`, `capacity`                               |
 | `nri_supply_chain_verification_skipped_total`     | Counter   | `reason`, `namespace`         | Containers allowed without verification. `reason`: `excluded`, `missing_annotations` |
+| `nri_supply_chain_fetch_duration_seconds`         | Histogram | `registry`                    | Attestation fetch latency per registry                                               |
 | `nri_supply_chain_fetch_errors_total`             | Counter   | `type`, `registry`            | Attestation fetch errors                                                             |
 | `nri_supply_chain_inflight_dedup_total`           | Counter   |                               | Deduplicated inflight verifications                                                  |
 | `nri_supply_chain_circuit_breaker_trips_total`    | Counter   | `registry`                    | Circuit breaker open events                                                          |
@@ -206,9 +207,10 @@ your threat model.
 labels whose cardinality depends on the cluster. In multi-tenant clusters with
 many namespaces or images pulled from many registries, these labels can cause
 significant Prometheus memory growth. Monitor the cardinality of
-`nri_supply_chain_verification_total` and `nri_supply_chain_fetch_errors_total`
-and consider Prometheus recording rules to pre-aggregate if the series count
-grows large.
+`nri_supply_chain_verification_total`, `nri_supply_chain_fetch_errors_total`,
+and `nri_supply_chain_fetch_duration_seconds` (a histogram producing ~16 series
+per registry: bucket counters + sum + count) and consider Prometheus recording
+rules to pre-aggregate if the series count grows large.
 
 **Enforce-mode startup warnings.** When running in `enforce` mode, the plugin
 logs warnings at startup if permissive defaults are still in place. It warns
