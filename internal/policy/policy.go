@@ -331,34 +331,36 @@ func cloneTrust(tp *TrustPolicy) *TrustPolicy {
 
 // Validate checks the policy for invalid values.
 func (p *Policy) Validate() error {
+	var errs []error
+
 	err := p.validateTrust()
 	if err != nil {
-		return err
+		errs = append(errs, err)
 	}
 
 	err = p.validateExclude()
 	if err != nil {
-		return err
+		errs = append(errs, err)
 	}
 
 	err = p.validateSLSA()
 	if err != nil {
-		return err
+		errs = append(errs, err)
 	}
 
 	err = p.validateVEX()
 	if err != nil {
-		return err
+		errs = append(errs, err)
 	}
 
 	err = p.validateVSA()
 	if err != nil {
-		return err
+		errs = append(errs, err)
+	} else {
+		p.resolveVSADuration()
 	}
 
-	p.resolveVSADuration()
-
-	return nil
+	return errors.Join(errs...)
 }
 
 // ValidateEnforce runs additional checks required for enforce mode.
@@ -385,6 +387,8 @@ func (p *Policy) ValidateRuntime() error {
 		return nil
 	}
 
+	var errs []error
+
 	for idx, verif := range p.Trust.Verifiers {
 		if verif.Key == "" {
 			continue
@@ -392,28 +396,32 @@ func (p *Policy) ValidateRuntime() error {
 
 		info, err := os.Lstat(verif.Key)
 		if err != nil {
-			return fmt.Errorf(
+			errs = append(errs, fmt.Errorf(
 				"trust.verifiers[%d] %q: key file %q: %w",
 				idx, verif.ID, verif.Key, err,
-			)
+			))
+
+			continue
 		}
 
 		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf(
+			errs = append(errs, fmt.Errorf(
 				"trust.verifiers[%d] %q: key path %q: %w (symlinks are not allowed)",
 				idx, verif.ID, verif.Key, ErrNotRegularFile,
-			)
+			))
+
+			continue
 		}
 
 		if !info.Mode().IsRegular() {
-			return fmt.Errorf(
+			errs = append(errs, fmt.Errorf(
 				"trust.verifiers[%d] %q: key path %q: %w",
 				idx, verif.ID, verif.Key, ErrNotRegularFile,
-			)
+			))
 		}
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 // Load loads and validates a policy file from disk.
@@ -492,38 +500,30 @@ func loadPolicyFiles(policyDir string) (map[string]*Policy, error) {
 		return policies, nil
 	}
 
-	entries, err := os.ReadDir(policyDir)
+	entries, err := readPolicyDir(policyDir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return policies, nil
-		}
-
-		return nil, fmt.Errorf(
-			"reading policy directory %q: %w", policyDir, err,
-		)
+		return nil, err
 	}
 
-	var jsonCount int
+	var errs []error
 
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-			continue
-		}
-
-		jsonCount++
-
-		if jsonCount > maxPolicyFiles {
-			return nil, fmt.Errorf(
+	for i, entry := range entries {
+		if i >= maxPolicyFiles {
+			errs = append(errs, fmt.Errorf(
 				"%w: %q contains more than %d JSON files",
 				ErrTooManyPolicyFiles, policyDir, maxPolicyFiles,
-			)
+			))
+
+			break
 		}
 
 		fullPath := filepath.Join(policyDir, entry.Name())
 
-		pol, err := Load(fullPath)
-		if err != nil {
-			return nil, err
+		pol, loadErr := Load(fullPath)
+		if loadErr != nil {
+			errs = append(errs, loadErr)
+
+			continue
 		}
 
 		namespace := strings.TrimSuffix(entry.Name(), ".json")
@@ -534,7 +534,36 @@ func loadPolicyFiles(policyDir string) (map[string]*Policy, error) {
 		policies[namespace] = pol
 	}
 
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
+	}
+
 	return policies, nil
+}
+
+func readPolicyDir(policyDir string) ([]os.DirEntry, error) {
+	entries, err := os.ReadDir(policyDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+
+		return nil, fmt.Errorf(
+			"reading policy directory %q: %w", policyDir, err,
+		)
+	}
+
+	var jsonEntries []os.DirEntry
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+
+		jsonEntries = append(jsonEntries, entry)
+	}
+
+	return jsonEntries, nil
 }
 
 func applyInheritance(policies map[string]*Policy) error {
@@ -566,129 +595,157 @@ func (p *Policy) validateTrust() error {
 
 	warnEmptyTrust(p.Trust)
 
+	var errs []error
+
 	seenBuilders := make(map[string]bool, len(p.Trust.Builders))
 
 	for idx, builder := range p.Trust.Builders {
 		if builder.ID == "" {
-			return fmt.Errorf(
+			errs = append(errs, fmt.Errorf(
 				"%w: trust.builders[%d]", ErrBuilderIDRequired, idx,
-			)
+			))
+
+			continue
 		}
 
 		if seenBuilders[builder.ID] {
-			return fmt.Errorf(
+			errs = append(errs, fmt.Errorf(
 				"%w %q at trust.builders[%d]", ErrDuplicateBuilderID, builder.ID, idx,
-			)
+			))
+
+			continue
 		}
 
 		seenBuilders[builder.ID] = true
 
 		if builder.MaxLevel < 0 || builder.MaxLevel > maxSLSALevel {
-			return fmt.Errorf(
+			errs = append(errs, fmt.Errorf(
 				"%w: trust.builders[%d] %q: got %d",
 				ErrBuilderMaxLevel, idx, builder.ID, builder.MaxLevel,
-			)
+			))
 		}
 	}
 
 	err := p.validateTrustStringFields()
 	if err != nil {
-		return err
+		errs = append(errs, err)
 	}
 
-	return p.validateVerifiers()
+	err = p.validateVerifiers()
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	return errors.Join(errs...)
 }
 
 func (p *Policy) validateTrustStringFields() error {
+	var errs []error
+
 	err := validateNonEmpty("trust.issuers", p.Trust.Issuers)
 	if err != nil {
-		return err
+		errs = append(errs, err)
 	}
 
 	err = validateNonEmpty("trust.sources", p.Trust.Sources)
 	if err != nil {
-		return err
+		errs = append(errs, err)
 	}
 
 	err = validateGlobPatterns("trust.sources", p.Trust.Sources)
 	if err != nil {
-		return err
+		errs = append(errs, err)
 	}
 
 	err = validateNonEmpty("trust.buildTypes", p.Trust.BuildTypes)
 	if err != nil {
-		return err
+		errs = append(errs, err)
 	}
 
 	err = validateNonEmpty("trust.sanPatterns", p.Trust.SANPatterns)
 	if err != nil {
-		return err
+		errs = append(errs, err)
 	}
 
-	return validateGlobPatterns("trust.sanPatterns", p.Trust.SANPatterns)
+	err = validateGlobPatterns("trust.sanPatterns", p.Trust.SANPatterns)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	return errors.Join(errs...)
 }
 
 func (p *Policy) validateVerifiers() error {
+	var errs []error
+
 	seenVerifiers := make(map[string]bool, len(p.Trust.Verifiers))
 
 	for idx, verif := range p.Trust.Verifiers {
 		if verif.ID == "" {
-			return fmt.Errorf(
+			errs = append(errs, fmt.Errorf(
 				"%w: trust.verifiers[%d]", ErrVerifierIDRequired, idx,
-			)
+			))
+
+			continue
 		}
 
 		if seenVerifiers[verif.ID] {
-			return fmt.Errorf(
+			errs = append(errs, fmt.Errorf(
 				"%w %q at trust.verifiers[%d]", ErrDuplicateVerifierID, verif.ID, idx,
-			)
+			))
+
+			continue
 		}
 
 		seenVerifiers[verif.ID] = true
 
 		if verif.Key == "" {
 			if len(p.Trust.Issuers) == 0 {
-				return fmt.Errorf(
+				errs = append(errs, fmt.Errorf(
 					"%w: trust.verifiers[%d] %q",
 					ErrKeylessVerifierRequiresIssuers, idx, verif.ID,
-				)
+				))
 			}
 
 			continue
 		}
 
 		if !filepath.IsAbs(verif.Key) {
-			return fmt.Errorf(
+			errs = append(errs, fmt.Errorf(
 				"%w: trust.verifiers[%d] %q: got %q",
 				ErrVerifierKeyNotAbsolute, idx, verif.ID, verif.Key,
-			)
+			))
 		}
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 func validateGlobPatterns(field string, patterns []string) error {
+	var errs []error
+
 	for idx, pattern := range patterns {
 		_, err := glob.Match(pattern, "")
 		if err != nil {
-			return fmt.Errorf(
+			errs = append(errs, fmt.Errorf(
 				"invalid %s[%d] pattern %q: %w", field, idx, pattern, err,
-			)
+			))
 		}
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 func validateNonEmpty(field string, values []string) error {
+	var errs []error
+
 	for idx, val := range values {
 		if val == "" {
-			return fmt.Errorf("%w in %s[%d]", ErrEmptyValue, field, idx)
+			errs = append(errs, fmt.Errorf("%w in %s[%d]", ErrEmptyValue, field, idx))
 		}
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 func warnEmptyTrust(trust *TrustPolicy) {
@@ -706,12 +763,14 @@ func (p *Policy) validateSLSA() error {
 		return nil
 	}
 
+	var errs []error
+
 	if p.SLSA.MissingPolicy != "" {
 		err := types.ValidateAction(
 			"slsa.missingPolicy", p.SLSA.MissingPolicy,
 		)
 		if err != nil {
-			return fmt.Errorf("validating slsa policy: %w", err)
+			errs = append(errs, fmt.Errorf("validating slsa policy: %w", err))
 		}
 	}
 
@@ -719,10 +778,10 @@ func (p *Policy) validateSLSA() error {
 		"slsa.knownParameters", p.SLSA.KnownParameters,
 	)
 	if err != nil {
-		return err
+		errs = append(errs, err)
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 func (p *Policy) validateVEX() error {
@@ -730,27 +789,30 @@ func (p *Policy) validateVEX() error {
 		return nil
 	}
 
+	var errs []error
+
 	if p.VEX.MissingPolicy != "" {
 		err := types.ValidateAction(
 			"vex.missingPolicy", p.VEX.MissingPolicy,
 		)
 		if err != nil {
-			return fmt.Errorf("validating vex missing policy: %w", err)
+			errs = append(errs, fmt.Errorf("validating vex missing policy: %w", err))
 		}
 	}
 
 	if p.VEX.UnderInvestigationPolicy != "" {
 		err := types.ValidateAction(
-			"vex.underInvestigationPolicy", p.VEX.UnderInvestigationPolicy,
+			"vex.underInvestigationPolicy",
+			p.VEX.UnderInvestigationPolicy,
 		)
 		if err != nil {
-			return fmt.Errorf(
+			errs = append(errs, fmt.Errorf(
 				"validating vex under investigation policy: %w", err,
-			)
+			))
 		}
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 func (p *Policy) validateVSA() error {
@@ -758,24 +820,24 @@ func (p *Policy) validateVSA() error {
 		return nil
 	}
 
+	var errs []error
+
 	if p.VSA.MinimumLevel < 0 || p.VSA.MinimumLevel > maxSLSALevel {
-		return fmt.Errorf(
+		errs = append(errs, fmt.Errorf(
 			"%w: got %d", ErrVSAMinimumLevel, p.VSA.MinimumLevel,
-		)
+		))
 	}
 
 	if p.VSA.MaxAge != "" {
 		maxAge, err := time.ParseDuration(p.VSA.MaxAge)
 		if err != nil {
-			return fmt.Errorf("invalid vsa.maxAge %q: %w", p.VSA.MaxAge, err)
-		}
-
-		if maxAge <= 0 {
-			return fmt.Errorf("%w, got %q", ErrVSAMaxAgeNotPositive, p.VSA.MaxAge)
+			errs = append(errs, fmt.Errorf("invalid vsa.maxAge %q: %w", p.VSA.MaxAge, err))
+		} else if maxAge <= 0 {
+			errs = append(errs, fmt.Errorf("%w, got %q", ErrVSAMaxAgeNotPositive, p.VSA.MaxAge))
 		}
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 // resolveVSADuration parses MaxAge into MaxAgeDuration. Safe to call only

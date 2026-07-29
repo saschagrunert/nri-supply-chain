@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -1321,5 +1322,143 @@ func TestTooManyPolicyFiles(t *testing.T) {
 	_, err := policy.LoadAll(dir)
 	if !errors.Is(err, policy.ErrTooManyPolicyFiles) {
 		t.Errorf("expected ErrTooManyPolicyFiles, got %v", err)
+	}
+}
+
+func TestPolicyValidateCollectsMultipleErrors(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{
+		Trust: &policy.TrustPolicy{
+			Builders: []policy.TrustedBuilder{
+				{ID: ""},
+				{ID: "b1", MaxLevel: 99},
+			},
+		},
+		VSA: &policy.VSAPolicy{
+			MinimumLevel: -1,
+		},
+	}
+
+	err := pol.Validate()
+	testutil.AssertError(t, err)
+
+	if !errors.Is(err, policy.ErrBuilderIDRequired) {
+		t.Errorf("expected ErrBuilderIDRequired, got %v", err)
+	}
+
+	if !errors.Is(err, policy.ErrBuilderMaxLevel) {
+		t.Errorf("expected ErrBuilderMaxLevel, got %v", err)
+	}
+
+	if !errors.Is(err, policy.ErrVSAMinimumLevel) {
+		t.Errorf("expected ErrVSAMinimumLevel, got %v", err)
+	}
+}
+
+func TestPolicyValidateVerifiersCollectsMultipleErrors(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{
+		Trust: &policy.TrustPolicy{
+			Verifiers: []policy.TrustedVerifier{
+				{ID: ""},
+				{ID: "v1", Key: "relative/path"},
+			},
+		},
+	}
+
+	err := pol.Validate()
+	testutil.AssertError(t, err)
+
+	if !errors.Is(err, policy.ErrVerifierIDRequired) {
+		t.Errorf("expected ErrVerifierIDRequired, got %v", err)
+	}
+
+	if !errors.Is(err, policy.ErrVerifierKeyNotAbsolute) {
+		t.Errorf("expected ErrVerifierKeyNotAbsolute, got %v", err)
+	}
+}
+
+func TestLoadAllCollectsMultiplePolicyErrors(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	testutil.WritePolicy(t, dir, "a.json", `{"trust":{"builders":[{"id":""}]}}`)
+	testutil.WritePolicy(t, dir, "b.json", `{"trust":{"builders":[{"id":""}]}}`)
+
+	_, err := policy.LoadAll(dir)
+	testutil.AssertError(t, err)
+
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "a.json") {
+		t.Errorf("expected error to mention a.json, got %v", err)
+	}
+
+	if !strings.Contains(errMsg, "b.json") {
+		t.Errorf("expected error to mention b.json, got %v", err)
+	}
+}
+
+func TestPolicyValidateTrustStringFieldsCollectsMultipleErrors(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{
+		Trust: &policy.TrustPolicy{
+			Issuers:     []string{"valid", ""},
+			Sources:     []string{"", "["},
+			BuildTypes:  []string{""},
+			SANPatterns: []string{"", "["},
+		},
+	}
+
+	err := pol.Validate()
+	testutil.AssertError(t, err)
+
+	if !errors.Is(err, policy.ErrEmptyValue) {
+		t.Errorf("expected ErrEmptyValue, got %v", err)
+	}
+
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "trust.issuers") {
+		t.Errorf("expected error to mention trust.issuers, got %v", err)
+	}
+
+	if !strings.Contains(errMsg, "trust.sources") {
+		t.Errorf("expected error to mention trust.sources, got %v", err)
+	}
+
+	if !strings.Contains(errMsg, "trust.buildTypes") {
+		t.Errorf("expected error to mention trust.buildTypes, got %v", err)
+	}
+
+	if !strings.Contains(errMsg, "trust.sanPatterns") {
+		t.Errorf("expected error to mention trust.sanPatterns, got %v", err)
+	}
+}
+
+func TestPolicyValidateRuntimeCollectsMultipleErrors(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{
+		Trust: &policy.TrustPolicy{
+			Verifiers: []policy.TrustedVerifier{
+				{ID: "v1", Key: "/nonexistent/key1.pub"},
+				{ID: "v2", Key: "/nonexistent/key2.pub"},
+			},
+		},
+	}
+
+	err := pol.ValidateRuntime()
+	testutil.AssertError(t, err)
+
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "key1.pub") {
+		t.Errorf("expected error to mention key1.pub, got %v", err)
+	}
+
+	if !strings.Contains(errMsg, "key2.pub") {
+		t.Errorf("expected error to mention key2.pub, got %v", err)
 	}
 }

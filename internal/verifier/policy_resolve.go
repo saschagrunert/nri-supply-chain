@@ -16,6 +16,7 @@ package verifier
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -56,6 +57,8 @@ func handleMissingPolicy(
 }
 
 func validatePoliciesRuntime(policies map[string]*policy.Policy) error {
+	var errs []error
+
 	for ns, pol := range policies {
 		err := pol.ValidateRuntime()
 		if err != nil {
@@ -64,11 +67,11 @@ func validatePoliciesRuntime(policies map[string]*policy.Policy) error {
 				label = DefaultPolicyLabel
 			}
 
-			return fmt.Errorf("policy %q: %w", label, err)
+			errs = append(errs, fmt.Errorf("policy %q: %w", label, err))
 		}
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 func validatePoliciesEnforce(
@@ -78,6 +81,8 @@ func validatePoliciesEnforce(
 		return nil
 	}
 
+	var errs []error
+
 	for ns, pol := range policies {
 		err := pol.ValidateEnforce()
 		if err != nil {
@@ -86,11 +91,11 @@ func validatePoliciesEnforce(
 				label = DefaultPolicyLabel
 			}
 
-			return fmt.Errorf("policy %q: %w", label, err)
+			errs = append(errs, fmt.Errorf("policy %q: %w", label, err))
 		}
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 func hashPolicies(

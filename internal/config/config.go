@@ -174,31 +174,38 @@ func (c *Config) Enabled() bool {
 
 // Validate checks the Config for invalid values.
 func (c *Config) Validate() error {
+	var errs []error
+
 	switch c.Verification {
 	case ModeDisabled, ModeWarn, ModeEnforce:
 	default:
-		return fmt.Errorf("%w: %q", ErrInvalidVerificationMode, c.Verification)
+		errs = append(errs, fmt.Errorf("%w: %q", ErrInvalidVerificationMode, c.Verification))
 	}
 
 	if c.LogLevel != "" {
 		switch c.LogLevel {
 		case "debug", "info", "warn", "error":
 		default:
-			return fmt.Errorf("%w: %q", ErrInvalidLogLevel, c.LogLevel)
+			errs = append(errs, fmt.Errorf("%w: %q", ErrInvalidLogLevel, c.LogLevel))
 		}
 	}
 
 	err := c.validateMetricsAddr()
 	if err != nil {
-		return err
+		errs = append(errs, err)
 	}
 
 	err = c.validateFetchAndCache()
 	if err != nil {
-		return err
+		errs = append(errs, err)
 	}
 
-	return c.validateResilienceFields()
+	err = c.validateResilienceFields()
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	return errors.Join(errs...)
 }
 
 // ValidateRuntime performs runtime checks that require filesystem access.
@@ -272,71 +279,83 @@ func (c *Config) validateMetricsAddr() error {
 }
 
 func (c *Config) validateFetchAndCache() error {
-	err := types.ValidateAction("fetch_failure_policy", c.FetchFailurePolicy)
+	var errs []error
+
+	err := types.ValidateAction(
+		"fetch_failure_policy", c.FetchFailurePolicy,
+	)
 	if err != nil {
-		return fmt.Errorf("validating config: %w", err)
+		errs = append(errs, fmt.Errorf("validating config: %w", err))
 	}
 
 	if c.FetchTimeout.Duration <= 0 {
-		return fmt.Errorf("%w: got %s", ErrFetchTimeoutNotPositive, c.FetchTimeout.Duration)
+		errs = append(errs, fmt.Errorf(
+			"%w: got %s", ErrFetchTimeoutNotPositive, c.FetchTimeout.Duration,
+		))
 	}
 
 	err = c.validateCacheFields()
 	if err != nil {
-		return err
+		errs = append(errs, err)
 	}
 
 	if c.Enabled() {
 		if c.PolicyDir == "" {
-			return ErrPolicyDirEmpty
-		}
-
-		if !filepath.IsAbs(c.PolicyDir) {
-			return fmt.Errorf("%w: %q", ErrPolicyDirNotAbsolute, c.PolicyDir)
+			errs = append(errs, ErrPolicyDirEmpty)
+		} else if !filepath.IsAbs(c.PolicyDir) {
+			errs = append(errs, fmt.Errorf("%w: %q", ErrPolicyDirNotAbsolute, c.PolicyDir))
 		}
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 func (c *Config) validateCacheFields() error {
+	var errs []error
+
 	if c.CacheTTL.Duration < 0 {
-		return fmt.Errorf("%w: got %s", ErrCacheTTLNegative, c.CacheTTL.Duration)
+		errs = append(errs, fmt.Errorf(
+			"%w: got %s", ErrCacheTTLNegative, c.CacheTTL.Duration,
+		))
 	}
 
 	if c.CacheFailureTTL.Duration < 0 {
-		return fmt.Errorf("%w: got %s", ErrCacheFailureTTLNegative, c.CacheFailureTTL.Duration)
+		errs = append(errs, fmt.Errorf(
+			"%w: got %s", ErrCacheFailureTTLNegative, c.CacheFailureTTL.Duration,
+		))
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 func (c *Config) validateResilienceFields() error {
+	var errs []error
+
 	if c.CircuitBreakerThreshold <= 0 {
-		return fmt.Errorf(
+		errs = append(errs, fmt.Errorf(
 			"%w: got %d", ErrCircuitBreakerThreshold, c.CircuitBreakerThreshold,
-		)
+		))
 	}
 
 	if c.CircuitBreakerCooldown.Duration <= 0 {
-		return fmt.Errorf(
+		errs = append(errs, fmt.Errorf(
 			"%w: got %s", ErrCircuitBreakerCooldown, c.CircuitBreakerCooldown.Duration,
-		)
+		))
 	}
 
 	if c.FetchRateLimit < 0 {
-		return fmt.Errorf(
+		errs = append(errs, fmt.Errorf(
 			"%w: got %g", ErrFetchRateLimitNegative, c.FetchRateLimit,
-		)
+		))
 	}
 
 	if c.FetchRateLimit > maxFetchRateLimit {
-		return fmt.Errorf(
+		errs = append(errs, fmt.Errorf(
 			"%w: got %g, max %g", ErrFetchRateLimitTooHigh, c.FetchRateLimit, maxFetchRateLimit,
-		)
+		))
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 // LoadFromFile reads and parses a TOML config file.

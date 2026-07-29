@@ -781,3 +781,51 @@ policy_dir = "relative/path"
 		t.Errorf("expected error %v, got %v", config.ErrPolicyDirNotAbsolute, err)
 	}
 }
+
+func TestConfigValidateCollectsMultipleErrors(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.VerificationMode("invalid")
+	cfg.LogLevel = "bogus"
+	cfg.CircuitBreakerThreshold = -1
+	cfg.CircuitBreakerCooldown = config.Duration{Duration: -1}
+
+	err := cfg.Validate()
+	testutil.AssertError(t, err)
+
+	if !errors.Is(err, config.ErrInvalidVerificationMode) {
+		t.Errorf("expected ErrInvalidVerificationMode, got %v", err)
+	}
+
+	if !errors.Is(err, config.ErrInvalidLogLevel) {
+		t.Errorf("expected ErrInvalidLogLevel, got %v", err)
+	}
+
+	if !errors.Is(err, config.ErrCircuitBreakerThreshold) {
+		t.Errorf("expected ErrCircuitBreakerThreshold, got %v", err)
+	}
+
+	if !errors.Is(err, config.ErrCircuitBreakerCooldown) {
+		t.Errorf("expected ErrCircuitBreakerCooldown, got %v", err)
+	}
+}
+
+func TestConfigValidateCacheCollectsMultipleErrors(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.CacheTTL = config.Duration{Duration: -1}
+	cfg.CacheFailureTTL = config.Duration{Duration: -1}
+
+	err := cfg.Validate()
+	testutil.AssertError(t, err)
+
+	if !errors.Is(err, config.ErrCacheTTLNegative) {
+		t.Errorf("expected ErrCacheTTLNegative, got %v", err)
+	}
+
+	if !errors.Is(err, config.ErrCacheFailureTTLNegative) {
+		t.Errorf("expected ErrCacheFailureTTLNegative, got %v", err)
+	}
+}

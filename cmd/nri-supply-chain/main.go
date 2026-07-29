@@ -253,33 +253,31 @@ func runValidation(cfg *config.Config) int {
 		return 1
 	}
 
+	var errs []error
+
 	for ns, pol := range policies {
 		label := ns
 		if label == "" {
 			label = verifier.DefaultPolicyLabel
 		}
 
-		err = pol.ValidateRuntime()
+		err := pol.ValidateRuntime()
 		if err != nil {
-			slog.Error("Policy runtime validation failed",
-				"policy", label,
-				"error", err,
-			)
-
-			return 1
+			errs = append(errs, fmt.Errorf("policy %q: %w", label, err))
 		}
 
 		if cfg.Verification == config.ModeEnforce {
 			err = pol.ValidateEnforce()
 			if err != nil {
-				slog.Error("Policy enforce validation failed",
-					"policy", label,
-					"error", err,
-				)
-
-				return 1
+				errs = append(errs, fmt.Errorf("policy %q: %w", label, err))
 			}
 		}
+	}
+
+	if len(errs) > 0 {
+		slog.Error("Validation failed", "error", errors.Join(errs...))
+
+		return 1
 	}
 
 	verifier.WarnEnforceDefaults(cfg, policies)
