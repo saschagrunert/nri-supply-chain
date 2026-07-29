@@ -1273,3 +1273,152 @@ func TestVerifyEnforceModeRejectsOnContextCancel(t *testing.T) {
 		t.Error("expected error in enforce mode on context cancel")
 	}
 }
+
+func TestVerifyIncludeAllowsMatchingImage(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{
+		"include": ["docker.io/myorg/**"],
+		"trust": {"builders": [{"id": "test", "maxLevel": 3}]},
+		"slsa": {"missingPolicy": "allow"}
+	}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+	cfg.PolicyDir = dir
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	result, err := verif.Verify(
+		context.Background(),
+		"docker.io/myorg/app:latest",
+		testDigest, "", "default",
+	)
+	testutil.AssertNoError(t, err)
+
+	if !result.Allowed {
+		t.Errorf("expected included image to be verified and allowed, got denied: %s",
+			result.Reason)
+	}
+}
+
+func TestVerifyIncludeSkipsNonMatchingImage(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{
+		"include": ["docker.io/myorg/**"],
+		"trust": {"builders": [{"id": "test", "maxLevel": 3}]},
+		"slsa": {"missingPolicy": "deny"}
+	}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+	cfg.PolicyDir = dir
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	result, err := verif.Verify(
+		context.Background(),
+		"gcr.io/other/app:latest",
+		testDigest, "", "default",
+	)
+	testutil.AssertNoError(t, err)
+
+	if !result.Allowed {
+		t.Error("expected non-included image to be allowed (skipped)")
+	}
+}
+
+func TestVerifyEmptyIncludeVerifiesEverything(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{
+		"trust": {"builders": [{"id": "test", "maxLevel": 3}]},
+		"slsa": {"missingPolicy": "deny"}
+	}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+	cfg.PolicyDir = dir
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	_, err = verif.Verify(
+		context.Background(),
+		"nginx:latest",
+		testDigest, "", "default",
+	)
+
+	if !errors.Is(err, verifier.ErrVerificationFailed) {
+		t.Errorf("expected verification to run (and fail due to deny policy), got %v", err)
+	}
+}
+
+func TestVerifyExcludeTakesPrecedenceOverInclude(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{
+		"include": ["docker.io/myorg/**"],
+		"exclude": ["docker.io/myorg/internal/*"],
+		"trust": {"builders": [{"id": "test", "maxLevel": 3}]},
+		"slsa": {"missingPolicy": "deny"}
+	}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+	cfg.PolicyDir = dir
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	result, err := verif.Verify(
+		context.Background(),
+		"docker.io/myorg/internal/tool",
+		testDigest, "", "default",
+	)
+	testutil.AssertNoError(t, err)
+
+	if !result.Allowed {
+		t.Errorf(
+			"expected excluded image to be allowed even though it matches include, got denied: %s",
+			result.Reason,
+		)
+	}
+}
+
+func TestVerifyIncludeDoubleStarPattern(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{
+		"include": ["docker.io/myorg/**"],
+		"trust": {"builders": [{"id": "test", "maxLevel": 3}]},
+		"slsa": {"missingPolicy": "allow"}
+	}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+	cfg.PolicyDir = dir
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	result, err := verif.Verify(
+		context.Background(),
+		"docker.io/myorg/team/app:v1",
+		testDigest, "", "default",
+	)
+	testutil.AssertNoError(t, err)
+
+	if !result.Allowed {
+		t.Errorf("expected ** include to match nested path, got denied: %s",
+			result.Reason)
+	}
+}

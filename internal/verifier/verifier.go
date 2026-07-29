@@ -261,6 +261,15 @@ func (v *Verifier) Verify(
 		return result, err
 	}
 
+	if !isIncluded(ctx, pol.Include, imageRef) {
+		state.metrics.VerificationSkippedTotal.WithLabelValues("not_included", namespace).Inc()
+
+		return allowResult(
+			ctx, state.auditLogger, imageRef, digest,
+			namespace, "image is not included",
+		), nil
+	}
+
 	if isExcluded(ctx, pol.Exclude, imageRef) {
 		state.metrics.VerificationSkippedTotal.WithLabelValues("excluded", namespace).Inc()
 
