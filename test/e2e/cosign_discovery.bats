@@ -33,7 +33,7 @@ restore_default_keybased_policy() {
 		cat <<-EOF
 			{
 			  "trust": {
-			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
+			    "verifiers": [{"id": "test-verifier", "keys": ["${COSIGN_PUB}"]}]
 			  },
 			  "slsa": {"missingPolicy": "allow"},
 			  "vex": {"missingPolicy": "allow"},
@@ -249,7 +249,7 @@ delete_oci_referrer() {
 		cat <<-EOF
 			{
 			  "trust": {
-			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
+			    "verifiers": [{"id": "test-verifier", "keys": ["${COSIGN_PUB}"]}]
 			  },
 			  "slsa": {"missingPolicy": "deny"},
 			  "vex": {"missingPolicy": "allow"},

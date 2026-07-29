@@ -288,7 +288,7 @@ func TestRunValidationRuntimeFailure(t *testing.T) {
 	}
 
 	writeValidationPolicy(t, policyDir, "default.json",
-		`{"trust":{"verifiers":[{"id":"test","key":"/nonexistent/key.pub"}]}}`)
+		`{"trust":{"verifiers":[{"id":"test","keys":["/nonexistent/key.pub"]}]}}`)
 
 	cfg := config.DefaultConfig()
 	cfg.Verification = config.ModeEnforce
@@ -468,9 +468,9 @@ func TestRunValidationMultipleErrors(t *testing.T) {
 	}
 
 	writeValidationPolicy(t, policyDir, "a.json",
-		`{"trust":{"verifiers":[{"id":"v1","key":"/nonexistent/a.pub"}]}}`)
+		`{"trust":{"verifiers":[{"id":"v1","keys":["/nonexistent/a.pub"]}]}}`)
 	writeValidationPolicy(t, policyDir, "b.json",
-		`{"trust":{"verifiers":[{"id":"v2","key":"/nonexistent/b.pub"}]}}`)
+		`{"trust":{"verifiers":[{"id":"v2","keys":["/nonexistent/b.pub"]}]}}`)
 
 	cfg := config.DefaultConfig()
 	cfg.Verification = config.ModeWarn

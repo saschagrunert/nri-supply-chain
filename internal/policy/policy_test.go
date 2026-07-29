@@ -34,6 +34,8 @@ const (
 	testVerifierID             = "https://example.com/v"
 	testIssuerURL              = "https://accounts.google.com"
 	testIncludePattern         = "docker.io/myorg/**"
+	testKeyPath                = "/etc/keys/verifier.pub"
+	testValidKeyPath           = "/valid/key.pub"
 	testEmptyMissingPolicyName = "empty missing policy defaults to allow"
 	testExplicitDenyName       = "explicit deny"
 )
@@ -145,7 +147,7 @@ func TestPolicyValidateVerifiers(t *testing.T) {
 				Trust: &policy.TrustPolicy{
 					Builders: nil,
 					Verifiers: []policy.TrustedVerifier{
-						{ID: testBuilderID, Key: ""},
+						{ID: testBuilderID},
 					},
 					Issuers: nil, Sources: nil, BuildTypes: nil,
 				},
@@ -171,12 +173,12 @@ func TestPolicyValidateVerifiers(t *testing.T) {
 			expectedErr: nil,
 		},
 		{
-			name: "verifier with relative key path",
+			name: "verifier with relative key path in keys",
 			policy: policy.Policy{
 				Trust: &policy.TrustPolicy{
 					Builders: nil,
 					Verifiers: []policy.TrustedVerifier{
-						{ID: testBuilderID, Key: "relative/path.pub"},
+						{ID: testBuilderID, Keys: []string{"relative/path.pub"}},
 					},
 					Issuers: nil, Sources: nil, BuildTypes: nil,
 				},
@@ -186,12 +188,12 @@ func TestPolicyValidateVerifiers(t *testing.T) {
 			expectedErr: policy.ErrVerifierKeyNotAbsolute,
 		},
 		{
-			name: "valid verifier with key",
+			name: "valid verifier with single key",
 			policy: policy.Policy{
 				Trust: &policy.TrustPolicy{
 					Builders: nil,
 					Verifiers: []policy.TrustedVerifier{
-						{ID: testBuilderID, Key: "/etc/keys/verifier.pub"},
+						{ID: testBuilderID, Keys: []string{testKeyPath}},
 					},
 					Issuers: nil, Sources: nil, BuildTypes: nil,
 				},
@@ -199,6 +201,93 @@ func TestPolicyValidateVerifiers(t *testing.T) {
 			},
 			wantErr:     false,
 			expectedErr: nil,
+		},
+		{
+			name: "valid verifier with multiple keys",
+			policy: policy.Policy{
+				Trust: &policy.TrustPolicy{
+					Verifiers: []policy.TrustedVerifier{
+						{
+							ID:   testBuilderID,
+							Keys: []string{"/path/a.pub", "/path/b.pub"},
+						},
+					},
+				},
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name: "verifier with keys containing relative path",
+			policy: policy.Policy{
+				Trust: &policy.TrustPolicy{
+					Verifiers: []policy.TrustedVerifier{
+						{
+							ID:   testBuilderID,
+							Keys: []string{"/abs/good.pub", "relative/bad.pub"},
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrVerifierKeyNotAbsolute,
+		},
+		{
+			name: "verifier with keys only is not keyless",
+			policy: policy.Policy{
+				Trust: &policy.TrustPolicy{
+					Verifiers: []policy.TrustedVerifier{
+						{
+							ID:   testBuilderID,
+							Keys: []string{testKeyPath},
+						},
+					},
+				},
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name: "verifier with no keys and no issuers",
+			policy: policy.Policy{
+				Trust: &policy.TrustPolicy{
+					Verifiers: []policy.TrustedVerifier{
+						{ID: testBuilderID},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrKeylessVerifierRequiresIssuers,
+		},
+		{
+			name: "verifier with empty string in keys",
+			policy: policy.Policy{
+				Trust: &policy.TrustPolicy{
+					Verifiers: []policy.TrustedVerifier{
+						{
+							ID:   testBuilderID,
+							Keys: []string{testValidKeyPath, ""},
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrEmptyValue,
+		},
+		{
+			name: "verifier with duplicate keys",
+			policy: policy.Policy{
+				Trust: &policy.TrustPolicy{
+					Verifiers: []policy.TrustedVerifier{
+						{
+							ID:   testBuilderID,
+							Keys: []string{testValidKeyPath, testValidKeyPath},
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrDuplicateVerifierKey,
 		},
 	})
 }
@@ -601,7 +690,7 @@ func TestPolicyValidateVerifierWithoutID(t *testing.T) {
 				Trust: &policy.TrustPolicy{
 					Builders: nil,
 					Verifiers: []policy.TrustedVerifier{
-						{ID: "", Key: "/etc/keys/verifier.pub"},
+						{ID: "", Keys: []string{testKeyPath}},
 					},
 					Issuers: nil, Sources: nil, BuildTypes: nil,
 				},
@@ -1268,7 +1357,7 @@ func TestValidateRuntime(t *testing.T) {
 		pol := &policy.Policy{
 			Trust: &policy.TrustPolicy{
 				Verifiers: []policy.TrustedVerifier{
-					{ID: testVerifierID, Key: keyPath},
+					{ID: testVerifierID, Keys: []string{keyPath}},
 				},
 			},
 		}
@@ -1283,7 +1372,7 @@ func TestValidateRuntime(t *testing.T) {
 		pol := &policy.Policy{
 			Trust: &policy.TrustPolicy{
 				Verifiers: []policy.TrustedVerifier{
-					{ID: testVerifierID, Key: "/nonexistent/key.pub"},
+					{ID: testVerifierID, Keys: []string{"/nonexistent/key.pub"}},
 				},
 			},
 		}
@@ -1300,7 +1389,7 @@ func TestValidateRuntime(t *testing.T) {
 		pol := &policy.Policy{
 			Trust: &policy.TrustPolicy{
 				Verifiers: []policy.TrustedVerifier{
-					{ID: testVerifierID, Key: dir},
+					{ID: testVerifierID, Keys: []string{dir}},
 				},
 			},
 		}
@@ -1311,6 +1400,66 @@ func TestValidateRuntime(t *testing.T) {
 		if !errors.Is(err, policy.ErrNotRegularFile) {
 			t.Errorf("expected ErrNotRegularFile, got %v", err)
 		}
+	})
+
+	t.Run("valid keys files exist", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+
+		key1 := filepath.Join(dir, "old.pub")
+		key2 := filepath.Join(dir, "new.pub")
+
+		writeFile(t, key1, "old-key-data")
+		writeFile(t, key2, "new-key-data")
+
+		pol := &policy.Policy{
+			Trust: &policy.TrustPolicy{
+				Verifiers: []policy.TrustedVerifier{
+					{ID: testVerifierID, Keys: []string{key1, key2}},
+				},
+			},
+		}
+
+		err := pol.ValidateRuntime()
+		testutil.AssertNoError(t, err)
+	})
+
+	t.Run("nonexistent keys path fails", func(t *testing.T) {
+		t.Parallel()
+
+		pol := &policy.Policy{
+			Trust: &policy.TrustPolicy{
+				Verifiers: []policy.TrustedVerifier{
+					{ID: testVerifierID, Keys: []string{"/nonexistent/key.pub"}},
+				},
+			},
+		}
+
+		err := pol.ValidateRuntime()
+		testutil.AssertError(t, err)
+	})
+
+	t.Run("keys with mix of valid and invalid paths", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		existingKey := filepath.Join(dir, "existing.pub")
+		writeFile(t, existingKey, "key-data")
+
+		pol := &policy.Policy{
+			Trust: &policy.TrustPolicy{
+				Verifiers: []policy.TrustedVerifier{
+					{
+						ID:   testVerifierID,
+						Keys: []string{existingKey, "/nonexistent/rotation.pub"},
+					},
+				},
+			},
+		}
+
+		err := pol.ValidateRuntime()
+		testutil.AssertError(t, err)
 	})
 }
 
@@ -1545,7 +1694,7 @@ func TestPolicyValidateVerifiersCollectsMultipleErrors(t *testing.T) {
 		Trust: &policy.TrustPolicy{
 			Verifiers: []policy.TrustedVerifier{
 				{ID: ""},
-				{ID: "v1", Key: "relative/path"},
+				{ID: "v1", Keys: []string{"relative/path"}},
 			},
 		},
 	}
@@ -1626,8 +1775,8 @@ func TestPolicyValidateRuntimeCollectsMultipleErrors(t *testing.T) {
 	pol := &policy.Policy{
 		Trust: &policy.TrustPolicy{
 			Verifiers: []policy.TrustedVerifier{
-				{ID: "v1", Key: "/nonexistent/key1.pub"},
-				{ID: "v2", Key: "/nonexistent/key2.pub"},
+				{ID: "v1", Keys: []string{"/nonexistent/key1.pub"}},
+				{ID: "v2", Keys: []string{"/nonexistent/key2.pub"}},
 			},
 		},
 	}
@@ -1642,5 +1791,32 @@ func TestPolicyValidateRuntimeCollectsMultipleErrors(t *testing.T) {
 
 	if !strings.Contains(errMsg, "key2.pub") {
 		t.Errorf("expected error to mention key2.pub, got %v", err)
+	}
+}
+
+func TestCloneIsolatesVerifierKeys(t *testing.T) {
+	t.Parallel()
+
+	original := &policy.Policy{
+		Trust: &policy.TrustPolicy{
+			Verifiers: []policy.TrustedVerifier{
+				{ID: "v1", Keys: []string{"/a.pub", "/b.pub"}},
+			},
+		},
+	}
+
+	clone := policy.MergeWithDefault(&policy.Policy{}, original)
+
+	clone.Trust.Verifiers[0].Keys[0] = "/mutated.pub"
+	clone.Trust.Verifiers[0].Keys = append(clone.Trust.Verifiers[0].Keys, "/c.pub")
+
+	if original.Trust.Verifiers[0].Keys[0] != "/a.pub" {
+		t.Errorf("expected original keys[0] to be /a.pub, got %s",
+			original.Trust.Verifiers[0].Keys[0])
+	}
+
+	if len(original.Trust.Verifiers[0].Keys) != 2 {
+		t.Errorf("expected original to have 2 keys, got %d",
+			len(original.Trust.Verifiers[0].Keys))
 	}
 }

@@ -57,7 +57,7 @@ create_sigstore_images() {
 		cat <<-EOF
 			{
 			  "trust": {
-			    "verifiers": [{"id": "wrong-verifier", "key": "${wrong_key}.pub"}]
+			    "verifiers": [{"id": "wrong-verifier", "keys": ["${wrong_key}.pub"]}]
 			  },
 			  "slsa": {"missingPolicy": "deny"},
 			  "vex": {"missingPolicy": "allow"},
@@ -78,7 +78,7 @@ create_sigstore_images() {
 		cat <<-EOF
 			{
 			  "trust": {
-			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
+			    "verifiers": [{"id": "test-verifier", "keys": ["${COSIGN_PUB}"]}]
 			  },
 			  "slsa": {"missingPolicy": "deny"},
 			  "vex": {"missingPolicy": "allow"},
@@ -103,8 +103,8 @@ create_sigstore_images() {
 			{
 			  "trust": {
 			    "verifiers": [
-			      {"id": "wrong-verifier", "key": "${wrong_key}.pub"},
-			      {"id": "correct-verifier", "key": "${COSIGN_PUB}"}
+			      {"id": "wrong-verifier", "keys": ["${wrong_key}.pub"]},
+			      {"id": "correct-verifier", "keys": ["${COSIGN_PUB}"]}
 			    ]
 			  },
 			  "slsa": {"missingPolicy": "deny"},

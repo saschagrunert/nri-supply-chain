@@ -34,6 +34,7 @@ patterns for the nri-supply-chain plugin.
 - [Deployment Patterns](#deployment-patterns)
   - [Gradual rollout](#gradual-rollout)
   - [VSA-accelerated verification](#vsa-accelerated-verification)
+  - [Key rotation](#key-rotation)
   - [Multi-verification mode](#multi-verification-mode)
 
 <!-- /toc -->
@@ -98,7 +99,7 @@ For key-based verification with a local public key:
     "verifiers": [
       {
         "id": "my-verifier",
-        "key": "/etc/nri-supply-chain/keys/cosign.pub"
+        "keys": ["/etc/nri-supply-chain/keys/cosign.pub"]
       }
     ]
   }
@@ -304,8 +305,11 @@ nri-supply-chain --json-schema policy
         "id": {
           "type": "string"
         },
-        "key": {
-          "type": "string"
+        "keys": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "additionalProperties": false,
@@ -367,7 +371,7 @@ Trust roots for verification. All sub-fields are optional.
 | Field         | Type  | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ------------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `builders`    | array | Trusted SLSA provenance builders. Each entry has `id` (URI) and `maxLevel` (0-3). Builder IDs must be unique within a policy. Note: `maxLevel` is only enforced by VSA verification (`vsa.minimumLevel`), not during SLSA provenance checks, because provenance attestations do not declare a build level.                                                                                                                                                                                    |
-| `verifiers`   | array | Trusted VSA verifiers. Each entry has `id` (URI) and an optional `key` (absolute path to PEM public key). Verifier IDs must be unique within a policy. When `key` is set, it is also used for Sigstore bundle signature verification. When `key` is omitted, bundles are verified via keyless (Fulcio/OIDC) using `issuers` and `sanPatterns`, which must be configured.                                                                                                                      |
+| `verifiers`   | array | Trusted VSA verifiers. Each entry has `id` (URI) and an optional `keys` (array of absolute paths to PEM public keys). Verifier IDs must be unique within a policy. When `keys` is set, the keys are used for Sigstore bundle signature verification. Use `keys` for key rotation so that both old and new keys are accepted simultaneously. When `keys` is empty or omitted, bundles are verified via keyless (Fulcio/OIDC) using `issuers` and `sanPatterns`, which must be configured.      |
 | `issuers`     | array | Trusted OIDC issuers for keyless (Fulcio) verification.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `sanPatterns` | array | Accepted certificate Subject Alternative Names. Supports glob patterns: `*` matches any non-`/` sequence, `**` matches any characters including `/`, `?` matches a single non-`/` character, `[...]` matches a character class. Use `**` for GitHub Actions OIDC SANs that include workflow paths (e.g., `https://github.com/org/repo/**`). Required when `issuers` is set in `enforce` mode. In `warn` mode, omitting this field accepts any SAN from a trusted issuer (with a log warning). |
 | `sources`     | array | Allowed source repository glob patterns. Supports the same glob syntax as `sanPatterns`: `*` matches non-`/` characters, `**` matches any characters including `/`.                                                                                                                                                                                                                                                                                                                           |
@@ -553,8 +557,8 @@ to restrict accepted certificate SANs. In `warn` mode, omitting `sanPatterns`
 accepts any SAN from a trusted issuer (with a log warning). Requires the
 Sigstore public-good instance (Fulcio + Rekor).
 
-**Key-based**: Uses a local PEM public key. Configure `trust.verifiers` with
-the verifier ID and key path. Does not require network access to Sigstore
+**Key-based**: Uses local PEM public keys. Configure `trust.verifiers` with
+the verifier ID and `keys` paths. Does not require network access to Sigstore
 infrastructure.
 
 When `signatures.requireTransparencyLog` is true, attestations must include a
@@ -714,7 +718,7 @@ verifying SLSA + VEX individually:
     "verifiers": [
       {
         "id": "https://verifier.internal/prod",
-        "key": "/etc/nri-supply-chain/keys/verifier.pub"
+        "keys": ["/etc/nri-supply-chain/keys/verifier.pub"]
       }
     ]
   },
@@ -729,6 +733,33 @@ verifying SLSA + VEX individually:
 }
 ```
 
+### Key rotation
+
+During key rotation, configure `keys` to accept both the old and new verifier
+keys simultaneously. Attestations signed by either key are accepted:
+
+```json
+{
+  "trust": {
+    "verifiers": [
+      {
+        "id": "https://verifier.internal/prod",
+        "keys": [
+          "/etc/nri-supply-chain/keys/verifier-2024.pub",
+          "/etc/nri-supply-chain/keys/verifier-2025.pub"
+        ]
+      }
+    ]
+  },
+  "slsa": {
+    "missingPolicy": "deny"
+  }
+}
+```
+
+Once all attestations have been re-signed with the new key, remove the old key
+from the `keys` list.
+
 ### Multi-verification mode
 
 Combine key-based and keyless verification for images from different sources.
@@ -740,7 +771,7 @@ The plugin tries both modes; either can satisfy the policy:
     "verifiers": [
       {
         "id": "internal-signer",
-        "key": "/etc/nri-supply-chain/keys/cosign.pub"
+        "keys": ["/etc/nri-supply-chain/keys/cosign.pub"]
       }
     ],
     "issuers": ["https://token.actions.githubusercontent.com"],

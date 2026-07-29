@@ -34,7 +34,7 @@ restore_default_keyless_policy() {
 			{
 			  "trust": {
 			    "builders": [{"id": "https://test-builder.example.com", "maxLevel": 3}],
-			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}],
+			    "verifiers": [{"id": "test-verifier", "keys": ["${COSIGN_PUB}"]}],
 			    "sources": ["https://github.com/testorg/*"]
 			  },
 			  "slsa": {"missingPolicy": "deny"},
@@ -94,7 +94,7 @@ create_slsa_images() {
 			{
 			  "trust": {
 			    "builders": [{"id": "https://builder.example.com/untrusted", "maxLevel": 3}],
-			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
+			    "verifiers": [{"id": "test-verifier", "keys": ["${COSIGN_PUB}"]}]
 			  },
 			  "slsa": {"missingPolicy": "deny"},
 			  "vex": {"missingPolicy": "allow"},
@@ -121,7 +121,7 @@ create_slsa_images() {
 			{
 			  "trust": {
 			    "builders": [{"id": "https://test-builder.example.com", "maxLevel": 3}],
-			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}],
+			    "verifiers": [{"id": "test-verifier", "keys": ["${COSIGN_PUB}"]}],
 			    "sources": ["https://github.com/myorg/*"]
 			  },
 			  "slsa": {"missingPolicy": "deny"},
@@ -144,7 +144,7 @@ create_slsa_images() {
 			{
 			  "trust": {
 			    "builders": [{"id": "https://test-builder.example.com", "maxLevel": 3}],
-			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}],
+			    "verifiers": [{"id": "test-verifier", "keys": ["${COSIGN_PUB}"]}],
 			    "buildTypes": ["https://example.com/CustomBuildType"]
 			  },
 			  "slsa": {"missingPolicy": "deny"},
@@ -167,7 +167,7 @@ create_slsa_images() {
 			{
 			  "trust": {
 			    "builders": [{"id": "https://test-builder.example.com", "maxLevel": 3}],
-			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}],
+			    "verifiers": [{"id": "test-verifier", "keys": ["${COSIGN_PUB}"]}],
 			    "buildTypes": ["https://example.com/WrongBuildType"]
 			  },
 			  "slsa": {"missingPolicy": "deny"},
@@ -189,7 +189,7 @@ create_slsa_images() {
 		cat <<-EOF
 			{
 			  "trust": {
-			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
+			    "verifiers": [{"id": "test-verifier", "keys": ["${COSIGN_PUB}"]}]
 			  },
 			  "slsa": {"missingPolicy": "deny", "rejectUnknownParameters": true},
 			  "vex": {"missingPolicy": "allow"},
@@ -211,7 +211,7 @@ create_slsa_images() {
 			{
 			  "trust": {
 			    "builders": [{"id": "https://test-builder.example.com", "maxLevel": 3}],
-			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
+			    "verifiers": [{"id": "test-verifier", "keys": ["${COSIGN_PUB}"]}]
 			  },
 			  "slsa": {"missingPolicy": "deny", "rejectUnknownParameters": false},
 			  "vex": {"missingPolicy": "allow"},
@@ -238,7 +238,7 @@ create_slsa_images() {
 		cat <<-EOF
 			{
 			  "trust": {
-			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
+			    "verifiers": [{"id": "test-verifier", "keys": ["${COSIGN_PUB}"]}]
 			  },
 			  "slsa": {"missingPolicy": "deny"},
 			  "vex": {"missingPolicy": "allow"},

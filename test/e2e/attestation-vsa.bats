@@ -149,7 +149,7 @@ create_vsa_images() {
 		cat <<-EOF
 			{
 			  "trust": {
-			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
+			    "verifiers": [{"id": "test-verifier", "keys": ["${COSIGN_PUB}"]}]
 			  },
 			  "slsa": {"missingPolicy": "deny"},
 			  "vex": {"missingPolicy": "deny"},
@@ -172,7 +172,7 @@ create_vsa_images() {
 		cat <<-EOF
 			{
 			  "trust": {
-			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
+			    "verifiers": [{"id": "test-verifier", "keys": ["${COSIGN_PUB}"]}]
 			  },
 			  "slsa": {"missingPolicy": "allow"},
 			  "vex": {"missingPolicy": "allow"},
@@ -195,7 +195,7 @@ create_vsa_images() {
 		cat <<-EOF
 			{
 			  "trust": {
-			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
+			    "verifiers": [{"id": "test-verifier", "keys": ["${COSIGN_PUB}"]}]
 			  },
 			  "slsa": {"missingPolicy": "allow"},
 			  "vex": {"missingPolicy": "allow"},
@@ -217,7 +217,7 @@ create_vsa_images() {
 		cat <<-EOF
 			{
 			  "trust": {
-			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
+			    "verifiers": [{"id": "test-verifier", "keys": ["${COSIGN_PUB}"]}]
 			  },
 			  "slsa": {"missingPolicy": "allow"},
 			  "vex": {"missingPolicy": "allow"},
@@ -239,7 +239,7 @@ create_vsa_images() {
 		cat <<-EOF
 			{
 			  "trust": {
-			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
+			    "verifiers": [{"id": "test-verifier", "keys": ["${COSIGN_PUB}"]}]
 			  },
 			  "slsa": {"missingPolicy": "deny"},
 			  "vex": {"missingPolicy": "allow"},
@@ -261,7 +261,7 @@ create_vsa_images() {
 		cat <<-EOF
 			{
 			  "trust": {
-			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
+			    "verifiers": [{"id": "test-verifier", "keys": ["${COSIGN_PUB}"]}]
 			  },
 			  "slsa": {"missingPolicy": "deny"},
 			  "vex": {"missingPolicy": "allow"},
@@ -283,7 +283,7 @@ create_vsa_images() {
 		cat <<-EOF
 			{
 			  "trust": {
-			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
+			    "verifiers": [{"id": "test-verifier", "keys": ["${COSIGN_PUB}"]}]
 			  },
 			  "slsa": {"missingPolicy": "allow"},
 			  "vex": {"missingPolicy": "allow"},
@@ -306,7 +306,7 @@ create_vsa_images() {
 		cat <<-EOF
 			{
 			  "trust": {
-			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
+			    "verifiers": [{"id": "test-verifier", "keys": ["${COSIGN_PUB}"]}]
 			  },
 			  "slsa": {"missingPolicy": "deny"},
 			  "vex": {"missingPolicy": "allow"},
@@ -328,7 +328,7 @@ create_vsa_images() {
 		cat <<-EOF
 			{
 			  "trust": {
-			    "verifiers": [{"id": "test-verifier", "key": "${COSIGN_PUB}"}]
+			    "verifiers": [{"id": "test-verifier", "keys": ["${COSIGN_PUB}"]}]
 			  },
 			  "slsa": {"missingPolicy": "deny"},
 			  "vex": {"missingPolicy": "allow"},
