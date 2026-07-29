@@ -31,10 +31,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
-const (
-	fileWatchDebounce = 500 * time.Millisecond
-	panicExitCode     = 2
-)
+const fileWatchDebounce = 500 * time.Millisecond
 
 func setupSignals(
 	ctx context.Context, cancel context.CancelFunc,
@@ -316,7 +313,7 @@ func handleShutdown(
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("Recovered panic in shutdown handler", "error", r)
-				os.Exit(panicExitCode)
+				os.Exit(exitError)
 			}
 		}()
 
@@ -333,7 +330,7 @@ func handleShutdown(
 		case <-done:
 		case <-sigCh:
 			slog.Warn("Received second signal, forcing exit")
-			os.Exit(1)
+			os.Exit(exitError)
 		}
 	}()
 }

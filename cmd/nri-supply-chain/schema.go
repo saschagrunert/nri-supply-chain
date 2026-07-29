@@ -93,21 +93,21 @@ func printJSONSchema(schemaType string) int {
 			"type", schemaType,
 		)
 
-		return 1
+		return exitError
 	}
 
 	if err != nil {
 		slog.Error("Failed to generate JSON Schema", "error", err)
 
-		return 1
+		return exitError
 	}
 
 	_, err = os.Stdout.Write(data)
 	if err != nil {
 		slog.Error("Failed to write JSON Schema", "error", err)
 
-		return 1
+		return exitError
 	}
 
-	return 0
+	return exitSuccess
 }

@@ -18,6 +18,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -40,6 +42,8 @@ import (
 	internaltypes "github.com/saschagrunert/nri-supply-chain/internal/types"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
+
+var errTestInternal = errors.New("internal error")
 
 const (
 	testArchAmd64  = "amd64"
@@ -476,8 +480,8 @@ func TestRunVerifyInvalidOutputFormat(t *testing.T) {
 		outputFormat:    "xml",
 	}
 
-	if code := runVerify(opts, cfg); code != 1 {
-		t.Errorf("exit code = %d, want 1", code)
+	if code := runVerify(opts, cfg); code != exitError {
+		t.Errorf("exit code = %d, want %d", code, exitError)
 	}
 }
 
@@ -502,8 +506,8 @@ func TestRunVerifyResolveDigestFails(t *testing.T) {
 	}
 
 	code := runVerify(opts, cfg)
-	if code != 1 {
-		t.Errorf("exit code = %d, want 1", code)
+	if code != exitError {
+		t.Errorf("exit code = %d, want %d", code, exitError)
 	}
 }
 
@@ -518,51 +522,125 @@ func TestRunVerifyDisabledErrors(t *testing.T) {
 	}
 
 	code := runVerify(opts, cfg)
-	if code != 1 {
-		t.Errorf("expected exit code 1 for disabled verification, got %d", code)
+	if code != exitError {
+		t.Errorf("expected exit code %d for disabled verification, got %d", exitError, code)
 	}
 }
 
-func TestRunVerifyEnforceDenied(t *testing.T) {
+func TestRunVerifyExitCodes(t *testing.T) {
 	t.Parallel()
-	// Push image to in-memory registry, then verify with enforce mode.
-	regHandler := registry.New()
-	server := httptest.NewServer(regHandler)
 
-	t.Cleanup(server.Close)
-
-	addr := strings.TrimPrefix(server.URL, "http://")
-	imgRef := addr + "/deny-test:latest"
-
-	img, err := mutate.ConfigFile(empty.Image, nil)
-	if err != nil {
-		t.Fatalf("creating test image: %v", err)
+	tests := []struct {
+		name          string
+		imageSuffix   string
+		mode          config.VerificationMode
+		missingPolicy string
+		wantCode      int
+		wantAllowed   bool
+	}{
+		{
+			name:          "denied returns exit code 1",
+			imageSuffix:   "deny-exit-test",
+			mode:          config.ModeEnforce,
+			missingPolicy: "deny",
+			wantCode:      exitDenied,
+			wantAllowed:   false,
+		},
+		{
+			name:          "allowed returns exit code 0",
+			imageSuffix:   "allow-exit-test",
+			mode:          config.ModeWarn,
+			missingPolicy: "warn",
+			wantCode:      exitSuccess,
+			wantAllowed:   true,
+		},
 	}
 
-	err = crane.Push(img, imgRef, crane.Insecure)
-	if err != nil {
-		t.Fatalf("pushing test image: %v", err)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			regHandler := registry.New()
+			server := httptest.NewServer(regHandler)
+
+			t.Cleanup(server.Close)
+
+			addr := strings.TrimPrefix(server.URL, "http://")
+			imgRef := addr + "/" + test.imageSuffix + ":latest"
+
+			img, err := mutate.ConfigFile(empty.Image, nil)
+			if err != nil {
+				t.Fatalf("creating test image: %v", err)
+			}
+
+			err = crane.Push(img, imgRef, crane.Insecure)
+			if err != nil {
+				t.Fatalf("pushing test image: %v", err)
+			}
+
+			policyDir := t.TempDir()
+			writeValidationPolicy(t, policyDir, "default.json",
+				`{"slsa": {"missingPolicy": "`+test.missingPolicy+`"}}`)
+
+			cfg := config.DefaultConfig()
+			cfg.Verification = test.mode
+			cfg.PolicyDir = policyDir
+
+			opts := &options{ //nolint:exhaustruct // test only sets relevant fields
+				verifyImage:     imgRef,
+				verifyNamespace: verifier.DefaultPolicyLabel,
+				outputFormat:    outputFormatJSON,
+			}
+
+			var buf bytes.Buffer
+
+			code := runVerifyTo(&buf, opts, cfg)
+			if code != test.wantCode {
+				t.Errorf("exit code = %d, want %d", code, test.wantCode)
+			}
+
+			lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+			lastJSON := findLastJSON(lines)
+
+			if lastJSON != "" {
+				var out verifyOutput
+
+				err = json.Unmarshal([]byte(lastJSON), &out)
+				if err != nil {
+					t.Fatalf("invalid JSON: %v\nraw: %s", err, lastJSON)
+				}
+
+				if out.Allowed != test.wantAllowed {
+					t.Errorf("Allowed = %v, want %v", out.Allowed, test.wantAllowed)
+				}
+			}
+		})
 	}
+}
 
-	policyDir := t.TempDir()
-	writeValidationPolicy(t, policyDir, "default.json",
-		`{"slsa": {"missingPolicy": "deny"}}`)
+func TestExitCodeForVerifyError(t *testing.T) {
+	t.Parallel()
 
-	cfg := config.DefaultConfig()
-	cfg.Verification = config.ModeEnforce
-	cfg.PolicyDir = policyDir
+	t.Run("ErrVerificationFailed returns exitDenied", func(t *testing.T) {
+		t.Parallel()
 
-	opts := &options{ //nolint:exhaustruct // test only sets relevant fields
-		verifyImage:     imgRef,
-		verifyNamespace: verifier.DefaultPolicyLabel,
-		outputFormat:    outputFormatJSON,
-	}
+		err := fmt.Errorf("wrapped: %w", verifier.ErrVerificationFailed)
+		code := exitCodeForVerifyError(err)
 
-	out := captureRunVerify(t, opts, cfg)
+		if code != exitDenied {
+			t.Errorf("exit code = %d, want %d", code, exitDenied)
+		}
+	})
 
-	if out.Allowed {
-		t.Error("expected Allowed = false for enforce mode with deny policy")
-	}
+	t.Run("other error returns exitError", func(t *testing.T) {
+		t.Parallel()
+
+		code := exitCodeForVerifyError(errTestInternal)
+
+		if code != exitError {
+			t.Errorf("exit code = %d, want %d", code, exitError)
+		}
+	})
 }
 
 func TestRunVerifyVerifierNewError(t *testing.T) {
@@ -584,8 +662,8 @@ func TestRunVerifyVerifierNewError(t *testing.T) {
 	}
 
 	code := runVerify(opts, cfg)
-	if code != 1 {
-		t.Errorf("exit code = %d, want 1", code)
+	if code != exitError {
+		t.Errorf("exit code = %d, want %d", code, exitError)
 	}
 }
 
@@ -625,7 +703,11 @@ func TestRunVerifyWarnModeWithChecks(t *testing.T) {
 		outputFormat:    outputFormatJSON,
 	}
 
-	out := captureRunVerify(t, opts, cfg)
+	out, code := captureRunVerify(t, opts, cfg)
+
+	if code != exitSuccess {
+		t.Errorf("expected exit code %d, got %d", exitSuccess, code)
+	}
 
 	if !out.Allowed {
 		t.Error("expected Allowed = true for warn mode")
@@ -636,12 +718,14 @@ func TestRunVerifyWarnModeWithChecks(t *testing.T) {
 	}
 }
 
-func captureRunVerify(t *testing.T, opts *options, cfg *config.Config) verifyOutput {
+func captureRunVerify(
+	t *testing.T, opts *options, cfg *config.Config,
+) (out verifyOutput, exitCode int) {
 	t.Helper()
 
 	var buf bytes.Buffer
 
-	_ = runVerifyTo(&buf, opts, cfg)
+	code := runVerifyTo(&buf, opts, cfg)
 
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
 	lastJSON := findLastJSON(lines)
@@ -650,14 +734,12 @@ func captureRunVerify(t *testing.T, opts *options, cfg *config.Config) verifyOut
 		t.Fatalf("no JSON found in output: %s", buf.String())
 	}
 
-	var out verifyOutput
-
 	err := json.Unmarshal([]byte(lastJSON), &out)
 	if err != nil {
 		t.Fatalf("invalid JSON: %v\nraw: %s", err, lastJSON)
 	}
 
-	return out
+	return out, code
 }
 
 func findLastJSON(lines []string) string {

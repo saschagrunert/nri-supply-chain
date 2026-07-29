@@ -17,6 +17,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -62,13 +63,13 @@ func runVerifyTo(writer io.Writer, opts *options, cfg *config.Config) int {
 	if opts.outputFormat != outputFormatTable && opts.outputFormat != outputFormatJSON {
 		slog.Error("Invalid output format", "format", opts.outputFormat)
 
-		return 1
+		return exitError
 	}
 
 	if !cfg.Enabled() {
 		slog.Error("--verify-image requires verification to be enabled")
 
-		return 1
+		return exitError
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -78,7 +79,7 @@ func runVerifyTo(writer io.Writer, opts *options, cfg *config.Config) int {
 	if err != nil {
 		slog.Error("Failed to create verifier", "error", err)
 
-		return 1
+		return exitError
 	}
 
 	defer verif.Stop()
@@ -98,7 +99,7 @@ func executeVerify(
 	if err != nil {
 		slog.Error("Failed to resolve image digest", "image", imageRef, "error", err)
 
-		return 1
+		return exitError
 	}
 
 	result, err := verif.Verify(
@@ -117,24 +118,34 @@ func executeVerify(
 			slog.Error("Failed to write output", "error", outErr)
 		}
 
-		return 1
+		return exitCodeForVerifyError(err)
 	}
 
 	out.Allowed = result.Allowed
 	out.Reason = result.Reason
 
+	// Output failure is an infrastructure error regardless of the
+	// verification result, so return exitError unconditionally.
 	outErr := outputVerifyResult(writer, opts.outputFormat, out)
 	if outErr != nil {
 		slog.Error("Failed to write output", "error", outErr)
 
-		return 1
+		return exitError
 	}
 
 	if !result.Allowed {
-		return 1
+		return exitDenied
 	}
 
-	return 0
+	return exitSuccess
+}
+
+func exitCodeForVerifyError(err error) int {
+	if errors.Is(err, verifier.ErrVerificationFailed) {
+		return exitDenied
+	}
+
+	return exitError
 }
 
 func newVerifier(
