@@ -102,7 +102,7 @@ func New(cfg *config.Config, met *metrics.Metrics, fetcher attestation.Fetcher) 
 	}
 
 	if cfgCopy.Enabled() {
-		err = validatePoliciesEnforce(cfgCopy.Verification, policies)
+		err = validatePoliciesModes(cfgCopy.Verification, policies)
 		if err != nil {
 			return nil, err
 		}
@@ -152,10 +152,42 @@ func newSnapshot(
 // WarnEnforceDefaults logs warnings when enforce mode is used with
 // permissive settings that may allow unverified containers through.
 func WarnEnforceDefaults(cfg *config.Config, policies map[string]*policy.Policy) {
-	if cfg.Verification != config.ModeEnforce {
-		return
+	if anyEnforceMode(cfg.Verification, policies) {
+		warnPermissiveFetchPolicy(cfg)
 	}
 
+	for namespace, pol := range policies {
+		effectiveMode := pol.EffectiveMode(cfg.Verification)
+		if effectiveMode != config.ModeEnforce {
+			continue
+		}
+
+		label := namespace
+		if label == "" {
+			label = DefaultPolicyLabel
+		}
+
+		warnPermissiveMissingPolicies(label, pol)
+	}
+}
+
+func anyEnforceMode(
+	global config.VerificationMode, policies map[string]*policy.Policy,
+) bool {
+	if global == config.ModeEnforce {
+		return true
+	}
+
+	for _, pol := range policies {
+		if pol.EffectiveMode(global) == config.ModeEnforce {
+			return true
+		}
+	}
+
+	return false
+}
+
+func warnPermissiveFetchPolicy(cfg *config.Config) {
 	switch cfg.FetchFailurePolicy {
 	case types.ActionDeny:
 	case types.ActionWarn, types.ActionAllow:
@@ -168,28 +200,23 @@ func WarnEnforceDefaults(cfg *config.Config, policies map[string]*policy.Policy)
 			cfg.CircuitBreakerThreshold,
 		)
 	}
+}
 
-	for ns, pol := range policies {
-		label := ns
-		if label == "" {
-			label = DefaultPolicyLabel
-		}
+func warnPermissiveMissingPolicies(label string, pol *policy.Policy) {
+	if pol.SLSAMissingPolicy() == types.ActionAllow {
+		slog.Warn("enforce mode with default SLSA missing_policy=allow allows "+
+			"containers without SLSA provenance attestations; consider setting missingPolicy=deny",
+			"policy", label,
+			"slsa_missing_policy", pol.SLSAMissingPolicy(),
+		)
+	}
 
-		if pol.SLSAMissingPolicy() == types.ActionAllow {
-			slog.Warn("enforce mode with default SLSA missing_policy=allow allows "+
-				"containers without SLSA provenance attestations; consider setting missingPolicy=deny",
-				"policy", label,
-				"slsa_missing_policy", pol.SLSAMissingPolicy(),
-			)
-		}
-
-		if pol.VEXMissingPolicy() == types.ActionAllow {
-			slog.Warn("enforce mode with default VEX missing_policy=allow allows "+
-				"containers without VEX attestations; consider setting vex.missingPolicy=deny",
-				"policy", label,
-				"vex_missing_policy", pol.VEXMissingPolicy(),
-			)
-		}
+	if pol.VEXMissingPolicy() == types.ActionAllow {
+		slog.Warn("enforce mode with default VEX missing_policy=allow allows "+
+			"containers without VEX attestations; consider setting vex.missingPolicy=deny",
+			"policy", label,
+			"vex_missing_policy", pol.VEXMissingPolicy(),
+		)
 	}
 }
 
@@ -206,9 +233,24 @@ func (v *Verifier) Stop() {
 	v.state.Load().cache.Stop()
 }
 
-// Enforcing returns true if the verifier is in enforce mode.
+// Enforcing returns true if the global verification mode is enforce.
+// It does not account for per-namespace mode overrides. Callers that
+// need per-namespace semantics should use EffectiveModeForNamespace.
 func (v *Verifier) Enforcing() bool {
 	return v.state.Load().config.Verification == config.ModeEnforce
+}
+
+// EffectiveModeForNamespace returns the verification mode that applies to the
+// given namespace, taking per-namespace mode overrides into account.
+func (v *Verifier) EffectiveModeForNamespace(namespace string) config.VerificationMode {
+	state := v.snap()
+	pol := policyForNamespace(state.policies, namespace)
+
+	if pol == nil {
+		return state.config.Verification
+	}
+
+	return pol.EffectiveMode(state.config.Verification)
 }
 
 // Ready returns true if the verifier is ready to serve requests.
@@ -280,26 +322,30 @@ func (v *Verifier) Verify(
 		), nil
 	}
 
-	result, err := v.handleCacheHit(ctx, state, imageRef, digest, namespace)
+	effectiveMode := pol.EffectiveMode(state.config.Verification)
+
+	result, err := v.handleCacheHit(ctx, state, effectiveMode, imageRef, digest, namespace)
 	if result != nil || err != nil {
 		return result, err
 	}
 
 	result, err = v.verifyOnce(ctx, state, pol, imageRef, digest, indexDigest, namespace)
 	if err != nil {
-		return handleVerifyError(ctx, state, imageRef, digest, namespace, err)
+		return handleVerifyError(ctx, state, effectiveMode, imageRef, digest, namespace, err)
 	}
 
-	return applyEnforcement(ctx, state.config, result, imageRef)
+	return applyEnforcement(ctx, effectiveMode, result, imageRef)
 }
 
 func handleVerifyError(
 	ctx context.Context, state *snapshot,
+	mode config.VerificationMode,
 	imageRef, digest, namespace string, err error,
 ) (*types.Result, error) {
-	if state.config.Verification != config.ModeEnforce {
-		slog.WarnContext(ctx, "Verification error (warn mode, allowing)",
+	if mode != config.ModeEnforce {
+		slog.WarnContext(ctx, "Verification error (non-enforce mode, allowing)",
 			"image", imageRef,
+			"mode", mode,
 			"error", err,
 		)
 
@@ -329,9 +375,11 @@ func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
-	err = validatePoliciesEnforce(cfgCopy.Verification, policies)
-	if err != nil {
-		return err
+	if cfgCopy.Enabled() {
+		err = validatePoliciesModes(cfgCopy.Verification, policies)
+		if err != nil {
+			return err
+		}
 	}
 
 	prev := v.state.Load()
@@ -367,13 +415,16 @@ func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 	})
 	v.policyHashes = newHashes
 
-	WarnEnforceDefaults(&cfgCopy, policies)
+	if cfgCopy.Enabled() {
+		WarnEnforceDefaults(&cfgCopy, policies)
+	}
 
 	return nil
 }
 
 func (v *Verifier) handleCacheHit(
 	ctx context.Context, state *snapshot,
+	mode config.VerificationMode,
 	imageRef, digest, namespace string,
 ) (*types.Result, error) {
 	cached := state.cache.Get(digest, namespace)
@@ -394,7 +445,7 @@ func (v *Verifier) handleCacheHit(
 	logResult(ctx, state.auditLogger, imageRef, digest, namespace, &result)
 	recordMetrics(state.metrics, &result, namespace)
 
-	return applyEnforcement(ctx, state.config, &result, imageRef)
+	return applyEnforcement(ctx, mode, &result, imageRef)
 }
 
 func reloadCache(prev *snapshot, cfg *config.Config, invalidated bool) *cache.Cache {

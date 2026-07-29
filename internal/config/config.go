@@ -42,6 +42,13 @@ const (
 	// ModeEnforce enables verification in enforce (reject on failure) mode.
 	ModeEnforce VerificationMode = "enforce"
 
+	// StrictnessDisabled is the strictness level for "disabled" mode.
+	StrictnessDisabled = 0
+	// StrictnessWarn is the strictness level for "warn" mode.
+	StrictnessWarn = 1
+	// StrictnessEnforce is the strictness level for "enforce" mode.
+	StrictnessEnforce = 2
+
 	defaultFetchTimeout            = 30 * time.Second
 	defaultCacheTTL                = 24 * time.Hour
 	defaultCacheFailureTTL         = 5 * time.Minute
@@ -214,6 +221,26 @@ func DefaultConfig() *Config {
 		LogLevel:                "",
 		Sigstore:                SigstoreConfig{TUFMirror: "", TUFRoot: ""},
 	}
+}
+
+// Strictness returns the numeric strictness level of the mode.
+// disabled=0, warn=1, enforce=2. Unknown modes return -1.
+func (m VerificationMode) Strictness() int {
+	switch m {
+	case ModeDisabled:
+		return StrictnessDisabled
+	case ModeWarn:
+		return StrictnessWarn
+	case ModeEnforce:
+		return StrictnessEnforce
+	default:
+		return -1
+	}
+}
+
+// IsValid returns true if the mode is a recognized verification mode.
+func (m VerificationMode) IsValid() bool {
+	return m.Strictness() >= 0
 }
 
 // Enabled returns true if supply chain verification is not disabled.

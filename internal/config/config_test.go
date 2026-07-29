@@ -26,7 +26,10 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
-const testTUFMirrorURL = "https://tuf.example.com"
+const (
+	testTUFMirrorURL                         = "https://tuf.example.com"
+	testModeUnknown  config.VerificationMode = "unknown"
+)
 
 func TestDefaultConfig(t *testing.T) {
 	t.Parallel()
@@ -1138,4 +1141,74 @@ func TestConfigValidateRuntimeTUFRoot(t *testing.T) {
 
 		testutil.AssertNoError(t, cfg.ValidateRuntime())
 	})
+}
+
+func TestVerificationModeStrictness(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		mode     config.VerificationMode
+		expected int
+	}{
+		{name: "mode disabled", mode: config.ModeDisabled, expected: config.StrictnessDisabled},
+		{name: "mode warn", mode: config.ModeWarn, expected: config.StrictnessWarn},
+		{name: "mode enforce", mode: config.ModeEnforce, expected: config.StrictnessEnforce},
+		{name: "mode unknown", mode: testModeUnknown, expected: -1},
+		{name: "mode empty", mode: "", expected: -1},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := test.mode.Strictness()
+			if got != test.expected {
+				t.Errorf("expected strictness %d, got %d", test.expected, got)
+			}
+		})
+	}
+}
+
+func TestVerificationModeIsValid(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		mode     config.VerificationMode
+		expected bool
+	}{
+		{name: "disabled is valid", mode: config.ModeDisabled, expected: true},
+		{name: "warn is valid", mode: config.ModeWarn, expected: true},
+		{name: "enforce is valid", mode: config.ModeEnforce, expected: true},
+		{name: "unknown is invalid", mode: testModeUnknown, expected: false},
+		{name: "empty is invalid", mode: "", expected: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := test.mode.IsValid()
+			if got != test.expected {
+				t.Errorf("expected IsValid=%v, got %v", test.expected, got)
+			}
+		})
+	}
+}
+
+func TestStrictnessOrdering(t *testing.T) {
+	t.Parallel()
+
+	disabled := config.ModeDisabled.Strictness()
+	warn := config.ModeWarn.Strictness()
+	enforce := config.ModeEnforce.Strictness()
+
+	if disabled >= warn {
+		t.Errorf("expected disabled (%d) < warn (%d)", disabled, warn)
+	}
+
+	if warn >= enforce {
+		t.Errorf("expected warn (%d) < enforce (%d)", warn, enforce)
+	}
 }

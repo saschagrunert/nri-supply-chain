@@ -174,7 +174,7 @@ teardown_file() {
 
 	run_pod "warn-log" "$PAUSE_IMAGE"
 	wait_for_pod_status "warn-log" "Running"
-	assert_log_contains "Verification failed (warn mode, allowing)"
+	assert_log_contains "Verification failed (non-enforce mode, allowing)"
 }
 
 @test "cache is cleared on config reload" {
