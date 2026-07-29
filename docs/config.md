@@ -157,6 +157,14 @@ Use `--output json` for machine-readable JSON output:
 }
 ```
 
+The `--verify-image` command uses distinct exit codes for CI/CD integration:
+
+| Exit code | Meaning                                                  |
+| --------- | -------------------------------------------------------- |
+| 0         | Verification passed                                      |
+| 1         | Verification denied (policy violation)                   |
+| 2         | Internal/infrastructure error (config, network, parsing) |
+
 The full JSON Schema for this output can be generated via:
 
 ```console

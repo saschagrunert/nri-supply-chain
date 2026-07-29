@@ -40,6 +40,10 @@ var version = "0.1.5"
 var logLevelVar slog.LevelVar //nolint:gochecknoglobals // shared between initLogging and reload
 
 const (
+	exitSuccess = 0
+	exitDenied  = 1
+	exitError   = 2
+
 	logLevelDebug = "debug"
 	logLevelInfo  = "info"
 	logLevelWarn  = "warn"
@@ -71,18 +75,18 @@ func run() int {
 	opts, err := parseFlags()
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			return 0
+			return exitSuccess
 		}
 
 		slog.Error("Failed to parse flags", "error", err)
 
-		return 1
+		return exitError
 	}
 
 	if opts.showVersion {
 		_, _ = fmt.Fprintln(os.Stdout, "nri-supply-chain v"+version)
 
-		return 0
+		return exitSuccess
 	}
 
 	if opts.jsonSchema != "" {
@@ -93,7 +97,7 @@ func run() int {
 	if err != nil {
 		slog.Error("Setup failed", "error", err)
 
-		return 1
+		return exitError
 	}
 
 	cliMode := opts.verifyImage != "" || opts.validate
@@ -139,7 +143,7 @@ func startPlugin(opts *options, cfg *config.Config) int {
 		slog.Error("Failed to create verifier", "error", err)
 		cancel()
 
-		return 1
+		return exitError
 	}
 
 	defer cancel()
@@ -154,10 +158,10 @@ func startPlugin(opts *options, cfg *config.Config) int {
 	if err != nil {
 		slog.Error("Plugin exited with error", "error", err)
 
-		return 1
+		return exitError
 	}
 
-	return 0
+	return exitSuccess
 }
 
 func parseFlags() (options, error) {
@@ -243,14 +247,14 @@ func runValidation(cfg *config.Config) int {
 	if !cfg.Enabled() {
 		slog.Info("Validation passed (verification disabled)")
 
-		return 0
+		return exitSuccess
 	}
 
 	policies, err := policy.LoadAll(cfg.PolicyDir)
 	if err != nil {
 		slog.Error("Policy validation failed", "error", err)
 
-		return 1
+		return exitError
 	}
 
 	var errs []error
@@ -277,7 +281,7 @@ func runValidation(cfg *config.Config) int {
 	if len(errs) > 0 {
 		slog.Error("Validation failed", "error", errors.Join(errs...))
 
-		return 1
+		return exitError
 	}
 
 	verifier.WarnEnforceDefaults(cfg, policies)
@@ -287,7 +291,7 @@ func runValidation(cfg *config.Config) int {
 		"policies", len(policies),
 	)
 
-	return 0
+	return exitSuccess
 }
 
 func loadConfig(path string) (*config.Config, error) {

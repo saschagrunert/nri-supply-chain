@@ -197,7 +197,7 @@ func TestPrintJSONSchemaPolicy(t *testing.T) {
 	t.Parallel()
 
 	exitCode := printJSONSchema("policy")
-	if exitCode != 0 {
+	if exitCode != exitSuccess {
 		t.Errorf("expected exit code 0, got %d", exitCode)
 	}
 }
@@ -206,7 +206,7 @@ func TestPrintJSONSchemaVerifyResult(t *testing.T) {
 	t.Parallel()
 
 	exitCode := printJSONSchema("result")
-	if exitCode != 0 {
+	if exitCode != exitSuccess {
 		t.Errorf("expected exit code 0, got %d", exitCode)
 	}
 }
@@ -215,8 +215,8 @@ func TestPrintJSONSchemaUnknown(t *testing.T) {
 	t.Parallel()
 
 	exitCode := printJSONSchema("bogus")
-	if exitCode != 1 {
-		t.Errorf("expected exit code 1, got %d", exitCode)
+	if exitCode != exitError {
+		t.Errorf("expected exit code %d, got %d", exitError, exitCode)
 	}
 }
 

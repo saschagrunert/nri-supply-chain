@@ -229,7 +229,7 @@ func TestRunValidationDisabled(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 
-	if code := runValidation(cfg); code != 0 {
+	if code := runValidation(cfg); code != exitSuccess {
 		t.Errorf("expected exit code 0, got %d", code)
 	}
 }
@@ -251,7 +251,7 @@ func TestRunValidationValid(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = policyDir
 
-	if code := runValidation(cfg); code != 0 {
+	if code := runValidation(cfg); code != exitSuccess {
 		t.Errorf("expected exit code 0, got %d", code)
 	}
 }
@@ -272,8 +272,8 @@ func TestRunValidationInvalidPolicy(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = policyDir
 
-	if code := runValidation(cfg); code != 1 {
-		t.Errorf("expected exit code 1, got %d", code)
+	if code := runValidation(cfg); code != exitError {
+		t.Errorf("expected exit code %d, got %d", exitError, code)
 	}
 }
 
@@ -294,8 +294,8 @@ func TestRunValidationRuntimeFailure(t *testing.T) {
 	cfg.Verification = config.ModeEnforce
 	cfg.PolicyDir = policyDir
 
-	if code := runValidation(cfg); code != 1 {
-		t.Errorf("expected exit code 1, got %d", code)
+	if code := runValidation(cfg); code != exitError {
+		t.Errorf("expected exit code %d, got %d", exitError, code)
 	}
 }
 
@@ -316,7 +316,7 @@ func TestRunValidationEnforceValid(t *testing.T) {
 	cfg.Verification = config.ModeEnforce
 	cfg.PolicyDir = policyDir
 
-	if code := runValidation(cfg); code != 0 {
+	if code := runValidation(cfg); code != exitSuccess {
 		t.Errorf("expected exit code 0, got %d", code)
 	}
 }
@@ -476,8 +476,8 @@ func TestRunValidationMultipleErrors(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = policyDir
 
-	if code := runValidation(cfg); code != 1 {
-		t.Errorf("expected exit code 1, got %d", code)
+	if code := runValidation(cfg); code != exitError {
+		t.Errorf("expected exit code %d, got %d", exitError, code)
 	}
 }
 
@@ -498,8 +498,8 @@ func TestRunValidationMultiplePolicyLoadErrors(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = policyDir
 
-	if code := runValidation(cfg); code != 1 {
-		t.Errorf("expected exit code 1, got %d", code)
+	if code := runValidation(cfg); code != exitError {
+		t.Errorf("expected exit code %d, got %d", exitError, code)
 	}
 }
 
