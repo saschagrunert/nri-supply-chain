@@ -47,6 +47,7 @@ type ImageVerifier interface {
 	) (*types.Result, error)
 	Ready() (ready bool, reason string)
 	Enforcing() bool
+	EffectiveModeForNamespace(namespace string) config.VerificationMode
 	Reload(ctx context.Context, cfg *config.Config) error
 }
 
@@ -269,7 +270,7 @@ func (p *Plugin) handleMissingAnnotations(
 	pod *api.PodSandbox, ctr *api.Container,
 	imageRef, digest string, annotationCount int,
 ) (*api.ContainerAdjustment, []*api.ContainerUpdate, error) {
-	if p.verifier.Enforcing() {
+	if p.verifier.EffectiveModeForNamespace(namespace) == config.ModeEnforce {
 		slog.ErrorContext(ctx, "Missing image annotations in enforce mode",
 			"pod", namespace+"/"+pod.GetName(),
 			"container", ctr.GetName(),

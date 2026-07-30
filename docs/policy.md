@@ -13,6 +13,7 @@ patterns for the nri-supply-chain plugin.
   - [Step 4: Add image includes and excludes](#step-4-add-image-includes-and-excludes)
 - [JSON Schema](#json-schema)
 - [Field Reference](#field-reference)
+  - [<code>mode</code> (string)](#mode-string)
   - [<code>inherits</code> (boolean)](#inherits-boolean)
   - [<code>trust</code> (object)](#trust-object)
   - [<code>include</code> (array of strings)](#include-array-of-strings)
@@ -184,6 +185,10 @@ nri-supply-chain --json-schema policy
   "$defs": {
     "Policy": {
       "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["disabled", "warn", "enforce"]
+        },
         "inherits": {
           "type": "boolean"
         },
@@ -357,6 +362,23 @@ nri-supply-chain --json-schema policy
 </details>
 
 ## Field Reference
+
+### `mode` (string)
+
+Overrides the global `verification` mode for this namespace. Valid values:
+`"disabled"`, `"warn"`, `"enforce"`. When empty or omitted, the global mode
+from the operational config applies.
+
+The per-namespace mode can only be equal to or stricter than the global mode.
+Strictness order: `disabled` < `warn` < `enforce`. For example, global `warn`
+with a namespace `enforce` is valid, but global `enforce` with a namespace
+`warn` is rejected at startup.
+
+When set on `default.json`, the mode applies to all namespaces that fall
+back to the default policy (i.e., namespaces without their own policy file).
+
+This is useful for gradually rolling out enforcement: set the global mode to
+`warn` and promote individual namespaces to `enforce` as confidence grows.
 
 ### `inherits` (boolean)
 
@@ -699,6 +721,32 @@ fetch_failure_policy = "allow"
 
 Review the logs, then progressively tighten: add trust roots, switch
 `missingPolicy` to `deny`, and finally set `verification = "enforce"`.
+
+You can also promote individual namespaces to `enforce` while the global mode
+remains `warn`, using the per-namespace `mode` field:
+
+**`production.json`** (enforce for production while the cluster is still in
+warn mode):
+
+```json
+{
+  "mode": "enforce",
+  "slsa": {
+    "missingPolicy": "deny"
+  }
+}
+```
+
+**`staging.json`** (inherits defaults, stays in global warn mode):
+
+```json
+{
+  "inherits": true,
+  "slsa": {
+    "missingPolicy": "warn"
+  }
+}
+```
 
 ### VSA-accelerated verification
 

@@ -37,19 +37,19 @@ circuit_breaker_cooldown = "30s"
 # tuf_root = "/etc/sigstore/root.json"
 ```
 
-| Field                       | Default                          | Description                                                        |
-| --------------------------- | -------------------------------- | ------------------------------------------------------------------ |
-| `verification`              | `disabled`                       | Mode: `disabled`, `warn` (log-only), `enforce` (reject on failure) |
-| `log_level`                 | (CLI flag)                       | Log verbosity override: `debug`, `info`, `warn`, `error`           |
-| `fetch_timeout`             | `30s`                            | Per-request timeout for attestation fetches and digest resolution  |
-| `fetch_failure_policy`      | `warn`                           | Behavior when attestation fetch fails: `allow`, `warn`, `deny`     |
-| `cache_ttl`                 | `24h`                            | TTL for cached verification results (`0s` disables caching)        |
-| `cache_failure_ttl`         | `5m`                             | TTL for cached failure results, so transient errors retry sooner   |
-| `policy_dir`                | `/etc/nri-supply-chain/policies` | Directory containing JSON policy files                             |
-| `metrics_addr`              | `127.0.0.1:9090`                 | Prometheus metrics HTTP listen address                             |
-| `circuit_breaker_threshold` | `5`                              | Consecutive fetch failures before a per-host circuit breaker opens |
-| `circuit_breaker_cooldown`  | `30s`                            | Duration the circuit breaker stays open before allowing a probe    |
-| `fetch_rate_limit`          | `0` (unlimited)                  | Maximum registry fetch requests per second (max 10,000)            |
+| Field                       | Default                          | Description                                                                                                                                                                   |
+| --------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `verification`              | `disabled`                       | Global mode: `disabled`, `warn` (log-only), `enforce` (reject on failure). Per-namespace overrides are set in policy files via the `mode` field (see [policy.md](policy.md)). |
+| `log_level`                 | (CLI flag)                       | Log verbosity override: `debug`, `info`, `warn`, `error`                                                                                                                      |
+| `fetch_timeout`             | `30s`                            | Per-request timeout for attestation fetches and digest resolution                                                                                                             |
+| `fetch_failure_policy`      | `warn`                           | Behavior when attestation fetch fails: `allow`, `warn`, `deny`                                                                                                                |
+| `cache_ttl`                 | `24h`                            | TTL for cached verification results (`0s` disables caching)                                                                                                                   |
+| `cache_failure_ttl`         | `5m`                             | TTL for cached failure results, so transient errors retry sooner                                                                                                              |
+| `policy_dir`                | `/etc/nri-supply-chain/policies` | Directory containing JSON policy files                                                                                                                                        |
+| `metrics_addr`              | `127.0.0.1:9090`                 | Prometheus metrics HTTP listen address                                                                                                                                        |
+| `circuit_breaker_threshold` | `5`                              | Consecutive fetch failures before a per-host circuit breaker opens                                                                                                            |
+| `circuit_breaker_cooldown`  | `30s`                            | Duration the circuit breaker stays open before allowing a probe                                                                                                               |
+| `fetch_rate_limit`          | `0` (unlimited)                  | Maximum registry fetch requests per second (max 10,000)                                                                                                                       |
 
 See [operations.md](operations.md) for the metrics reference, config reload
 behavior, and health/readiness probes.

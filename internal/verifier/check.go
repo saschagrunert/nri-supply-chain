@@ -36,21 +36,22 @@ import (
 )
 
 func applyEnforcement(
-	ctx context.Context, cfg *config.Config,
+	ctx context.Context, mode config.VerificationMode,
 	result *types.Result, imageRef string,
 ) (*types.Result, error) {
 	if result.Allowed {
 		return result, nil
 	}
 
-	if cfg.Verification == config.ModeEnforce {
+	if mode == config.ModeEnforce {
 		return result, fmt.Errorf(
 			"%w: %s: %s", ErrVerificationFailed, imageRef, result.Reason,
 		)
 	}
 
-	slog.WarnContext(ctx, "Verification failed (warn mode, allowing)",
+	slog.WarnContext(ctx, "Verification failed (non-enforce mode, allowing)",
 		"image", imageRef,
+		"mode", mode,
 		"reason", result.Reason,
 	)
 

@@ -1,4 +1,5 @@
 {
+  "mode": "enforce",
   "slsa": {
     "missingPolicy": "warn"
   },

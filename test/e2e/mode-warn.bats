@@ -33,7 +33,7 @@ teardown_file() {
 @test "pod with unsigned image is admitted with warning" {
 	run_pod "unsigned-pod" "$PAUSE_IMAGE"
 	wait_for_pod_status "unsigned-pod" "Running"
-	assert_log_contains "Verification failed (warn mode, allowing)"
+	assert_log_contains "Verification failed (non-enforce mode, allowing)"
 }
 
 @test "pod with image lacking provenance is admitted in warn mode" {

@@ -1536,6 +1536,271 @@ func TestVerifyExcludeTakesPrecedenceOverInclude(t *testing.T) {
 	}
 }
 
+func TestVerifyPerNamespaceEnforceMode(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{
+		"trust": {"builders": [{"id": "test", "maxLevel": 2}]},
+		"slsa": {"missingPolicy": "deny"}
+	}`)
+	testutil.WritePolicy(t, dir, "production.json", `{
+		"mode": "enforce",
+		"trust": {"builders": [{"id": "test", "maxLevel": 2}]},
+		"slsa": {"missingPolicy": "deny"}
+	}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	// Default namespace uses global warn mode, so verification failure is allowed.
+	result, err := verif.Verify(
+		context.Background(), "nginx:latest", testDigest, "", "default",
+	)
+	testutil.AssertNoError(t, err)
+
+	if !result.Allowed {
+		t.Errorf("expected default namespace to allow in warn mode, got denied: %s",
+			result.Reason)
+	}
+
+	const prodDigest = "sha256:55555555555555555555555555555555" +
+		"55555555555555555555555555555555"
+
+	// Production namespace uses per-namespace enforce mode, so verification failure is rejected.
+	_, err = verif.Verify(
+		context.Background(), "nginx:latest", prodDigest, "", "production",
+	)
+
+	if !errors.Is(err, verifier.ErrVerificationFailed) {
+		t.Fatalf("expected ErrVerificationFailed for production namespace, got %v", err)
+	}
+}
+
+func TestVerifyPerNamespaceWarnModeAllows(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{
+		"trust": {"builders": [{"id": "test", "maxLevel": 2}]},
+		"slsa": {"missingPolicy": "deny"}
+	}`)
+	testutil.WritePolicy(t, dir, "staging.json", `{
+		"mode": "warn",
+		"trust": {"builders": [{"id": "test", "maxLevel": 2}]},
+		"slsa": {"missingPolicy": "deny"}
+	}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	const stagingDigest = "sha256:66666666666666666666666666666666" +
+		"66666666666666666666666666666666"
+
+	result, err := verif.Verify(
+		context.Background(), "nginx:latest", stagingDigest, "", "staging",
+	)
+	testutil.AssertNoError(t, err)
+
+	if !result.Allowed {
+		t.Errorf("expected staging namespace to allow in warn mode, got denied: %s",
+			result.Reason)
+	}
+}
+
+func TestNewRejectsLessStrictNamespaceMode(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{}`)
+	testutil.WritePolicy(t, dir, "staging.json", `{
+		"mode": "warn"
+	}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+	cfg.PolicyDir = dir
+
+	_, err := verifier.New(cfg, metrics.New(), nil)
+	if !errors.Is(err, policy.ErrModeNotStricter) {
+		t.Fatalf("expected ErrModeNotStricter, got %v", err)
+	}
+}
+
+func TestNewAcceptsStricterNamespaceMode(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{}`)
+	testutil.WritePolicy(t, dir, "production.json", `{
+		"mode": "enforce"
+	}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	if verif == nil {
+		t.Fatal("expected non-nil verifier")
+	}
+}
+
+func TestEffectiveModeForNamespace(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{}`)
+	testutil.WritePolicy(t, dir, "production.json", `{
+		"mode": "enforce"
+	}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	mode := verif.EffectiveModeForNamespace("default")
+	if mode != config.ModeWarn {
+		t.Errorf("expected default namespace mode %q, got %q", config.ModeWarn, mode)
+	}
+
+	mode = verif.EffectiveModeForNamespace("production")
+	if mode != config.ModeEnforce {
+		t.Errorf("expected production namespace mode %q, got %q", config.ModeEnforce, mode)
+	}
+
+	mode = verif.EffectiveModeForNamespace("unknown")
+	if mode != config.ModeWarn {
+		t.Errorf("expected unknown namespace to use global mode %q, got %q",
+			config.ModeWarn, mode)
+	}
+}
+
+func TestWarnEnforceDefaultsPerNamespaceMode(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+
+	policies := map[string]*policy.Policy{
+		"":           {},
+		"production": {Mode: config.ModeEnforce},
+	}
+
+	// Should not panic; warnings for production enforce mode should be emitted.
+	verifier.WarnEnforceDefaults(cfg, policies)
+}
+
+func TestVerifyPerNamespaceEnforceCacheHit(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{
+		"trust": {"builders": [{"id": "test", "maxLevel": 2}]},
+		"slsa": {"missingPolicy": "deny"}
+	}`)
+	testutil.WritePolicy(t, dir, "production.json", `{
+		"mode": "enforce",
+		"trust": {"builders": [{"id": "test", "maxLevel": 2}]},
+		"slsa": {"missingPolicy": "deny"}
+	}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+	cfg.CacheTTL = config.Duration{Duration: time.Hour}
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	const cacheDigest = "sha256:77777777777777777777777777777777" +
+		"77777777777777777777777777777777"
+
+	// First call: enforce mode rejects.
+	_, err = verif.Verify(
+		context.Background(), "nginx:latest", cacheDigest, "", "production",
+	)
+	if !errors.Is(err, verifier.ErrVerificationFailed) {
+		t.Fatalf("first call: expected ErrVerificationFailed, got %v", err)
+	}
+
+	// Second call (cache hit): enforce mode still rejects.
+	_, err = verif.Verify(
+		context.Background(), "nginx:latest", cacheDigest, "", "production",
+	)
+	if !errors.Is(err, verifier.ErrVerificationFailed) {
+		t.Fatalf("second call (cache hit): expected ErrVerificationFailed, got %v", err)
+	}
+}
+
+func TestNewValidateEnforcePerNamespaceMode(t *testing.T) {
+	t.Parallel()
+
+	// Per-namespace enforce mode should trigger ValidateEnforce checks even
+	// when the global mode is warn.
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{}`)
+	testutil.WritePolicy(t, dir, "production.json", `{
+		"mode": "enforce",
+		"trust": {
+			"issuers": ["https://example.com"],
+			"builders": [{"id": "test", "maxLevel": 1}]
+		}
+	}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+
+	_, err := verifier.New(cfg, metrics.New(), nil)
+	if !errors.Is(err, policy.ErrSANPatternsRequired) {
+		t.Fatalf("expected ErrSANPatternsRequired for per-namespace enforce, got %v", err)
+	}
+}
+
+func TestReloadRejectsLessStrictNamespaceMode(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	// Reload with a config where global is enforce but a namespace is warn.
+	reloadDir := t.TempDir()
+	testutil.WritePolicy(t, reloadDir, "default.json", `{}`)
+	testutil.WritePolicy(t, reloadDir, "staging.json", `{
+		"mode": "warn"
+	}`)
+
+	reloadCfg := config.DefaultConfig()
+	reloadCfg.Verification = config.ModeEnforce
+	reloadCfg.PolicyDir = reloadDir
+
+	err = verif.Reload(t.Context(), reloadCfg)
+	if !errors.Is(err, policy.ErrModeNotStricter) {
+		t.Fatalf("expected ErrModeNotStricter on reload, got %v", err)
+	}
+}
+
 func TestVerifyIncludeDoubleStarPattern(t *testing.T) {
 	t.Parallel()
 

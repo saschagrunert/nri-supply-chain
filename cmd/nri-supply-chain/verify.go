@@ -105,7 +105,8 @@ func executeVerify(
 	result, err := verif.Verify(
 		ctx, imageRef, resolved.digest, resolved.indexDigest, namespace,
 	)
-	out := newVerifyOutput(imageRef, resolved.digest, namespace, policyFile, cfg)
+	out := newVerifyOutput(imageRef, resolved.digest, namespace, policyFile)
+	out.Mode = string(verif.EffectiveModeForNamespace(namespace))
 	out.CheckResults = checksFrom(result)
 
 	if err != nil {
@@ -203,14 +204,14 @@ func resolvePolicyFile(policyDir, namespace string) string {
 }
 
 func newVerifyOutput(
-	imageRef, digest, namespace, policyFile string, cfg *config.Config,
+	imageRef, digest, namespace, policyFile string,
 ) *verifyOutput {
 	return &verifyOutput{
 		Image:        imageRef,
 		Digest:       digest,
 		Namespace:    namespace,
 		PolicyFile:   policyFile,
-		Mode:         string(cfg.Verification),
+		Mode:         "",
 		Allowed:      false,
 		Reason:       "",
 		CheckResults: nil,

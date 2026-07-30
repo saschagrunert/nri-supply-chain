@@ -135,6 +135,32 @@ func TestCreateContainerMissingAnnotationsWarn(t *testing.T) {
 	}
 }
 
+func TestCreateContainerMissingAnnotationsPerNamespaceEnforce(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{}`)
+	testutil.WritePolicy(t, dir, "production.json", `{
+		"mode": "enforce"
+	}`)
+
+	plug := newTestPlugin(t, config.ModeWarn, dir)
+
+	pod := &api.PodSandbox{
+		Namespace: "production",
+		Name:      testPodName,
+	}
+	ctr := &api.Container{
+		Name:        testCtrName,
+		Annotations: map[string]string{},
+	}
+
+	_, _, err := plug.CreateContainer(context.Background(), pod, ctr)
+	if err == nil {
+		t.Fatal("expected error for missing annotations in per-namespace enforce mode")
+	}
+}
+
 func TestCreateContainerEnforceReject(t *testing.T) {
 	t.Parallel()
 

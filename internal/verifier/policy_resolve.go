@@ -43,11 +43,16 @@ func handleMissingPolicy(
 	ctx context.Context, cfg *config.Config,
 	imageRef, namespace string,
 ) (*types.Result, error) {
+	slog.DebugContext(ctx, "No policy found, using global mode",
+		"namespace", namespace,
+		"mode", cfg.Verification,
+	)
+
 	reason := fmt.Sprintf(
 		"no policy found for namespace %q and no default policy configured", namespace,
 	)
 
-	return applyEnforcement(ctx, cfg, &types.Result{
+	return applyEnforcement(ctx, cfg.Verification, &types.Result{
 		Allowed: false,
 		Reason:  reason,
 		CheckResults: []types.CheckResult{
@@ -74,24 +79,31 @@ func validatePoliciesRuntime(policies map[string]*policy.Policy) error {
 	return errors.Join(errs...)
 }
 
-func validatePoliciesEnforce(
+func validatePoliciesModes(
 	mode config.VerificationMode, policies map[string]*policy.Policy,
 ) error {
-	if mode != config.ModeEnforce {
-		return nil
-	}
-
 	var errs []error
 
 	for ns, pol := range policies {
-		err := pol.ValidateEnforce()
-		if err != nil {
-			label := ns
-			if label == "" {
-				label = DefaultPolicyLabel
-			}
+		label := ns
+		if label == "" {
+			label = DefaultPolicyLabel
+		}
 
+		// Validate per-namespace mode strictness against global mode.
+		err := pol.ValidateModeStrictness(mode)
+		if err != nil {
 			errs = append(errs, fmt.Errorf("policy %q: %w", label, err))
+		}
+
+		// Run enforce-specific checks when the effective mode is enforce
+		// (either global enforce, or per-namespace enforce override).
+		effectiveMode := pol.EffectiveMode(mode)
+		if effectiveMode == config.ModeEnforce {
+			err = pol.ValidateEnforce()
+			if err != nil {
+				errs = append(errs, fmt.Errorf("policy %q: %w", label, err))
+			}
 		}
 	}
 

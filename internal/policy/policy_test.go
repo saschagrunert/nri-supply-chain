@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
@@ -1818,5 +1819,332 @@ func TestCloneIsolatesVerifierKeys(t *testing.T) {
 	if len(original.Trust.Verifiers[0].Keys) != 2 {
 		t.Errorf("expected original to have 2 keys, got %d",
 			len(original.Trust.Verifiers[0].Keys))
+	}
+}
+
+func TestPolicyValidateMode(t *testing.T) {
+	t.Parallel()
+
+	runValidateTests(t, []validateTest{
+		{
+			name: "empty mode is valid",
+			policy: policy.Policy{
+				Mode: "",
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name: "warn mode is valid",
+			policy: policy.Policy{
+				Mode: config.ModeWarn,
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name: "enforce mode is valid",
+			policy: policy.Policy{
+				Mode: config.ModeEnforce,
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name: "disabled mode is valid",
+			policy: policy.Policy{
+				Mode: config.ModeDisabled,
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name: "invalid mode is rejected",
+			policy: policy.Policy{
+				Mode: "invalid",
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrInvalidPolicyMode,
+		},
+	})
+}
+
+func TestEffectiveMode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		policyMode config.VerificationMode
+		globalMode config.VerificationMode
+		expected   config.VerificationMode
+	}{
+		{
+			name:       "empty mode uses global",
+			policyMode: "",
+			globalMode: config.ModeWarn,
+			expected:   config.ModeWarn,
+		},
+		{
+			name:       "per-namespace enforce overrides global warn",
+			policyMode: config.ModeEnforce,
+			globalMode: config.ModeWarn,
+			expected:   config.ModeEnforce,
+		},
+		{
+			name:       "per-namespace warn with global warn",
+			policyMode: config.ModeWarn,
+			globalMode: config.ModeWarn,
+			expected:   config.ModeWarn,
+		},
+		{
+			name:       "per-namespace enforce with global enforce",
+			policyMode: config.ModeEnforce,
+			globalMode: config.ModeEnforce,
+			expected:   config.ModeEnforce,
+		},
+		{
+			name:       "per-namespace disabled with global disabled",
+			policyMode: config.ModeDisabled,
+			globalMode: config.ModeDisabled,
+			expected:   config.ModeDisabled,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			pol := &policy.Policy{Mode: test.policyMode}
+			got := pol.EffectiveMode(test.globalMode)
+
+			if got != test.expected {
+				t.Errorf("expected %q, got %q", test.expected, got)
+			}
+		})
+	}
+}
+
+func TestValidateModeStrictness(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		policyMode config.VerificationMode
+		globalMode config.VerificationMode
+		wantErr    bool
+	}{
+		{
+			name:       "empty mode always valid",
+			policyMode: "",
+			globalMode: config.ModeEnforce,
+			wantErr:    false,
+		},
+		{
+			name:       "enforce >= enforce is valid",
+			policyMode: config.ModeEnforce,
+			globalMode: config.ModeEnforce,
+			wantErr:    false,
+		},
+		{
+			name:       "enforce > warn is valid",
+			policyMode: config.ModeEnforce,
+			globalMode: config.ModeWarn,
+			wantErr:    false,
+		},
+		{
+			name:       "enforce > disabled is valid",
+			policyMode: config.ModeEnforce,
+			globalMode: config.ModeDisabled,
+			wantErr:    false,
+		},
+		{
+			name:       "warn >= warn is valid",
+			policyMode: config.ModeWarn,
+			globalMode: config.ModeWarn,
+			wantErr:    false,
+		},
+		{
+			name:       "warn > disabled is valid",
+			policyMode: config.ModeWarn,
+			globalMode: config.ModeDisabled,
+			wantErr:    false,
+		},
+		{
+			name:       "warn < enforce is rejected",
+			policyMode: config.ModeWarn,
+			globalMode: config.ModeEnforce,
+			wantErr:    true,
+		},
+		{
+			name:       "disabled < warn is rejected",
+			policyMode: config.ModeDisabled,
+			globalMode: config.ModeWarn,
+			wantErr:    true,
+		},
+		{
+			name:       "disabled < enforce is rejected",
+			policyMode: config.ModeDisabled,
+			globalMode: config.ModeEnforce,
+			wantErr:    true,
+		},
+		{
+			name:       "disabled >= disabled is valid",
+			policyMode: config.ModeDisabled,
+			globalMode: config.ModeDisabled,
+			wantErr:    false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			pol := &policy.Policy{Mode: test.policyMode}
+			err := pol.ValidateModeStrictness(test.globalMode)
+
+			if test.wantErr && err == nil {
+				t.Error("expected error, got nil")
+			}
+
+			if !test.wantErr && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+
+			if test.wantErr && !errors.Is(err, policy.ErrModeNotStricter) {
+				t.Errorf("expected ErrModeNotStricter, got %v", err)
+			}
+		})
+	}
+}
+
+func TestMergeWithDefaultModeOverride(t *testing.T) {
+	t.Parallel()
+
+	t.Run("namespace mode overrides default", func(t *testing.T) {
+		t.Parallel()
+
+		defaultPol := &policy.Policy{
+			Mode: config.ModeWarn,
+			SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
+		}
+		nsPol := &policy.Policy{
+			Mode: config.ModeEnforce,
+		}
+
+		merged := policy.MergeWithDefault(nsPol, defaultPol)
+
+		if merged.Mode != config.ModeEnforce {
+			t.Errorf("expected mode %q, got %q", config.ModeEnforce, merged.Mode)
+		}
+
+		if merged.SLSA == nil || merged.SLSA.MissingPolicy != types.ActionDeny {
+			t.Error("expected SLSA to be inherited from default")
+		}
+	})
+
+	t.Run("empty namespace mode inherits default", func(t *testing.T) {
+		t.Parallel()
+
+		defaultPol := &policy.Policy{
+			Mode: config.ModeEnforce,
+		}
+		nsPol := &policy.Policy{}
+
+		merged := policy.MergeWithDefault(nsPol, defaultPol)
+
+		if merged.Mode != config.ModeEnforce {
+			t.Errorf("expected mode %q, got %q", config.ModeEnforce, merged.Mode)
+		}
+	})
+}
+
+func TestLoadPolicyWithMode(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "test.json")
+
+	writeFile(t, policyPath, `{
+		"mode": "enforce",
+		"slsa": {"missingPolicy": "deny"}
+	}`)
+
+	pol, err := policy.Load(policyPath)
+	testutil.AssertNoError(t, err)
+
+	if pol.Mode != config.ModeEnforce {
+		t.Errorf("expected mode %q, got %q", config.ModeEnforce, pol.Mode)
+	}
+}
+
+func TestLoadPolicyInvalidMode(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "test.json")
+
+	writeFile(t, policyPath, `{
+		"mode": "invalid"
+	}`)
+
+	_, err := policy.Load(policyPath)
+	testutil.AssertError(t, err)
+
+	if !errors.Is(err, policy.ErrInvalidPolicyMode) {
+		t.Errorf("expected ErrInvalidPolicyMode, got %v", err)
+	}
+}
+
+func TestLoadAllModeStrictnessValidation(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	writeFile(t, filepath.Join(dir, "default.json"), `{
+		"slsa": {"missingPolicy": "allow"}
+	}`)
+	writeFile(t, filepath.Join(dir, "production.json"), `{
+		"mode": "enforce",
+		"slsa": {"missingPolicy": "deny"}
+	}`)
+
+	policies, err := policy.LoadAll(dir)
+	testutil.AssertNoError(t, err)
+
+	if len(policies) != 2 {
+		t.Fatalf("expected 2 policies, got %d", len(policies))
+	}
+
+	prod := policies["production"]
+	if prod.Mode != config.ModeEnforce {
+		t.Errorf("expected mode %q, got %q", config.ModeEnforce, prod.Mode)
+	}
+}
+
+func TestLoadAllInheritsMergesModeFromNamespace(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	writeFile(t, filepath.Join(dir, "default.json"), `{
+		"slsa": {"missingPolicy": "allow"}
+	}`)
+	writeFile(t, filepath.Join(dir, "staging.json"), `{
+		"inherits": true,
+		"mode": "enforce"
+	}`)
+
+	policies, err := policy.LoadAll(dir)
+	testutil.AssertNoError(t, err)
+
+	staging := policies["staging"]
+
+	if staging.Mode != config.ModeEnforce {
+		t.Errorf("expected mode %q, got %q", config.ModeEnforce, staging.Mode)
+	}
+
+	if staging.SLSAMissingPolicy() != types.ActionAllow {
+		t.Errorf("expected inherited SLSA missing policy %q, got %q",
+			types.ActionAllow, staging.SLSAMissingPolicy())
 	}
 }

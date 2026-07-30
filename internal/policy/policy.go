@@ -30,6 +30,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/glob"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
@@ -105,10 +106,24 @@ var (
 	// ErrTooManyPolicyFiles indicates the policy directory contains more
 	// files than the allowed maximum.
 	ErrTooManyPolicyFiles = errors.New("policy directory contains too many files")
+
+	// ErrInvalidPolicyMode indicates a policy has an unrecognized mode value.
+	ErrInvalidPolicyMode = errors.New("invalid policy mode")
+
+	// ErrModeNotStricter indicates a namespace policy mode is less strict
+	// than the global verification mode.
+	ErrModeNotStricter = errors.New(
+		"namespace policy mode cannot be less strict than the global verification mode",
+	)
 )
 
 // Policy defines the trust roots and per-namespace verification settings.
 type Policy struct {
+	// Mode overrides the global verification mode for this namespace.
+	// Valid values: "disabled", "warn", "enforce". When empty, the global mode applies.
+	// The per-namespace mode can only be equal to or stricter than the global
+	// mode (disabled < warn < enforce).
+	Mode config.VerificationMode `json:"mode,omitempty" jsonschema:"enum=disabled,enum=warn,enum=enforce"`
 	// Inherits, when true, causes this namespace policy to inherit unset
 	// fields from the default policy. Only valid on namespace policies.
 	Inherits *bool `json:"inherits,omitempty"`
@@ -213,6 +228,15 @@ type SignaturesPolicy struct {
 	RequireTransparencyLog bool `json:"requireTransparencyLog,omitempty"`
 }
 
+// EffectiveMode returns the per-namespace mode if set, otherwise the global mode.
+func (p *Policy) EffectiveMode(global config.VerificationMode) config.VerificationMode {
+	if p.Mode != "" {
+		return p.Mode
+	}
+
+	return global
+}
+
 // SLSAMissingPolicy returns the effective SLSA missing policy.
 // Defaults to allow so that the plugin can be deployed in warn mode
 // without requiring provenance from the start.
@@ -276,6 +300,10 @@ func (p *Policy) Hash() (string, error) {
 func MergeWithDefault(namespace, defaultPol *Policy) *Policy {
 	merged := clonePolicy(defaultPol)
 
+	if namespace.Mode != "" {
+		merged.Mode = namespace.Mode
+	}
+
 	if namespace.Trust != nil {
 		merged.Trust = cloneTrust(namespace.Trust)
 	}
@@ -314,6 +342,7 @@ func MergeWithDefault(namespace, defaultPol *Policy) *Policy {
 
 func clonePolicy(pol *Policy) *Policy {
 	clone := &Policy{
+		Mode:    pol.Mode,
 		Include: slices.Clone(pol.Include),
 		Exclude: slices.Clone(pol.Exclude),
 	}
@@ -363,9 +392,31 @@ func cloneTrust(tp *TrustPolicy) *TrustPolicy {
 	return &trust
 }
 
+// ValidateModeStrictness checks that the per-namespace mode is at least as
+// strict as the global verification mode. Returns nil if Mode is empty (no
+// per-namespace override).
+func (p *Policy) ValidateModeStrictness(global config.VerificationMode) error {
+	if p.Mode == "" {
+		return nil
+	}
+
+	if p.Mode.Strictness() < global.Strictness() {
+		return fmt.Errorf(
+			"%w: global %q, namespace %q",
+			ErrModeNotStricter, global, p.Mode,
+		)
+	}
+
+	return nil
+}
+
 // Validate checks the policy for invalid values.
 func (p *Policy) Validate() error {
 	var errs []error
+
+	if p.Mode != "" && !p.Mode.IsValid() {
+		errs = append(errs, fmt.Errorf("%w: %q", ErrInvalidPolicyMode, p.Mode))
+	}
 
 	err := p.validateTrust()
 	if err != nil {
@@ -404,6 +455,8 @@ func (p *Policy) Validate() error {
 
 // ValidateEnforce runs additional checks required for enforce mode.
 // Keyless verification (issuers set) requires explicit SANPatterns.
+// The mode parameter is the effective mode for this policy (per-namespace
+// mode if set, otherwise the global mode).
 func (p *Policy) ValidateEnforce() error {
 	if p.Trust == nil {
 		return nil
