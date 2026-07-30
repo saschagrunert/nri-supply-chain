@@ -62,7 +62,6 @@ const (
 
 var (
 	errExitNonZero       = errors.New("non-zero exit")
-	errMissingImageRef   = errors.New("requires an image reference, e.g. ghcr.io/org/image:tag")
 	errMissingSchemaType = errors.New("requires a schema type: policy, result")
 )
 
@@ -149,20 +148,11 @@ func newVerifyCmd(configPath, logLevel *string) *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   cmdVerify + " <image>",
-		Short: "Verify an image",
-		Args: func(_ *cobra.Command, args []string) error {
-			if len(args) == 0 {
-				return errMissingImageRef
-			}
-
-			if len(args) > 1 {
-				//nolint:err113 // dynamic arg count
-				return fmt.Errorf("accepts 1 arg, received %d", len(args))
-			}
-
-			return nil
-		},
+		Use:   cmdVerify + " <image> [<image>...]",
+		Short: "Verify one or more images",
+		Long: "Verify one or more container images against configured policies.\n\n" +
+			"Pass one or more image references as positional arguments.",
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 
@@ -177,7 +167,7 @@ func newVerifyCmd(configPath, logLevel *string) *cobra.Command {
 
 			slog.Info("Using config", "path", *configPath)
 
-			code := runVerify(args[0], namespace, outputFormat, cfg)
+			code := runVerifyCmd(args, namespace, outputFormat, cfg)
 			if code != 0 {
 				return errExitNonZero
 			}
@@ -192,6 +182,17 @@ func newVerifyCmd(configPath, logLevel *string) *cobra.Command {
 		outputFormatTable, "output format: table, json")
 
 	return cmd
+}
+
+func runVerifyCmd(
+	args []string, namespace, outputFormat string,
+	cfg *config.Config,
+) int {
+	if len(args) == 1 {
+		return runVerify(args[0], namespace, outputFormat, cfg)
+	}
+
+	return runVerifyBatch(args, namespace, outputFormat, cfg)
 }
 
 func newValidateCmd(configPath, logLevel *string) *cobra.Command {

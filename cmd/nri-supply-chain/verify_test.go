@@ -46,12 +46,19 @@ import (
 var errTestInternal = errors.New("internal error")
 
 const (
-	testArchAmd64  = "amd64"
-	testArchArm64  = "arm64"
-	testArchS390x  = "s390x"
-	testOSLinux    = "linux"
-	testOSZos      = "zos"
-	testImageNginx = "nginx:latest"
+	testArchAmd64         = "amd64"
+	testArchArm64         = "arm64"
+	testArchS390x         = "s390x"
+	testOSLinux           = "linux"
+	testOSZos             = "zos"
+	testImageNginx        = "nginx:latest"
+	testImageAlpine       = "alpine:latest"
+	testImageNginx125     = "nginx:1.25"
+	testImageV1           = "img:v1"
+	testDigestAAA         = "sha256:aaa"
+	testNamespaceDefault  = "default"
+	testPolicyPathDefault = "/policies/default.json"
+	testReasonDenied      = "denied"
 )
 
 func TestOutputVerifyResultAllowed(t *testing.T) {
@@ -474,7 +481,7 @@ func TestRunVerifyInvalidOutputFormat(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 
-	if code := runVerify("img:v1", verifier.DefaultPolicyLabel, "xml", cfg); code != exitError {
+	if code := runVerify(testImageV1, verifier.DefaultPolicyLabel, "xml", cfg); code != exitError {
 		t.Errorf("exit code = %d, want %d", code, exitError)
 	}
 }
@@ -856,7 +863,7 @@ func TestOutputVerifyResultTableNoChecks(t *testing.T) {
 	var buf bytes.Buffer
 
 	input := &verifyOutput{
-		Image: "img:v1", Digest: "sha256:aaa", Namespace: "ns",
+		Image: testImageV1, Digest: testDigestAAA, Namespace: "ns",
 		PolicyFile: "/policies/ns.json", Mode: string(config.ModeWarn), Allowed: true,
 		Reason: "", CheckResults: nil,
 	}
@@ -870,5 +877,323 @@ func TestOutputVerifyResultTableNoChecks(t *testing.T) {
 
 	if strings.Contains(got, "TYPE") {
 		t.Errorf("should not contain table header when no checks\ngot:\n%s", got)
+	}
+}
+
+func TestOutputBatchJSON(t *testing.T) {
+	t.Parallel()
+
+	results := []*verifyOutput{
+		{
+			Image: testImageAlpine, Digest: testDigestAAA,
+			Namespace: testNamespaceDefault,
+			Allowed:   true, Reason: "", CheckResults: nil,
+		},
+		{
+			Image: testImageNginx125, Digest: "sha256:bbb",
+			Namespace: testNamespaceDefault,
+			Allowed:   false, Reason: testReasonDenied, CheckResults: nil,
+		},
+	}
+
+	var buf bytes.Buffer
+
+	err := outputBatchJSON(&buf, results)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var parsed []verifyOutput
+
+	err = json.Unmarshal(buf.Bytes(), &parsed)
+	if err != nil {
+		t.Fatalf("invalid JSON: %v\nraw: %s", err, buf.String())
+	}
+
+	if len(parsed) != 2 {
+		t.Fatalf("got %d results, want 2", len(parsed))
+	}
+
+	if parsed[0].Image != testImageAlpine {
+		t.Errorf("result[0].Image = %q, want %q", parsed[0].Image, testImageAlpine)
+	}
+
+	if parsed[0].Allowed != true {
+		t.Error("result[0].Allowed should be true")
+	}
+
+	if parsed[1].Allowed != false {
+		t.Error("result[1].Allowed should be false")
+	}
+
+	if parsed[1].Reason != testReasonDenied {
+		t.Errorf("result[1].Reason = %q, want %q", parsed[1].Reason, testReasonDenied)
+	}
+}
+
+func TestOutputBatchTable(t *testing.T) {
+	t.Parallel()
+
+	results := []*verifyOutput{
+		{
+			Image: testImageAlpine, Digest: testDigestAAA,
+			Namespace:  testNamespaceDefault,
+			PolicyFile: testPolicyPathDefault, Mode: string(config.ModeWarn),
+			Allowed: true, CheckResults: nil,
+		},
+		{
+			Image: testImageNginx125, Digest: "sha256:bbb",
+			Namespace:  testNamespaceDefault,
+			PolicyFile: testPolicyPathDefault, Mode: string(config.ModeEnforce),
+			Allowed: false, Reason: testReasonDenied, CheckResults: nil,
+		},
+	}
+
+	var buf bytes.Buffer
+
+	err := outputBatchTable(&buf, results)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := buf.String()
+
+	for _, want := range []string{
+		testImageAlpine,
+		testImageNginx125,
+		"ALLOWED",
+		"DENIED",
+		testReasonDenied,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("batch table output missing %q\ngot:\n%s", want, got)
+		}
+	}
+}
+
+func TestRunVerifyBatchAllAllowed(t *testing.T) {
+	t.Parallel()
+
+	regHandler := registry.New()
+	server := httptest.NewServer(regHandler)
+
+	t.Cleanup(server.Close)
+
+	addr := strings.TrimPrefix(server.URL, "http://")
+	imgRef1 := addr + "/batch-allow-1:latest"
+	imgRef2 := addr + "/batch-allow-2:latest"
+
+	for _, ref := range []string{imgRef1, imgRef2} {
+		img, err := mutate.ConfigFile(empty.Image, nil)
+		if err != nil {
+			t.Fatalf("creating test image: %v", err)
+		}
+
+		err = crane.Push(img, ref, crane.Insecure)
+		if err != nil {
+			t.Fatalf("pushing test image: %v", err)
+		}
+	}
+
+	policyDir := t.TempDir()
+
+	writeValidationPolicy(t, policyDir, "default.json",
+		`{"slsa": {"missingPolicy": "warn"}}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = policyDir
+
+	var buf bytes.Buffer
+
+	code := runVerifyBatchTo(
+		&buf,
+		[]string{imgRef1, imgRef2},
+		verifier.DefaultPolicyLabel,
+		outputFormatJSON,
+		cfg,
+	)
+	if code != exitSuccess {
+		t.Errorf("exit code = %d, want %d", code, exitSuccess)
+	}
+
+	var results []verifyOutput
+
+	err := json.Unmarshal(buf.Bytes(), &results)
+	if err != nil {
+		t.Fatalf("invalid JSON: %v\nraw: %s", err, buf.String())
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2", len(results))
+	}
+
+	for i, r := range results {
+		if !r.Allowed {
+			t.Errorf("result[%d].Allowed = false, want true", i)
+		}
+	}
+}
+
+func TestRunVerifyBatchExitCodes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		imageSuffix   string
+		extraImages   []string
+		mode          config.VerificationMode
+		missingPolicy string
+		wantCode      int
+	}{
+		{
+			name:          "mixed results returns worst exit code",
+			imageSuffix:   "batch-mixed",
+			extraImages:   []string{":::invalid-ref"},
+			mode:          config.ModeWarn,
+			missingPolicy: "warn",
+			wantCode:      exitError,
+		},
+		{
+			name:          "denied returns exit code 1",
+			imageSuffix:   "batch-denied",
+			extraImages:   nil,
+			mode:          config.ModeEnforce,
+			missingPolicy: "deny",
+			wantCode:      exitDenied,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			regHandler := registry.New()
+			server := httptest.NewServer(regHandler)
+
+			t.Cleanup(server.Close)
+
+			addr := strings.TrimPrefix(server.URL, "http://")
+			imgRef := addr + "/" + test.imageSuffix + ":latest"
+
+			img, err := mutate.ConfigFile(empty.Image, nil)
+			if err != nil {
+				t.Fatalf("creating test image: %v", err)
+			}
+
+			err = crane.Push(img, imgRef, crane.Insecure)
+			if err != nil {
+				t.Fatalf("pushing test image: %v", err)
+			}
+
+			images := append([]string{imgRef}, test.extraImages...)
+
+			policyDir := t.TempDir()
+
+			writeValidationPolicy(t, policyDir, "default.json",
+				`{"slsa": {"missingPolicy": "`+test.missingPolicy+`"}}`)
+
+			cfg := config.DefaultConfig()
+			cfg.Verification = test.mode
+			cfg.PolicyDir = policyDir
+
+			var buf bytes.Buffer
+
+			code := runVerifyBatchTo(
+				&buf,
+				images,
+				verifier.DefaultPolicyLabel,
+				outputFormatJSON,
+				cfg,
+			)
+			if code != test.wantCode {
+				t.Errorf("exit code = %d, want %d", code, test.wantCode)
+			}
+		})
+	}
+}
+
+func TestRunVerifyBatchDisabledErrors(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+
+	code := runVerifyBatch(
+		[]string{testImageAlpine},
+		verifier.DefaultPolicyLabel,
+		outputFormatJSON,
+		cfg,
+	)
+	if code != exitError {
+		t.Errorf("expected exit code %d, got %d", exitError, code)
+	}
+}
+
+func TestRunVerifyBatchInvalidOutputFormat(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+
+	code := runVerifyBatch(
+		[]string{testImageAlpine},
+		verifier.DefaultPolicyLabel,
+		"xml",
+		cfg,
+	)
+	if code != exitError {
+		t.Errorf("exit code = %d, want %d", code, exitError)
+	}
+}
+
+func TestRunVerifyBatchTableOutput(t *testing.T) {
+	t.Parallel()
+
+	regHandler := registry.New()
+	server := httptest.NewServer(regHandler)
+
+	t.Cleanup(server.Close)
+
+	addr := strings.TrimPrefix(server.URL, "http://")
+	imgRef := addr + "/batch-table:latest"
+
+	img, err := mutate.ConfigFile(empty.Image, nil)
+	if err != nil {
+		t.Fatalf("creating test image: %v", err)
+	}
+
+	err = crane.Push(img, imgRef, crane.Insecure)
+	if err != nil {
+		t.Fatalf("pushing test image: %v", err)
+	}
+
+	policyDir := t.TempDir()
+
+	writeValidationPolicy(t, policyDir, "default.json",
+		`{"slsa": {"missingPolicy": "warn"}}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = policyDir
+
+	var buf bytes.Buffer
+
+	code := runVerifyBatchTo(
+		&buf,
+		[]string{imgRef},
+		verifier.DefaultPolicyLabel,
+		outputFormatTable,
+		cfg,
+	)
+	if code != exitSuccess {
+		t.Errorf("exit code = %d, want %d", code, exitSuccess)
+	}
+
+	got := buf.String()
+	if !strings.Contains(got, imgRef) {
+		t.Errorf("table output missing image ref %q\ngot:\n%s", imgRef, got)
+	}
+
+	if !strings.Contains(got, "ALLOWED") {
+		t.Errorf("table output missing ALLOWED\ngot:\n%s", got)
 	}
 }

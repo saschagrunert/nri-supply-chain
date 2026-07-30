@@ -111,6 +111,23 @@ teardown() {
 	echo "$output" | grep -q "Image:"
 }
 
+@test "verify multiple images via positional args" {
+	local ref="${VERIFY_IMAGE}@${VERIFY_DIGEST}"
+	local json_out
+	json_out=$(timeout "$CMD_TIMEOUT" "$BINARY" \
+		--config "$PLUGIN_CONFIG" \
+		verify "$ref" "$ref" \
+		--output json 2>/dev/null)
+	echo "# verify output: $json_out" >&2
+	echo "$json_out" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+assert isinstance(data, list), 'expected array'
+assert len(data) == 2, f'expected 2 results, got {len(data)}'
+assert all(r['allowed'] for r in data), 'expected all allowed'
+"
+}
+
 @test "verify with disabled verification fails" {
 	local ref="${VERIFY_IMAGE}@${VERIFY_DIGEST}"
 	local disabled_config="${BATS_FILE_TMPDIR}/disabled-config.toml"
