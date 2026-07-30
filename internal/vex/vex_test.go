@@ -126,7 +126,9 @@ func TestVerify(t *testing.T) {
 			name: "affected fails with VEX policy",
 			doc:  validVEXDoc(openvex.StatusAffected),
 			pol: &policy.Policy{
-				VEX: &policy.VEXPolicy{},
+				Sections: policy.Sections{
+					VEX: &policy.VEXPolicy{},
+				},
 			},
 			wantPassed: false,
 			wantStatus: types.StatusFail,
@@ -142,7 +144,9 @@ func TestVerify(t *testing.T) {
 			name: "under investigation warn",
 			doc:  validVEXDoc(openvex.StatusUnderInvestigation),
 			pol: &policy.Policy{
-				VEX: &policy.VEXPolicy{UnderInvestigationPolicy: types.ActionWarn},
+				Sections: policy.Sections{
+					VEX: &policy.VEXPolicy{UnderInvestigationPolicy: types.ActionWarn},
+				},
 			},
 			wantPassed: true,
 			wantStatus: types.StatusWarn,
@@ -151,7 +155,9 @@ func TestVerify(t *testing.T) {
 			name: "under investigation deny",
 			doc:  validVEXDoc(openvex.StatusUnderInvestigation),
 			pol: &policy.Policy{
-				VEX: &policy.VEXPolicy{UnderInvestigationPolicy: types.ActionDeny},
+				Sections: policy.Sections{
+					VEX: &policy.VEXPolicy{UnderInvestigationPolicy: types.ActionDeny},
+				},
 			},
 			wantPassed: false,
 			wantStatus: types.StatusFail,
@@ -600,7 +606,9 @@ func TestVerifyStatementEdgeCases(t *testing.T) {
 		result, err := vex.Verify(
 			context.Background(), att,
 			&policy.Policy{
-				VEX: &policy.VEXPolicy{UnderInvestigationPolicy: "unknown_action"},
+				Sections: policy.Sections{
+					VEX: &policy.VEXPolicy{UnderInvestigationPolicy: "unknown_action"},
+				},
 			},
 			testImageRef, testDigest,
 			nil,
@@ -702,7 +710,9 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		result, err := vex.VerifyMultiple(
 			context.Background(), attestations,
 			&policy.Policy{
-				VEX: &policy.VEXPolicy{UnderInvestigationPolicy: types.ActionWarn},
+				Sections: policy.Sections{
+					VEX: &policy.VEXPolicy{UnderInvestigationPolicy: types.ActionWarn},
+				},
 			},
 			testImageRef, testDigest,
 			nil,

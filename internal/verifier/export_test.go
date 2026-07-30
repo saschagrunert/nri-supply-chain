@@ -19,6 +19,7 @@ import (
 	"log/slog"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
+	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
@@ -106,4 +107,16 @@ func ExportAllowResult(
 // to complete without stopping the cache.
 func (v *Verifier) ExportWaitInflight() {
 	v.inflightWg.Wait()
+}
+
+// ExportResolveImagePolicy exposes resolveImagePolicy for external tests.
+func ExportResolveImagePolicy(
+	ctx context.Context, pol *policy.Policy, imageRef string,
+) (resolved *policy.Policy, ruleIdx int) {
+	return resolveImagePolicy(ctx, pol, imageRef)
+}
+
+// ExportCacheNamespaceKey exposes cacheNamespaceKey for external tests.
+func ExportCacheNamespaceKey(namespace string, ruleIdx int) string {
+	return cacheNamespaceKey(namespace, ruleIdx)
 }

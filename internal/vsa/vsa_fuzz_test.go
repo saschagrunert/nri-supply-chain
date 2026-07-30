@@ -46,9 +46,11 @@ func FuzzVerify(f *testing.F) {
 	f.Add([]byte(`{}`))
 
 	pol := &policy.Policy{
-		Trust: &policy.TrustPolicy{
-			Verifiers: []policy.TrustedVerifier{
-				{ID: testVerifierID, Keys: []string{"/tmp/nonexistent.pub"}},
+		Sections: policy.Sections{
+			Trust: &policy.TrustPolicy{
+				Verifiers: []policy.TrustedVerifier{
+					{ID: testVerifierID, Keys: []string{"/tmp/nonexistent.pub"}},
+				},
 			},
 		},
 	}

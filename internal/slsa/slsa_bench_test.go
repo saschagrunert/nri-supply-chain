@@ -31,9 +31,11 @@ func BenchmarkVerify(b *testing.B) {
 	}
 
 	pol := &policy.Policy{
-		Trust: &policy.TrustPolicy{
-			Builders: []policy.TrustedBuilder{
-				{ID: testBuilderID, MaxLevel: 2},
+		Sections: policy.Sections{
+			Trust: &policy.TrustPolicy{
+				Builders: []policy.TrustedBuilder{
+					{ID: testBuilderID, MaxLevel: 2},
+				},
 			},
 		},
 	}

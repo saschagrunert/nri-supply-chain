@@ -27,6 +27,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/glob"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
+	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
@@ -145,6 +146,48 @@ func isIncluded(ctx context.Context, includedImages []string, imageRef string) b
 		matched, err := glob.Match(pattern, imageRef)
 		if err != nil {
 			slog.DebugContext(ctx, "Malformed include pattern",
+				"pattern", pattern,
+				"image", imageRef,
+				"error", err,
+			)
+
+			continue
+		}
+
+		if matched {
+			return true
+		}
+	}
+
+	return false
+}
+
+func resolveImagePolicy(
+	ctx context.Context, pol *policy.Policy, imageRef string,
+) (resolved *policy.Policy, ruleIdx int) {
+	if len(pol.Rules) == 0 {
+		return pol, -1
+	}
+
+	for idx, rule := range pol.Rules {
+		if matchesImageRule(ctx, rule.Images, imageRef) {
+			slog.DebugContext(ctx, "Image matched policy rule",
+				"image", imageRef,
+				"ruleIndex", idx,
+			)
+
+			return policy.ApplyRule(pol, &rule), idx
+		}
+	}
+
+	return pol, -1
+}
+
+func matchesImageRule(ctx context.Context, patterns []string, imageRef string) bool {
+	for _, pattern := range patterns {
+		matched, err := glob.Match(pattern, imageRef)
+		if err != nil {
+			slog.DebugContext(ctx, "Malformed rule image pattern",
 				"pattern", pattern,
 				"image", imageRef,
 				"error", err,

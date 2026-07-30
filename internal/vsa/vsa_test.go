@@ -57,16 +57,18 @@ func validVSAStatement() vsa.Statement {
 
 func trustedPolicy() *policy.Policy {
 	return &policy.Policy{
-		Trust: &policy.TrustPolicy{
-			Verifiers: []policy.TrustedVerifier{
-				{ID: testVerifierID, Keys: []string{testVerifierKey}},
+		Sections: policy.Sections{
+			Trust: &policy.TrustPolicy{
+				Verifiers: []policy.TrustedVerifier{
+					{ID: testVerifierID, Keys: []string{testVerifierKey}},
+				},
 			},
-		},
-		VSA: &policy.VSAPolicy{
-			MinimumLevel:   2,
-			MaxAge:         "24h",
-			MaxAgeDuration: 24 * time.Hour,
-			Policy:         testPolicyURI,
+			VSA: &policy.VSAPolicy{
+				MinimumLevel:   2,
+				MaxAge:         "24h",
+				MaxAgeDuration: 24 * time.Hour,
+				Policy:         testPolicyURI,
+			},
 		},
 	}
 }
@@ -151,9 +153,11 @@ func TestVerify(t *testing.T) {
 				s.Predicate.VerifiedLevels = []string{testBuildLevel1}
 			},
 			pol: &policy.Policy{
-				Trust: &policy.TrustPolicy{
-					Verifiers: []policy.TrustedVerifier{
-						{ID: testVerifierID, Keys: []string{testVerifierKey}},
+				Sections: policy.Sections{
+					Trust: &policy.TrustPolicy{
+						Verifiers: []policy.TrustedVerifier{
+							{ID: testVerifierID, Keys: []string{testVerifierKey}},
+						},
 					},
 				},
 			},
@@ -247,9 +251,11 @@ func TestVerify(t *testing.T) {
 				s.Predicate.Policy = vsa.Policy{URI: "any-policy"}
 			},
 			pol: &policy.Policy{
-				Trust: &policy.TrustPolicy{
-					Verifiers: []policy.TrustedVerifier{
-						{ID: testVerifierID, Keys: []string{testVerifierKey}},
+				Sections: policy.Sections{
+					Trust: &policy.TrustPolicy{
+						Verifiers: []policy.TrustedVerifier{
+							{ID: testVerifierID, Keys: []string{testVerifierKey}},
+						},
 					},
 				},
 			},
@@ -306,16 +312,18 @@ func TestVerify(t *testing.T) {
 					Format(time.RFC3339)
 			},
 			pol: &policy.Policy{
-				Trust: &policy.TrustPolicy{
-					Verifiers: []policy.TrustedVerifier{
-						{ID: testVerifierID, Keys: []string{testVerifierKey}},
+				Sections: policy.Sections{
+					Trust: &policy.TrustPolicy{
+						Verifiers: []policy.TrustedVerifier{
+							{ID: testVerifierID, Keys: []string{testVerifierKey}},
+						},
 					},
-				},
-				VSA: &policy.VSAPolicy{
-					MinimumLevel:   2,
-					MaxAge:         "1s",
-					MaxAgeDuration: 1 * time.Second,
-					Policy:         testPolicyURI,
+					VSA: &policy.VSAPolicy{
+						MinimumLevel:   2,
+						MaxAge:         "1s",
+						MaxAgeDuration: 1 * time.Second,
+						Policy:         testPolicyURI,
+					},
 				},
 			},
 			wantPassed: true,
@@ -332,9 +340,11 @@ func TestVerify(t *testing.T) {
 					Format(time.RFC3339)
 			},
 			pol: &policy.Policy{
-				Trust: &policy.TrustPolicy{
-					Verifiers: []policy.TrustedVerifier{
-						{ID: testVerifierID, Keys: []string{testVerifierKey}},
+				Sections: policy.Sections{
+					Trust: &policy.TrustPolicy{
+						Verifiers: []policy.TrustedVerifier{
+							{ID: testVerifierID, Keys: []string{testVerifierKey}},
+						},
 					},
 				},
 			},
@@ -391,12 +401,14 @@ func TestVerify(t *testing.T) {
 			name:   "invalid max age duration",
 			modify: nil,
 			pol: &policy.Policy{
-				Trust: &policy.TrustPolicy{
-					Verifiers: []policy.TrustedVerifier{
-						{ID: testVerifierID, Keys: []string{testVerifierKey}},
+				Sections: policy.Sections{
+					Trust: &policy.TrustPolicy{
+						Verifiers: []policy.TrustedVerifier{
+							{ID: testVerifierID, Keys: []string{testVerifierKey}},
+						},
 					},
+					VSA: &policy.VSAPolicy{MaxAge: "not-a-duration"},
 				},
-				VSA: &policy.VSAPolicy{MaxAge: "not-a-duration"},
 			},
 			wantPassed: false,
 			wantReject: false,
@@ -519,10 +531,12 @@ func TestVerifyVerifierEdgeCases(t *testing.T) {
 		stmt := validVSAStatement()
 
 		pol := &policy.Policy{
-			Trust: &policy.TrustPolicy{
-				Verifiers: []policy.TrustedVerifier{
-					{ID: "https://other.example.com", Keys: []string{"/etc/keys/other.pub"}},
-					{ID: testVerifierID, Keys: []string{testVerifierKey}},
+			Sections: policy.Sections{
+				Trust: &policy.TrustPolicy{
+					Verifiers: []policy.TrustedVerifier{
+						{ID: "https://other.example.com", Keys: []string{"/etc/keys/other.pub"}},
+						{ID: testVerifierID, Keys: []string{testVerifierKey}},
+					},
 				},
 			},
 		}
@@ -723,12 +737,14 @@ func TestVerifyVersionEdgeCases(t *testing.T) {
 		stmt.Predicate.Policy = vsa.Policy{URI: "https://arbitrary.example.com/pol"}
 
 		pol := &policy.Policy{
-			Trust: &policy.TrustPolicy{
-				Verifiers: []policy.TrustedVerifier{
-					{ID: testVerifierID, Keys: []string{testVerifierKey}},
+			Sections: policy.Sections{
+				Trust: &policy.TrustPolicy{
+					Verifiers: []policy.TrustedVerifier{
+						{ID: testVerifierID, Keys: []string{testVerifierKey}},
+					},
 				},
+				VSA: &policy.VSAPolicy{MinimumLevel: 2},
 			},
-			VSA: &policy.VSAPolicy{MinimumLevel: 2},
 		}
 
 		result, err := vsa.Verify(testutil.MustMarshal(t, stmt), pol, testImageRef, nil)
@@ -873,9 +889,11 @@ func TestVerifyResourceURINormalized(t *testing.T) {
 	t.Parallel()
 
 	pol := &policy.Policy{
-		Trust: &policy.TrustPolicy{
-			Verifiers: []policy.TrustedVerifier{
-				{ID: testVerifierID, Keys: []string{testVerifierKey}},
+		Sections: policy.Sections{
+			Trust: &policy.TrustPolicy{
+				Verifiers: []policy.TrustedVerifier{
+					{ID: testVerifierID, Keys: []string{testVerifierKey}},
+				},
 			},
 		},
 	}
