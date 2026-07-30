@@ -35,6 +35,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 	"github.com/sigstore/sigstore-go/pkg/root"
+	"github.com/sigstore/sigstore-go/pkg/tuf"
 	"golang.org/x/sync/singleflight"
 	"golang.org/x/time/rate"
 )
@@ -204,6 +205,50 @@ func NewOCIFetcherWithVerifier(verifier BundleVerifyFunc) *OCIFetcher {
 		referrers:    remote.Referrers,
 		rootCache:    nil,
 		limiter:      atomic.Pointer[rate.Limiter]{},
+	}
+}
+
+// NewOCIFetcherWithTUFMirror creates an OCI-based attestation fetcher that
+// uses a custom TUF mirror for fetching the Sigstore trusted root. This
+// supports private Sigstore deployments where the trusted root (containing
+// Fulcio CA certificates and Rekor log keys) is served from an internal
+// TUF repository.
+//
+// When tufRootBytes is non-nil, it replaces the embedded public Sigstore
+// root.json as the TUF trust anchor. This is required for private Sigstore
+// deployments that use their own root keys. When tufRootBytes is nil, the
+// default public Sigstore root.json is used, treating the mirror as a CDN
+// mirror of the public infrastructure.
+func NewOCIFetcherWithTUFMirror(tufMirror string, tufRootBytes []byte) *OCIFetcher {
+	cachedRoot := &trustedRootCache{
+		mu:        sync.RWMutex{},
+		root:      nil,
+		fetchedAt: time.Time{},
+		fetchRoot: func() (*root.TrustedRoot, error) {
+			opts := tuf.DefaultOptions().
+				WithRepositoryBaseURL(tufMirror).
+				WithDisableLocalCache()
+
+			if len(tufRootBytes) > 0 {
+				opts = opts.WithRoot(tufRootBytes)
+			}
+
+			return root.FetchTrustedRootWithOptions(opts)
+		},
+		inflight:   singleflight.Group{},
+		onStaleHit: nil,
+	}
+
+	return &OCIFetcher{
+		verifyBundle: func(
+			ctx context.Context, bundleBytes []byte, opts *FetchOptions,
+		) ([]byte, error) {
+			return verifyBundleWithCache(ctx, bundleBytes, opts, cachedRoot)
+		},
+		fetchImage: remote.Image,
+		referrers:  remote.Referrers,
+		rootCache:  cachedRoot,
+		limiter:    atomic.Pointer[rate.Limiter]{},
 	}
 }
 

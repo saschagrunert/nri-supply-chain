@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -1380,6 +1381,95 @@ func TestArtifactPolicy(t *testing.T) {
 			t.Errorf("artifactPolicy(%q) expected error, got nil", digest)
 		}
 	}
+}
+
+func TestNewOCIFetcherWithTUFMirror(t *testing.T) {
+	t.Parallel()
+
+	t.Run("creates non-nil fetcher", func(t *testing.T) {
+		t.Parallel()
+
+		fetcher := attestation.NewOCIFetcherWithTUFMirror("https://tuf.example.com", nil)
+		if fetcher == nil {
+			t.Fatal("expected non-nil fetcher")
+		}
+	})
+
+	t.Run("warm contacts custom mirror", func(t *testing.T) {
+		t.Parallel()
+
+		var requestReceived atomic.Bool
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			requestReceived.Store(true)
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer server.Close()
+
+		fetcher := attestation.NewOCIFetcherWithTUFMirror(server.URL, nil)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		// Warm should attempt to fetch from the custom TUF mirror.
+		// It will fail because the test server doesn't serve valid TUF data.
+		err := fetcher.Warm(ctx)
+		if err == nil {
+			t.Error("expected warm to fail with a mock TUF server")
+		}
+
+		if !requestReceived.Load() {
+			t.Error("expected request to be sent to custom TUF mirror")
+		}
+	})
+
+	t.Run("unreachable mirror does not fall back to public sigstore", func(t *testing.T) {
+		t.Parallel()
+
+		// Start a server that returns 503 to simulate a failing private
+		// TUF mirror.
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}))
+		defer server.Close()
+
+		fetcher := attestation.NewOCIFetcherWithTUFMirror(server.URL, nil)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		// Warm must return an error, not silently succeed with public
+		// Sigstore data. A silent fallback would mean verification uses
+		// the wrong trust anchor.
+		err := fetcher.Warm(ctx)
+		if err == nil {
+			t.Error(
+				"expected error when TUF mirror is unreachable," +
+					" must not fall back to public Sigstore",
+			)
+		}
+	})
+
+	t.Run("custom root bytes are used", func(t *testing.T) {
+		t.Parallel()
+
+		customRoot := []byte(`{"signed":{"_type":"root","version":1}}`)
+		fetcher := attestation.NewOCIFetcherWithTUFMirror("https://tuf.example.com", customRoot)
+
+		if fetcher == nil {
+			t.Fatal("expected non-nil fetcher with custom root bytes")
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		// Warm fails because the custom root bytes are not a valid TUF
+		// root document, proving the WithRoot path is exercised.
+		err := fetcher.Warm(ctx)
+		if err == nil {
+			t.Error("expected error when custom root bytes are invalid")
+		}
+	})
 }
 
 func TestFetchSkipsCosignTagWhenReferrersExist(t *testing.T) {

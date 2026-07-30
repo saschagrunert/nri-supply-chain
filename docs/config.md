@@ -6,6 +6,7 @@ nri-supply-chain plugin.
 <!-- toc -->
 
 - [Operational Config](#operational-config)
+- [Private Sigstore Instances](#private-sigstore-instances)
 - [Policy Files](#policy-files)
 - [CLI Flags](#cli-flags)
 
@@ -30,6 +31,10 @@ metrics_addr = "127.0.0.1:9090"
 circuit_breaker_threshold = 5
 circuit_breaker_cooldown = "30s"
 # fetch_rate_limit = 50
+
+# [sigstore]
+# tuf_mirror = "https://tuf.internal.example.com"
+# tuf_root = "/etc/sigstore/root.json"
 ```
 
 | Field                       | Default                          | Description                                                        |
@@ -48,6 +53,52 @@ circuit_breaker_cooldown = "30s"
 
 See [operations.md](operations.md) for the metrics reference, config reload
 behavior, and health/readiness probes.
+
+## Private Sigstore Instances
+
+By default, keyless verification uses the public Sigstore instance (public
+Fulcio CA, public Rekor transparency log). Organizations running a private
+Sigstore deployment can point the plugin at their internal TUF mirror:
+
+```toml
+[sigstore]
+tuf_mirror = "https://tuf.internal.example.com"
+tuf_root = "/etc/sigstore/root.json"
+```
+
+| Field                 | Default         | Description                                               |
+| --------------------- | --------------- | --------------------------------------------------------- |
+| `sigstore.tuf_mirror` | (empty, public) | URL of a custom TUF mirror for the Sigstore trusted root  |
+| `sigstore.tuf_root`   | (empty)         | Path to a custom TUF root.json for private root key trust |
+
+The trusted root fetched from the custom TUF mirror contains the Fulcio CA
+certificates and Rekor transparency log keys for the private deployment.
+
+There are two usage patterns:
+
+**CDN mirror of public Sigstore** (tuf_mirror only): When only `tuf_mirror` is
+set, the mirror is treated as a CDN replica of the public Sigstore TUF
+repository. The embedded public Sigstore root.json is used as the TUF trust
+anchor. This is suitable for air-gapped environments that mirror the public
+Sigstore infrastructure but use the same root keys.
+
+**Fully private Sigstore deployment** (tuf_mirror + tuf_root): When both fields
+are set, `tuf_root` provides the TUF trust anchor (root.json) for a private
+Sigstore deployment that uses its own root keys. Without this, TUF
+verification fails because the default public Sigstore root keys do not match
+the private deployment's keys. The path must be absolute and the file must
+exist and be non-empty at startup.
+
+The `tuf_mirror` URL must use the `http` or `https` scheme. Reachability is
+not validated at config load time; a failure to reach the mirror is handled at
+verification time through the normal fetch failure policy. The plugin does not
+fall back to the public Sigstore instance when a configured mirror is
+unreachable.
+
+When `tuf_mirror` or `tuf_root` is changed via config reload, the plugin
+creates a new fetcher with the updated settings and invalidates the
+verification cache. Changes to the file content at the same `tuf_root` path
+are not detected; update the config value to force a re-read.
 
 ## Policy Files
 

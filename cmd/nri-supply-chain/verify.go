@@ -152,7 +152,11 @@ func newVerifier(
 	ctx context.Context, cfg *config.Config,
 ) (*verifier.Verifier, error) {
 	met := metrics.New()
-	fetcher := verifier.NewFetcher(ctx, cfg)
+
+	fetcher, err := verifier.NewFetcher(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("creating fetcher: %w", err)
+	}
 
 	v, err := verifier.New(cfg, met, fetcher)
 	if err != nil {

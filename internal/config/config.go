@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,6 +92,26 @@ var (
 
 	// ErrUnknownConfigKeys indicates the config file contains unrecognized keys.
 	ErrUnknownConfigKeys = errors.New("unknown config keys")
+
+	// ErrInvalidTUFMirror indicates the sigstore.tuf_mirror URL is not valid.
+	ErrInvalidTUFMirror = errors.New("invalid sigstore.tuf_mirror URL")
+
+	// ErrTUFRootNotAbsolute indicates the sigstore.tuf_root path is not absolute.
+	ErrTUFRootNotAbsolute = errors.New("sigstore.tuf_root must be an absolute path")
+
+	// ErrTUFRootNotFound indicates the sigstore.tuf_root file does not exist.
+	ErrTUFRootNotFound = errors.New("sigstore.tuf_root file not found")
+
+	// ErrTUFRootRequiresMirror indicates tuf_root is set without tuf_mirror.
+	ErrTUFRootRequiresMirror = errors.New(
+		"sigstore.tuf_root requires sigstore.tuf_mirror to be set",
+	)
+
+	// ErrTUFRootEmpty indicates the sigstore.tuf_root file is empty.
+	ErrTUFRootEmpty = errors.New("sigstore.tuf_root file is empty")
+
+	// ErrTUFRootNotRegularFile indicates the sigstore.tuf_root path is not a regular file.
+	ErrTUFRootNotRegularFile = errors.New("sigstore.tuf_root is not a regular file")
 )
 
 // Duration wraps time.Duration to support TOML unmarshalling from strings.
@@ -113,6 +134,30 @@ func (d *Duration) UnmarshalText(text []byte) error {
 // MarshalText implements encoding.TextMarshaler for TOML serialization.
 func (d Duration) MarshalText() ([]byte, error) {
 	return []byte(d.String()), nil
+}
+
+// SigstoreConfig configures private Sigstore instance endpoints for keyless
+// verification. When all fields are empty, the public Sigstore instance is used.
+type SigstoreConfig struct {
+	// TUFMirror is the URL of a custom TUF mirror for fetching the Sigstore
+	// trusted root. When set, the plugin uses this mirror instead of the
+	// default public Sigstore TUF repository. The trusted root from the
+	// custom mirror contains the Fulcio CA certificates and Rekor log keys
+	// for the private Sigstore deployment.
+	//
+	// When only tuf_mirror is set (without tuf_root), the mirror is treated
+	// as a CDN mirror of the public Sigstore TUF repository and the embedded
+	// public root.json is used as the trust anchor. This is suitable for
+	// air-gapped environments that mirror the public Sigstore infrastructure.
+	TUFMirror string `toml:"tuf_mirror"`
+
+	// TUFRoot is the path to a custom root.json file for TUF trust anchor
+	// initialization. Required for private Sigstore deployments that use
+	// their own root keys (different from the public Sigstore root keys).
+	// When set, the file contents replace the embedded public Sigstore
+	// root.json so that TUF verification uses the private deployment's
+	// trust chain. Must be an absolute path.
+	TUFRoot string `toml:"tuf_root"`
 }
 
 // Config represents the operational configuration for the NRI supply chain plugin.
@@ -148,6 +193,9 @@ type Config struct {
 	// Valid values: "debug", "info", "warn", "error".
 	// Empty means the level is determined by the --log-level CLI flag.
 	LogLevel string `toml:"log_level"`
+	// Sigstore configures private Sigstore instance endpoints for keyless
+	// verification. When omitted, the public Sigstore instance is used.
+	Sigstore SigstoreConfig `toml:"sigstore"`
 }
 
 // DefaultConfig returns the default configuration.
@@ -164,6 +212,7 @@ func DefaultConfig() *Config {
 		CircuitBreakerCooldown:  Duration{Duration: defaultCircuitBreakerCooldown},
 		FetchRateLimit:          0,
 		LogLevel:                "",
+		Sigstore:                SigstoreConfig{TUFMirror: "", TUFRoot: ""},
 	}
 }
 
@@ -205,6 +254,11 @@ func (c *Config) Validate() error {
 		errs = append(errs, err)
 	}
 
+	err = c.validateSigstoreConfig()
+	if err != nil {
+		errs = append(errs, err)
+	}
+
 	return errors.Join(errs...)
 }
 
@@ -221,6 +275,21 @@ func (c *Config) ValidateRuntime() error {
 
 	if !info.IsDir() {
 		return fmt.Errorf("%w: %q", ErrPolicyDirNotDirectory, c.PolicyDir)
+	}
+
+	if c.Sigstore.TUFRoot != "" {
+		rootInfo, err := os.Stat(c.Sigstore.TUFRoot)
+		if err != nil {
+			return fmt.Errorf("%w: %q: %w", ErrTUFRootNotFound, c.Sigstore.TUFRoot, err)
+		}
+
+		if !rootInfo.Mode().IsRegular() {
+			return fmt.Errorf("%w: %q", ErrTUFRootNotRegularFile, c.Sigstore.TUFRoot)
+		}
+
+		if rootInfo.Size() == 0 {
+			return fmt.Errorf("%w: %q", ErrTUFRootEmpty, c.Sigstore.TUFRoot)
+		}
 	}
 
 	return nil
@@ -356,6 +425,50 @@ func (c *Config) validateResilienceFields() error {
 	}
 
 	return errors.Join(errs...)
+}
+
+func (c *Config) validateSigstoreConfig() error {
+	var errs []error
+
+	if c.Sigstore.TUFMirror != "" {
+		err := validateTUFMirrorURL(c.Sigstore.TUFMirror)
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	if c.Sigstore.TUFRoot != "" {
+		if !filepath.IsAbs(c.Sigstore.TUFRoot) {
+			errs = append(errs, fmt.Errorf("%w: %q", ErrTUFRootNotAbsolute, c.Sigstore.TUFRoot))
+		}
+
+		if c.Sigstore.TUFMirror == "" {
+			errs = append(errs, ErrTUFRootRequiresMirror)
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+func validateTUFMirrorURL(mirror string) error {
+	parsed, err := url.Parse(mirror)
+	if err != nil {
+		return fmt.Errorf("%w: %q: %w", ErrInvalidTUFMirror, mirror, err)
+	}
+
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf(
+			"%w: %q: scheme must be http or https", ErrInvalidTUFMirror, mirror,
+		)
+	}
+
+	if parsed.Host == "" {
+		return fmt.Errorf(
+			"%w: %q: missing host", ErrInvalidTUFMirror, mirror,
+		)
+	}
+
+	return nil
 }
 
 // LoadFromFile reads and parses a TOML config file.
