@@ -101,3 +101,9 @@ func ExportAllowResult(
 ) *types.Result {
 	return allowResult(ctx, logger, imageRef, digest, namespace, reason)
 }
+
+// ExportWaitInflight waits for all in-flight singleflight verifications
+// to complete without stopping the cache.
+func (v *Verifier) ExportWaitInflight() {
+	v.inflightWg.Wait()
+}
