@@ -17,6 +17,7 @@ package verifier_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -25,6 +26,9 @@ import (
 	"testing"
 	"time"
 
+	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
@@ -37,6 +41,26 @@ const testDigest = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4" +
 	"e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
 
 const testTUFMirrorURL = "https://tuf.example.com"
+
+type delayFetcher struct {
+	delay   time.Duration
+	started chan struct{}
+}
+
+func (f *delayFetcher) Fetch(
+	ctx context.Context, _ string, _ *attestation.FetchOptions,
+) ([]attestation.VerifiedAttestation, error) {
+	if f.started != nil {
+		close(f.started)
+	}
+
+	select {
+	case <-time.After(f.delay):
+		return nil, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("fetch interrupted: %w", ctx.Err())
+	}
+}
 
 func TestNewFetcher(t *testing.T) {
 	t.Parallel()
@@ -1828,5 +1852,137 @@ func TestVerifyIncludeDoubleStarPattern(t *testing.T) {
 	if !result.Allowed {
 		t.Errorf("expected ** include to match nested path, got denied: %s",
 			result.Reason)
+	}
+}
+
+func TestVerifyDetachedVerificationPopulatesCache(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{
+		"trust": {"builders": [{"id": "test", "maxLevel": 2}]},
+		"slsa": {"missingPolicy": "allow"}
+	}`)
+
+	met := metrics.New()
+
+	fetcher := &delayFetcher{
+		delay:   500 * time.Millisecond,
+		started: make(chan struct{}),
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+	cfg.CacheTTL = config.Duration{Duration: time.Hour}
+
+	verif, err := verifier.New(cfg, met, fetcher)
+	testutil.AssertNoError(t, err)
+
+	defer verif.Stop()
+
+	const detachedDigest = "sha256:88888888888888888888888888888888" +
+		"88888888888888888888888888888888"
+
+	// Use a short timeout so the caller's context expires before the
+	// fetcher completes, simulating the NRI ttrpc timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	result, err := verif.Verify(ctx, "nginx:latest", detachedDigest, "", "default")
+	testutil.AssertNoError(t, err)
+
+	if !result.Allowed {
+		t.Fatalf("expected allowed=true in warn mode on timeout, got: %s", result.Reason)
+	}
+
+	if promtestutil.ToFloat64(met.VerificationInterruptedTotal) < 1 {
+		t.Fatal("expected VerificationInterruptedTotal >= 1")
+	}
+
+	// Ensure the singleflight goroutine has started (and called
+	// inflightWg.Add) before waiting, otherwise Wait returns
+	// immediately on slow CI.
+	<-fetcher.started
+	verif.ExportWaitInflight()
+
+	// A second call with a fresh context should hit the cache.
+	hitsBefore := promtestutil.ToFloat64(met.CacheHitsTotal)
+
+	result2, err := verif.Verify(
+		context.Background(), "nginx:latest", detachedDigest, "", "default",
+	)
+	testutil.AssertNoError(t, err)
+
+	if !result2.Allowed {
+		t.Fatalf("expected cached result to be allowed, got: %s", result2.Reason)
+	}
+
+	if promtestutil.ToFloat64(met.CacheHitsTotal) <= hitsBefore {
+		t.Error("expected cache hit after detached verification completed")
+	}
+}
+
+func TestVerifyDetachedVerificationEnforceRetryHitsCache(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{
+		"trust": {"builders": [{"id": "test", "maxLevel": 2}]},
+		"slsa": {"missingPolicy": "allow"}
+	}`)
+
+	met := metrics.New()
+
+	fetcher := &delayFetcher{
+		delay:   500 * time.Millisecond,
+		started: make(chan struct{}),
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+	cfg.PolicyDir = dir
+	cfg.CacheTTL = config.Duration{Duration: time.Hour}
+
+	verif, err := verifier.New(cfg, met, fetcher)
+	testutil.AssertNoError(t, err)
+
+	defer verif.Stop()
+
+	const enforceDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" +
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	_, err = verif.Verify(ctx, "nginx:latest", enforceDigest, "", "default")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context.DeadlineExceeded, got: %v", err)
+	}
+
+	if promtestutil.ToFloat64(met.VerificationInterruptedTotal) < 1 {
+		t.Fatal("expected VerificationInterruptedTotal >= 1")
+	}
+
+	// Ensure the singleflight goroutine has started (and called
+	// inflightWg.Add) before waiting, otherwise Wait returns
+	// immediately on slow CI.
+	<-fetcher.started
+	verif.ExportWaitInflight()
+
+	// Retry with a fresh context should hit the cache and succeed.
+	hitsBefore := promtestutil.ToFloat64(met.CacheHitsTotal)
+
+	result, err := verif.Verify(
+		context.Background(), "nginx:latest", enforceDigest, "", "default",
+	)
+	testutil.AssertNoError(t, err)
+
+	if !result.Allowed {
+		t.Errorf("expected retry to succeed from cache, got: %s", result.Reason)
+	}
+
+	if promtestutil.ToFloat64(met.CacheHitsTotal) <= hitsBefore {
+		t.Error("expected cache hit on retry after detached verification completed")
 	}
 }
