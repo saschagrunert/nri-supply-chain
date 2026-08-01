@@ -64,13 +64,13 @@ must pass verification.
 
    ```console
    nri-supply-chain --config config.toml \
-     verify ghcr.io/saschagrunert/nri-supply-chain:0.1.5
+     verify ghcr.io/saschagrunert/nri-supply-chain:0.2.0
    ```
 
    The default output is a colored table:
 
    ```text
-   Image: ghcr.io/saschagrunert/nri-supply-chain:0.1.5
+   Image: ghcr.io/saschagrunert/nri-supply-chain:0.2.0
    Digest: sha256:1a8b39eeff74b8bb3e20c7f9fa773d4a9935241f7cc4e1217067c8186c2cee3c
    Namespace: default
    Policy: /etc/nri-supply-chain/policies/default.json
@@ -86,7 +86,7 @@ must pass verification.
 
    ```json
    {
-     "image": "ghcr.io/saschagrunert/nri-supply-chain:0.1.5",
+     "image": "ghcr.io/saschagrunert/nri-supply-chain:0.2.0",
      "digest": "sha256:1a8b39eeff74b8bb3e20c7f9fa773d4a9935241f7cc4e1217067c8186c2cee3c",
      "namespace": "default",
      "allowed": true,
@@ -134,7 +134,7 @@ must pass verification.
    With this policy the default table output becomes:
 
    ```text
-   Image: ghcr.io/saschagrunert/nri-supply-chain:0.1.5
+   Image: ghcr.io/saschagrunert/nri-supply-chain:0.2.0
    Digest: sha256:1a8b39eeff74b8bb3e20c7f9fa773d4a9935241f7cc4e1217067c8186c2cee3c
    Namespace: default
    Policy: /etc/nri-supply-chain/policies/default.json
