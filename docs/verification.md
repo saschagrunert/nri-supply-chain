@@ -116,10 +116,17 @@ reference, and custom build system configuration.
 
 ### VEX (Vulnerability Exploitability eXchange)
 
-Verifies [OpenVEX](https://openvex.dev) v0.2.0 documents. When multiple VEX
-documents exist, the most restrictive result wins: any `affected` status
-causes failure. See [policy.md](policy.md#vex-vulnerability-exploitability-exchange)
-for status handling, product matching, and the field reference.
+Verifies VEX documents in two formats:
+
+- [OpenVEX](https://openvex.dev) v0.2.0
+- [CycloneDX VEX](https://cyclonedx.org/capabilities/vex/) (via CycloneDX BOM
+  vulnerability entries)
+
+The format is detected automatically from the predicate content. When multiple
+VEX documents exist (in either format), the most restrictive result wins: any
+`affected`/`exploitable` status causes failure. See
+[policy.md](policy.md#vex-vulnerability-exploitability-exchange) for status
+handling, product matching, and the field reference.
 
 ### VSA (Verification Summary Attestation)
 
@@ -142,8 +149,6 @@ All attestations must be valid Sigstore bundles. The plugin supports keyless
 The supply chain ecosystem includes several related formats and frameworks
 that the plugin does not currently support:
 
-- **[CycloneDX VEX](https://cyclonedx.org/capabilities/vex/)**: an alternative
-  VEX format. The plugin currently supports OpenVEX only.
 - **[SARIF](https://sarifweb.azurewebsites.net/)** (Static Analysis Results
   Interchange Format): a standardized format for security scanner results that
   could complement VEX by providing detailed finding data.

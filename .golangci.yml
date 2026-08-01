@@ -139,6 +139,7 @@ linters:
           allow:
             - $gostd
             - github.com/BurntSushi/toml
+            - github.com/CycloneDX/cyclonedx-go
             - github.com/containerd/nri
             - github.com/fatih/color
             - github.com/fsnotify/fsnotify
@@ -163,6 +164,7 @@ linters:
         - 'crypto/x509\.Certificate'
         - 'crypto/x509/pkix\.Name'
         - 'encoding/pem\.Block'
+        - 'github\.com/CycloneDX/cyclonedx-go\..*'
         - 'github\.com/containerd/nri/pkg/api\..*'
         - 'github\.com/google/go-containerregistry/.*'
         - 'github\.com/notaryproject/notation-go/verifier/trustpolicy\..*'

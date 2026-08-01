@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"testing"
 
+	cdx "github.com/CycloneDX/cyclonedx-go"
 	openvex "github.com/openvex/go-vex/pkg/vex"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
@@ -1156,5 +1157,243 @@ func TestVerifyMultipleAllInvalid(t *testing.T) {
 
 	if result.Status != types.StatusFail {
 		t.Errorf("expected fail status, got %q", result.Status)
+	}
+}
+
+// CycloneDX VEX format detection and integration tests.
+
+func cycloneDXBOM(state cdx.ImpactAnalysisState) *cdx.BOM {
+	bom := cdx.NewBOM()
+	bom.Components = &[]cdx.Component{
+		{
+			BOMRef: "comp-nginx",
+			Type:   cdx.ComponentTypeContainer,
+			Name:   "nginx",
+			Hashes: &[]cdx.Hash{
+				{
+					Algorithm: cdx.HashAlgoSHA256,
+					Value:     testDigest[len(testDigestAlgo)+1:],
+				},
+			},
+		},
+	}
+	bom.Vulnerabilities = &[]cdx.Vulnerability{
+		{
+			ID:       "CVE-2024-1234",
+			Analysis: &cdx.VulnerabilityAnalysis{State: state},
+			Affects: &[]cdx.Affects{
+				{Ref: "comp-nginx"},
+			},
+		},
+	}
+
+	return bom
+}
+
+func wrapCycloneDXInToto(t *testing.T, bom *cdx.BOM, digest string) []byte {
+	t.Helper()
+
+	predBytes := testutil.MustMarshal(t, bom)
+
+	wrapper := inTotoWrapper{
+		Type: testInTotoType,
+		Subject: []inTotoSubj{
+			{
+				Name:   testSubjectName,
+				Digest: map[string]string{testDigestAlgo: digest[len(testDigestAlgo)+1:]},
+			},
+		},
+		PredicateType: "https://cyclonedx.org/bom",
+		Predicate:     predBytes,
+	}
+
+	return testutil.MustMarshal(t, wrapper)
+}
+
+func TestVerifyCycloneDXFormatDetection(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		state      cdx.ImpactAnalysisState
+		wantPassed bool
+		wantStatus types.CheckStatus
+	}{
+		{
+			name:       "CycloneDX not_affected passes",
+			state:      cdx.IASNotAffected,
+			wantPassed: true,
+			wantStatus: types.StatusPass,
+		},
+		{
+			name:       "CycloneDX exploitable fails",
+			state:      cdx.IASExploitable,
+			wantPassed: false,
+			wantStatus: types.StatusFail,
+		},
+		{
+			name:       "CycloneDX resolved passes",
+			state:      cdx.IASResolved,
+			wantPassed: true,
+			wantStatus: types.StatusPass,
+		},
+		{
+			name:       "CycloneDX false_positive passes",
+			state:      cdx.IASFalsePositive,
+			wantPassed: true,
+			wantStatus: types.StatusPass,
+		},
+		{
+			name:       "CycloneDX in_triage default allow",
+			state:      cdx.IASInTriage,
+			wantPassed: true,
+			wantStatus: types.StatusPass,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			bom := cycloneDXBOM(test.state)
+			att := wrapCycloneDXInToto(t, bom, testDigest)
+
+			result, err := vex.Verify(
+				context.Background(), att,
+				&policy.Policy{}, testImageRef, testDigest,
+				nil,
+			)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result.Passed != test.wantPassed {
+				t.Errorf("expected passed=%v, got passed=%v (detail: %s)",
+					test.wantPassed, result.Passed, result.Detail)
+			}
+
+			if result.Status != test.wantStatus {
+				t.Errorf("expected status %q, got %q", test.wantStatus, result.Status)
+			}
+		})
+	}
+}
+
+func TestVerifyCycloneDXInTriageWithDenyPolicy(t *testing.T) {
+	t.Parallel()
+
+	bom := cycloneDXBOM(cdx.IASInTriage)
+	att := wrapCycloneDXInToto(t, bom, testDigest)
+
+	result, err := vex.Verify(
+		context.Background(), att,
+		&policy.Policy{
+			Sections: policy.Sections{
+				VEX: &policy.VEXPolicy{UnderInvestigationPolicy: types.ActionDeny},
+			},
+		},
+		testImageRef, testDigest,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Passed {
+		t.Error("expected fail for in_triage with deny policy")
+	}
+
+	if result.Status != types.StatusFail {
+		t.Errorf("expected fail status, got %q", result.Status)
+	}
+}
+
+func TestVerifyCycloneDXEmptyVulnerabilities(t *testing.T) {
+	t.Parallel()
+
+	bom := cdx.NewBOM()
+	att := wrapCycloneDXInToto(t, bom, testDigest)
+
+	result, err := vex.Verify(
+		context.Background(), att,
+		&policy.Policy{}, testImageRef, testDigest,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.Passed {
+		t.Errorf("expected pass for CycloneDX BOM without vulnerabilities, got: %s", result.Detail)
+	}
+}
+
+func TestVerifyCycloneDXCheckType(t *testing.T) {
+	t.Parallel()
+
+	bom := cycloneDXBOM(cdx.IASExploitable)
+	att := wrapCycloneDXInToto(t, bom, testDigest)
+
+	result, err := vex.Verify(
+		context.Background(), att,
+		&policy.Policy{}, testImageRef, testDigest,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Type != "vex" {
+		t.Errorf("expected type vex, got %q", result.Type)
+	}
+}
+
+func TestVerifyMultipleMixedFormats(t *testing.T) {
+	t.Parallel()
+
+	openVEXDoc := validVEXDoc(openvex.StatusNotAffected)
+	openVEXAtt := wrapInToto(t, openVEXDoc, testDigest)
+
+	cdxBOM := cycloneDXBOM(cdx.IASNotAffected)
+	cdxAtt := wrapCycloneDXInToto(t, cdxBOM, testDigest)
+
+	attestations := [][]byte{openVEXAtt, cdxAtt}
+
+	result, err := vex.VerifyMultiple(
+		context.Background(), attestations,
+		&policy.Policy{}, testImageRef, testDigest,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.Passed {
+		t.Errorf("expected pass for mixed formats both passing, got: %s", result.Detail)
+	}
+}
+
+func TestVerifyMultipleMixedFormatsWithAffected(t *testing.T) {
+	t.Parallel()
+
+	openVEXDoc := validVEXDoc(openvex.StatusNotAffected)
+	openVEXAtt := wrapInToto(t, openVEXDoc, testDigest)
+
+	cdxBOM := cycloneDXBOM(cdx.IASExploitable)
+	cdxAtt := wrapCycloneDXInToto(t, cdxBOM, testDigest)
+
+	attestations := [][]byte{openVEXAtt, cdxAtt}
+
+	result, err := vex.VerifyMultiple(
+		context.Background(), attestations,
+		&policy.Policy{}, testImageRef, testDigest,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Passed {
+		t.Error("expected fail when CycloneDX doc has exploitable status")
 	}
 }

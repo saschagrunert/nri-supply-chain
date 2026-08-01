@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	cdx "github.com/CycloneDX/cyclonedx-go"
 	openvex "github.com/openvex/go-vex/pkg/vex"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
@@ -68,4 +69,38 @@ func BenchmarkVerify(b *testing.B) {
 	for range b.N {
 		_, _ = vex.Verify(ctx, att, pol, testImageRef, testDigest, nil)
 	}
+}
+
+func BenchmarkVerifyCycloneDX(b *testing.B) {
+	bom := cycloneDXBOM(cdx.IASNotAffected)
+	att := benchWrapCycloneDXInToto(b, bom, testDigest)
+
+	pol := &policy.Policy{}
+	ctx := context.Background()
+
+	b.ResetTimer()
+
+	for range b.N {
+		_, _ = vex.Verify(ctx, att, pol, testImageRef, testDigest, nil)
+	}
+}
+
+func benchWrapCycloneDXInToto(b *testing.B, bom *cdx.BOM, digest string) []byte {
+	b.Helper()
+
+	predBytes := benchMarshal(b, bom)
+
+	wrapper := inTotoWrapper{
+		Type: testInTotoType,
+		Subject: []inTotoSubj{
+			{
+				Name:   testSubjectName,
+				Digest: map[string]string{testDigestAlgo: digest[len(testDigestAlgo)+1:]},
+			},
+		},
+		PredicateType: "https://cyclonedx.org/bom",
+		Predicate:     predBytes,
+	}
+
+	return benchMarshal(b, wrapper)
 }

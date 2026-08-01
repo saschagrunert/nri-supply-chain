@@ -155,6 +155,11 @@ func TestPredicateTypeConstants(t *testing.T) {
 			got:  attestation.PredicateOpenVEX,
 			want: "https://openvex.dev/ns",
 		},
+		{
+			name: "CycloneDX",
+			got:  attestation.PredicateCycloneDX,
+			want: "https://cyclonedx.org/bom",
+		},
 	}
 
 	for _, tt := range tests {
