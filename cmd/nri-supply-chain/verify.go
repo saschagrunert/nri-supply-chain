@@ -335,7 +335,7 @@ func resolveDigest(
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
-	digest, indexDigest, err := registry.ResolveWithRegistries(ctx, imageRef, cache)
+	digest, indexDigest, _, err := registry.ResolveWithRegistries(ctx, imageRef, cache)
 	if err != nil {
 		return resolvedDigest{}, fmt.Errorf("resolving digest: %w", err)
 	}

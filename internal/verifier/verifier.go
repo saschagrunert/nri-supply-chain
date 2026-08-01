@@ -100,6 +100,9 @@ func New(cfg *config.Config, met *metrics.Metrics, fetcher attestation.Fetcher) 
 
 	if ociFetcher, ok := fetcher.(*attestation.OCIFetcher); ok && ociFetcher != nil {
 		ociFetcher.SetStaleRootCallback(met.TrustedRootStaleTotal.Inc)
+		ociFetcher.SetMirrorFallbackCallback(func(registryHost string) {
+			met.MirrorFallbackTotal.WithLabelValues(registryHost, "attestation").Inc()
+		})
 	}
 
 	policies, hashes, err := loadAndHashPolicies(&cfgCopy)
@@ -556,6 +559,9 @@ func (v *Verifier) reloadFetcher( //nolint:ireturn // returns prev.fetcher which
 
 	if newFetcher != nil {
 		newFetcher.SetStaleRootCallback(prev.metrics.TrustedRootStaleTotal.Inc)
+		newFetcher.SetMirrorFallbackCallback(func(registryHost string) {
+			prev.metrics.MirrorFallbackTotal.WithLabelValues(registryHost, "attestation").Inc()
+		})
 
 		return newFetcher
 	}

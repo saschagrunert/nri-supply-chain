@@ -20,6 +20,8 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -31,6 +33,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 )
@@ -137,14 +140,14 @@ func (tc *TransportCache) getTransport(prefix string) (http.RoundTripper, error)
 		return nil, nil //nolint:nilnil // nil signals "use default transport"
 	}
 
-	transport, err := BuildTransport(reg.CACert, reg.Insecure)
+	builtTransport, err := BuildTransport(reg.CACert, reg.Insecure)
 	if err != nil {
 		return nil, err
 	}
 
-	tc.transports[prefix] = transport
+	tc.transports[prefix] = builtTransport
 
-	return transport, nil
+	return builtTransport, nil
 }
 
 // BuildTransport creates an http.RoundTripper configured with the given
@@ -284,58 +287,144 @@ func FindMatchingRegistry(
 	return nil
 }
 
+// FallbackInfo holds the information needed to retry a request against the
+// original registry when a mirror is unreachable.
+type FallbackInfo struct {
+	// OriginalRef is the unmodified image reference (before mirror rewrite).
+	OriginalRef string
+	// TransportOpt is the remote.Option for the original registry (may be nil).
+	TransportOpt remote.Option
+}
+
+// IsConnectionError reports whether err represents a connection-level failure
+// that warrants falling back to the original registry. Application-level
+// errors (401, 403, 404, 400) are NOT connection errors because the mirror
+// responded successfully at the transport layer.
+func IsConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Server-side errors (5xx) from the registry transport.
+	var transportErr *transport.Error
+	if errors.As(err, &transportErr) {
+		return transportErr.StatusCode >= http.StatusInternalServerError
+	}
+
+	if isNetworkOrTLSError(err) {
+		return true
+	}
+
+	// Timeout errors (net.Error with Timeout() == true).
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+
+	// Unexpected EOF or EOF (connection dropped).
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+}
+
+func isNetworkOrTLSError(err error) bool {
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
+	}
+
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return true
+	}
+
+	var tlsRecordErr *tls.RecordHeaderError
+	if errors.As(err, &tlsRecordErr) {
+		return true
+	}
+
+	var certInvalidErr *x509.CertificateInvalidError
+	if errors.As(err, &certInvalidErr) {
+		return true
+	}
+
+	var unknownAuthErr *x509.UnknownAuthorityError
+	if errors.As(err, &unknownAuthErr) {
+		return true
+	}
+
+	var hostnameErr *x509.HostnameError
+
+	return errors.As(err, &hostnameErr)
+}
+
 // OptionsForRegistries returns the (possibly rewritten) image reference plus
 // the transport remote.Option for the matching registry. The transport option
 // is nil when no custom transport is needed. If no registry matches, the
 // original imageRef is returned with a nil transport option.
+//
+// When the matching registry has a mirror configured, a non-nil FallbackInfo
+// is returned with the original reference and transport option for retrying
+// against the original registry.
 func OptionsForRegistries(
 	cache *TransportCache, imageRef string,
-) (rewrittenRef string, transportOpt remote.Option, err error) {
+) (rewrittenRef string, transportOpt remote.Option, fallback *FallbackInfo, err error) {
 	if cache == nil {
-		return imageRef, nil, nil
+		return imageRef, nil, nil, nil
 	}
 
 	registries := cache.Registries()
 
 	reg := FindMatchingRegistry(registries, imageRef)
 	if reg == nil {
-		return imageRef, nil, nil
+		return imageRef, nil, nil, nil
 	}
 
 	if reg.Mirror != "" {
 		rewrittenRef, err = RewriteReference(imageRef, reg.Prefix, reg.Mirror)
 		if err != nil {
-			return imageRef, nil, err
+			return imageRef, nil, nil, err
 		}
 	} else {
 		rewrittenRef = imageRef
 	}
 
-	transport, transportErr := cache.getTransport(reg.Prefix)
+	roundTripper, transportErr := cache.getTransport(reg.Prefix)
 	if transportErr != nil {
-		return imageRef, nil, transportErr
+		return imageRef, nil, nil, transportErr
 	}
 
-	if transport != nil {
-		transportOpt = remote.WithTransport(transport)
+	if roundTripper != nil {
+		transportOpt = remote.WithTransport(roundTripper)
 	}
 
-	return rewrittenRef, transportOpt, nil
+	// Build fallback info when a mirror is configured.
+	if reg.Mirror != "" {
+		fallback = &FallbackInfo{
+			OriginalRef:  imageRef,
+			TransportOpt: nil, // original registry uses default transport
+		}
+	}
+
+	return rewrittenRef, transportOpt, fallback, nil
 }
 
 // ResolveWithRegistries resolves an image reference to its digest using
 // per-registry transport configuration. Falls back to the default keychain
-// when no registry matches.
+// when no registry matches. When a mirror is configured and the mirror is
+// unreachable, the resolution is retried against the original registry.
+// The returned fallbackUsed flag is true when the mirror was unreachable
+// and the digest was resolved against the original registry instead.
 func ResolveWithRegistries(
 	ctx context.Context, imageRef string, cache *TransportCache,
-) (digest, indexDigest string, err error) {
+) (digest, indexDigest string, fallbackUsed bool, err error) {
 	if cache == nil {
-		return ResolveWithDefaultKeychain(ctx, imageRef)
+		digest, indexDigest, err = ResolveWithDefaultKeychain(ctx, imageRef)
+
+		return digest, indexDigest, false, err
 	}
 
-	rewrittenRef, transportOpt, err := OptionsForRegistries(cache, imageRef)
+	rewrittenRef, transportOpt, fallback, err := OptionsForRegistries(cache, imageRef)
 	if err != nil {
-		return "", "", fmt.Errorf("building registry options: %w", err)
+		return "", "", false, fmt.Errorf("building registry options: %w", err)
 	}
 
 	opts := []remote.Option{remote.WithAuthFromKeychain(authn.DefaultKeychain)}
@@ -343,5 +432,23 @@ func ResolveWithRegistries(
 		opts = append(opts, transportOpt)
 	}
 
-	return ResolveDigest(ctx, rewrittenRef, opts...)
+	digest, indexDigest, err = ResolveDigest(ctx, rewrittenRef, opts...)
+	if err != nil && fallback != nil && ctx.Err() == nil && IsConnectionError(err) {
+		slog.Warn("Mirror unreachable for digest resolution, falling back to original registry",
+			"mirror_ref", rewrittenRef,
+			"original_ref", fallback.OriginalRef,
+			"error", err,
+		)
+
+		fallbackOpts := []remote.Option{remote.WithAuthFromKeychain(authn.DefaultKeychain)}
+		if fallback.TransportOpt != nil {
+			fallbackOpts = append(fallbackOpts, fallback.TransportOpt)
+		}
+
+		digest, indexDigest, err = ResolveDigest(ctx, fallback.OriginalRef, fallbackOpts...)
+
+		return digest, indexDigest, true, err
+	}
+
+	return digest, indexDigest, false, err
 }

@@ -171,9 +171,11 @@ type OCIFetcher struct {
 	fetchImage   ImageFetchFunc
 	referrers    ReferrersFunc
 	// rootCache is captured by the verifyBundle closure; stored for exhaustruct compliance.
-	rootCache      *trustedRootCache
-	limiter        atomic.Pointer[rate.Limiter]
-	transportCache atomic.Pointer[registry.TransportCache]
+	rootCache          *trustedRootCache
+	limiter            atomic.Pointer[rate.Limiter]
+	transportCache     atomic.Pointer[registry.TransportCache]
+	onMirrorFallback   func(registryHost string)
+	onMirrorFallbackMu sync.RWMutex
 }
 
 // NewOCIFetcher creates a new OCI-based attestation fetcher.
@@ -193,23 +195,27 @@ func NewOCIFetcher() *OCIFetcher {
 		) ([]byte, error) {
 			return verifyBundleWithCache(ctx, bundleBytes, opts, cachedRoot)
 		},
-		fetchImage:     remote.Image,
-		referrers:      remote.Referrers,
-		rootCache:      cachedRoot,
-		limiter:        atomic.Pointer[rate.Limiter]{},
-		transportCache: atomic.Pointer[registry.TransportCache]{},
+		fetchImage:         remote.Image,
+		referrers:          remote.Referrers,
+		rootCache:          cachedRoot,
+		limiter:            atomic.Pointer[rate.Limiter]{},
+		transportCache:     atomic.Pointer[registry.TransportCache]{},
+		onMirrorFallback:   nil,
+		onMirrorFallbackMu: sync.RWMutex{},
 	}
 }
 
 // NewOCIFetcherWithVerifier creates a fetcher with a custom bundle verification function.
 func NewOCIFetcherWithVerifier(verifier BundleVerifyFunc) *OCIFetcher {
 	return &OCIFetcher{
-		verifyBundle:   verifier,
-		fetchImage:     remote.Image,
-		referrers:      remote.Referrers,
-		rootCache:      nil,
-		limiter:        atomic.Pointer[rate.Limiter]{},
-		transportCache: atomic.Pointer[registry.TransportCache]{},
+		verifyBundle:       verifier,
+		fetchImage:         remote.Image,
+		referrers:          remote.Referrers,
+		rootCache:          nil,
+		limiter:            atomic.Pointer[rate.Limiter]{},
+		transportCache:     atomic.Pointer[registry.TransportCache]{},
+		onMirrorFallback:   nil,
+		onMirrorFallbackMu: sync.RWMutex{},
 	}
 }
 
@@ -250,11 +256,13 @@ func NewOCIFetcherWithTUFMirror(tufMirror string, tufRootBytes []byte) *OCIFetch
 		) ([]byte, error) {
 			return verifyBundleWithCache(ctx, bundleBytes, opts, cachedRoot)
 		},
-		fetchImage:     remote.Image,
-		referrers:      remote.Referrers,
-		rootCache:      cachedRoot,
-		limiter:        atomic.Pointer[rate.Limiter]{},
-		transportCache: atomic.Pointer[registry.TransportCache]{},
+		fetchImage:         remote.Image,
+		referrers:          remote.Referrers,
+		rootCache:          cachedRoot,
+		limiter:            atomic.Pointer[rate.Limiter]{},
+		transportCache:     atomic.Pointer[registry.TransportCache]{},
+		onMirrorFallback:   nil,
+		onMirrorFallbackMu: sync.RWMutex{},
 	}
 }
 
@@ -265,6 +273,16 @@ func (f *OCIFetcher) SetStaleRootCallback(fn func()) {
 	if f.rootCache != nil {
 		f.rootCache.onStaleHit = fn
 	}
+}
+
+// SetMirrorFallbackCallback sets a function to be called each time the fetcher
+// falls back to the original registry because a mirror is unreachable.
+// The callback receives the original registry host. Safe for concurrent use.
+func (f *OCIFetcher) SetMirrorFallbackCallback(fn func(registryHost string)) {
+	f.onMirrorFallbackMu.Lock()
+	defer f.onMirrorFallbackMu.Unlock()
+
+	f.onMirrorFallback = fn
 }
 
 // SetRateLimit configures a rate limiter for outbound registry calls.
@@ -334,25 +352,9 @@ func (f *OCIFetcher) Fetch(
 		defer cancel()
 	}
 
-	// Apply registry mirror rewriting and custom transport if configured.
-	effectiveRef := imageRef
-
-	remoteOpts := []remote.Option{
-		remote.WithAuthFromKeychain(authn.DefaultKeychain),
-		remote.WithContext(ctx),
-	}
-
-	if cache := f.transportCache.Load(); cache != nil {
-		rewritten, transportOpt, regErr := registry.OptionsForRegistries(cache, imageRef)
-		if regErr != nil {
-			return nil, fmt.Errorf("building registry options: %w", regErr)
-		}
-
-		effectiveRef = rewritten
-
-		if transportOpt != nil {
-			remoteOpts = append(remoteOpts, transportOpt)
-		}
+	effectiveRef, remoteOpts, fallback, err := f.buildFetchOptions(ctx, imageRef)
+	if err != nil {
+		return nil, err
 	}
 
 	ref, err := parseDigestRef(effectiveRef, opts.Digest)
@@ -360,7 +362,91 @@ func (f *OCIFetcher) Fetch(
 		return nil, fmt.Errorf("parsing image reference: %w", err)
 	}
 
-	return f.fetchWithRetry(ctx, ref, opts.Digest, remoteOpts, opts)
+	result, fetchErr := f.fetchWithRetry(ctx, ref, opts.Digest, remoteOpts, opts)
+	if fetchErr != nil && fallback != nil &&
+		ctx.Err() == nil && registry.IsConnectionError(fetchErr) {
+		return f.fetchWithFallback(ctx, effectiveRef, fallback, fetchErr, opts)
+	}
+
+	return result, fetchErr
+}
+
+func (f *OCIFetcher) buildFetchOptions(
+	ctx context.Context, imageRef string,
+) (string, []remote.Option, *registry.FallbackInfo, error) {
+	effectiveRef := imageRef
+
+	remoteOpts := []remote.Option{
+		remote.WithAuthFromKeychain(authn.DefaultKeychain),
+		remote.WithContext(ctx),
+	}
+
+	var fallback *registry.FallbackInfo
+
+	if cache := f.transportCache.Load(); cache != nil {
+		rewritten, transportOpt, regFallback, regErr := registry.OptionsForRegistries(
+			cache, imageRef,
+		)
+		if regErr != nil {
+			return "", nil, nil, fmt.Errorf("building registry options: %w", regErr)
+		}
+
+		effectiveRef = rewritten
+		fallback = regFallback
+
+		if transportOpt != nil {
+			remoteOpts = append(remoteOpts, transportOpt)
+		}
+	}
+
+	return effectiveRef, remoteOpts, fallback, nil
+}
+
+func (f *OCIFetcher) fetchWithFallback(
+	ctx context.Context,
+	mirrorRef string,
+	fallback *registry.FallbackInfo,
+	mirrorErr error,
+	opts *FetchOptions,
+) ([]VerifiedAttestation, error) {
+	slog.Warn("Mirror unreachable for attestation fetch, falling back to original registry",
+		"mirror_ref", mirrorRef,
+		"original_ref", fallback.OriginalRef,
+		"error", mirrorErr,
+	)
+
+	f.onMirrorFallbackMu.RLock()
+	cb := f.onMirrorFallback
+	f.onMirrorFallbackMu.RUnlock()
+
+	if cb != nil {
+		cb(fallbackOriginalHost(fallback.OriginalRef))
+	}
+
+	fallbackOpts := []remote.Option{
+		remote.WithAuthFromKeychain(authn.DefaultKeychain),
+		remote.WithContext(ctx),
+	}
+
+	if fallback.TransportOpt != nil {
+		fallbackOpts = append(fallbackOpts, fallback.TransportOpt)
+	}
+
+	fallbackRef, err := parseDigestRef(fallback.OriginalRef, opts.Digest)
+	if err != nil {
+		return nil, fmt.Errorf("parsing fallback reference: %w", err)
+	}
+
+	return f.fetchWithRetry(ctx, fallbackRef, opts.Digest, fallbackOpts, opts)
+}
+
+func fallbackOriginalHost(originalRef string) string {
+	ref, err := name.ParseReference(originalRef)
+	if err != nil {
+		return originalRef
+	}
+
+	return ref.Context().RegistryStr()
 }
 
 func retryJitter(base time.Duration) time.Duration {

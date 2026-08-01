@@ -15,14 +15,19 @@
 package registry_test
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"fmt"
+	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -30,16 +35,24 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
+
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 )
 
 const (
-	testRegistryGHCR     = "ghcr.io"
-	testMirrorInternal   = "mirror.internal"
-	testImageGHCR        = "ghcr.io/myorg/myimage:v1.0"
-	testImageDockerNginx = "docker.io/library/nginx:latest"
-	testImageEvilGHCR    = "ghcr.io.evil.com/myorg/myimage:v1.0"
+	testRegistryGHCR        = "ghcr.io"
+	testMirrorInternal      = "mirror.internal"
+	testImageGHCR           = "ghcr.io/myorg/myimage:v1.0"
+	testImageDockerNginx    = "docker.io/library/nginx:latest"
+	testImageEvilGHCR       = "ghcr.io.evil.com/myorg/myimage:v1.0"
+	testMirrorRewrittenGHCR = "mirror.internal/myorg/myimage:v1.0"
+)
+
+var (
+	errConnRefused = errors.New("connection refused")
+	errGeneric     = errors.New("generic error")
 )
 
 func writeSelfSignedCACert(tb testing.TB, dir string) string {
@@ -87,12 +100,12 @@ func writeSelfSignedCACert(tb testing.TB, dir string) string {
 func TestBuildTransportNoConfig(t *testing.T) {
 	t.Parallel()
 
-	transport, err := registry.BuildTransport("", false)
+	roundTripper, err := registry.BuildTransport("", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if transport != nil {
+	if roundTripper != nil {
 		t.Error("expected nil transport for default settings")
 	}
 }
@@ -100,18 +113,18 @@ func TestBuildTransportNoConfig(t *testing.T) {
 func TestBuildTransportInsecure(t *testing.T) {
 	t.Parallel()
 
-	transport, err := registry.BuildTransport("", true)
+	roundTripper, err := registry.BuildTransport("", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if transport == nil {
+	if roundTripper == nil {
 		t.Fatal("expected non-nil transport for insecure mode")
 	}
 
-	httpTransport, ok := transport.(*http.Transport)
+	httpTransport, ok := roundTripper.(*http.Transport)
 	if !ok {
-		t.Fatalf("expected *http.Transport, got %T", transport)
+		t.Fatalf("expected *http.Transport, got %T", roundTripper)
 	}
 
 	if httpTransport.TLSClientConfig == nil {
@@ -128,18 +141,18 @@ func TestBuildTransportCustomCA(t *testing.T) {
 
 	certPath := writeSelfSignedCACert(t, t.TempDir())
 
-	transport, err := registry.BuildTransport(certPath, false)
+	roundTripper, err := registry.BuildTransport(certPath, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if transport == nil {
+	if roundTripper == nil {
 		t.Fatal("expected non-nil transport for custom CA")
 	}
 
-	httpTransport, ok := transport.(*http.Transport)
+	httpTransport, ok := roundTripper.(*http.Transport)
 	if !ok {
-		t.Fatalf("expected *http.Transport, got %T", transport)
+		t.Fatalf("expected *http.Transport, got %T", roundTripper)
 	}
 
 	if httpTransport.TLSClientConfig == nil {
@@ -156,18 +169,18 @@ func TestBuildTransportCustomCAAndInsecure(t *testing.T) {
 
 	certPath := writeSelfSignedCACert(t, t.TempDir())
 
-	transport, err := registry.BuildTransport(certPath, true)
+	roundTripper, err := registry.BuildTransport(certPath, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if transport == nil {
+	if roundTripper == nil {
 		t.Fatal("expected non-nil transport")
 	}
 
-	httpTransport, ok := transport.(*http.Transport)
+	httpTransport, ok := roundTripper.(*http.Transport)
 	if !ok {
-		t.Fatalf("expected *http.Transport, got %T", transport)
+		t.Fatalf("expected *http.Transport, got %T", roundTripper)
 	}
 
 	if !httpTransport.TLSClientConfig.InsecureSkipVerify {
@@ -228,7 +241,7 @@ func TestRewriteReferenceWithMirror(t *testing.T) {
 			imageRef: testImageGHCR,
 			prefix:   testRegistryGHCR,
 			mirror:   testMirrorInternal,
-			want:     "mirror.internal/myorg/myimage:v1.0",
+			want:     testMirrorRewrittenGHCR,
 		},
 		{
 			name: "digest reference rewritten",
@@ -410,7 +423,7 @@ func TestOptionsForRegistriesNoMatch(t *testing.T) {
 		},
 	})
 
-	ref, transportOpt, err := registry.OptionsForRegistries(
+	ref, transportOpt, _, err := registry.OptionsForRegistries(
 		tc, "docker.io/nginx:latest",
 	)
 	if err != nil {
@@ -438,12 +451,12 @@ func TestOptionsForRegistriesWithMirror(t *testing.T) {
 		},
 	})
 
-	ref, transportOpt, err := registry.OptionsForRegistries(tc, testImageGHCR)
+	ref, transportOpt, _, err := registry.OptionsForRegistries(tc, testImageGHCR)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if ref != "mirror.internal/myorg/myimage:v1.0" {
+	if ref != testMirrorRewrittenGHCR {
 		t.Errorf("ref = %q, want mirror rewrite", ref)
 	}
 
@@ -467,7 +480,7 @@ func TestOptionsForRegistriesWithTransport(t *testing.T) {
 		},
 	})
 
-	ref, transportOpt, err := registry.OptionsForRegistries(
+	ref, transportOpt, _, err := registry.OptionsForRegistries(
 		tc, "registry.internal/myorg/myimage:v1.0",
 	)
 	if err != nil {
@@ -488,7 +501,7 @@ func TestOptionsForRegistriesEmptyCache(t *testing.T) {
 
 	tc := registry.NewTransportCache(nil)
 
-	ref, transportOpt, err := registry.OptionsForRegistries(tc, testImageDockerNginx)
+	ref, transportOpt, _, err := registry.OptionsForRegistries(tc, testImageDockerNginx)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -505,7 +518,7 @@ func TestOptionsForRegistriesEmptyCache(t *testing.T) {
 func TestOptionsForRegistriesNilCache(t *testing.T) {
 	t.Parallel()
 
-	ref, transportOpt, err := registry.OptionsForRegistries(nil, testImageDockerNginx)
+	ref, transportOpt, _, err := registry.OptionsForRegistries(nil, testImageDockerNginx)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -556,7 +569,9 @@ func TestTransportCacheRegistries(t *testing.T) {
 	t.Parallel()
 
 	regs := []config.Registry{
-		{Prefix: testRegistryGHCR, Mirror: "", CACert: "", Insecure: false},
+		{
+			Prefix: testRegistryGHCR, Mirror: "", CACert: "", Insecure: false,
+		},
 	}
 
 	tc := registry.NewTransportCache(regs)
@@ -577,7 +592,10 @@ func TestTransportCacheCloseIdleConnections(t *testing.T) {
 	certPath := writeSelfSignedCACert(t, t.TempDir())
 
 	cache := registry.NewTransportCache([]config.Registry{
-		{Prefix: testMirrorInternal, Mirror: "", CACert: certPath, Insecure: false},
+		{
+			Prefix: testMirrorInternal, Mirror: "", CACert: certPath,
+			Insecure: false,
+		},
 	})
 
 	// Build a transport so the cache has something to close.
@@ -602,7 +620,10 @@ func TestTransportCacheConcurrentAccess(t *testing.T) {
 	certPath := writeSelfSignedCACert(t, t.TempDir())
 
 	cache := registry.NewTransportCache([]config.Registry{
-		{Prefix: testMirrorInternal, Mirror: "", CACert: certPath, Insecure: false},
+		{
+			Prefix: testMirrorInternal, Mirror: "", CACert: certPath,
+			Insecure: false,
+		},
 	})
 
 	const goroutines = 50
@@ -640,7 +661,10 @@ func TestFindMatchingRegistryBareImage(t *testing.T) {
 	t.Parallel()
 
 	registries := []config.Registry{
-		{Prefix: "index.docker.io", Mirror: testMirrorInternal, CACert: "", Insecure: false},
+		{
+			Prefix: "index.docker.io", Mirror: testMirrorInternal,
+			CACert: "", Insecure: false,
+		},
 	}
 
 	reg := registry.FindMatchingRegistry(registries, "nginx:latest")
@@ -659,7 +683,7 @@ func TestResolveWithRegistriesNilCache(t *testing.T) {
 	// nil cache should not panic; it falls back to default keychain.
 	// The actual resolution will fail (no real registry), but it should
 	// not panic on nil dereference.
-	_, _, err := registry.ResolveWithRegistries(
+	_, _, _, err := registry.ResolveWithRegistries(
 		t.Context(), "invalid-ref-that-wont-resolve:tag", nil,
 	)
 	if err == nil {
@@ -683,7 +707,9 @@ func TestNewTransportCacheOrNil(t *testing.T) {
 		t.Parallel()
 
 		cache := registry.NewTransportCacheOrNil([]config.Registry{
-			{Prefix: testRegistryGHCR, Mirror: "", CACert: "", Insecure: false},
+			{
+				Prefix: testRegistryGHCR, Mirror: "", CACert: "", Insecure: false,
+			},
 		})
 		if cache == nil {
 			t.Error("expected non-nil cache for populated registries")
@@ -703,7 +729,7 @@ func TestOptionsForRegistriesCAError(t *testing.T) {
 		},
 	})
 
-	_, _, err := registry.OptionsForRegistries(cache, testImageGHCR)
+	_, _, _, err := registry.OptionsForRegistries(cache, testImageGHCR)
 	if err == nil {
 		t.Fatal("expected error for missing CA cert file")
 	}
@@ -711,4 +737,233 @@ func TestOptionsForRegistriesCAError(t *testing.T) {
 	if !errors.Is(err, registry.ErrCACertRead) {
 		t.Errorf("expected ErrCACertRead, got %v", err)
 	}
+}
+
+func TestIsConnectionError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "nil error",
+			err:  nil,
+			want: false,
+		},
+		{
+			name: "DNS error",
+			err: &net.DNSError{ //nolint:exhaustruct // test only needs Err+Name
+				Err: "no such host", Name: "mirror.example.com",
+			},
+			want: true,
+		},
+		{
+			name: "OpError (connection refused)",
+			err: &net.OpError{ //nolint:exhaustruct // test only needs Op+Err
+				Op: "dial", Err: errConnRefused,
+			},
+			want: true,
+		},
+		{
+			name: "TLS record header error",
+			err:  &tls.RecordHeaderError{}, //nolint:exhaustruct // zero value suffices
+			want: true,
+		},
+		{
+			name: "x509 CertificateInvalidError",
+			//nolint:exhaustruct // test needs Reason
+			err:  &x509.CertificateInvalidError{Reason: x509.Expired},
+			want: true,
+		},
+		{
+			name: "x509 UnknownAuthorityError",
+			err:  &x509.UnknownAuthorityError{}, //nolint:exhaustruct // zero value suffices
+			want: true,
+		},
+		{
+			name: "x509 HostnameError",
+			err:  &x509.HostnameError{Host: "example.com"}, //nolint:exhaustruct // test needs Host
+			want: true,
+		},
+		{
+			name: "timeout error",
+			err:  &fakeTimeoutError{},
+			want: true,
+		},
+		{
+			name: "non-timeout net.Error",
+			err:  &fakeNonTimeoutError{},
+			want: false,
+		},
+		{
+			name: "transport error 500",
+			err:  &transport.Error{StatusCode: http.StatusInternalServerError},
+			want: true,
+		},
+		{
+			name: "transport error 502",
+			err:  &transport.Error{StatusCode: http.StatusBadGateway},
+			want: true,
+		},
+		{
+			name: "transport error 503",
+			err:  &transport.Error{StatusCode: http.StatusServiceUnavailable},
+			want: true,
+		},
+		{
+			name: "transport error 401 (NOT connection error)",
+			err:  &transport.Error{StatusCode: http.StatusUnauthorized},
+			want: false,
+		},
+		{
+			name: "transport error 403 (NOT connection error)",
+			err:  &transport.Error{StatusCode: http.StatusForbidden},
+			want: false,
+		},
+		{
+			name: "transport error 404 (NOT connection error)",
+			err:  &transport.Error{StatusCode: http.StatusNotFound},
+			want: false,
+		},
+		{
+			name: "transport error 400 (NOT connection error)",
+			err:  &transport.Error{StatusCode: http.StatusBadRequest},
+			want: false,
+		},
+		{
+			name: "io.EOF",
+			err:  io.EOF,
+			want: true,
+		},
+		{
+			name: "io.ErrUnexpectedEOF",
+			err:  io.ErrUnexpectedEOF,
+			want: true,
+		},
+		{
+			name: "plain error",
+			err:  errGeneric,
+			want: false,
+		},
+		{
+			name: "wrapped DNS error",
+			err: fmt.Errorf("resolving: %w", &net.DNSError{ //nolint:exhaustruct // test
+				Err: "no such host", Name: "x",
+			}),
+			want: true,
+		},
+		{
+			name: "wrapped EOF",
+			err:  fmt.Errorf("reading response: %w", io.EOF),
+			want: true,
+		},
+		{
+			name: "context.DeadlineExceeded",
+			err:  fmt.Errorf("interrupted: %w", context.DeadlineExceeded),
+			want: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := registry.IsConnectionError(test.err)
+			if got != test.want {
+				t.Errorf("IsConnectionError() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+type fakeTimeoutError struct{}
+
+func (e *fakeTimeoutError) Error() string   { return "timeout" }
+func (e *fakeTimeoutError) Timeout() bool   { return true }
+func (e *fakeTimeoutError) Temporary() bool { return true }
+
+type fakeNonTimeoutError struct{}
+
+func (e *fakeNonTimeoutError) Error() string   { return "not timeout" }
+func (e *fakeNonTimeoutError) Timeout() bool   { return false }
+func (e *fakeNonTimeoutError) Temporary() bool { return false }
+
+func TestOptionsForRegistriesReturnsFallback(t *testing.T) {
+	t.Parallel()
+
+	t.Run("fallback returned when mirror configured", func(t *testing.T) {
+		t.Parallel()
+
+		tc := registry.NewTransportCache([]config.Registry{
+			{
+				Prefix:   testRegistryGHCR,
+				Mirror:   testMirrorInternal,
+				CACert:   "",
+				Insecure: false,
+			},
+		})
+
+		ref, _, fallback, err := registry.OptionsForRegistries(tc, testImageGHCR)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if ref != testMirrorRewrittenGHCR {
+			t.Errorf("ref = %q, want mirror rewrite", ref)
+		}
+
+		if fallback == nil {
+			t.Fatal("expected non-nil fallback")
+		}
+
+		if fallback.OriginalRef != testImageGHCR {
+			t.Errorf("OriginalRef = %q, want %q", fallback.OriginalRef, testImageGHCR)
+		}
+	})
+
+	t.Run("no fallback when no mirror", func(t *testing.T) {
+		t.Parallel()
+
+		tc := registry.NewTransportCache([]config.Registry{
+			{
+				Prefix:   testRegistryGHCR,
+				Mirror:   "",
+				CACert:   "",
+				Insecure: false,
+			},
+		})
+
+		_, _, fallback, err := registry.OptionsForRegistries(tc, testImageGHCR)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if fallback != nil {
+			t.Error("expected nil fallback when no mirror")
+		}
+	})
+
+	t.Run("no fallback when no registry match", func(t *testing.T) {
+		t.Parallel()
+
+		tc := registry.NewTransportCache([]config.Registry{
+			{
+				Prefix:   testRegistryGHCR,
+				Mirror:   testMirrorInternal,
+				CACert:   "",
+				Insecure: false,
+			},
+		})
+
+		_, _, fallback, err := registry.OptionsForRegistries(tc, testImageDockerNginx)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if fallback != nil {
+			t.Error("expected nil fallback for non-matching registry")
+		}
+	})
 }
