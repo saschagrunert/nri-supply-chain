@@ -52,6 +52,10 @@ const (
 	testDockerGlob             = "docker.io/**"
 	testCELExprTrue            = "true"
 	testCELExprSLSAVerified    = "slsa.verified == true"
+	testFormatCycloneDX        = "cyclonedx"
+	testFormatSPDX             = "spdx"
+	testLicenseAGPL            = "AGPL-3.0"
+	testLicenseMIT             = "MIT"
 )
 
 type validateTest struct {
@@ -2919,6 +2923,389 @@ func TestApplyRuleSignaturesOverride(t *testing.T) {
 
 	if resolved.SLSAMissingPolicy() != types.ActionAllow {
 		t.Errorf("expected base SLSA allow, got %v", resolved.SLSAMissingPolicy())
+	}
+}
+
+func TestSBOMMissingPolicy(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		policy   policy.Policy
+		expected types.Action
+	}{
+		{
+			name:     "nil sbom defaults to allow",
+			policy:   emptyPolicy(),
+			expected: types.ActionAllow,
+		},
+		{
+			name: testEmptyMissingPolicyName,
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					SBOM: &policy.SBOMPolicy{
+						MissingPolicy: "",
+					},
+				},
+			},
+			expected: types.ActionAllow,
+		},
+		{
+			name: testExplicitDenyName,
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					SBOM: &policy.SBOMPolicy{
+						MissingPolicy: types.ActionDeny,
+					},
+				},
+			},
+			expected: types.ActionDeny,
+		},
+		{
+			name: "explicit warn",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					SBOM: &policy.SBOMPolicy{
+						MissingPolicy: types.ActionWarn,
+					},
+				},
+			},
+			expected: types.ActionWarn,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := test.policy.SBOMMissingPolicy(); got != test.expected {
+				t.Errorf("expected %q, got %q", test.expected, got)
+			}
+		})
+	}
+}
+
+func TestPolicyValidateSBOM(t *testing.T) {
+	t.Parallel()
+
+	runValidateTests(t, []validateTest{
+		{
+			name: "valid SBOM config",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					SBOM: &policy.SBOMPolicy{
+						MissingPolicy: types.ActionWarn,
+						Formats:       []string{testFormatSPDX, testFormatCycloneDX},
+						License: &policy.SBOMLicensePolicy{
+							Deny: []string{testLicenseAGPL},
+						},
+						Component: &policy.SBOMComponentPolicy{
+							Deny: []string{
+								"pkg:npm/bad-package@1.0.0",
+							},
+						},
+					},
+				},
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name: "invalid SBOM missing policy",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					SBOM: &policy.SBOMPolicy{
+						MissingPolicy: testInvalidValue,
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: types.ErrInvalidAction,
+		},
+		{
+			name: "invalid SBOM format",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					SBOM: &policy.SBOMPolicy{
+						Formats: []string{"unknown"},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrInvalidSBOMFormat,
+		},
+		{
+			name: "empty license in deny list",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					SBOM: &policy.SBOMPolicy{
+						License: &policy.SBOMLicensePolicy{
+							Deny: []string{testLicenseMIT, ""},
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrEmptyValue,
+		},
+		{
+			name: "invalid component deny list entry",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					SBOM: &policy.SBOMPolicy{
+						Component: &policy.SBOMComponentPolicy{
+							Deny: []string{"not-a-purl"},
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrInvalidComponentPURL,
+		},
+		{
+			name: "empty component deny list entry",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					SBOM: &policy.SBOMPolicy{
+						Component: &policy.SBOMComponentPolicy{
+							Deny: []string{""},
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrEmptyValue,
+		},
+		{
+			name: "empty license in allow list",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					SBOM: &policy.SBOMPolicy{
+						License: &policy.SBOMLicensePolicy{
+							Allow: []string{testLicenseMIT, ""},
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrEmptyValue,
+		},
+		{
+			name: "invalid component allow list entry",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					SBOM: &policy.SBOMPolicy{
+						Component: &policy.SBOMComponentPolicy{
+							Allow: []string{"not-a-purl"},
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrInvalidComponentPURL,
+		},
+		{
+			name: "bare pkg: scheme without type/name rejected",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					SBOM: &policy.SBOMPolicy{
+						Component: &policy.SBOMComponentPolicy{
+							Deny: []string{"pkg:"},
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrInvalidComponentPURL,
+		},
+		{
+			name: "pkg:type without name rejected",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					SBOM: &policy.SBOMPolicy{
+						Component: &policy.SBOMComponentPolicy{
+							Deny: []string{"pkg:npm"},
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrInvalidComponentPURL,
+		},
+		{
+			name: "valid allow lists",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					SBOM: &policy.SBOMPolicy{
+						License: &policy.SBOMLicensePolicy{
+							Allow: []string{testLicenseMIT, "Apache-2.0"},
+						},
+						Component: &policy.SBOMComponentPolicy{
+							Allow: []string{"pkg:npm/trusted@1.0.0"},
+						},
+					},
+				},
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name: "nil SBOM is valid",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					SBOM: nil,
+				},
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+	})
+}
+
+func TestApplyRuleSBOMOverride(t *testing.T) {
+	t.Parallel()
+
+	base := &policy.Policy{
+		Sections: policy.Sections{
+			SBOM: &policy.SBOMPolicy{
+				MissingPolicy: types.ActionAllow,
+			},
+			SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionAllow},
+		},
+	}
+
+	rule := &policy.ImageRule{
+		Images: []string{testRuleImagesGlob},
+		Sections: policy.Sections{
+			SBOM: &policy.SBOMPolicy{
+				MissingPolicy: types.ActionDeny,
+				Formats:       []string{testFormatSPDX},
+				License: &policy.SBOMLicensePolicy{
+					Deny: []string{testLicenseAGPL},
+				},
+			},
+		},
+	}
+
+	resolved := policy.ApplyRule(base, rule)
+
+	if resolved.SBOMMissingPolicy() != types.ActionDeny {
+		t.Errorf(
+			"expected rule SBOM deny, got %v",
+			resolved.SBOMMissingPolicy(),
+		)
+	}
+
+	if resolved.SLSAMissingPolicy() != types.ActionAllow {
+		t.Errorf("expected base SLSA allow, got %v", resolved.SLSAMissingPolicy())
+	}
+
+	if len(resolved.SBOM.Formats) != 1 || resolved.SBOM.Formats[0] != testFormatSPDX {
+		t.Errorf("expected rule SBOM formats, got %v", resolved.SBOM.Formats)
+	}
+}
+
+func TestMergeWithDefaultInheritsSBOM(t *testing.T) {
+	t.Parallel()
+
+	defaultPol := &policy.Policy{
+		Sections: policy.Sections{
+			SBOM: &policy.SBOMPolicy{
+				MissingPolicy: types.ActionDeny,
+				Formats:       []string{testFormatSPDX},
+				License: &policy.SBOMLicensePolicy{
+					Deny: []string{testLicenseAGPL},
+				},
+			},
+		},
+	}
+
+	nsPol := &policy.Policy{}
+	merged := policy.MergeWithDefault(nsPol, defaultPol)
+
+	if merged.SBOM == nil {
+		t.Fatal("expected SBOM to be inherited")
+	}
+
+	if merged.SBOMMissingPolicy() != types.ActionDeny {
+		t.Errorf("expected inherited SBOM deny, got %v", merged.SBOMMissingPolicy())
+	}
+
+	if len(merged.SBOM.Formats) != 1 || merged.SBOM.Formats[0] != testFormatSPDX {
+		t.Errorf("expected inherited SBOM formats, got %v", merged.SBOM.Formats)
+	}
+}
+
+func TestMergeWithDefaultSBOMOverride(t *testing.T) {
+	t.Parallel()
+
+	defaultPol := &policy.Policy{
+		Sections: policy.Sections{
+			SBOM: &policy.SBOMPolicy{
+				MissingPolicy: types.ActionAllow,
+				Formats:       []string{testFormatSPDX, testFormatCycloneDX},
+			},
+		},
+	}
+
+	nsPol := &policy.Policy{
+		Sections: policy.Sections{
+			SBOM: &policy.SBOMPolicy{
+				MissingPolicy: types.ActionDeny,
+				Formats:       []string{testFormatCycloneDX},
+			},
+		},
+	}
+
+	merged := policy.MergeWithDefault(nsPol, defaultPol)
+
+	if merged.SBOMMissingPolicy() != types.ActionDeny {
+		t.Errorf("expected overridden SBOM deny, got %v", merged.SBOMMissingPolicy())
+	}
+
+	if len(merged.SBOM.Formats) != 1 || merged.SBOM.Formats[0] != testFormatCycloneDX {
+		t.Errorf("expected overridden SBOM formats, got %v", merged.SBOM.Formats)
+	}
+}
+
+func TestCloneIsolatesSBOM(t *testing.T) {
+	t.Parallel()
+
+	original := &policy.Policy{
+		Sections: policy.Sections{
+			SBOM: &policy.SBOMPolicy{
+				MissingPolicy: types.ActionDeny,
+				Formats:       []string{testFormatSPDX},
+				License: &policy.SBOMLicensePolicy{
+					Deny: []string{testLicenseMIT},
+				},
+				Component: &policy.SBOMComponentPolicy{
+					Deny:  []string{"pkg:npm/bad@1.0.0"},
+					Allow: []string{"pkg:npm/good@1.0.0"},
+				},
+			},
+		},
+	}
+
+	clone := policy.MergeWithDefault(&policy.Policy{}, original)
+
+	clone.SBOM.Formats = append(clone.SBOM.Formats, testFormatCycloneDX)
+	clone.SBOM.License.Deny[0] = testLicenseAGPL
+	clone.SBOM.Component.Allow[0] = "pkg:npm/mutated@1.0.0"
+
+	if len(original.SBOM.Formats) != 1 {
+		t.Errorf("expected original to have 1 format, got %d",
+			len(original.SBOM.Formats))
+	}
+
+	if original.SBOM.License.Deny[0] != "MIT" {
+		t.Errorf("expected original license deny list unchanged, got %s",
+			original.SBOM.License.Deny[0])
+	}
+
+	if original.SBOM.Component.Allow[0] != "pkg:npm/good@1.0.0" {
+		t.Errorf("expected original component allow list unchanged, got %s",
+			original.SBOM.Component.Allow[0])
 	}
 }
 

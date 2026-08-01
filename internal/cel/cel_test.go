@@ -33,6 +33,7 @@ const (
 	exprMatchGHCR        = "image.registry == 'ghcr.io'"
 	exprSLSAVerified     = "slsa.verified == true"
 	exprVEXVerified      = "vex.verified == true"
+	exprSBOMVerified     = "sbom.verified == true"
 	exprTrue             = "true"
 	exprFalse            = "false"
 	exprImageRef         = "image.ref"
@@ -45,6 +46,7 @@ func defaultVars() map[string]any {
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
 		types.PassResult(types.CheckTypeSLSA, "ok"),
 		types.PassResult(types.CheckTypeVEX, "ok"),
+		types.PassResult(types.CheckTypeSBOM, "ok"),
 	)
 }
 
@@ -383,6 +385,7 @@ func TestEvaluateSLSAVariables(t *testing.T) {
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
 		types.FailResult(types.CheckTypeSLSA, "fail", nil),
 		types.PassResult(types.CheckTypeVEX, "ok"),
+		types.PassResult(types.CheckTypeSBOM, "ok"),
 	)
 
 	result = celengine.Evaluate(compiled, varsUnverified)
@@ -409,6 +412,7 @@ func TestEvaluateVEXVariables(t *testing.T) {
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
 		types.PassResult(types.CheckTypeSLSA, "ok"),
 		types.FailResult(types.CheckTypeVEX, "fail", nil),
+		types.PassResult(types.CheckTypeSBOM, "ok"),
 	)
 
 	result := celengine.Evaluate(compiled, vars)
@@ -437,11 +441,46 @@ func TestEvaluateVSAVariables(t *testing.T) {
 	}
 }
 
+func TestEvaluateSBOMVariables(t *testing.T) {
+	t.Parallel()
+
+	rules := []celengine.Rule{
+		{Require: exprSBOMVerified},
+	}
+
+	compiled, err := celengine.Compile(rules)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	// Test with verified SBOM.
+	vars := defaultVars()
+	result := celengine.Evaluate(compiled, vars)
+
+	if !result.Passed {
+		t.Errorf("expected pass with verified SBOM, got: %s", result.Detail)
+	}
+
+	// Test with unverified SBOM.
+	varsUnverified := celengine.BuildVars(
+		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
+		types.PassResult(types.CheckTypeSLSA, "ok"),
+		types.PassResult(types.CheckTypeVEX, "ok"),
+		types.FailResult(types.CheckTypeSBOM, "fail", nil),
+	)
+
+	result = celengine.Evaluate(compiled, varsUnverified)
+
+	if result.Passed {
+		t.Error("expected fail with unverified SBOM")
+	}
+}
+
 func TestEvaluateNilResults(t *testing.T) {
 	t.Parallel()
 
 	rules := []celengine.Rule{
-		{Require: "slsa.verified == false && vex.verified == false"},
+		{Require: "slsa.verified == false && vex.verified == false && sbom.verified == false"},
 	}
 
 	compiled, err := celengine.Compile(rules)
@@ -451,7 +490,7 @@ func TestEvaluateNilResults(t *testing.T) {
 
 	vars := celengine.BuildVars(
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
-		nil, nil,
+		nil, nil, nil,
 	)
 
 	result := celengine.Evaluate(compiled, vars)
@@ -561,6 +600,15 @@ func TestBuildVarsTypes(t *testing.T) {
 
 	if _, ok := vsaMap["level"].(int64); !ok {
 		t.Error("vsa.level should be an int64")
+	}
+
+	sbomMap, ok := vars["sbom"].(map[string]any)
+	if !ok {
+		t.Fatal("sbom vars should be map[string]any")
+	}
+
+	if _, ok := sbomMap["verified"].(bool); !ok {
+		t.Error("sbom.verified should be a bool")
 	}
 }
 

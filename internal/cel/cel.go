@@ -101,6 +101,7 @@ func initEnvironment() (*cel.Env, error) {
 			cel.Variable("slsa", cel.MapType(cel.StringType, cel.DynType)),
 			cel.Variable("vex", cel.MapType(cel.StringType, cel.DynType)),
 			cel.Variable("vsa", cel.MapType(cel.StringType, cel.DynType)),
+			cel.Variable("sbom", cel.MapType(cel.StringType, cel.DynType)),
 			ext.Strings(),
 		)
 	})
@@ -303,7 +304,7 @@ func isCostError(err error) bool {
 // BuildVars constructs the CEL variable map from check results and image context.
 func BuildVars(
 	imageRef, registry, repository, digest, namespace string,
-	slsaResult, vexResult *types.CheckResult,
+	slsaResult, vexResult, sbomResult *types.CheckResult,
 ) map[string]any {
 	imageVars := map[string]any{
 		"ref":        imageRef,
@@ -316,12 +317,14 @@ func BuildVars(
 	slsaVars := buildSLSAVars(slsaResult)
 	vexVars := buildVEXVars(vexResult)
 	vsaVars := buildDefaultVSAVars()
+	sbomVars := buildSBOMVars(sbomResult)
 
 	return map[string]any{
 		"image": imageVars,
 		"slsa":  slsaVars,
 		"vex":   vexVars,
 		"vsa":   vsaVars,
+		"sbom":  sbomVars,
 	}
 }
 
@@ -360,4 +363,16 @@ func buildDefaultVSAVars() map[string]any {
 		"level":      int64(0),
 		varVerified:  false,
 	}
+}
+
+func buildSBOMVars(result *types.CheckResult) map[string]any {
+	vars := map[string]any{
+		varVerified: false,
+	}
+
+	if result != nil {
+		vars[varVerified] = result.Passed
+	}
+
+	return vars
 }

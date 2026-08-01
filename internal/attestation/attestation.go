@@ -42,6 +42,9 @@ const (
 	// PredicateOpenVEX is the in-toto predicate type for OpenVEX documents.
 	PredicateOpenVEX = "https://openvex.dev/ns"
 
+	// PredicateSPDX is the in-toto predicate type for SPDX SBOM documents.
+	PredicateSPDX = "https://spdx.dev/Document"
+
 	// PredicateCycloneDX is the in-toto predicate type for CycloneDX BOM documents.
 	PredicateCycloneDX = "https://cyclonedx.org/bom"
 

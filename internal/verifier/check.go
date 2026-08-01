@@ -32,6 +32,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/notation"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
+	"github.com/saschagrunert/nri-supply-chain/internal/sbom"
 	"github.com/saschagrunert/nri-supply-chain/internal/slsa"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 	"github.com/saschagrunert/nri-supply-chain/internal/vex"
@@ -190,7 +191,13 @@ func runChecksWithoutFetcher(
 
 	met.VerificationDuration.WithLabelValues(string(types.CheckTypeNotation)).Observe(0)
 
-	result := combineResults(slsaResult, vexResult, notationResult)
+	sbomResult := handleMissingAttestation(
+		pol.SBOMMissingPolicy(), types.CheckTypeSBOM, detail,
+	)
+
+	met.VerificationDuration.WithLabelValues(string(types.CheckTypeSBOM)).Observe(0)
+
+	result := combineResults(slsaResult, vexResult, notationResult, sbomResult)
 
 	prependVSAWarning(result, pol, detail)
 
@@ -413,10 +420,11 @@ func runParallelChecks(
 		slsaResult     *types.CheckResult
 		vexResult      *types.CheckResult
 		notationResult *types.CheckResult
+		sbomResult     *types.CheckResult
 		waitGroup      sync.WaitGroup
 	)
 
-	const numChecks = 3
+	const numChecks = 4
 	waitGroup.Add(numChecks)
 
 	go runParallelSLSA(
@@ -434,9 +442,14 @@ func runParallelChecks(
 		bins.notation, pol, met, imageRef, digest, namespace,
 	)
 
+	go runParallelSBOM(
+		ctx, &waitGroup, &sbomResult,
+		bins.sbom, pol, met, imageRef, digest, namespace,
+	)
+
 	waitGroup.Wait()
 
-	return combineResults(slsaResult, vexResult, notationResult)
+	return combineResults(slsaResult, vexResult, notationResult, sbomResult)
 }
 
 func runParallelSLSA(
@@ -504,6 +517,84 @@ func runParallelNotation(
 	}()
 
 	*result = runNotationCheck(ctx, atts, pol, met, imageRef, digest, namespace)
+}
+
+func runParallelSBOM(
+	ctx context.Context, waitGroup *sync.WaitGroup, result **types.CheckResult,
+	atts []attestation.VerifiedAttestation,
+	pol *policy.Policy, met *metrics.Metrics,
+	imageRef, digest, namespace string,
+) {
+	defer waitGroup.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("Panic during SBOM check",
+				"panic", r, "stack", string(debug.Stack()))
+
+			*result = types.FailResult(
+				types.CheckTypeSBOM,
+				"internal error during SBOM check", nil,
+			)
+		}
+	}()
+
+	*result = runSBOMCheck(ctx, atts, pol, met, imageRef, digest, namespace)
+}
+
+func runSBOMCheck(
+	ctx context.Context,
+	sbomAtts []attestation.VerifiedAttestation,
+	pol *policy.Policy, met *metrics.Metrics,
+	imageRef, digest, namespace string,
+) *types.CheckResult {
+	start := time.Now()
+
+	defer func() {
+		met.VerificationDuration.WithLabelValues(
+			string(types.CheckTypeSBOM),
+		).Observe(time.Since(start).Seconds())
+	}()
+
+	if len(sbomAtts) == 0 {
+		slog.WarnContext(ctx, "No SBOM attestation found",
+			"reason", "missing_attestation",
+			"image", imageRef,
+		)
+
+		return handleMissingAttestation(
+			pol.SBOMMissingPolicy(),
+			types.CheckTypeSBOM,
+			"no SBOM attestation found for image "+imageRef,
+		)
+	}
+
+	payloads := make([][]byte, 0, len(sbomAtts))
+	for idx := range sbomAtts {
+		payloads = append(payloads, sbomAtts[idx].Payload)
+	}
+
+	result, err := sbom.VerifyMultiple(payloads, pol, digest)
+	if err != nil {
+		slog.ErrorContext(ctx, "SBOM verification error",
+			"error", err,
+			"reason", "verification_error",
+			"image", imageRef,
+		)
+
+		met.VerificationTotal.WithLabelValues(
+			string(types.CheckTypeSBOM), "error", namespace,
+		).Inc()
+
+		return types.FailResult(
+			types.CheckTypeSBOM,
+			fmt.Sprintf(
+				"SBOM verification error for %s: %s", imageRef, err,
+			),
+			err,
+		)
+	}
+
+	return result
 }
 
 func runSLSACheck(
@@ -667,7 +758,7 @@ func runCELCheck(
 
 	registry, repository := extractRegistryRepo(parsedRef, imageRef)
 
-	var slsaResult, vexResult *types.CheckResult
+	var slsaResult, vexResult, sbomResult *types.CheckResult
 
 	for idx := range result.CheckResults {
 		switch result.CheckResults[idx].Type {
@@ -675,6 +766,8 @@ func runCELCheck(
 			slsaResult = &result.CheckResults[idx]
 		case types.CheckTypeVEX:
 			vexResult = &result.CheckResults[idx]
+		case types.CheckTypeSBOM:
+			sbomResult = &result.CheckResults[idx]
 		case types.CheckTypeVSA, types.CheckTypeFetch, types.CheckTypePolicy,
 			types.CheckTypeCEL, types.CheckTypeNotation:
 			// Not used for CEL variable construction.
@@ -683,7 +776,7 @@ func runCELCheck(
 
 	vars := celengine.BuildVars(
 		imageRef, registry, repository, digest, namespace,
-		slsaResult, vexResult,
+		slsaResult, vexResult, sbomResult,
 	)
 
 	return celengine.Evaluate(pol.CompiledCEL, vars)
@@ -779,6 +872,7 @@ type attestationBins struct {
 	slsa     []attestation.VerifiedAttestation
 	vex      []attestation.VerifiedAttestation
 	notation []attestation.VerifiedAttestation
+	sbom     []attestation.VerifiedAttestation
 }
 
 func binAttestations(attestations []attestation.VerifiedAttestation) attestationBins {
@@ -787,6 +881,7 @@ func binAttestations(attestations []attestation.VerifiedAttestation) attestation
 		slsa:     make([]attestation.VerifiedAttestation, 0, len(attestations)),
 		vex:      make([]attestation.VerifiedAttestation, 0, len(attestations)),
 		notation: make([]attestation.VerifiedAttestation, 0, len(attestations)),
+		sbom:     make([]attestation.VerifiedAttestation, 0, len(attestations)),
 	}
 
 	for idx := range attestations {
@@ -803,8 +898,13 @@ func binAttestations(attestations []attestation.VerifiedAttestation) attestation
 			bins.vsa = append(bins.vsa, attestations[idx])
 		case attestation.PredicateSLSAProvenanceV1:
 			bins.slsa = append(bins.slsa, attestations[idx])
-		case attestation.PredicateOpenVEX, attestation.PredicateCycloneDX:
+		case attestation.PredicateOpenVEX:
 			bins.vex = append(bins.vex, attestations[idx])
+		case attestation.PredicateCycloneDX:
+			bins.vex = append(bins.vex, attestations[idx])
+			bins.sbom = append(bins.sbom, attestations[idx])
+		case attestation.PredicateSPDX:
+			bins.sbom = append(bins.sbom, attestations[idx])
 		}
 	}
 

@@ -932,3 +932,127 @@ write_vsa_predicate() {
 		}
 	EOF
 }
+
+write_spdx_sbom_predicate() {
+	local file="$1"
+	local pkg_name="$2"
+	local license="$3"
+	local purl="${4:-}"
+
+	local ext_ref=""
+	if [[ -n "$purl" ]]; then
+		ext_ref=$(
+			cat <<-EOFREF
+				,
+				      "externalRefs": [
+				        {
+				          "referenceCategory": "PACKAGE-MANAGER",
+				          "referenceType": "purl",
+				          "referenceLocator": "${purl}"
+				        }
+				      ]
+			EOFREF
+		)
+	fi
+
+	cat >"$file" <<-EOF
+		{
+		  "spdxVersion": "SPDX-2.3",
+		  "dataLicense": "CC0-1.0",
+		  "SPDXID": "SPDXRef-DOCUMENT",
+		  "name": "test-sbom",
+		  "packages": [
+		    {
+		      "name": "${pkg_name}",
+		      "SPDXID": "SPDXRef-Package",
+		      "licenseConcluded": "${license}",
+		      "licenseDeclared": "${license}"${ext_ref}
+		    }
+		  ]
+		}
+	EOF
+}
+
+write_cyclonedx_sbom_predicate() {
+	local file="$1"
+	local comp_name="$2"
+	local license="$3"
+	local purl="${4:-}"
+
+	local purl_field=""
+	if [[ -n "$purl" ]]; then
+		purl_field=",
+		      \"purl\": \"${purl}\""
+	fi
+
+	cat >"$file" <<-EOF
+		{
+		  "bomFormat": "CycloneDX",
+		  "specVersion": "1.5",
+		  "version": 1,
+		  "components": [
+		    {
+		      "type": "library",
+		      "name": "${comp_name}",
+		      "licenses": [{"license": {"id": "${license}"}}]${purl_field}
+		    }
+		  ]
+		}
+	EOF
+}
+
+create_sbom_images() {
+	local pred_dir="${BATS_FILE_TMPDIR}/predicates"
+	mkdir -p "$pred_dir"
+
+	# Image with allowed license (MIT)
+	SBOM_ALLOWED_IMAGE=$(push_test_image "sbom-allowed:v1")
+	write_slsa_predicate "${pred_dir}/sbom-allowed-slsa.json" \
+		"https://test-builder.example.com" \
+		"https://github.com/testorg/repo" \
+		""
+	attest_image "$SBOM_ALLOWED_IMAGE" "https://slsa.dev/provenance/v1" "${pred_dir}/sbom-allowed-slsa.json"
+	write_spdx_sbom_predicate "${pred_dir}/sbom-allowed.json" "test-pkg" "MIT"
+	attest_image "$SBOM_ALLOWED_IMAGE" "https://spdx.dev/Document" "${pred_dir}/sbom-allowed.json"
+
+	# Image with denied license (AGPL-3.0)
+	SBOM_DENIED_LIC_IMAGE=$(push_test_image "sbom-denied-lic:v1")
+	write_slsa_predicate "${pred_dir}/sbom-denied-lic-slsa.json" \
+		"https://test-builder.example.com" \
+		"https://github.com/testorg/repo" \
+		""
+	attest_image "$SBOM_DENIED_LIC_IMAGE" "https://slsa.dev/provenance/v1" "${pred_dir}/sbom-denied-lic-slsa.json"
+	write_spdx_sbom_predicate "${pred_dir}/sbom-denied-lic.json" "bad-pkg" "AGPL-3.0"
+	attest_image "$SBOM_DENIED_LIC_IMAGE" "https://spdx.dev/Document" "${pred_dir}/sbom-denied-lic.json"
+
+	# Image with denied component (PURL)
+	SBOM_DENIED_COMP_IMAGE=$(push_test_image "sbom-denied-comp:v1")
+	write_slsa_predicate "${pred_dir}/sbom-denied-comp-slsa.json" \
+		"https://test-builder.example.com" \
+		"https://github.com/testorg/repo" \
+		""
+	attest_image "$SBOM_DENIED_COMP_IMAGE" "https://slsa.dev/provenance/v1" "${pred_dir}/sbom-denied-comp-slsa.json"
+	write_spdx_sbom_predicate "${pred_dir}/sbom-denied-comp.json" "event-stream" "MIT" "pkg:npm/event-stream@3.3.6"
+	attest_image "$SBOM_DENIED_COMP_IMAGE" "https://spdx.dev/Document" "${pred_dir}/sbom-denied-comp.json"
+
+	# Image with no SBOM attestation (only SLSA)
+	SBOM_MISSING_IMAGE=$(push_test_image "sbom-missing:v1")
+	write_slsa_predicate "${pred_dir}/sbom-missing-slsa.json" \
+		"https://test-builder.example.com" \
+		"https://github.com/testorg/repo" \
+		""
+	attest_image "$SBOM_MISSING_IMAGE" "https://slsa.dev/provenance/v1" "${pred_dir}/sbom-missing-slsa.json"
+
+	# CycloneDX image with denied license
+	SBOM_CDX_DENIED_IMAGE=$(push_test_image "sbom-cdx-denied:v1")
+	write_slsa_predicate "${pred_dir}/sbom-cdx-denied-slsa.json" \
+		"https://test-builder.example.com" \
+		"https://github.com/testorg/repo" \
+		""
+	attest_image "$SBOM_CDX_DENIED_IMAGE" "https://slsa.dev/provenance/v1" "${pred_dir}/sbom-cdx-denied-slsa.json"
+	write_cyclonedx_sbom_predicate "${pred_dir}/sbom-cdx-denied.json" "bad-lib" "GPL-3.0"
+	attest_image "$SBOM_CDX_DENIED_IMAGE" "https://cyclonedx.org/bom" "${pred_dir}/sbom-cdx-denied.json"
+
+	export SBOM_ALLOWED_IMAGE SBOM_DENIED_LIC_IMAGE SBOM_DENIED_COMP_IMAGE
+	export SBOM_MISSING_IMAGE SBOM_CDX_DENIED_IMAGE
+}

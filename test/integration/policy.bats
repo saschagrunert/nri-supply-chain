@@ -47,6 +47,10 @@ EOF
     "signatures": {
         "requireTransparencyLog": true
     },
+    "sbom": {
+        "missingPolicy": "allow",
+        "formats": ["spdx", "cyclonedx"]
+    },
     "exclude": ["test-*", "dev-*"]
 }
 EOF
@@ -414,4 +418,60 @@ policy_dir = "$TEST_DIR/policies"
 EOF
 	run_binary --config "$TEST_DIR/config.toml" validate
 	[[ "$status" -eq 0 ]]
+}
+
+@test "policy with SBOM configuration" {
+	mkdir -p "$TEST_DIR/policies"
+	cat >"$TEST_DIR/policies/default.json" <<EOF
+{
+    "sbom": {
+        "missingPolicy": "deny",
+        "formats": ["spdx", "cyclonedx"],
+        "license": {"deny": ["AGPL-3.0", "GPL-3.0"]},
+        "component": {"deny": ["pkg:npm/event-stream@3.3.6"]}
+    }
+}
+EOF
+	cat >"$TEST_DIR/config.toml" <<EOF
+verification = "enforce"
+policy_dir = "$TEST_DIR/policies"
+EOF
+	run_binary --config "$TEST_DIR/config.toml" validate
+	[[ "$status" -eq 0 ]]
+}
+
+@test "policy with invalid SBOM format rejected" {
+	mkdir -p "$TEST_DIR/policies"
+	cat >"$TEST_DIR/policies/default.json" <<EOF
+{
+    "sbom": {
+        "formats": ["invalid"]
+    }
+}
+EOF
+	cat >"$TEST_DIR/config.toml" <<EOF
+verification = "enforce"
+policy_dir = "$TEST_DIR/policies"
+EOF
+	run_binary --config "$TEST_DIR/config.toml"
+	[[ "$status" -ne 0 ]]
+	[[ "$output" == *"invalid sbom format"* ]]
+}
+
+@test "policy with invalid SBOM component PURL rejected" {
+	mkdir -p "$TEST_DIR/policies"
+	cat >"$TEST_DIR/policies/default.json" <<EOF
+{
+    "sbom": {
+        "component": {"deny": ["not-a-purl"]}
+    }
+}
+EOF
+	cat >"$TEST_DIR/config.toml" <<EOF
+verification = "enforce"
+policy_dir = "$TEST_DIR/policies"
+EOF
+	run_binary --config "$TEST_DIR/config.toml"
+	[[ "$status" -ne 0 ]]
+	[[ "$output" == *"valid PURL"* ]]
 }
