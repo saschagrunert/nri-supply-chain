@@ -2,7 +2,7 @@
 
 load helpers
 
-@test "enforce mode with valid policy file and version flag succeeds" {
+@test "enforce mode with valid policy file succeeds" {
 	mkdir -p "$TEST_DIR/policies"
 	cat >"$TEST_DIR/policies/default.json" <<EOF
 {
@@ -16,17 +16,18 @@ EOF
 verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 EOF
-	run_binary --config "$TEST_DIR/config.toml" --version
+	run_binary --config "$TEST_DIR/config.toml" validate
 	[[ "$status" -eq 0 ]]
 }
 
 @test "policy with all verification types configured" {
-	mkdir -p "$TEST_DIR/policies"
+	mkdir -p "$TEST_DIR/policies" "$TEST_DIR/keys"
+	touch "$TEST_DIR/keys/v.pub"
 	cat >"$TEST_DIR/policies/production.json" <<EOF
 {
     "trust": {
         "builders": [{"id": "https://github.com/actions/runner", "maxLevel": 3}],
-        "verifiers": [{"id": "https://example.com/verifier", "keys": ["/etc/keys/v.pub"]}],
+        "verifiers": [{"id": "https://example.com/verifier", "keys": ["$TEST_DIR/keys/v.pub"]}],
         "sources": ["github.com/myorg/*"],
         "buildTypes": ["https://actions.github.io/buildtypes/workflow/v1"]
     },
@@ -53,7 +54,7 @@ EOF
 verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 EOF
-	run_binary --config "$TEST_DIR/config.toml" --version
+	run_binary --config "$TEST_DIR/config.toml" validate
 	[[ "$status" -eq 0 ]]
 }
 
@@ -77,7 +78,7 @@ EOF
 verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 EOF
-	run_binary --config "$TEST_DIR/config.toml" --version
+	run_binary --config "$TEST_DIR/config.toml" validate
 	[[ "$status" -eq 0 ]]
 }
 
@@ -93,7 +94,7 @@ EOF
 verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 EOF
-	run_binary --config "$TEST_DIR/config.toml" --version
+	run_binary --config "$TEST_DIR/config.toml" validate
 	[[ "$status" -eq 0 ]]
 }
 
@@ -111,7 +112,7 @@ EOF
 verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 EOF
-	run_binary --config "$TEST_DIR/config.toml" --version
+	run_binary --config "$TEST_DIR/config.toml" validate
 	[[ "$status" -eq 0 ]]
 }
 
@@ -160,7 +161,7 @@ EOF
 verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 EOF
-	run_binary --config "$TEST_DIR/config.toml" --version
+	run_binary --config "$TEST_DIR/config.toml" validate
 	[[ "$status" -eq 0 ]]
 }
 
@@ -177,7 +178,7 @@ EOF
 verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 EOF
-	run_binary --config "$TEST_DIR/config.toml" --validate
+	run_binary --config "$TEST_DIR/config.toml" validate
 	[[ "$status" -ne 0 ]]
 	[[ "$output" == *"sanPatterns is required"* ]]
 }
@@ -195,7 +196,7 @@ EOF
 verification = "warn"
 policy_dir = "$TEST_DIR/policies"
 EOF
-	run_binary --config "$TEST_DIR/config.toml" --validate
+	run_binary --config "$TEST_DIR/config.toml" validate
 	[[ "$status" -eq 0 ]]
 }
 
@@ -321,7 +322,7 @@ EOF
 verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 EOF
-	run_binary --config "$TEST_DIR/config.toml" --validate
+	run_binary --config "$TEST_DIR/config.toml" validate
 	[[ "$status" -eq 0 ]]
 }
 
@@ -341,16 +342,17 @@ EOF
 verification = "warn"
 policy_dir = "$TEST_DIR/policies"
 EOF
-	run_binary --config "$TEST_DIR/config.toml" --validate
+	run_binary --config "$TEST_DIR/config.toml" validate
 	[[ "$status" -eq 0 ]]
 }
 
 @test "policy with VSA configuration" {
-	mkdir -p "$TEST_DIR/policies"
+	mkdir -p "$TEST_DIR/policies" "$TEST_DIR/keys"
+	touch "$TEST_DIR/keys/v.pub"
 	cat >"$TEST_DIR/policies/default.json" <<EOF
 {
     "trust": {
-        "verifiers": [{"id": "https://example.com/v", "keys": ["/keys/v.pub"]}]
+        "verifiers": [{"id": "https://example.com/v", "keys": ["$TEST_DIR/keys/v.pub"]}]
     },
     "vsa": {
         "minimumLevel": 3,
@@ -363,6 +365,6 @@ EOF
 verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 EOF
-	run_binary --config "$TEST_DIR/config.toml" --version
+	run_binary --config "$TEST_DIR/config.toml" validate
 	[[ "$status" -eq 0 ]]
 }

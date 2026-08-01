@@ -40,7 +40,7 @@ func PolicyJSONSchema() ([]byte, error) {
 	)
 }
 
-// VerifyResultJSONSchema generates the JSON Schema for --verify-image output.
+// VerifyResultJSONSchema generates the JSON Schema for verify output.
 func VerifyResultJSONSchema() ([]byte, error) {
 	return generateSchema(
 		&verifyOutput{
@@ -54,7 +54,7 @@ func VerifyResultJSONSchema() ([]byte, error) {
 			CheckResults: nil,
 		},
 		"nri-supply-chain Verify Result",
-		"JSON output of the --verify-image command.",
+		"JSON output of the verify command.",
 	)
 }
 

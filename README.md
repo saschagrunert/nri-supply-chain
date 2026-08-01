@@ -64,7 +64,7 @@ must pass verification.
 
    ```console
    nri-supply-chain --config config.toml \
-     --verify-image ghcr.io/saschagrunert/nri-supply-chain:0.1.5
+     verify ghcr.io/saschagrunert/nri-supply-chain:0.1.5
    ```
 
    The default output is a colored table:

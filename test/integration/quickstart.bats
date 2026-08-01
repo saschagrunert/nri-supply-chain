@@ -20,7 +20,7 @@ extract_quickstart_policy() {
 verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 EOF
-	run_binary --config "$TEST_DIR/config.toml" --verify-image "$QUICKSTART_IMAGE" --output json
+	run_binary --config "$TEST_DIR/config.toml" verify "$QUICKSTART_IMAGE" --output json
 	[[ "$status" -eq 0 ]]
 	[[ "$output" == *'"allowed": true'* ]]
 	[[ "$output" == *'"type": "slsa"'* ]]
@@ -40,7 +40,7 @@ EOF
 verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 EOF
-	run_binary --config "$TEST_DIR/config.toml" --verify-image "$QUICKSTART_IMAGE" --output json
+	run_binary --config "$TEST_DIR/config.toml" verify "$QUICKSTART_IMAGE" --output json
 	[[ "$status" -eq 0 ]]
 	[[ "$output" == *'"allowed": true'* ]]
 	[[ "$output" == *'"type": "vsa"'* ]]

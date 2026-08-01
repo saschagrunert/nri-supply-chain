@@ -102,7 +102,7 @@ func handleReload(
 
 	slog.Info("Reloading config")
 
-	if configPath == "" {
+	if !shouldUseConfigFile(configPath) {
 		slog.Warn("No config file specified, skipping reload")
 
 		return
@@ -197,7 +197,7 @@ func setupFileWatch(
 	ctx context.Context, configPath, policyDir string,
 	verif *verifier.Verifier, met *metrics.Metrics,
 ) (func(), *fsnotify.Watcher) {
-	if configPath == "" {
+	if !shouldUseConfigFile(configPath) {
 		return func() {}, nil
 	}
 

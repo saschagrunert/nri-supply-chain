@@ -55,19 +55,24 @@ type resolvedDigest struct {
 	indexDigest string
 }
 
-func runVerify(opts *options, cfg *config.Config) int {
-	return runVerifyTo(os.Stdout, opts, cfg)
+func runVerify(
+	imageRef, namespace, outputFormat string, cfg *config.Config,
+) int {
+	return runVerifyTo(os.Stdout, imageRef, namespace, outputFormat, cfg)
 }
 
-func runVerifyTo(writer io.Writer, opts *options, cfg *config.Config) int {
-	if opts.outputFormat != outputFormatTable && opts.outputFormat != outputFormatJSON {
-		slog.Error("Invalid output format", "format", opts.outputFormat)
+func runVerifyTo(
+	writer io.Writer,
+	imageRef, namespace, outputFormat string, cfg *config.Config,
+) int {
+	if outputFormat != outputFormatTable && outputFormat != outputFormatJSON {
+		slog.Error("Invalid output format", "format", outputFormat)
 
 		return exitError
 	}
 
 	if !cfg.Enabled() {
-		slog.Error("--verify-image requires verification to be enabled")
+		slog.Error("verify requires verification to be enabled")
 
 		return exitError
 	}
@@ -84,15 +89,14 @@ func runVerifyTo(writer io.Writer, opts *options, cfg *config.Config) int {
 
 	defer verif.Stop()
 
-	return executeVerify(ctx, writer, opts, cfg, verif)
+	return executeVerify(ctx, writer, imageRef, namespace, outputFormat, cfg, verif)
 }
 
 func executeVerify(
 	ctx context.Context, writer io.Writer,
-	opts *options, cfg *config.Config, verif *verifier.Verifier,
+	imageRef, namespace, outputFormat string,
+	cfg *config.Config, verif *verifier.Verifier,
 ) int {
-	imageRef := opts.verifyImage
-	namespace := opts.verifyNamespace
 	policyFile := resolvePolicyFile(cfg.PolicyDir, namespace)
 
 	resolved, err := resolveDigest(ctx, imageRef, cfg.FetchTimeout.Duration)
@@ -114,7 +118,7 @@ func executeVerify(
 
 		out.Reason = err.Error()
 
-		outErr := outputVerifyResult(writer, opts.outputFormat, out)
+		outErr := outputVerifyResult(writer, outputFormat, out)
 		if outErr != nil {
 			slog.Error("Failed to write output", "error", outErr)
 		}
@@ -125,9 +129,7 @@ func executeVerify(
 	out.Allowed = result.Allowed
 	out.Reason = result.Reason
 
-	// Output failure is an infrastructure error regardless of the
-	// verification result, so return exitError unconditionally.
-	outErr := outputVerifyResult(writer, opts.outputFormat, out)
+	outErr := outputVerifyResult(writer, outputFormat, out)
 	if outErr != nil {
 		slog.Error("Failed to write output", "error", outErr)
 

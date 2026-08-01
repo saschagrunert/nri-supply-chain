@@ -11,16 +11,15 @@ EOF
 	[[ "$status" -ne 0 ]]
 }
 
-@test "enforce mode with empty policy dir and version flag succeeds" {
+@test "enforce mode with empty policy dir succeeds" {
 	mkdir -p "$TEST_DIR/policies"
 	echo '{}' >"$TEST_DIR/policies/default.json"
 	cat >"$TEST_DIR/config.toml" <<EOF
 verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 EOF
-	run_binary --config "$TEST_DIR/config.toml" --version
+	run_binary --config "$TEST_DIR/config.toml" validate
 	[[ "$status" -eq 0 ]]
-	[[ "$output" == *"nri-supply-chain v"* ]]
 }
 
 @test "disabled mode ignores policy dir" {
@@ -28,18 +27,18 @@ EOF
 verification = "disabled"
 policy_dir = "/nonexistent"
 EOF
-	run_binary --config "$TEST_DIR/config.toml" --version
+	run_binary --config "$TEST_DIR/config.toml" validate
 	[[ "$status" -eq 0 ]]
 }
 
-@test "warn mode with valid policy dir and version flag succeeds" {
+@test "warn mode with valid policy dir succeeds" {
 	mkdir -p "$TEST_DIR/policies"
 	echo '{}' >"$TEST_DIR/policies/default.json"
 	cat >"$TEST_DIR/config.toml" <<EOF
 verification = "warn"
 policy_dir = "$TEST_DIR/policies"
 EOF
-	run_binary --config "$TEST_DIR/config.toml" --version
+	run_binary --config "$TEST_DIR/config.toml" validate
 	[[ "$status" -eq 0 ]]
 }
 
@@ -75,7 +74,7 @@ verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 fetch_failure_policy = "allow"
 EOF
-	run_binary --config "$TEST_DIR/config.toml" --version
+	run_binary --config "$TEST_DIR/config.toml" validate
 	[[ "$status" -eq 0 ]]
 }
 
@@ -87,7 +86,7 @@ verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 fetch_failure_policy = "deny"
 EOF
-	run_binary --config "$TEST_DIR/config.toml" --version
+	run_binary --config "$TEST_DIR/config.toml" validate
 	[[ "$status" -eq 0 ]]
 }
 
@@ -122,7 +121,7 @@ verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 cache_ttl = "0s"
 EOF
-	run_binary --config "$TEST_DIR/config.toml" --version
+	run_binary --config "$TEST_DIR/config.toml" validate
 	[[ "$status" -eq 0 ]]
 }
 
@@ -134,7 +133,7 @@ verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 fetch_timeout = "60s"
 EOF
-	run_binary --config "$TEST_DIR/config.toml" --version
+	run_binary --config "$TEST_DIR/config.toml" validate
 	[[ "$status" -eq 0 ]]
 }
 
@@ -146,7 +145,7 @@ verification = "warn"
 policy_dir = "$TEST_DIR/policies"
 metrics_addr = ":9091"
 EOF
-	run_binary --config "$TEST_DIR/config.toml" --version
+	run_binary --config "$TEST_DIR/config.toml" validate
 	[[ "$status" -eq 0 ]]
 }
 
@@ -155,6 +154,6 @@ EOF
 verification = "disabled"
 policy_dir = "/tmp"
 EOF
-	run_binary --config "$TEST_DIR/config.toml" --log-level debug --version
+	run_binary --config "$TEST_DIR/config.toml" --log-level debug validate
 	[[ "$status" -eq 0 ]]
 }

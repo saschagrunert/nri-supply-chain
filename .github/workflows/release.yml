@@ -144,7 +144,7 @@ jobs:
           EOF
           ./dist/nri-supply-chain_linux_amd64_v1/nri-supply-chain \
             --config /tmp/verify-config.toml \
-            --verify-image "${IMAGE}:${VERSION}"
+            verify "${IMAGE}:${VERSION}"
       # This self-attestation VSA is for bootstrapping only. Because the same
       # workflow that builds the image also attests it, the VSA is not
       # independently verifiable per SLSA requirements.

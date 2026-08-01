@@ -92,33 +92,6 @@ teardown_file() {
 	start_plugin
 }
 
-@test "--metrics-addr CLI flag overrides config file value" {
-	stop_plugin
-	write_plugin_config "warn"
-	"$BINARY" \
-		--config "$PLUGIN_CONFIG" \
-		--log-level debug \
-		--metrics-addr ":9092" \
-		>"$PLUGIN_LOG" 2>&1 &
-	echo $! >"$PLUGIN_PID_FILE"
-	local elapsed=0
-	while [[ $elapsed -lt 10 ]]; do
-		if grep -q "Connected to runtime" "$PLUGIN_LOG" 2>/dev/null; then
-			break
-		fi
-		sleep 1
-		elapsed=$((elapsed + 1))
-	done
-
-	run curl_metrics "localhost:9092"
-	[[ "$status" -eq 0 ]]
-	echo "$output" | grep -q 'nri_supply_chain'
-
-	stop_plugin
-	write_plugin_config "warn"
-	start_plugin
-}
-
 @test "metrics endpoint returns valid Prometheus format" {
 	run curl_metrics
 	[[ "$status" -eq 0 ]]

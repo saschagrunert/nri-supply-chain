@@ -52,18 +52,18 @@ teardown() {
 	true
 }
 
-@test "verify-image with attested image shows verification passed" {
+@test "verify with attested image shows verification passed" {
 	local ref="${VERIFY_IMAGE}@${VERIFY_DIGEST}"
 	run timeout "$CMD_TIMEOUT" "$BINARY" \
 		--config "$PLUGIN_CONFIG" \
-		--verify-image "$ref" \
+		verify "$ref" \
 		--output json
-	echo "# verify-image output: $output" >&2
+	echo "# verify output: $output" >&2
 	[[ "$status" -eq 0 ]]
 	echo "$output" | grep -q '"allowed": true'
 }
 
-@test "verify-image with unsigned image shows verification failed" {
+@test "verify with unsigned image shows verification failed" {
 	local unsigned_image
 	unsigned_image=$(push_test_image "verify-unsigned:v1")
 	local unsigned_digest
@@ -72,46 +72,46 @@ teardown() {
 
 	run timeout "$CMD_TIMEOUT" "$BINARY" \
 		--config "$PLUGIN_CONFIG" \
-		--verify-image "$ref" \
+		verify "$ref" \
 		--output json
-	echo "# verify-image output: $output" >&2
+	echo "# verify output: $output" >&2
 	[[ "$status" -ne 0 ]]
 	echo "$output" | grep -q '"allowed": false'
 }
 
-@test "verify-image outputs valid JSON" {
+@test "verify outputs valid JSON" {
 	local ref="${VERIFY_IMAGE}@${VERIFY_DIGEST}"
 	local json_out
 	json_out=$(timeout "$CMD_TIMEOUT" "$BINARY" \
 		--config "$PLUGIN_CONFIG" \
-		--verify-image "$ref" \
+		verify "$ref" \
 		--output json 2>/dev/null)
 	echo "$json_out" | python3 -c "import sys, json; json.load(sys.stdin)"
 }
 
-@test "verify-image includes image and digest in output" {
+@test "verify includes image and digest in output" {
 	local ref="${VERIFY_IMAGE}@${VERIFY_DIGEST}"
 	run timeout "$CMD_TIMEOUT" "$BINARY" \
 		--config "$PLUGIN_CONFIG" \
-		--verify-image "$ref" \
+		verify "$ref" \
 		--output json
 	[[ "$status" -eq 0 ]]
 	echo "$output" | grep -q "\"digest\":"
 	echo "$output" | grep -q "\"image\":"
 }
 
-@test "verify-image default table output shows ALLOWED" {
+@test "verify default table output shows ALLOWED" {
 	local ref="${VERIFY_IMAGE}@${VERIFY_DIGEST}"
 	run timeout "$CMD_TIMEOUT" "$BINARY" \
 		--config "$PLUGIN_CONFIG" \
-		--verify-image "$ref"
-	echo "# verify-image output: $output" >&2
+		verify "$ref"
+	echo "# verify output: $output" >&2
 	[[ "$status" -eq 0 ]]
 	echo "$output" | grep -q "ALLOWED"
 	echo "$output" | grep -q "Image:"
 }
 
-@test "verify-image with disabled verification fails" {
+@test "verify with disabled verification fails" {
 	local ref="${VERIFY_IMAGE}@${VERIFY_DIGEST}"
 	local disabled_config="${BATS_FILE_TMPDIR}/disabled-config.toml"
 	cat >"$disabled_config" <<-EOF
@@ -123,6 +123,6 @@ teardown() {
 
 	run timeout "$CMD_TIMEOUT" "$BINARY" \
 		--config "$disabled_config" \
-		--verify-image "$ref"
+		verify "$ref"
 	[[ "$status" -ne 0 ]]
 }

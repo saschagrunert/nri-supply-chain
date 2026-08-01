@@ -150,6 +150,7 @@ linters:
             - github.com/prometheus/client_golang
             - github.com/saschagrunert/nri-supply-chain
             - github.com/sigstore/protobuf-specs
+            - github.com/spf13/cobra
             - github.com/sigstore/sigstore
             - golang.org/x/sync
             - golang.org/x/time
@@ -168,6 +169,7 @@ linters:
         - 'github\.com/saschagrunert/nri-supply-chain/internal/policy\..*'
         - 'github\.com/sigstore/sigstore-go/.*'
         - 'github\.com/sigstore/sigstore/.*'
+        - 'github\.com/spf13/cobra\.Command'
         - 'log/slog\.HandlerOptions'
         - 'net/http\.Server'
     gocritic:

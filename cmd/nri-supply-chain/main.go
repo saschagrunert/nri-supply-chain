@@ -18,13 +18,13 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 	"runtime"
 
 	"github.com/containerd/nri/pkg/stub"
+	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
@@ -35,7 +35,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
-var version = "0.1.5"
+var version = "v0.1.5"
 
 var logLevelVar slog.LevelVar //nolint:gochecknoglobals // shared between initLogging and reload
 
@@ -51,76 +51,238 @@ const (
 
 	outputFormatTable = "table"
 	outputFormatJSON  = "json"
+
+	defaultConfigPath = "/etc/nri-supply-chain/config.toml"
+
+	cmdVersion    = "version"
+	cmdVerify     = "verify"
+	cmdValidate   = "validate"
+	cmdJSONSchema = "json-schema"
 )
 
-type options struct {
-	configPath      string
-	metricsAddr     string
-	pluginName      string
-	pluginIdx       string
-	logLevel        string
-	verifyImage     string
-	verifyNamespace string
-	outputFormat    string
-	showVersion     bool
-	validate        bool
-	jsonSchema      string
-}
+var (
+	errExitNonZero       = errors.New("non-zero exit")
+	errMissingImageRef   = errors.New("requires an image reference, e.g. ghcr.io/org/image:tag")
+	errMissingSchemaType = errors.New("requires a schema type: policy, result")
+)
 
 func main() {
-	os.Exit(run())
+	os.Exit(execute())
 }
 
-func run() int {
-	opts, err := parseFlags()
+func execute() int {
+	initLogging(logLevelInfo, true)
+
+	err := newRootCmd().Execute()
 	if err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return exitSuccess
+		if !errors.Is(err, errExitNonZero) {
+			slog.Error(err.Error())
 		}
 
-		slog.Error("Failed to parse flags", "error", err)
-
 		return exitError
 	}
 
-	if opts.showVersion {
-		_, _ = fmt.Fprintln(os.Stdout, "nri-supply-chain v"+version)
-
-		return exitSuccess
-	}
-
-	if opts.jsonSchema != "" {
-		return printJSONSchema(opts.jsonSchema)
-	}
-
-	cfg, err := setupConfig(&opts)
-	if err != nil {
-		slog.Error("Setup failed", "error", err)
-
-		return exitError
-	}
-
-	cliMode := opts.verifyImage != "" || opts.validate
-	initLogging(effectiveLogLevel(opts.logLevel, cfg.LogLevel), cliMode)
-
-	if opts.validate {
-		return runValidation(cfg)
-	}
-
-	if opts.verifyImage != "" {
-		return runVerify(&opts, cfg)
-	}
-
-	return startPlugin(&opts, cfg)
+	return exitSuccess
 }
 
-func startPlugin(opts *options, cfg *config.Config) int {
+func newRootCmd() *cobra.Command {
+	var (
+		configPath string
+		logLevel   string
+		pluginName string
+		pluginIdx  string
+	)
+
+	root := &cobra.Command{
+		Use:           "nri-supply-chain",
+		Short:         "NRI Supply Chain Plugin",
+		Version:       version,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SilenceUsage = true
+
+			cfg, err := setupConfig(configPath)
+			if err != nil {
+				slog.Error("Setup failed", "error", err)
+
+				return errExitNonZero
+			}
+
+			initLogging(effectiveLogLevel(logLevel, cfg.LogLevel), false)
+
+			code := startPlugin(configPath, pluginName, pluginIdx, cfg)
+			if code != 0 {
+				return errExitNonZero
+			}
+
+			return nil
+		},
+	}
+
+	root.CompletionOptions.DisableDefaultCmd = true
+	root.SetVersionTemplate("nri-supply-chain {{.Version}}\n")
+
+	root.PersistentFlags().StringVarP(&configPath, "config", "c",
+		defaultConfigPath, "path to TOML config file")
+	root.PersistentFlags().StringVarP(&logLevel, "log-level", "l", "",
+		"log level: debug, info, warn, error (default: info)")
+
+	root.Flags().StringVar(&pluginName, "plugin-name", "supply-chain",
+		"NRI plugin name")
+	root.Flags().StringVar(&pluginIdx, "plugin-idx", "10",
+		"NRI plugin index")
+
+	root.AddCommand(
+		newVerifyCmd(&configPath, &logLevel),
+		newValidateCmd(&configPath, &logLevel),
+		newVersionCmd(),
+		newJSONSchemaCmd(),
+	)
+
+	return root
+}
+
+func newVerifyCmd(configPath, logLevel *string) *cobra.Command {
+	var (
+		namespace    string
+		outputFormat string
+	)
+
+	cmd := &cobra.Command{
+		Use:   cmdVerify + " <image>",
+		Short: "Verify an image",
+		Args: func(_ *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return errMissingImageRef
+			}
+
+			if len(args) > 1 {
+				//nolint:err113 // dynamic arg count
+				return fmt.Errorf("accepts 1 arg, received %d", len(args))
+			}
+
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+
+			cfg, err := setupConfig(*configPath)
+			if err != nil {
+				slog.Error("Setup failed", "error", err)
+
+				return errExitNonZero
+			}
+
+			initLogging(effectiveLogLevel(*logLevel, cfg.LogLevel), true)
+
+			slog.Info("Using config", "path", *configPath)
+
+			code := runVerify(args[0], namespace, outputFormat, cfg)
+			if code != 0 {
+				return errExitNonZero
+			}
+
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVarP(&namespace, "namespace", "n",
+		verifier.DefaultPolicyLabel, "namespace for verification")
+	cmd.Flags().StringVarP(&outputFormat, "output", "o",
+		outputFormatTable, "output format: table, json")
+
+	return cmd
+}
+
+func newValidateCmd(configPath, logLevel *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   cmdValidate,
+		Short: "Validate config and policies",
+		Long: "Validate the configuration file and all policy files.\n\n" +
+			"Loads the config, checks policy syntax, and in enforce mode\n" +
+			"verifies that trust roots and key files are accessible.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SilenceUsage = true
+
+			cfg, err := setupConfig(*configPath)
+			if err != nil {
+				slog.Error("Setup failed", "error", err)
+
+				return errExitNonZero
+			}
+
+			initLogging(effectiveLogLevel(*logLevel, cfg.LogLevel), true)
+
+			slog.Info("Using config", "path", *configPath)
+
+			code := runValidation(cfg)
+			if code != 0 {
+				return errExitNonZero
+			}
+
+			return nil
+		},
+	}
+}
+
+func newVersionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   cmdVersion,
+		Short: "Print the version",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "nri-supply-chain "+version)
+
+			return nil
+		},
+	}
+}
+
+func newJSONSchemaCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   cmdJSONSchema + " <type>",
+		Short: "Print JSON Schema for a given type",
+		Long: "Print the JSON Schema definition for a given type.\n\n" +
+			"Available types:\n" +
+			"  policy   Policy configuration file schema\n" +
+			"  result   Verification result output schema",
+		Args: func(_ *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return errMissingSchemaType
+			}
+
+			if len(args) > 1 {
+				//nolint:err113 // dynamic arg count
+				return fmt.Errorf("accepts 1 arg, received %d", len(args))
+			}
+
+			return nil
+		},
+		ValidArgs: []string{schemaPolicy, schemaResult},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+
+			code := printJSONSchema(args[0])
+			if code != 0 {
+				return errExitNonZero
+			}
+
+			return nil
+		},
+	}
+}
+
+func startPlugin(
+	configPath, pluginName, pluginIdx string, cfg *config.Config,
+) int {
 	met := metrics.New()
 	met.SetBuildInfo(version, runtime.Version())
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	slog.Info("Effective configuration",
+		"config", configPath,
 		"mode", cfg.Verification,
 		"policy_dir", cfg.PolicyDir,
 		"cache_ttl", cfg.CacheTTL.Duration,
@@ -158,12 +320,12 @@ func startPlugin(opts *options, cfg *config.Config) int {
 	defer cancel()
 	defer verif.Stop()
 
-	plug := plugin.New(verif, met, opts.configPath, cfg.FetchTimeout.Duration)
+	plug := plugin.New(verif, met, configPath, cfg.FetchTimeout.Duration)
 
-	cleanupSignals := setupSignals(ctx, cancel, opts.configPath, verif, met, cfg, plug)
+	cleanupSignals := setupSignals(ctx, cancel, configPath, verif, met, cfg, plug)
 	defer cleanupSignals()
 
-	err = runPlugin(ctx, plug, met, cfg.MetricsAddr, opts, cancel)
+	err = runPlugin(ctx, plug, met, cfg.MetricsAddr, pluginName, pluginIdx, cancel)
 	if err != nil {
 		slog.Error("Plugin exited with error", "error", err)
 
@@ -173,73 +335,10 @@ func startPlugin(opts *options, cfg *config.Config) int {
 	return exitSuccess
 }
 
-func parseFlags() (options, error) {
-	return parseFlagsFrom(os.Args[1:])
-}
-
-func parseFlagsFrom(args []string) (options, error) {
-	flagSet := flag.NewFlagSet("nri-supply-chain", flag.ContinueOnError)
-
-	var opts options
-
-	registerFlags(flagSet, &opts)
-
-	err := flagSet.Parse(args)
-	if err != nil {
-		return options{}, fmt.Errorf("parsing flags: %w", err)
-	}
-
-	return opts, nil
-}
-
-func registerFlags(flagSet *flag.FlagSet, opts *options) {
-	flagSet.StringVar(&opts.configPath, "config", "", "path to TOML config file")
-	flagSet.StringVar(
-		&opts.metricsAddr,
-		"metrics-addr",
-		"",
-		"metrics HTTP listen address (overrides config)",
-	)
-	flagSet.StringVar(&opts.pluginName, "plugin-name", "supply-chain", "NRI plugin name")
-	flagSet.StringVar(&opts.pluginIdx, "plugin-idx", "10", "NRI plugin index")
-	flagSet.StringVar(
-		&opts.logLevel, "log-level", "",
-		"log level: debug, info, warn, error (default: info)",
-	)
-	flagSet.BoolVar(&opts.showVersion, "version", false, "print version and exit")
-	flagSet.BoolVar(&opts.validate, "validate", false, "validate config and policies, then exit")
-	flagSet.StringVar(&opts.verifyImage, "verify-image", "", "verify an image and exit")
-	flagSet.StringVar(
-		&opts.verifyNamespace,
-		"verify-namespace",
-		verifier.DefaultPolicyLabel,
-		"namespace for verification",
-	)
-	flagSet.StringVar(
-		&opts.outputFormat,
-		"output",
-		outputFormatTable,
-		"output format for --verify-image (table, json)",
-	)
-	flagSet.StringVar(
-		&opts.jsonSchema, "json-schema", "",
-		"print JSON Schema and exit (policy, result)",
-	)
-}
-
-func setupConfig(opts *options) (*config.Config, error) {
-	cfg, err := loadConfig(opts.configPath)
+func setupConfig(configPath string) (*config.Config, error) {
+	cfg, err := loadConfig(configPath)
 	if err != nil {
 		return nil, err
-	}
-
-	if opts.metricsAddr != "" {
-		cfg.MetricsAddr = opts.metricsAddr
-
-		err = cfg.Validate()
-		if err != nil {
-			return nil, fmt.Errorf("validating config with --metrics-addr override: %w", err)
-		}
 	}
 
 	if cfg.Enabled() {
@@ -303,17 +402,34 @@ func runValidation(cfg *config.Config) int {
 	return exitSuccess
 }
 
-func loadConfig(path string) (*config.Config, error) {
-	if path != "" {
-		cfg, err := config.LoadFromFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("loading config file: %w", err)
-		}
-
-		return cfg, nil
+func shouldUseConfigFile(path string) bool {
+	if path == "" {
+		return false
 	}
 
-	return config.DefaultConfig(), nil
+	if path == defaultConfigPath {
+		_, err := os.Stat(path)
+
+		return !os.IsNotExist(err)
+	}
+
+	return true
+}
+
+func loadConfig(path string) (*config.Config, error) {
+	if path == defaultConfigPath {
+		_, statErr := os.Stat(path)
+		if os.IsNotExist(statErr) {
+			return config.DefaultConfig(), nil
+		}
+	}
+
+	cfg, err := config.LoadFromFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("loading config file: %w", err)
+	}
+
+	return cfg, nil
 }
 
 func effectiveLogLevel(flagLevel, configLevel string) string {
@@ -378,11 +494,11 @@ func newLogger(cliMode bool) *slog.Logger {
 
 func runPlugin(
 	ctx context.Context, plug *plugin.Plugin, met *metrics.Metrics,
-	metricsAddr string, opts *options, cancel context.CancelFunc,
+	metricsAddr, pluginName, pluginIdx string, cancel context.CancelFunc,
 ) error {
 	nriStub, err := stub.New(plug,
-		stub.WithPluginName(opts.pluginName),
-		stub.WithPluginIdx(opts.pluginIdx),
+		stub.WithPluginName(pluginName),
+		stub.WithPluginIdx(pluginIdx),
 		stub.WithOnClose(func() {
 			slog.Error("NRI connection lost")
 			plug.SetDisconnected()
@@ -397,7 +513,7 @@ func runPlugin(
 
 	group.Go(func() error {
 		slog.Info("Starting NRI plugin",
-			"name", opts.pluginName, "index", opts.pluginIdx,
+			"name", pluginName, "index", pluginIdx,
 		)
 
 		return nriStub.Run(gctx)

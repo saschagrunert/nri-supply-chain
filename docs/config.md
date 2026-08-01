@@ -150,27 +150,44 @@ performing any verification checks.
 For the complete field reference, pattern matching semantics, and scenario-based
 examples, see [policy.md](policy.md).
 
-## CLI Flags
+## CLI
+
+The binary uses subcommands. Running without a subcommand starts the NRI plugin
+daemon.
 
 ```text
---config              Path to TOML config file
---metrics-addr        Metrics HTTP listen address (overrides config)
---plugin-name         NRI plugin name (default: supply-chain)
---plugin-idx          NRI plugin index (default: 10)
---log-level           Log level: debug, info, warn, error (default: info)
---version             Print version and exit
---validate            Validate config and policies, then exit
---verify-image        Verify a specific image and exit (requires --config)
---verify-namespace    Namespace for verification (default: default)
---output              Output format for --verify-image: table, json (default: table)
---json-schema         Print JSON Schema and exit (policy, result)
+nri-supply-chain                         Run the NRI plugin daemon
+nri-supply-chain verify <image>          Verify an image
+nri-supply-chain validate                Validate config and policies
+nri-supply-chain version                 Print the version
+nri-supply-chain json-schema <type>      Print JSON Schema (policy, result)
 ```
 
-To verify a single image without running the plugin (requires `--config` with
-verification enabled):
+Global flags (available on all subcommands):
+
+```text
+-c, --config       Path to TOML config file (default: /etc/nri-supply-chain/config.toml)
+-l, --log-level    Log level: debug, info, warn, error (default: info)
+```
+
+Plugin flags (root command only):
+
+```text
+--plugin-name      NRI plugin name (default: supply-chain)
+--plugin-idx       NRI plugin index (default: 10)
+```
+
+Verify flags:
+
+```text
+-n, --namespace    Namespace for verification (default: default)
+-o, --output       Output format: table, json (default: table)
+```
+
+To verify a single image:
 
 ```console
-nri-supply-chain --config config.toml --verify-image ghcr.io/myorg/myimage:v1.0
+nri-supply-chain verify ghcr.io/myorg/myimage:v1.0
 ```
 
 The default output is a colored table:
@@ -188,7 +205,7 @@ SLSA   pass     SLSA level 3 verified
 VEX    pass     no known vulnerabilities
 ```
 
-Use `--output json` for machine-readable JSON output:
+Use `--output json` (or `-o json`) for machine-readable JSON output:
 
 ```json
 {
@@ -219,7 +236,7 @@ The `--verify-image` command uses distinct exit codes for CI/CD integration:
 The full JSON Schema for this output can be generated via:
 
 ```console
-nri-supply-chain --json-schema result
+nri-supply-chain json-schema result
 ```
 
 <details>
@@ -281,7 +298,7 @@ nri-supply-chain --json-schema result
     }
   },
   "title": "nri-supply-chain Verify Result",
-  "description": "JSON output of the --verify-image command."
+  "description": "JSON output of the verify command."
 }
 ```
 

@@ -2,10 +2,10 @@
 
 load helpers
 
-@test "version flag prints version" {
-	run_binary --version
+@test "version subcommand prints version" {
+	run_binary version
 	[[ "$status" -eq 0 ]]
-	[[ "$output" == *"nri-supply-chain v"* ]]
+	[[ "$output" == *"nri-supply-chain "* ]]
 }
 
 @test "help flag shows usage" {
