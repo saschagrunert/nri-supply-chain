@@ -42,6 +42,9 @@ const (
 	// PredicateOpenVEX is the in-toto predicate type for OpenVEX documents.
 	PredicateOpenVEX = "https://openvex.dev/ns"
 
+	// PredicateCycloneDX is the in-toto predicate type for CycloneDX BOM documents.
+	PredicateCycloneDX = "https://cyclonedx.org/bom"
+
 	// bundleMediaType is the OCI artifact type for Sigstore bundles.
 	bundleMediaType = "application/vnd.dev.sigstore.bundle.v0.3+json"
 

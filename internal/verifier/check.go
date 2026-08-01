@@ -746,7 +746,7 @@ func binAttestations(attestations []attestation.VerifiedAttestation) attestation
 			bins.vsa = append(bins.vsa, attestations[idx])
 		case attestation.PredicateSLSAProvenanceV1:
 			bins.slsa = append(bins.slsa, attestations[idx])
-		case attestation.PredicateOpenVEX:
+		case attestation.PredicateOpenVEX, attestation.PredicateCycloneDX:
 			bins.vex = append(bins.vex, attestations[idx])
 		}
 	}

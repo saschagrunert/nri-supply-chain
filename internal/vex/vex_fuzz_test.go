@@ -29,6 +29,19 @@ func FuzzVerify(f *testing.F) {
 	const testDigest = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4" +
 		"e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
 
+	// CycloneDX BOM seed wrapped in an in-toto statement so the fuzzer
+	// exercises the CycloneDX dispatch path.
+	f.Add([]byte(`{` +
+		`"_type":"https://in-toto.io/Statement/v1",` +
+		`"subject":[{"name":"test","digest":{"sha256":` +
+		`"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"}}],` +
+		`"predicateType":"https://cyclonedx.org/bom",` +
+		`"predicate":{"bomFormat":"CycloneDX","specVersion":"1.5",` +
+		`"vulnerabilities":[{"id":"CVE-2024-0001",` +
+		`"analysis":{"state":"not_affected"},` +
+		`"affects":[{"ref":"` + testDigest + `"}]}]}` +
+		`}`))
+
 	f.Fuzz(func(_ *testing.T, data []byte) {
 		vex.Verify(
 			context.Background(), data, &policy.Policy{},

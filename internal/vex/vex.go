@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package vex provides OpenVEX verification for supply chain attestations.
+// Package vex provides VEX verification for supply chain attestations.
+// It supports both OpenVEX and CycloneDX VEX formats, dispatching
+// automatically based on the document content.
 package vex
 
 import (
@@ -25,10 +27,11 @@ import (
 	"strings"
 
 	"github.com/google/go-containerregistry/pkg/name"
-	openvex "github.com/openvex/go-vex/pkg/vex"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
+	"github.com/saschagrunert/nri-supply-chain/internal/vex/cyclonedxvex"
+	"github.com/saschagrunert/nri-supply-chain/internal/vex/openvex"
 )
 
 const checkType = types.CheckTypeVEX
@@ -55,7 +58,16 @@ type inTotoSubject struct {
 	Digest map[string]string `json:"digest"`
 }
 
+// formatHint is used for lightweight format detection on the predicate JSON.
+type formatHint struct {
+	// OpenVEX documents contain a @context field.
+	Context string `json:"@context"`
+	// CycloneDX BOMs contain a bomFormat field.
+	BOMFormat string `json:"bomFormat"`
+}
+
 // Verify checks a VEX attestation against the given policy.
+// It auto-detects whether the predicate is OpenVEX or CycloneDX format.
 // When parsedImageRef is non-nil it is used instead of re-parsing imageRef.
 func Verify(
 	ctx context.Context,
@@ -67,59 +79,127 @@ func Verify(
 		return nil, err
 	}
 
-	doc, err := openvex.Parse(predicate)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidVEX, err)
-	}
-
-	var (
-		affectedNames         []string
-		hasUnderInvestigation bool
-	)
-
 	purl := buildOCIPURL(imageRef, imageDigest, parsedImageRef)
 
-	for idx := range doc.Statements {
-		stmt := &doc.Statements[idx]
+	affectedNames, hasUnderInvestigation, err := verifyPredicate(
+		ctx, predicate, imageDigest, purl,
+	)
+	if err != nil {
+		return nil, err
+	}
 
-		if !matchesImage(ctx, stmt, imageDigest, purl) {
-			continue
-		}
+	return buildResult(affectedNames, hasUnderInvestigation, pol), nil
+}
 
-		switch stmt.Status {
-		case openvex.StatusAffected:
-			affectedNames = append(affectedNames, vulnerabilityName(stmt))
+// verifyPredicate dispatches to the appropriate format handler based on
+// document content. It tries OpenVEX first (check for @context), then
+// CycloneDX (check for bomFormat == "CycloneDX"). If neither matches,
+// it falls back to OpenVEX parsing.
+func verifyPredicate(
+	ctx context.Context,
+	predicate []byte,
+	imageDigest, purl string,
+) (affectedNames []string, hasUnderInvestigation bool, err error) {
+	var hint formatHint
 
-		case openvex.StatusUnderInvestigation:
-			hasUnderInvestigation = true
+	// Best-effort hint detection; ignore errors (invalid JSON will fail in the parser).
+	_ = json.Unmarshal(predicate, &hint)
 
-		case openvex.StatusNotAffected, openvex.StatusFixed:
-			// These statuses are acceptable.
+	if hint.BOMFormat == "CycloneDX" {
+		return verifyCycloneDX(predicate, imageDigest, purl)
+	}
+
+	// Default to OpenVEX (either @context is present, or we let the parser
+	// report the error for unrecognized content).
+	return verifyOpenVEX(ctx, predicate, imageDigest, purl)
+}
+
+func verifyOpenVEX(
+	ctx context.Context,
+	predicate []byte,
+	imageDigest, purl string,
+) (affectedNames []string, hasUnderInvestigation bool, err error) {
+	result, err := openvex.Verify(ctx, predicate, imageDigest, purl)
+	if err != nil {
+		return nil, false, fmt.Errorf("%w: %w", ErrInvalidVEX, err)
+	}
+
+	return result.AffectedNames, result.HasUnderInvestigation, nil
+}
+
+func verifyCycloneDX(
+	predicate []byte,
+	imageDigest, purl string,
+) (affectedNames []string, hasUnderInvestigation bool, err error) {
+	result, err := cyclonedxvex.Verify(predicate, imageDigest, purl)
+	if err != nil {
+		return nil, false, fmt.Errorf("%w: %w", ErrInvalidVEX, err)
+	}
+
+	return result.AffectedNames, result.HasUnderInvestigation, nil
+}
+
+// buildOCIPURL constructs an OCI Package URL for the given image.
+func buildOCIPURL(imageRef, imageDigest string, parsedImageRef name.Reference) string {
+	ref := parsedImageRef
+	if ref == nil {
+		var err error
+
+		ref, err = name.ParseReference(imageRef)
+		if err != nil {
+			slog.Debug("Failed to parse image reference for PURL construction",
+				"image", imageRef,
+				"error", err,
+			)
+
+			return ""
 		}
 	}
 
+	repo := ref.Context()
+	repoStr := repo.RepositoryStr()
+
+	lastSlash := strings.LastIndex(repoStr, "/")
+
+	var imgName, namespace string
+
+	if lastSlash >= 0 {
+		imgName = repoStr[lastSlash+1:]
+		namespace = repoStr[:lastSlash]
+	} else {
+		imgName = repoStr
+	}
+
+	repoURL := repo.RegistryStr()
+	if namespace != "" {
+		repoURL += "/" + namespace
+	}
+
+	return fmt.Sprintf(
+		"pkg:oci/%s@%s?repository_url=%s",
+		imgName, imageDigest, url.QueryEscape(repoURL),
+	)
+}
+
+func buildResult(
+	affectedNames []string,
+	hasUnderInvestigation bool,
+	pol *policy.Policy,
+) *types.CheckResult {
 	if len(affectedNames) > 0 {
 		detail := fmt.Sprintf(
 			"vulnerabilities %s have status %q",
-			strings.Join(affectedNames, ", "), openvex.StatusAffected,
+			strings.Join(affectedNames, ", "), "affected",
 		)
 
-		return failResult(detail), nil
+		return failResult(detail)
 	}
 
 	if hasUnderInvestigation {
-		return handleUnderInvestigation(pol), nil
+		return handleUnderInvestigation(pol)
 	}
 
-	return passResult(), nil
-}
-
-func vulnerabilityName(stmt *openvex.Statement) string {
-	if vulnName := string(stmt.Vulnerability.Name); vulnName != "" {
-		return vulnName
-	}
-
-	return "unknown"
+	return passResult()
 }
 
 // VerifyMultiple checks multiple VEX documents. Most restrictive wins:
@@ -223,72 +303,6 @@ func subjectMatchesDigest(subjects []inTotoSubject, imageDigest string) bool {
 	}
 
 	return false
-}
-
-func matchesImage(ctx context.Context, stmt *openvex.Statement, imageDigest, purl string) bool {
-	if len(stmt.Products) == 0 {
-		slog.WarnContext(
-			ctx,
-			"VEX statement has no products, skipping (requires explicit product match)",
-		)
-
-		return false
-	}
-
-	for idx := range stmt.Products {
-		product := &stmt.Products[idx]
-
-		if product.Component.Matches(imageDigest) {
-			return true
-		}
-
-		if purl != "" && product.Component.Matches(purl) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func buildOCIPURL(imageRef, imageDigest string, parsedImageRef name.Reference) string {
-	ref := parsedImageRef
-	if ref == nil {
-		var err error
-
-		ref, err = name.ParseReference(imageRef)
-		if err != nil {
-			slog.Debug("Failed to parse image reference for PURL construction",
-				"image", imageRef,
-				"error", err,
-			)
-
-			return ""
-		}
-	}
-
-	repo := ref.Context()
-	repoStr := repo.RepositoryStr()
-
-	lastSlash := strings.LastIndex(repoStr, "/")
-
-	var imgName, namespace string
-
-	if lastSlash >= 0 {
-		imgName = repoStr[lastSlash+1:]
-		namespace = repoStr[:lastSlash]
-	} else {
-		imgName = repoStr
-	}
-
-	repoURL := repo.RegistryStr()
-	if namespace != "" {
-		repoURL += "/" + namespace
-	}
-
-	return fmt.Sprintf(
-		"pkg:oci/%s@%s?repository_url=%s",
-		imgName, imageDigest, url.QueryEscape(repoURL),
-	)
 }
 
 func handleUnderInvestigation(pol *policy.Policy) *types.CheckResult {

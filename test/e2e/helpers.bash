@@ -648,6 +648,41 @@ write_vex_predicate() {
 	EOF
 }
 
+write_cyclonedx_vex_predicate() {
+	local file="$1"
+	local state="$2"
+	local product_purl="$3"
+	local vuln_id="${4:-CVE-2024-0001}"
+
+	# Extract the image name from the PURL (e.g. "image-name" from
+	# "pkg:oci/image-name@sha256:abc123...").
+	local name
+	name=$(echo "$product_purl" | sed 's|pkg:oci/||; s|@.*||')
+
+	cat >"$file" <<-EOF
+		{
+		  "bomFormat": "CycloneDX",
+		  "specVersion": "1.5",
+		  "version": 1,
+		  "components": [
+		    {
+		      "type": "container",
+		      "name": "${name}",
+		      "bom-ref": "comp-1",
+		      "purl": "${product_purl}"
+		    }
+		  ],
+		  "vulnerabilities": [
+		    {
+		      "id": "${vuln_id}",
+		      "affects": [{"ref": "comp-1"}],
+		      "analysis": {"state": "${state}"}
+		    }
+		  ]
+		}
+	EOF
+}
+
 # --- DaemonSet deployment helpers ---
 
 DAEMONSET_MANIFEST="${BATS_FILE_TMPDIR}/daemonset.yaml"

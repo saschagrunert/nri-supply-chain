@@ -111,3 +111,39 @@ func TestBinAttestationsNotation(t *testing.T) {
 		)
 	}
 }
+
+func TestBinAttestationsCycloneDX(t *testing.T) {
+	t.Parallel()
+
+	attestations := []attestation.VerifiedAttestation{
+		{
+			PredicateType: attestation.PredicateOpenVEX,
+			Payload:       []byte("openvex1"),
+			Digest:        benchDigest,
+		},
+		{
+			PredicateType: attestation.PredicateCycloneDX,
+			Payload:       []byte("cdx1"),
+			Digest:        benchDigest,
+		},
+		{
+			PredicateType: attestation.PredicateSLSAProvenanceV1,
+			Payload:       []byte("slsa1"),
+			Digest:        benchDigest,
+		},
+	}
+
+	bins := binAttestations(attestations)
+
+	if len(bins.vex) != 2 {
+		t.Errorf("expected 2 VEX attestations (OpenVEX + CycloneDX), got %d", len(bins.vex))
+	}
+
+	if len(bins.slsa) != 1 {
+		t.Errorf("expected 1 SLSA attestation, got %d", len(bins.slsa))
+	}
+
+	if len(bins.vsa) != 0 {
+		t.Errorf("expected 0 VSA attestations, got %d", len(bins.vsa))
+	}
+}

@@ -155,6 +155,9 @@ jobs:
           - name: vex
             package: ./internal/vex/
             target: FuzzVerify
+          - name: vex-cyclonedx
+            package: ./internal/vex/cyclonedxvex/
+            target: FuzzVerify
           - name: vsa
             package: ./internal/vsa/
             target: FuzzVerify

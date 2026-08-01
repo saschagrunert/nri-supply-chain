@@ -542,7 +542,7 @@ SLSA provenance verification settings.
 
 ### `vex` (object)
 
-OpenVEX verification settings.
+VEX verification settings. Applies to both OpenVEX and CycloneDX VEX formats.
 
 | Field                      | Type   | Default | Description                                                        |
 | -------------------------- | ------ | ------- | ------------------------------------------------------------------ |
@@ -723,20 +723,39 @@ list the expected `externalParameters` keys:
 
 ### VEX (Vulnerability Exploitability eXchange)
 
-Verifies [OpenVEX](https://openvex.dev) v0.2.0 documents.
+Verifies VEX documents in two formats:
 
-Status handling:
+- [OpenVEX](https://openvex.dev) v0.2.0
+- [CycloneDX VEX](https://cyclonedx.org/capabilities/vex/) (via CycloneDX BOM
+  vulnerability entries with `analysis.state`)
+
+The format is detected automatically from the predicate content. The same
+policy settings apply to both formats.
+
+**OpenVEX status handling:**
 
 - `not_affected` or `fixed`: pass
 - `affected`: fail
 - `under_investigation`: controlled by `underInvestigationPolicy` (default:
   allow)
 
-Product matching operates at the image level using digest comparison and PURL
-(`pkg:oci/...`) matching.
+**CycloneDX VEX status handling** (mapped from `analysis.state`):
 
-When multiple VEX documents exist, the most restrictive result wins: any
-`affected` status causes failure regardless of other documents.
+- `not_affected`, `false_positive`, `resolved`, `resolved_with_pedigree`: pass
+- `exploitable`: fail
+- `in_triage`: controlled by `underInvestigationPolicy` (default: allow)
+- Missing or empty `analysis`: skipped (no VEX assertion)
+
+CycloneDX BOMs without a `vulnerabilities` section are treated as pure SBOMs
+with no VEX data (pass, not an error).
+
+Product matching operates at the image level using digest comparison and PURL
+(`pkg:oci/...`) matching. For CycloneDX, vulnerability `affects[].ref` entries
+are resolved to components via BOM-ref, then matched by component hash or PURL.
+
+When multiple VEX documents exist (in either format), the most restrictive
+result wins: any `affected`/`exploitable` status causes failure regardless of
+other documents.
 
 If all VEX documents fail to parse or verify (as opposed to being absent),
 the check always fails regardless of `missingPolicy`. The `missingPolicy`
