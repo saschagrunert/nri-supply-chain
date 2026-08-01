@@ -350,6 +350,7 @@ policy_dir = "/tmp/policies"
 	testutil.AssertNoError(t, err)
 	testutil.AssertEqual(t, config.ModeEnforce, cfg.Verification)
 	testutil.AssertEqual(t, 5*time.Second, cfg.FetchTimeout.Duration)
+	testutil.AssertEqual(t, types.ActionDeny, cfg.FetchFailurePolicy)
 }
 
 func TestDurationMarshalText(t *testing.T) {
@@ -664,6 +665,151 @@ func TestNormalizeDockerIOPrefix(t *testing.T) {
 			"index.docker.io", cfg.Registries[0].Prefix,
 		)
 	}
+}
+
+func TestApplyModeDefaults(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		mode           config.VerificationMode
+		policy         types.Action
+		explicit       bool
+		expectedPolicy types.Action
+	}{
+		{
+			name:           "enforce implicit warn becomes deny",
+			mode:           config.ModeEnforce,
+			policy:         types.ActionWarn,
+			explicit:       false,
+			expectedPolicy: types.ActionDeny,
+		},
+		{
+			name:           "enforce explicit warn preserved",
+			mode:           config.ModeEnforce,
+			policy:         types.ActionWarn,
+			explicit:       true,
+			expectedPolicy: types.ActionWarn,
+		},
+		{
+			name:           "enforce implicit deny unchanged",
+			mode:           config.ModeEnforce,
+			policy:         types.ActionDeny,
+			explicit:       false,
+			expectedPolicy: types.ActionDeny,
+		},
+		{
+			name:           "enforce explicit deny unchanged",
+			mode:           config.ModeEnforce,
+			policy:         types.ActionDeny,
+			explicit:       true,
+			expectedPolicy: types.ActionDeny,
+		},
+		{
+			name:           "enforce implicit allow unchanged",
+			mode:           config.ModeEnforce,
+			policy:         types.ActionAllow,
+			explicit:       false,
+			expectedPolicy: types.ActionAllow,
+		},
+		{
+			name:           "enforce explicit allow unchanged",
+			mode:           config.ModeEnforce,
+			policy:         types.ActionAllow,
+			explicit:       true,
+			expectedPolicy: types.ActionAllow,
+		},
+		{
+			name:           "warn mode unchanged",
+			mode:           config.ModeWarn,
+			policy:         types.ActionWarn,
+			explicit:       false,
+			expectedPolicy: types.ActionWarn,
+		},
+		{
+			name:           "disabled mode unchanged",
+			mode:           config.ModeDisabled,
+			policy:         types.ActionWarn,
+			explicit:       false,
+			expectedPolicy: types.ActionWarn,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := config.DefaultConfig()
+			cfg.Verification = test.mode
+			cfg.FetchFailurePolicy = test.policy
+
+			cfg.ApplyModeDefaults(test.explicit)
+
+			testutil.AssertEqual(t, test.expectedPolicy, cfg.FetchFailurePolicy)
+		})
+	}
+}
+
+func TestApplyModeDefaultsViaLoadFromString(t *testing.T) {
+	t.Parallel()
+
+	t.Run("enforce without explicit policy gets deny", func(t *testing.T) {
+		t.Parallel()
+
+		cfg, err := config.LoadFromString(`verification = "enforce"
+policy_dir = "/tmp/policies"
+`)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, types.ActionDeny, cfg.FetchFailurePolicy)
+	})
+
+	t.Run("enforce with explicit warn keeps warn", func(t *testing.T) {
+		t.Parallel()
+
+		cfg, err := config.LoadFromString(`verification = "enforce"
+fetch_failure_policy = "warn"
+policy_dir = "/tmp/policies"
+`)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, types.ActionWarn, cfg.FetchFailurePolicy)
+	})
+
+	t.Run("enforce with explicit deny keeps deny", func(t *testing.T) {
+		t.Parallel()
+
+		cfg, err := config.LoadFromString(`verification = "enforce"
+fetch_failure_policy = "deny"
+policy_dir = "/tmp/policies"
+`)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, types.ActionDeny, cfg.FetchFailurePolicy)
+	})
+
+	t.Run("warn mode keeps default", func(t *testing.T) {
+		t.Parallel()
+
+		cfg, err := config.LoadFromString(`verification = "warn"
+policy_dir = "/tmp/policies"
+`)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, types.ActionWarn, cfg.FetchFailurePolicy)
+	})
+
+	t.Run("warn to enforce reload changes policy", func(t *testing.T) {
+		t.Parallel()
+
+		warnCfg, err := config.LoadFromString(`verification = "warn"
+policy_dir = "/tmp/policies"
+`)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, types.ActionWarn, warnCfg.FetchFailurePolicy)
+
+		enforceCfg, err := config.LoadFromString(`verification = "enforce"
+policy_dir = "/tmp/policies"
+`)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, types.ActionDeny, enforceCfg.FetchFailurePolicy)
+	})
 }
 
 func TestConfigValidateFetchRateLimit(t *testing.T) {

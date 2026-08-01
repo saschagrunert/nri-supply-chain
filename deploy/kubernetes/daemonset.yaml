@@ -12,7 +12,7 @@ data:
   config.toml: |
     verification = "warn"
     fetch_timeout = "30s"
-    fetch_failure_policy = "warn"
+    # fetch_failure_policy = "warn"
     cache_ttl = "24h"
     cache_failure_ttl = "5m"
     policy_dir = "/etc/nri-supply-chain/policies"
