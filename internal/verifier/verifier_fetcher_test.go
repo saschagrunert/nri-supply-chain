@@ -466,7 +466,7 @@ func TestVerifyWithFetcher(t *testing.T) {
 			setupPayloads:      nil,
 			wantAllowed:        true,
 			wantErr:            nil,
-			wantCheckLen:       4,
+			wantCheckLen:       5,
 		},
 		{
 			name:       "parallel SLSA and VEX",
@@ -589,7 +589,7 @@ func TestVerifyWithFetcher(t *testing.T) {
 			setupPayloads:      nil,
 			wantAllowed:        true,
 			wantErr:            nil,
-			wantCheckLen:       4,
+			wantCheckLen:       5,
 		},
 		{
 			name: "VSA missing allow falls through",
@@ -1159,6 +1159,155 @@ func (f *digestAwareFetcher) Fetch(
 	}
 
 	return nil, nil
+}
+
+func validSBOMPayload(t *testing.T) []byte {
+	t.Helper()
+
+	hexDigest := testFetchDigest[len("sha256:"):]
+
+	spdxPredicate := map[string]any{
+		"spdxVersion": "SPDX-2.3",
+		"packages": []map[string]any{
+			{
+				"name":             "mylib",
+				"licenseConcluded": "MIT",
+				"licenseDeclared":  "NOASSERTION",
+				"externalRefs": []map[string]any{
+					{
+						"referenceCategory": "PACKAGE-MANAGER",
+						"referenceType":     "purl",
+						"referenceLocator":  "pkg:npm/mylib@1.0.0",
+					},
+				},
+			},
+		},
+	}
+
+	stmt := map[string]any{
+		"_type": testInTotoStatementV1,
+		"subject": []map[string]any{
+			{
+				"name":   testSubjectName,
+				"digest": map[string]string{testAlgoSHA256: hexDigest},
+			},
+		},
+		"predicateType": "https://spdx.dev/Document",
+		"predicate":     spdxPredicate,
+	}
+
+	return marshalJSON(t, stmt)
+}
+
+func TestVerifySBOMThroughVerifier(t *testing.T) {
+	t.Parallel()
+
+	t.Run("SBOM pass with allowed license", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		testutil.WritePolicy(t, dir, "default.json", `{
+			"sbom": {"missingPolicy": "deny"}
+		}`)
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeEnforce
+		cfg.PolicyDir = dir
+
+		fetcher := &mockFetcher{
+			attestations: []attestation.VerifiedAttestation{
+				{
+					PredicateType: attestation.PredicateSPDX,
+					Payload:       nil,
+					Digest:        testFetchDigest,
+				},
+			},
+			err: nil,
+		}
+
+		fetcher.attestations[0].Payload = validSBOMPayload(t)
+
+		verif, err := verifier.New(cfg, metrics.New(), fetcher)
+		testutil.AssertNoError(t, err)
+
+		result, err := verif.Verify(
+			context.Background(), "nginx:latest", testFetchDigest, "", testDefaultNamespace,
+		)
+		testutil.AssertNoError(t, err)
+
+		if !result.Allowed {
+			t.Errorf("expected allowed=true, got false (reason: %s)", result.Reason)
+		}
+	})
+
+	t.Run("SBOM missing deny rejects", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		testutil.WritePolicy(t, dir, "default.json", `{
+			"sbom": {"missingPolicy": "deny"}
+		}`)
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeEnforce
+		cfg.PolicyDir = dir
+
+		fetcher := &mockFetcher{
+			attestations: []attestation.VerifiedAttestation{},
+			err:          nil,
+		}
+
+		verif, err := verifier.New(cfg, metrics.New(), fetcher)
+		testutil.AssertNoError(t, err)
+
+		_, err = verif.Verify(
+			context.Background(), "nginx:latest", testFetchDigest, "", testDefaultNamespace,
+		)
+
+		if !errors.Is(err, verifier.ErrVerificationFailed) {
+			t.Errorf("expected ErrVerificationFailed, got %v", err)
+		}
+	})
+
+	t.Run("SBOM denied license fails", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		testutil.WritePolicy(t, dir, "default.json", `{
+			"sbom": {
+				"missingPolicy": "deny",
+				"license": {"deny": ["MIT"]}
+			}
+		}`)
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeEnforce
+		cfg.PolicyDir = dir
+
+		fetcher := &mockFetcher{
+			attestations: []attestation.VerifiedAttestation{
+				{
+					PredicateType: attestation.PredicateSPDX,
+					Payload:       nil,
+					Digest:        testFetchDigest,
+				},
+			},
+			err: nil,
+		}
+
+		fetcher.attestations[0].Payload = validSBOMPayload(t)
+
+		verif, err := verifier.New(cfg, metrics.New(), fetcher)
+		testutil.AssertNoError(t, err)
+
+		_, err = verif.Verify(
+			context.Background(), "nginx:latest", testFetchDigest, "", testDefaultNamespace,
+		)
+
+		if !errors.Is(err, verifier.ErrVerificationFailed) {
+			t.Errorf("expected ErrVerificationFailed, got %v", err)
+		}
+	})
 }
 
 func TestVerifyIndexDigestFallback(t *testing.T) {

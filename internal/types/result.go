@@ -45,6 +45,8 @@ const (
 	CheckTypeNotation CheckType = "notation"
 	// CheckTypeCEL is the CEL custom rule check type.
 	CheckTypeCEL CheckType = "cel"
+	// CheckTypeSBOM is the SBOM attestation check type.
+	CheckTypeSBOM CheckType = "sbom"
 )
 
 // Result represents the outcome of a supply chain verification.

@@ -11,6 +11,7 @@ by the nri-supply-chain plugin.
   - [VEX (Vulnerability Exploitability eXchange)](#vex-vulnerability-exploitability-exchange)
   - [VSA (Verification Summary Attestation)](#vsa-verification-summary-attestation)
   - [Signature Verification](#signature-verification)
+  - [SBOM (Software Bill of Materials)](#sbom-software-bill-of-materials)
 - [Other Standards](#other-standards)
 
 <!-- /toc -->
@@ -58,7 +59,7 @@ When a container is created, the plugin performs verification in this order:
 5. **Per-image rule resolution**: If the policy has `rules`, the image is
    matched against each rule's `images` patterns in order (first match
    wins). When a rule matches, its non-nil sections (trust, slsa, vex,
-   vsa, signatures, notation) override the base policy for that verification.
+   vsa, signatures, notation, sbom) override the base policy for that verification.
 
 6. **Cache check**: If a cached result exists for this image digest and is
    within the configured TTL, returns it immediately.
@@ -78,9 +79,9 @@ When a container is created, the plugin performs verification in this order:
    - If no VSA is found, or the VSA is from an untrusted verifier or stale,
      fall through to direct verification.
 
-9. **Parallel SLSA + VEX + Notation verification**: When VSA does not
-   short-circuit, SLSA provenance, VEX, and Notation signature checks run
-   concurrently.
+9. **Parallel SLSA + VEX + Notation + SBOM verification**: When VSA does not
+   short-circuit, SLSA provenance, VEX, Notation signature, and SBOM checks
+   run concurrently.
 
 10. **Enforcement**: In `enforce` mode, failed verification rejects the
     container. In `warn` mode, failures are logged but allowed.
@@ -90,11 +91,11 @@ When a container is created, the plugin performs verification in this order:
 Latency model:
 
 - With trusted VSA: `fetch + VSA verify`
-- Without VSA: `fetch + max(SLSA verify, VEX verify, Notation verify)`
+- Without VSA: `fetch + max(SLSA verify, VEX verify, Notation verify, SBOM verify)`
 
 ## Verification Types
 
-The plugin supports three complementary attestation types that cover different
+The plugin supports several complementary attestation types that cover different
 aspects of the supply chain:
 
 - **SLSA provenance** answers "who built this artifact and how?" by verifying
@@ -143,6 +144,16 @@ check list and field reference.
 All attestations must be valid Sigstore bundles. The plugin supports keyless
 (Fulcio/OIDC) and key-based (PEM public key) modes. See
 [policy.md](policy.md#signature-verification) for configuration details.
+
+### SBOM (Software Bill of Materials)
+
+Verifies SBOM attestations in [SPDX](https://spdx.dev) JSON and
+[CycloneDX](https://cyclonedx.org) JSON formats. SBOMs are discovered via
+in-toto predicate type routing (`https://spdx.dev/Document` for SPDX,
+`https://cyclonedx.org/bom` for CycloneDX). The plugin extracts package
+licenses and PURLs from the SBOM and checks them against configurable deny
+and allow lists. See [policy.md](policy.md#sbom-verification) for the field reference
+and configuration examples.
 
 ## Other Standards
 

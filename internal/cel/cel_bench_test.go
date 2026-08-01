@@ -66,6 +66,7 @@ func BenchmarkEvaluate(b *testing.B) {
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
 		types.PassResult(types.CheckTypeSLSA, "ok"),
 		types.PassResult(types.CheckTypeVEX, "ok"),
+		types.PassResult(types.CheckTypeSBOM, "ok"),
 	)
 
 	b.ResetTimer()
@@ -96,6 +97,7 @@ func BenchmarkEvaluateWithMatch(b *testing.B) {
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
 		types.PassResult(types.CheckTypeSLSA, "ok"),
 		types.PassResult(types.CheckTypeVEX, "ok"),
+		types.PassResult(types.CheckTypeSBOM, "ok"),
 	)
 
 	b.ResetTimer()

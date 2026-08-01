@@ -146,4 +146,33 @@ func TestBinAttestationsCycloneDX(t *testing.T) {
 	if len(bins.vsa) != 0 {
 		t.Errorf("expected 0 VSA attestations, got %d", len(bins.vsa))
 	}
+
+	if len(bins.sbom) != 1 {
+		t.Errorf(
+			"expected 1 SBOM attestation (CycloneDX), got %d",
+			len(bins.sbom),
+		)
+	}
+}
+
+func TestBinAttestationsSPDX(t *testing.T) {
+	t.Parallel()
+
+	attestations := []attestation.VerifiedAttestation{
+		{
+			PredicateType: attestation.PredicateSPDX,
+			Payload:       []byte("spdx1"),
+			Digest:        benchDigest,
+		},
+	}
+
+	bins := binAttestations(attestations)
+
+	if len(bins.sbom) != 1 {
+		t.Errorf("expected 1 SBOM attestation, got %d", len(bins.sbom))
+	}
+
+	if len(bins.vex) != 0 {
+		t.Errorf("expected 0 VEX attestations, got %d", len(bins.vex))
+	}
 }

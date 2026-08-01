@@ -234,6 +234,14 @@ func warnPermissiveMissingPolicies(label string, pol *policy.Policy) {
 			"notation_missing_policy", pol.NotationMissingPolicy(),
 		)
 	}
+
+	if pol.SBOM != nil && pol.SBOMMissingPolicy() == types.ActionAllow {
+		slog.Warn("enforce mode with default SBOM missing_policy=allow allows "+
+			"containers without SBOM attestations; consider setting sbom.missingPolicy=deny",
+			"policy", label,
+			"sbom_missing_policy", pol.SBOMMissingPolicy(),
+		)
+	}
 }
 
 // Stop releases resources held by the verifier, including the cache's

@@ -1,0 +1,37 @@
+{
+  "trust": {
+    "verifiers": [
+      {
+        "id": "build-signer",
+        "keys": ["/etc/nri-supply-chain/keys/cosign.pub"]
+      }
+    ]
+  },
+  "slsa": {
+    "missingPolicy": "allow"
+  },
+  "sbom": {
+    "missingPolicy": "deny",
+    "formats": ["spdx", "cyclonedx"],
+    "license": {
+      "deny": [
+        "AGPL-3.0-only",
+        "AGPL-3.0-or-later",
+        "GPL-3.0-only",
+        "GPL-3.0-or-later",
+        "SSPL-1.0"
+      ],
+      "allow": []
+    },
+    "component": {
+      "deny": [
+        "pkg:npm/event-stream@3.3.6",
+        "pkg:pypi/malicious-package@1.0.0"
+      ],
+      "allow": []
+    }
+  },
+  "signatures": {
+    "requireTransparencyLog": false
+  }
+}

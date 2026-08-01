@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -182,6 +183,16 @@ var (
 
 	// ErrCELCompileFailed indicates a CEL expression failed to compile.
 	ErrCELCompileFailed = errors.New("CEL compilation failed")
+
+	// ErrInvalidSBOMFormat indicates an unrecognized SBOM format.
+	ErrInvalidSBOMFormat = errors.New(
+		"invalid sbom format, must be \"spdx\" or \"cyclonedx\"",
+	)
+
+	// ErrInvalidComponentPURL indicates a component list entry is not a valid PURL.
+	ErrInvalidComponentPURL = errors.New(
+		"invalid component entry, must be a valid PURL (pkg: scheme)",
+	)
 )
 
 // Sections groups the verification settings that can be overridden
@@ -201,6 +212,8 @@ type Sections struct {
 	Notation *NotationPolicy `json:"notation,omitempty"`
 	// CEL contains custom CEL expression rules for verification.
 	CEL *celengine.Policy `json:"cel,omitempty"`
+	// SBOM contains SBOM attestation verification settings.
+	SBOM *SBOMPolicy `json:"sbom,omitempty"`
 }
 
 // Policy defines the trust roots and per-namespace verification settings.
@@ -347,6 +360,36 @@ type NotationTrustPolicyRule struct {
 	TrustedIdentities []string `json:"trustedIdentities"`
 }
 
+// SBOMPolicy contains SBOM attestation verification settings.
+type SBOMPolicy struct {
+	// MissingPolicy controls behavior when no SBOM attestation is found.
+	MissingPolicy types.Action `json:"missingPolicy,omitempty"`
+	// Formats lists accepted SBOM formats: "spdx", "cyclonedx". When empty, both are accepted.
+	Formats []string `json:"formats,omitempty"`
+	// License contains license allow/deny list settings for SBOM verification.
+	License *SBOMLicensePolicy `json:"license,omitempty"`
+	// Component contains component allow/deny list settings for SBOM verification.
+	Component *SBOMComponentPolicy `json:"component,omitempty"`
+}
+
+// SBOMLicensePolicy contains license allow/deny list settings.
+type SBOMLicensePolicy struct {
+	// Deny is a list of SPDX license identifiers to deny (case-insensitive match).
+	Deny []string `json:"deny,omitempty"`
+	// Allow is a list of SPDX license identifiers to allow. When non-empty,
+	// any license not in this list is denied. Deny takes precedence over allow.
+	Allow []string `json:"allow,omitempty"`
+}
+
+// SBOMComponentPolicy contains component allow/deny list settings.
+type SBOMComponentPolicy struct {
+	// Deny is a list of PURLs to deny (prefix match).
+	Deny []string `json:"deny,omitempty"`
+	// Allow is a list of PURLs to allow (prefix match). When non-empty,
+	// any component not matching an allow entry is denied. Deny takes precedence over allow.
+	Allow []string `json:"allow,omitempty"`
+}
+
 // ImageRule defines per-image verification overrides within a namespace policy.
 // When an image matches the glob patterns in Images, the non-nil fields in this
 // rule override the corresponding fields of the base policy. The first matching
@@ -410,6 +453,17 @@ func (p *Policy) VSAMissingPolicy() types.Action {
 func (p *Policy) NotationMissingPolicy() types.Action {
 	if p.Notation != nil && p.Notation.MissingPolicy != "" {
 		return p.Notation.MissingPolicy
+	}
+
+	return types.ActionAllow
+}
+
+// SBOMMissingPolicy returns the effective SBOM missing policy.
+// Defaults to allow so that the plugin can be deployed in warn mode
+// without requiring SBOM attestations from the start.
+func (p *Policy) SBOMMissingPolicy() types.Action {
+	if p.SBOM != nil && p.SBOM.MissingPolicy != "" {
+		return p.SBOM.MissingPolicy
 	}
 
 	return types.ActionAllow
@@ -558,6 +612,10 @@ func applySections(dst *Sections, src Sections) {
 	if src.CEL != nil {
 		dst.CEL = cloneCEL(src.CEL)
 	}
+
+	if src.SBOM != nil {
+		dst.SBOM = cloneSBOM(src.SBOM)
+	}
 }
 
 func cloneNotation(notationPolicy *NotationPolicy) *NotationPolicy {
@@ -618,6 +676,27 @@ func cloneCEL(src *celengine.Policy) *celengine.Policy {
 	copy(cloned.Rules, src.Rules)
 
 	return cloned
+}
+
+func cloneSBOM(src *SBOMPolicy) *SBOMPolicy {
+	clone := *src
+	clone.Formats = slices.Clone(clone.Formats)
+
+	if clone.License != nil {
+		lic := *clone.License
+		lic.Deny = slices.Clone(lic.Deny)
+		lic.Allow = slices.Clone(lic.Allow)
+		clone.License = &lic
+	}
+
+	if clone.Component != nil {
+		comp := *clone.Component
+		comp.Deny = slices.Clone(comp.Deny)
+		comp.Allow = slices.Clone(comp.Allow)
+		clone.Component = &comp
+	}
+
+	return &clone
 }
 
 // ValidateModeStrictness checks that the per-namespace mode is at least as
@@ -753,6 +832,7 @@ func (p *Policy) validateSections() []error {
 	}
 
 	appendErr(p.validateNotation())
+	appendErr(p.validateSBOM())
 
 	return errs
 }
@@ -1480,6 +1560,91 @@ func validateNotationTrustPolicyFields(
 	return errs
 }
 
+func (p *Policy) validateSBOM() error {
+	if p.SBOM == nil {
+		return nil
+	}
+
+	var errs []error
+
+	if p.SBOM.MissingPolicy != "" {
+		err := types.ValidateAction(
+			"sbom.missingPolicy", p.SBOM.MissingPolicy,
+		)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("validating sbom policy: %w", err))
+		}
+	}
+
+	errs = append(errs, validateSBOMFormats(p.SBOM.Formats)...)
+
+	if p.SBOM.License != nil {
+		err := validateNonEmpty("sbom.license.deny", p.SBOM.License.Deny)
+		if err != nil {
+			errs = append(errs, err)
+		}
+
+		err = validateNonEmpty("sbom.license.allow", p.SBOM.License.Allow)
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	if p.SBOM.Component != nil {
+		errs = append(errs, validateComponentPURLs(
+			"sbom.component.deny", p.SBOM.Component.Deny,
+		)...)
+		errs = append(errs, validateComponentPURLs(
+			"sbom.component.allow", p.SBOM.Component.Allow,
+		)...)
+	}
+
+	return errors.Join(errs...)
+}
+
+func validateSBOMFormats(formats []string) []error {
+	var errs []error
+
+	for idx, format := range formats {
+		switch strings.ToLower(format) {
+		case "spdx", "cyclonedx":
+		default:
+			errs = append(errs, fmt.Errorf(
+				"%w: sbom.formats[%d] got %q",
+				ErrInvalidSBOMFormat, idx, format,
+			))
+		}
+	}
+
+	return errs
+}
+
+func validateComponentPURLs(field string, components []string) []error {
+	var errs []error
+
+	for idx, comp := range components {
+		if comp == "" {
+			errs = append(errs, fmt.Errorf(
+				"%w in %s[%d]",
+				ErrEmptyValue, field, idx,
+			))
+
+			continue
+		}
+
+		parsed, err := url.Parse(comp)
+		if err != nil || parsed.Scheme != "pkg" || parsed.Opaque == "" ||
+			!strings.Contains(parsed.Opaque, "/") {
+			errs = append(errs, fmt.Errorf(
+				"%w: %s[%d] got %q",
+				ErrInvalidComponentPURL, field, idx, comp,
+			))
+		}
+	}
+
+	return errs
+}
+
 func (p *Policy) validateRules() error {
 	if len(p.Rules) == 0 {
 		return nil
@@ -1519,40 +1684,44 @@ func (p *Policy) validateRule(idx int) []error {
 		Sections: rule.Sections,
 	}
 
-	err = rulePol.validateTrust()
-	if err != nil {
-		errs = append(errs, fmt.Errorf("rules[%d]: %w", idx, err))
-	}
-
-	err = rulePol.validateSLSA()
-	if err != nil {
-		errs = append(errs, fmt.Errorf("rules[%d]: %w", idx, err))
-	}
-
-	err = rulePol.validateVEX()
-	if err != nil {
-		errs = append(errs, fmt.Errorf("rules[%d]: %w", idx, err))
-	}
-
-	err = rulePol.validateVSA()
-	if err != nil {
-		errs = append(errs, fmt.Errorf("rules[%d]: %w", idx, err))
-	} else {
-		// resolveVSADuration mutates rulePol.VSA.MaxAgeDuration, which
-		// is the same pointer as p.Rules[idx].VSA, so no copy-back needed.
-		rulePol.resolveVSADuration()
-	}
-
-	err = rulePol.validateNotation()
-	if err != nil {
-		errs = append(errs, fmt.Errorf("rules[%d]: %w", idx, err))
-	}
+	errs = append(errs, validateRuleSections(rulePol, idx)...)
 
 	celErr := rulePol.validateAndCompileCEL()
 	if celErr != nil {
 		errs = append(errs, fmt.Errorf("rules[%d]: %w", idx, celErr))
 	} else {
 		p.Rules[idx].CompiledCEL = rulePol.CompiledCEL
+	}
+
+	return errs
+}
+
+func validateRuleSections(rulePol *Policy, idx int) []error {
+	var errs []error
+
+	for _, validator := range []struct {
+		name string
+		fn   func() error
+	}{
+		{"trust", rulePol.validateTrust},
+		{"slsa", rulePol.validateSLSA},
+		{"vex", rulePol.validateVEX},
+		{"notation", rulePol.validateNotation},
+		{"sbom", rulePol.validateSBOM},
+	} {
+		err := validator.fn()
+		if err != nil {
+			errs = append(errs, fmt.Errorf("rules[%d]: %w", idx, err))
+		}
+	}
+
+	err := rulePol.validateVSA()
+	if err != nil {
+		errs = append(errs, fmt.Errorf("rules[%d]: %w", idx, err))
+	} else {
+		// resolveVSADuration mutates rulePol.VSA.MaxAgeDuration, which
+		// is the same pointer as the rule's VSA, so no copy-back needed.
+		rulePol.resolveVSADuration()
 	}
 
 	return errs

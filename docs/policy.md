@@ -23,6 +23,7 @@ patterns for the nri-supply-chain plugin.
   - [<code>vsa</code> (object)](#vsa-object)
   - [<code>signatures</code> (object)](#signatures-object)
   - [<code>notation</code> (object)](#notation-object)
+  - [<code>sbom</code> (object)](#sbom-object)
   - [<code>rules</code> (array of objects)](#rules-array-of-objects)
   - [<code>cel</code> (object)](#cel-object)
 - [Verification Types](#verification-types)
@@ -32,6 +33,7 @@ patterns for the nri-supply-chain plugin.
   - [VSA (Verification Summary Attestation)](#vsa-verification-summary-attestation)
   - [Signature Verification](#signature-verification)
   - [Notation (Notary v2) Signature Verification](#notation-notary-v2-signature-verification)
+  - [SBOM Verification](#sbom-verification)
 - [Pattern Matching](#pattern-matching)
   - [<code>include</code>, <code>exclude</code>, and <code>trust.sources</code>](#include-exclude-and-trustsources)
   - [<code>trust.sanPatterns</code>](#trustsanpatterns)
@@ -240,6 +242,9 @@ nri-supply-chain json-schema policy
         "cel": {
           "$ref": "#/$defs/CELPolicy"
         },
+        "sbom": {
+          "$ref": "#/$defs/SBOMPolicy"
+        },
         "images": {
           "items": {
             "type": "string"
@@ -345,6 +350,9 @@ nri-supply-chain json-schema policy
         "cel": {
           "$ref": "#/$defs/CELPolicy"
         },
+        "sbom": {
+          "$ref": "#/$defs/SBOMPolicy"
+        },
         "mode": {
           "type": "string",
           "enum": ["disabled", "warn", "enforce"]
@@ -367,6 +375,63 @@ nri-supply-chain json-schema policy
         "rules": {
           "items": {
             "$ref": "#/$defs/ImageRule"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "SBOMPolicy": {
+      "properties": {
+        "missingPolicy": {
+          "type": "string"
+        },
+        "formats": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "license": {
+          "$ref": "#/$defs/SBOMLicensePolicy"
+        },
+        "component": {
+          "$ref": "#/$defs/SBOMComponentPolicy"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "SBOMLicensePolicy": {
+      "properties": {
+        "deny": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allow": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "SBOMComponentPolicy": {
+      "properties": {
+        "deny": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allow": {
+          "items": {
+            "type": "string"
           },
           "type": "array"
         }
@@ -638,6 +703,38 @@ Each `trustPolicy` entry:
 | `trustStores`       | array  | yes      | Trust store references in `type:name` format (e.g., `"ca:myca"`)                    |
 | `trustedIdentities` | array  | yes      | Distinguished name patterns or `"*"` to trust all signers                           |
 
+### `sbom` (object)
+
+SBOM attestation verification settings. When configured, the plugin verifies
+SPDX and CycloneDX SBOM attestations attached to container images.
+
+| Field           | Type   | Default | Description                                                            |
+| --------------- | ------ | ------- | ---------------------------------------------------------------------- |
+| `missingPolicy` | string | `allow` | Behavior when no SBOM attestation is found: `allow`, `warn`, `deny`    |
+| `formats`       | array  | (both)  | Accepted SBOM formats: `spdx`, `cyclonedx`. When empty, both accepted. |
+| `license`       | object | (none)  | License allow/deny list settings (see below)                           |
+| `component`     | object | (none)  | Component allow/deny list settings (see below)                         |
+
+#### `sbom.license` (object)
+
+| Field   | Type  | Default | Description                                                                     |
+| ------- | ----- | ------- | ------------------------------------------------------------------------------- |
+| `deny`  | array | (none)  | SPDX license identifiers to deny (case-insensitive match)                       |
+| `allow` | array | (none)  | SPDX license identifiers to allow. When non-empty, unlisted licenses are denied |
+
+When both `deny` and `allow` are set, deny takes precedence: a license in both
+lists is denied.
+
+#### `sbom.component` (object)
+
+| Field   | Type  | Default | Description                                                                   |
+| ------- | ----- | ------- | ----------------------------------------------------------------------------- |
+| `deny`  | array | (none)  | PURLs to deny (prefix match, e.g. `pkg:npm/event-stream@3.3.6`)               |
+| `allow` | array | (none)  | PURLs to allow (prefix match). When non-empty, unlisted components are denied |
+
+When both `deny` and `allow` are set, deny takes precedence: a component
+matching a deny entry is denied even if it also matches an allow entry.
+
 ### `rules` (array of objects)
 
 Per-image policy overrides. Each rule matches images by glob patterns and
@@ -656,6 +753,7 @@ Each rule is an object with:
 | `signatures` | object | no       | Override signature settings (same schema as `signatures`) |
 | `notation`   | object | no       | Override Notation settings (same schema as `notation`)    |
 | `cel`        | object | no       | Override CEL rules (same schema as top-level `cel`)       |
+| `sbom`       | object | no       | Override SBOM settings (same schema as `sbom`)            |
 
 Fields not set in a rule are inherited from the base policy. The `images`
 patterns use the same glob syntax as `include` and `exclude`.
@@ -742,6 +840,7 @@ Each rule is an object with:
 | `vsa.verifierID`   | string | VSA verifier ID (reserved, always `""`)            |
 | `vsa.result`       | string | PASSED/FAILED (reserved, always `""`)              |
 | `vsa.level`        | int    | SLSA build level (reserved, always `0`)            |
+| `sbom.verified`    | bool   | Whether SBOM check passed                          |
 
 Standard string functions are available via `ext.Strings()`: `startsWith`,
 `endsWith`, `contains`, `matches`.
@@ -979,6 +1078,57 @@ Example configuration:
 }
 ```
 
+### SBOM Verification
+
+Verifies SBOM (Software Bill of Materials) attestations in
+[SPDX](https://spdx.dev) JSON and [CycloneDX](https://cyclonedx.org) JSON
+formats. SBOM attestations are discovered via the same in-toto predicate
+routing used for other attestation types, using predicate URIs
+`https://spdx.dev/Document` (SPDX) and `https://cyclonedx.org/bom`
+(CycloneDX).
+
+Checks performed:
+
+- **Format filtering**: When `sbom.formats` is configured, only the listed
+  formats are accepted. Unrecognized formats cause a verification error.
+- **License deny list**: Each package/component license is checked against
+  `sbom.license.deny` using case-insensitive SPDX identifier matching.
+  Any match causes failure.
+- **License allow list**: When `sbom.license.allow` is set and non-empty,
+  any license not in the allow list causes failure.
+- **Component deny list**: Each package/component PURL is checked against
+  `sbom.component.deny` using prefix matching. Any match causes failure.
+- **Component allow list**: When `sbom.component.allow` is set and non-empty,
+  any component not matching an allow entry causes failure.
+- **Deny over allow**: If a license or component appears in both the deny and
+  allow lists, it is denied. Deny always takes precedence.
+
+When multiple SBOM attestations exist, any denied license or component in any
+document causes failure.
+
+If all SBOM documents fail to parse (as opposed to being absent), the check
+always fails regardless of `missingPolicy`. The `missingPolicy` setting only
+controls behavior when no SBOM attestation exists at all.
+
+Example configuration:
+
+```json
+{
+  "sbom": {
+    "missingPolicy": "deny",
+    "formats": ["spdx", "cyclonedx"],
+    "license": {
+      "deny": ["AGPL-3.0-only", "GPL-3.0-only"],
+      "allow": ["MIT", "Apache-2.0"]
+    },
+    "component": {
+      "deny": ["pkg:npm/event-stream@3.3.6"],
+      "allow": ["pkg:npm/trusted"]
+    }
+  }
+}
+```
+
 ## Pattern Matching
 
 The plugin uses glob patterns in several contexts, with slightly different
@@ -1027,7 +1177,7 @@ A file named `<namespace>.json` in the policy directory overrides
 
 By default, the override is a full replacement. If a namespace policy sets
 `"inherits": true`, unset top-level fields (`trust`, `include`, `exclude`,
-`slsa`, `vex`, `vsa`, `signatures`, `notation`, `rules`) are inherited from the default
+`slsa`, `vex`, `vsa`, `signatures`, `notation`, `sbom`, `rules`) are inherited from the default
 policy. Each top-level section that is set in the namespace policy replaces
 the default's section entirely. The default policy itself cannot set `inherits`.
 
