@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/google/go-containerregistry/pkg/name"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
@@ -56,6 +57,14 @@ const (
 	defaultCircuitBreakerThreshold = 5
 	defaultCircuitBreakerCooldown  = 30 * time.Second
 	maxFetchRateLimit              = 10000.0
+
+	// PolicySourceLocal loads policies from the local filesystem (default).
+	PolicySourceLocal = "local"
+	// PolicySourceOCI loads policies from an OCI registry artifact.
+	PolicySourceOCI = "oci"
+
+	defaultPollInterval = 5 * time.Minute
+	minPollInterval     = 30 * time.Second
 )
 
 var (
@@ -141,6 +150,18 @@ var (
 
 	// ErrRegistryMirrorSameAsPrefix indicates the mirror equals the prefix.
 	ErrRegistryMirrorSameAsPrefix = errors.New("registry mirror must differ from prefix")
+
+	// ErrInvalidPolicySource indicates the policy source is not "local" or "oci".
+	ErrInvalidPolicySource = errors.New("policy.source must be \"local\" or \"oci\"")
+
+	// ErrPolicyOCIRefRequired indicates the OCI reference is missing when source is "oci".
+	ErrPolicyOCIRefRequired = errors.New("policy.oci_ref is required when policy.source is \"oci\"")
+
+	// ErrPolicyOCIRefInvalid indicates the OCI reference could not be parsed.
+	ErrPolicyOCIRefInvalid = errors.New("policy.oci_ref is not a valid OCI reference")
+
+	// ErrPollIntervalTooShort indicates the poll interval is below the minimum.
+	ErrPollIntervalTooShort = errors.New("policy.poll_interval must be at least 30s")
 )
 
 // Duration wraps time.Duration to support TOML unmarshalling from strings.
@@ -201,6 +222,19 @@ type Registry struct {
 	Insecure bool `toml:"insecure"`
 }
 
+// PolicyConfig controls how policy files are sourced: from the local filesystem
+// (default) or from an OCI registry artifact.
+type PolicyConfig struct {
+	// Source selects the policy source: "local" (default) or "oci".
+	Source string `toml:"source"`
+	// OCIRef is the OCI reference for the remote policy artifact
+	// (e.g. "ghcr.io/myorg/policies:v1"). Required when Source is "oci".
+	OCIRef string `toml:"oci_ref"`
+	// PollInterval is how often the plugin checks for policy updates in the
+	// remote registry. Minimum 30s, default 5m.
+	PollInterval Duration `toml:"poll_interval"`
+}
+
 // Config represents the operational configuration for the NRI supply chain plugin.
 type Config struct {
 	// Verification is the master toggle for supply chain verification.
@@ -241,6 +275,8 @@ type Config struct {
 	// Registries configures per-registry transport settings such as mirrors,
 	// custom CA certificates, and insecure (TLS-skip) connections.
 	Registries []Registry `toml:"registries"`
+	// Policy configures the policy source: local filesystem (default) or OCI registry.
+	Policy PolicyConfig `toml:"policy"`
 }
 
 // DefaultConfig returns the default configuration.
@@ -259,6 +295,11 @@ func DefaultConfig() *Config {
 		LogLevel:                "",
 		Sigstore:                SigstoreConfig{TUFMirror: "", TUFRoot: ""},
 		Registries:              nil,
+		Policy: PolicyConfig{
+			Source:       PolicySourceLocal,
+			OCIRef:       "",
+			PollInterval: Duration{Duration: defaultPollInterval},
+		},
 	}
 }
 
@@ -318,6 +359,11 @@ func (c *Config) Validate() error {
 		errs = append(errs, err)
 	}
 
+	err = c.validatePolicyConfig()
+	if err != nil {
+		errs = append(errs, err)
+	}
+
 	return errors.Join(errs...)
 }
 
@@ -326,11 +372,13 @@ func (c *Config) ValidateRuntime() error {
 	var errs []error
 
 	if c.Enabled() {
-		info, err := os.Stat(c.PolicyDir)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("invalid policy_dir %q: %w", c.PolicyDir, err))
-		} else if !info.IsDir() {
-			errs = append(errs, fmt.Errorf("%w: %q", ErrPolicyDirNotDirectory, c.PolicyDir))
+		if c.Policy.Source != PolicySourceOCI {
+			info, err := os.Stat(c.PolicyDir)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("invalid policy_dir %q: %w", c.PolicyDir, err))
+			} else if !info.IsDir() {
+				errs = append(errs, fmt.Errorf("%w: %q", ErrPolicyDirNotDirectory, c.PolicyDir))
+			}
 		}
 
 		errs = append(errs, c.validateTUFRootRuntime()...)
@@ -636,7 +684,7 @@ func (c *Config) validateFetchAndCache() error {
 		errs = append(errs, err)
 	}
 
-	if c.Enabled() {
+	if c.Enabled() && c.Policy.Source != PolicySourceOCI {
 		if c.PolicyDir == "" {
 			errs = append(errs, ErrPolicyDirEmpty)
 		} else if !filepath.IsAbs(c.PolicyDir) {
@@ -737,6 +785,37 @@ func validateTUFMirrorURL(mirror string) error {
 	}
 
 	return nil
+}
+
+func (c *Config) validatePolicyConfig() error {
+	switch c.Policy.Source {
+	case PolicySourceLocal, "":
+		return nil
+	case PolicySourceOCI:
+	default:
+		return fmt.Errorf("%w: got %q", ErrInvalidPolicySource, c.Policy.Source)
+	}
+
+	var errs []error
+
+	if c.Policy.OCIRef == "" {
+		errs = append(errs, ErrPolicyOCIRefRequired)
+	} else {
+		_, err := name.ParseReference(c.Policy.OCIRef)
+		if err != nil {
+			errs = append(errs, fmt.Errorf(
+				"%w: %q: %w", ErrPolicyOCIRefInvalid, c.Policy.OCIRef, err,
+			))
+		}
+	}
+
+	if c.Policy.PollInterval.Duration < minPollInterval {
+		errs = append(errs, fmt.Errorf(
+			"%w: got %s", ErrPollIntervalTooShort, c.Policy.PollInterval.Duration,
+		))
+	}
+
+	return errors.Join(errs...)
 }
 
 // LoadFromFile reads and parses a TOML config file.

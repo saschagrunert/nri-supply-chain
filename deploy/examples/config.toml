@@ -40,6 +40,14 @@ circuit_breaker_cooldown = "30s"
 # Valid values: "debug", "info", "warn", "error".
 # log_level = "info"
 
+# Policy distribution source.
+# By default, policies are loaded from policy_dir on disk ("local").
+# Set source = "oci" to fetch policies from an OCI registry instead.
+# [policy]
+# source = "oci"
+# oci_ref = "ghcr.io/myorg/supply-chain-policies:v1"
+# poll_interval = "5m"
+
 # Registry mirror with automatic fallback to the original registry.
 # When the mirror is unreachable, requests fall back to ghcr.io.
 # [[registries]]

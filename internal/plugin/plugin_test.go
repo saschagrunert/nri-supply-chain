@@ -227,7 +227,7 @@ func TestConfigureWithEmptyConfig(t *testing.T) {
 	cfg := config.DefaultConfig()
 	met := metrics.New()
 
-	v, err := verifier.New(cfg, met, nil)
+	v, err := verifier.New(t.Context(), cfg, met, nil)
 	testutil.AssertNoError(t, err)
 
 	plug := plugin.New(v, met, "", 30*time.Second, nil)
@@ -245,7 +245,7 @@ func TestConfigureWithNRIConfig(t *testing.T) {
 	cfg := config.DefaultConfig()
 	met := metrics.New()
 
-	v, err := verifier.New(cfg, met, nil)
+	v, err := verifier.New(t.Context(), cfg, met, nil)
 	testutil.AssertNoError(t, err)
 
 	plug := plugin.New(v, met, "", 30*time.Second, nil)
@@ -263,7 +263,7 @@ func TestConfigureWithInvalidNRIConfig(t *testing.T) {
 	cfg := config.DefaultConfig()
 	met := metrics.New()
 
-	v, err := verifier.New(cfg, met, nil)
+	v, err := verifier.New(t.Context(), cfg, met, nil)
 	testutil.AssertNoError(t, err)
 
 	plug := plugin.New(v, met, "", 30*time.Second, nil)
@@ -280,7 +280,7 @@ func TestConfigureWithInvalidPolicyDir(t *testing.T) {
 	cfg := config.DefaultConfig()
 	met := metrics.New()
 
-	v, err := verifier.New(cfg, met, nil)
+	v, err := verifier.New(t.Context(), cfg, met, nil)
 	testutil.AssertNoError(t, err)
 
 	plug := plugin.New(v, met, "", 30*time.Second, nil)
@@ -300,7 +300,7 @@ func TestConfigureSkipsWhenConfigPathSet(t *testing.T) {
 	cfg := config.DefaultConfig()
 	met := metrics.New()
 
-	v, err := verifier.New(cfg, met, nil)
+	v, err := verifier.New(t.Context(), cfg, met, nil)
 	testutil.AssertNoError(t, err)
 
 	plug := plugin.New(v, met, "/some/config.toml", 30*time.Second, nil)
@@ -603,7 +603,7 @@ func newTestPlugin(t *testing.T, mode config.VerificationMode, policyDir string)
 
 	met := metrics.New()
 
-	v, err := verifier.New(cfg, met, nil)
+	v, err := verifier.New(t.Context(), cfg, met, nil)
 	testutil.AssertNoError(t, err)
 
 	return plugin.New(v, met, "", 30*time.Second, nil)

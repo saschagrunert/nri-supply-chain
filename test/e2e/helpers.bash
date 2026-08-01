@@ -1056,3 +1056,78 @@ create_sbom_images() {
 	export SBOM_ALLOWED_IMAGE SBOM_DENIED_LIC_IMAGE SBOM_DENIED_COMP_IMAGE
 	export SBOM_MISSING_IMAGE SBOM_CDX_DENIED_IMAGE
 }
+
+# --- OCI policy helpers ---
+
+write_plugin_config_oci() {
+	local mode="${1:-warn}"
+	local oci_ref="${2}"
+	local poll_interval="${3:-1m}"
+	cat >"$PLUGIN_CONFIG" <<-EOF
+		verification = "${mode}"
+		policy_dir = "${POLICY_DIR}"
+		fetch_timeout = "30s"
+		fetch_failure_policy = "deny"
+		cache_ttl = "5m"
+		metrics_addr = ":9090"
+
+		[policy]
+		source = "oci"
+		oci_ref = "${oci_ref}"
+		poll_interval = "${poll_interval}"
+	EOF
+}
+
+push_policy_to_registry() {
+	local tag="$1"
+	shift
+	local ref="${REGISTRY_HOST}/policies/${tag}"
+	local layout_dir
+	layout_dir=$(mktemp -d "${BATS_FILE_TMPDIR}/policy-layout-XXXXXX")
+
+	local config='{"architecture":"amd64","os":"linux"}'
+	local config_hash
+	config_hash=$(printf '%s' "$config" | sha256sum | awk '{print $1}')
+	local config_size=${#config}
+	mkdir -p "${layout_dir}/blobs/sha256"
+	printf '%s' "$config" >"${layout_dir}/blobs/sha256/${config_hash}"
+
+	local layers_json=""
+	local diff_ids=""
+	for f in "$@"; do
+		local content
+		content=$(cat "$f")
+		local blob_hash
+		blob_hash=$(printf '%s' "$content" | sha256sum | awk '{print $1}')
+		local blob_size=${#content}
+		printf '%s' "$content" >"${layout_dir}/blobs/sha256/${blob_hash}"
+		local fname
+		fname=$(basename "$f")
+		if [ -n "$layers_json" ]; then
+			layers_json="${layers_json},"
+			diff_ids="${diff_ids},"
+		fi
+		layers_json="${layers_json}{\"mediaType\":\"application/json\",\"size\":${blob_size},\"digest\":\"sha256:${blob_hash}\",\"annotations\":{\"org.opencontainers.image.title\":\"${fname}\"}}"
+		diff_ids="${diff_ids}\"sha256:${blob_hash}\""
+	done
+
+	local manifest="{\"schemaVersion\":2,\"mediaType\":\"application/vnd.oci.image.manifest.v1+json\",\"config\":{\"mediaType\":\"application/vnd.oci.image.config.v1+json\",\"size\":${config_size},\"digest\":\"sha256:${config_hash}\"},\"layers\":[${layers_json}]}"
+	local manifest_hash
+	manifest_hash=$(printf '%s' "$manifest" | sha256sum | awk '{print $1}')
+	local manifest_size=${#manifest}
+	printf '%s' "$manifest" >"${layout_dir}/blobs/sha256/${manifest_hash}"
+
+	printf '{"imageLayoutVersion":"1.0.0"}' >"${layout_dir}/oci-layout"
+	printf '{"schemaVersion":2,"manifests":[{"mediaType":"application/vnd.oci.image.manifest.v1+json","size":%d,"digest":"sha256:%s"}]}' \
+		"$manifest_size" "$manifest_hash" >"${layout_dir}/index.json"
+
+	local output
+	if ! output=$(timeout "$CMD_TIMEOUT" "$CRANE" push "${layout_dir}" "$ref" \
+		--insecure --image-refs /dev/null 2>&1); then
+		echo "ERROR: crane push failed for $ref: $output" >&2
+		rm -rf "$layout_dir"
+		return 1
+	fi
+	rm -rf "$layout_dir"
+	echo "$ref"
+}

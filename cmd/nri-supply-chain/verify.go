@@ -320,7 +320,7 @@ func newVerifier(
 		return nil, fmt.Errorf("creating fetcher: %w", err)
 	}
 
-	v, err := verifier.New(cfg, met, fetcher)
+	v, err := verifier.New(ctx, cfg, met, fetcher)
 	if err != nil {
 		return nil, fmt.Errorf("creating verifier: %w", err)
 	}

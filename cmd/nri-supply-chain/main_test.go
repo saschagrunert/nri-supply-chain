@@ -138,7 +138,7 @@ func newDisabledPlugin(t *testing.T) *plugin.Plugin {
 	cfg := config.DefaultConfig()
 	met := metrics.New()
 
-	v, err := verifier.New(cfg, met, nil)
+	v, err := verifier.New(t.Context(), cfg, met, nil)
 	if err != nil {
 		t.Fatalf("creating verifier: %v", err)
 	}

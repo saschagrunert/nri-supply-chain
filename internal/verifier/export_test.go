@@ -120,3 +120,8 @@ func ExportResolveImagePolicy(
 func ExportCacheNamespaceKey(namespace string, ruleIdx int) string {
 	return cacheNamespaceKey(namespace, ruleIdx)
 }
+
+// ExportOnPolicyUpdate exposes onPolicyUpdate for external tests.
+func (v *Verifier) ExportOnPolicyUpdate(policies map[string]*policy.Policy) error {
+	return v.onPolicyUpdate(policies)
+}

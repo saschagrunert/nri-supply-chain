@@ -80,12 +80,19 @@ systemctl reload nri-supply-chain
 A reload re-reads the [TOML config file](config.md) and all
 [policy files](policy.md) from disk. The verification cache is cleared only
 when cache-affecting config fields changed (`verification`, `policy_dir`,
-`cache_ttl`, `cache_failure_ttl`, `fetch_failure_policy`, `fetch_timeout`) or
+`cache_ttl`, `cache_failure_ttl`, `fetch_failure_policy`, `fetch_timeout`,
+`sigstore.tuf_mirror`, `sigstore.tuf_root`, `registries`,
+`policy.source`, `policy.oci_ref`) or
 when the content of any policy file
 changed. If the config and policies are identical, the cache is preserved. To
 force a cache clear when nothing else needs to change, temporarily modify
 `cache_ttl` (for example, change it from `24h` to `23h59m`), send SIGHUP, then
 change it back and send SIGHUP again.
+
+When `policy.source = "oci"` is configured, SIGHUP stops the running OCI
+poller and starts a new one with the updated configuration. This allows
+changing the `oci_ref`, `poll_interval`, or switching between `local` and `oci`
+sources without restarting the plugin.
 
 The plugin also watches the config file and policy directory for changes using
 fsnotify. When a file is written, created, or removed, the plugin automatically
@@ -119,7 +126,9 @@ trail of all container verification outcomes.
 - **Stale cache**: Reduce `cache_ttl` or set to `0s` to disable caching during
   debugging. Send SIGHUP to reload; the cache is cleared only when
   cache-affecting config fields (`verification`, `policy_dir`, `cache_ttl`,
-  `cache_failure_ttl`, `fetch_failure_policy`, `fetch_timeout`) or policy file
+  `cache_failure_ttl`, `fetch_failure_policy`, `fetch_timeout`,
+  `sigstore.tuf_mirror`, `sigstore.tuf_root`, `registries`,
+  `policy.source`, `policy.oci_ref`) or policy file
   contents have changed. A SIGHUP with unchanged config and policies does not
   clear the cache. To force a clear, change `cache_ttl` temporarily before
   sending SIGHUP.
@@ -187,6 +196,8 @@ protect against resource exhaustion and unbounded processing.
 | Digest resolve timeout      | 1 second                  | Image digest resolution during NRI callbacks is capped at 1 second to stay under containerd's ttrpc timeout. The `verify` CLI path uses the configured `fetch_timeout` instead. |
 | Policy file count limit     | 1,000 files               | At most 1,000 JSON policy files are loaded from the policy directory. If the count exceeds this limit, policy loading fails with an error.                                      |
 | Glob pattern cache          | 10,000 patterns           | Compiled glob patterns are cached for reuse. Once the cache holds 10,000 entries, new patterns still compile and match but are not cached.                                      |
+| OCI policy layer size       | 1 MiB per layer           | Individual OCI policy layers larger than 1 MiB are rejected during fetch. The layer is read through a size-limited reader and an error is returned if the limit is exceeded.    |
+| OCI policy layer count      | 1,000 layers              | At most 1,000 layers are processed from an OCI policy artifact. If the artifact contains more layers, policy loading fails with an error.                                       |
 
 **Sigstore trusted root refresh.** For keyless (Fulcio) verification, the
 plugin fetches the Sigstore trusted root from the TUF mirror on startup and

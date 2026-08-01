@@ -39,6 +39,7 @@ const (
 const (
 	testRegistryGHCR   = "ghcr.io"
 	testMirrorInternal = "mirror.internal"
+	testOCIRef         = "ghcr.io/myorg/policies:v1"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -1837,6 +1838,188 @@ func TestRegistriesChanged(t *testing.T) {
 
 			if got := config.RegistriesChanged(test.prev, test.next); got != test.want {
 				t.Errorf("RegistriesChanged() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestConfigValidatePolicyConfig(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		modify      func(*config.Config)
+		wantErr     bool
+		expectedErr error
+	}{
+		{
+			name:        "default local source is valid",
+			modify:      func(_ *config.Config) {},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name: "explicit local source is valid",
+			modify: func(c *config.Config) {
+				c.Policy.Source = config.PolicySourceLocal
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name: "oci source with valid ref",
+			modify: func(c *config.Config) {
+				c.Policy.Source = config.PolicySourceOCI
+				c.Policy.OCIRef = testOCIRef
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name: "oci source with digest pinning",
+			modify: func(c *config.Config) {
+				c.Policy.Source = config.PolicySourceOCI
+				c.Policy.OCIRef = "ghcr.io/myorg/policies@sha256:abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234"
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name: "invalid policy source",
+			modify: func(c *config.Config) {
+				c.Policy.Source = "ftp"
+			},
+			wantErr:     true,
+			expectedErr: config.ErrInvalidPolicySource,
+		},
+		{
+			name: "oci source requires oci_ref",
+			modify: func(c *config.Config) {
+				c.Policy.Source = config.PolicySourceOCI
+			},
+			wantErr:     true,
+			expectedErr: config.ErrPolicyOCIRefRequired,
+		},
+		{
+			name: "oci source with invalid ref",
+			modify: func(c *config.Config) {
+				c.Policy.Source = config.PolicySourceOCI
+				c.Policy.OCIRef = "NOT A VALID REF!!!"
+			},
+			wantErr:     true,
+			expectedErr: config.ErrPolicyOCIRefInvalid,
+		},
+		{
+			name: "poll interval below minimum",
+			modify: func(c *config.Config) {
+				c.Policy.Source = config.PolicySourceOCI
+				c.Policy.OCIRef = testOCIRef
+				c.Policy.PollInterval = config.Duration{Duration: 10 * time.Second}
+			},
+			wantErr:     true,
+			expectedErr: config.ErrPollIntervalTooShort,
+		},
+		{
+			name: "poll interval at minimum is valid",
+			modify: func(c *config.Config) {
+				c.Policy.Source = config.PolicySourceOCI
+				c.Policy.OCIRef = testOCIRef
+				c.Policy.PollInterval = config.Duration{Duration: 30 * time.Second}
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name: "oci source skips policy_dir validation",
+			modify: func(c *config.Config) {
+				c.Verification = config.ModeWarn
+				c.Policy.Source = config.PolicySourceOCI
+				c.Policy.OCIRef = testOCIRef
+				c.PolicyDir = "" // would normally fail for local source
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := config.DefaultConfig()
+			test.modify(cfg)
+
+			err := cfg.Validate()
+			if test.wantErr && err == nil {
+				t.Error("expected error, got nil")
+			}
+
+			if !test.wantErr && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+
+			if test.expectedErr != nil && !errors.Is(err, test.expectedErr) {
+				t.Errorf("expected error %v, got %v", test.expectedErr, err)
+			}
+		})
+	}
+}
+
+func TestConfigLoadFromStringPolicySection(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		toml     string
+		wantErr  bool
+		checkCfg func(*testing.T, *config.Config)
+	}{
+		{
+			name: "policy section with oci source",
+			toml: `
+[policy]
+source = "oci"
+oci_ref = "ghcr.io/myorg/policies:v1"
+poll_interval = "10m"
+`,
+			wantErr: false,
+			checkCfg: func(t *testing.T, cfg *config.Config) {
+				t.Helper()
+
+				testutil.AssertEqual(t, config.PolicySourceOCI, cfg.Policy.Source)
+				testutil.AssertEqual(t, testOCIRef, cfg.Policy.OCIRef)
+				testutil.AssertEqual(t, 10*time.Minute, cfg.Policy.PollInterval.Duration)
+			},
+		},
+		{
+			name:    "empty config uses defaults",
+			toml:    "",
+			wantErr: false,
+			checkCfg: func(t *testing.T, cfg *config.Config) {
+				t.Helper()
+
+				testutil.AssertEqual(t, config.PolicySourceLocal, cfg.Policy.Source)
+				testutil.AssertEqual(t, "", cfg.Policy.OCIRef)
+				testutil.AssertEqual(t, 5*time.Minute, cfg.Policy.PollInterval.Duration)
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg, err := config.LoadFromString(test.toml)
+			if test.wantErr {
+				testutil.AssertError(t, err)
+
+				return
+			}
+
+			testutil.AssertNoError(t, err)
+
+			if test.checkCfg != nil {
+				test.checkCfg(t, cfg)
 			}
 		})
 	}

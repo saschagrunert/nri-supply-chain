@@ -276,7 +276,7 @@ func newJSONSchemaCmd() *cobra.Command {
 }
 
 func logEffectiveConfig(configPath string, cfg *config.Config) {
-	slog.Info("Effective configuration",
+	attrs := []any{
 		"config", configPath,
 		"mode", cfg.Verification,
 		"policy_dir", cfg.PolicyDir,
@@ -288,7 +288,17 @@ func logEffectiveConfig(configPath string, cfg *config.Config) {
 		"circuit_breaker_threshold", cfg.CircuitBreakerThreshold,
 		"circuit_breaker_cooldown", cfg.CircuitBreakerCooldown.Duration,
 		"metrics_addr", cfg.MetricsAddr,
-	)
+	}
+
+	if cfg.Policy.Source == config.PolicySourceOCI {
+		attrs = append(attrs,
+			"policy_source", cfg.Policy.Source,
+			"policy_oci_ref", cfg.Policy.OCIRef,
+			"policy_poll_interval", cfg.Policy.PollInterval.Duration,
+		)
+	}
+
+	slog.Info("Effective configuration", attrs...)
 }
 
 func startPlugin(
@@ -319,7 +329,7 @@ func startPlugin(
 		}
 	}
 
-	verif, err := verifier.New(cfg, met, fetcher)
+	verif, err := verifier.New(ctx, cfg, met, fetcher)
 	if err != nil {
 		slog.Error("Failed to create verifier", "error", err)
 		cancel()
@@ -368,7 +378,7 @@ func runValidation(cfg *config.Config) int {
 		return exitSuccess
 	}
 
-	policies, err := policy.LoadAll(cfg.PolicyDir)
+	policies, err := loadPoliciesForValidation(cfg)
 	if err != nil {
 		slog.Error("Policy validation failed", "error", err)
 
@@ -410,6 +420,36 @@ func runValidation(cfg *config.Config) int {
 	)
 
 	return exitSuccess
+}
+
+func loadPoliciesForValidation(cfg *config.Config) (map[string]*policy.Policy, error) {
+	if cfg.Policy.Source != config.PolicySourceOCI {
+		policies, err := policy.LoadAll(cfg.PolicyDir)
+		if err != nil {
+			return nil, fmt.Errorf("loading policies: %w", err)
+		}
+
+		return policies, nil
+	}
+
+	transportCache := registry.NewTransportCacheOrNil(cfg.Registries)
+	fetcher := policy.NewOCIFetcher(transportCache)
+
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.FetchTimeout.Duration)
+	defer cancel()
+
+	result, err := fetcher.FetchFromOCI(ctx, cfg.Policy.OCIRef)
+	if err != nil {
+		return nil, fmt.Errorf("loading OCI policies: %w", err)
+	}
+
+	slog.Info("Loaded policies from OCI artifact",
+		"oci_ref", cfg.Policy.OCIRef,
+		"digest", result.Digest,
+		"count", len(result.Policies),
+	)
+
+	return result.Policies, nil
 }
 
 func shouldUseConfigFile(path string) bool {
