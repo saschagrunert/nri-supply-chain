@@ -77,7 +77,7 @@ func TestServeMetricsReadyzVerifierNotReady(t *testing.T) {
 
 	met := metrics.New()
 
-	v, err := verifier.New(cfg, met, nil)
+	v, err := verifier.New(t.Context(), cfg, met, nil)
 	if err != nil {
 		t.Fatalf("creating verifier: %v", err)
 	}

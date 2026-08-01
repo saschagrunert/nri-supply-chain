@@ -51,3 +51,55 @@ EOF
 	run_binary --config "$TEST_DIR/config.toml" validate
 	[[ "$status" -eq 0 ]]
 }
+
+@test "OCI source with valid oci_ref and custom poll_interval passes" {
+	cat >"$TEST_DIR/config.toml" <<EOF
+verification = "disabled"
+
+[policy]
+source = "oci"
+oci_ref = "ghcr.io/myorg/policies:v1"
+poll_interval = "10m"
+EOF
+	run_binary --config "$TEST_DIR/config.toml" validate
+	[[ "$status" -eq 0 ]]
+}
+
+@test "OCI source with missing oci_ref fails" {
+	cat >"$TEST_DIR/config.toml" <<EOF
+verification = "disabled"
+
+[policy]
+source = "oci"
+EOF
+	run_binary --config "$TEST_DIR/config.toml" validate
+	[[ "$status" -ne 0 ]]
+	[[ "$output" == *"oci_ref"* ]]
+}
+
+@test "OCI source with poll_interval below minimum fails" {
+	cat >"$TEST_DIR/config.toml" <<EOF
+verification = "disabled"
+
+[policy]
+source = "oci"
+oci_ref = "ghcr.io/myorg/policies:v1"
+poll_interval = "10s"
+EOF
+	run_binary --config "$TEST_DIR/config.toml" validate
+	[[ "$status" -ne 0 ]]
+	[[ "$output" == *"30s"* ]]
+}
+
+@test "unknown policy source fails" {
+	cat >"$TEST_DIR/config.toml" <<EOF
+verification = "disabled"
+
+[policy]
+source = "ftp"
+oci_ref = "ghcr.io/myorg/policies:v1"
+EOF
+	run_binary --config "$TEST_DIR/config.toml" validate
+	[[ "$status" -ne 0 ]]
+	[[ "$output" == *"source"* ]]
+}

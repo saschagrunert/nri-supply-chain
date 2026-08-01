@@ -64,6 +64,10 @@ per-namespace trust roots and verification requirements.
 - Files are parsed with strict mode (`DisallowUnknownFields`). Any
   unrecognized field causes a parse error.
 - An empty policy `{}` allows all containers without verification.
+- As an alternative to local files, policies can be distributed as OCI
+  artifacts stored in a container registry. See the
+  [Policy Distribution](config.md#policy-distribution) section in the
+  configuration reference.
 
 ## Writing Your First Policy
 

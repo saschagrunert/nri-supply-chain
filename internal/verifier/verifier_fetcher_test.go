@@ -707,7 +707,7 @@ func TestVerifyWithFetcher(t *testing.T) {
 				fetcher = test.fetcher
 			}
 
-			verif, err := verifier.New(cfg, metrics.New(), fetcher)
+			verif, err := verifier.New(t.Context(), cfg, metrics.New(), fetcher)
 			testutil.AssertNoError(t, err)
 
 			result, err := verif.Verify(
@@ -765,7 +765,7 @@ func TestVerifyCacheFailureTTL(t *testing.T) {
 	cfg.CacheTTL = config.Duration{Duration: time.Hour}
 	cfg.CacheFailureTTL = config.Duration{Duration: 10 * time.Millisecond}
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
 	// First call: provenance missing with deny policy triggers a failure result.
@@ -849,7 +849,7 @@ func TestVerifyConcurrentSameDigest(t *testing.T) {
 	cfg.PolicyDir = dir
 	cfg.CacheTTL = config.Duration{Duration: 0}
 
-	ver, err := verifier.New(cfg, metrics.New(), fetcher)
+	ver, err := verifier.New(t.Context(), cfg, metrics.New(), fetcher)
 	testutil.AssertNoError(t, err)
 
 	const goroutines = 10
@@ -894,7 +894,7 @@ func TestVerifyCircuitBreakerIntegration(t *testing.T) {
 	cfg.CircuitBreakerThreshold = 3
 	cfg.CircuitBreakerCooldown = config.Duration{Duration: 100 * time.Millisecond}
 
-	ver, err := verifier.New(cfg, metrics.New(), fetcher)
+	ver, err := verifier.New(t.Context(), cfg, metrics.New(), fetcher)
 	testutil.AssertNoError(t, err)
 
 	imageRef := testDockerNginx
@@ -965,7 +965,7 @@ func TestVerifyCircuitBreakerMetric(t *testing.T) {
 	cfg.CircuitBreakerThreshold = 2
 	cfg.CircuitBreakerCooldown = config.Duration{Duration: 100 * time.Millisecond}
 
-	ver, err := verifier.New(cfg, met, fetcher)
+	ver, err := verifier.New(t.Context(), cfg, met, fetcher)
 	testutil.AssertNoError(t, err)
 
 	imageRef := testDockerNginx
@@ -1032,7 +1032,7 @@ func TestVerifyConcurrentWithReloadModeSwitch(t *testing.T) {
 	cfg.PolicyDir = dir
 	cfg.CacheTTL = config.Duration{Duration: 0}
 
-	ver, err := verifier.New(cfg, metrics.New(), fetcher)
+	ver, err := verifier.New(t.Context(), cfg, metrics.New(), fetcher)
 	testutil.AssertNoError(t, err)
 
 	const (
@@ -1096,7 +1096,7 @@ func TestVerifyConcurrentWithReload(t *testing.T) {
 	cfg.PolicyDir = dir
 	cfg.CacheTTL = config.Duration{Duration: 0}
 
-	ver, err := verifier.New(cfg, metrics.New(), fetcher)
+	ver, err := verifier.New(t.Context(), cfg, metrics.New(), fetcher)
 	testutil.AssertNoError(t, err)
 
 	const (
@@ -1227,7 +1227,7 @@ func TestVerifySBOMThroughVerifier(t *testing.T) {
 
 		fetcher.attestations[0].Payload = validSBOMPayload(t)
 
-		verif, err := verifier.New(cfg, metrics.New(), fetcher)
+		verif, err := verifier.New(context.Background(), cfg, metrics.New(), fetcher)
 		testutil.AssertNoError(t, err)
 
 		result, err := verif.Verify(
@@ -1257,7 +1257,7 @@ func TestVerifySBOMThroughVerifier(t *testing.T) {
 			err:          nil,
 		}
 
-		verif, err := verifier.New(cfg, metrics.New(), fetcher)
+		verif, err := verifier.New(context.Background(), cfg, metrics.New(), fetcher)
 		testutil.AssertNoError(t, err)
 
 		_, err = verif.Verify(
@@ -1297,7 +1297,7 @@ func TestVerifySBOMThroughVerifier(t *testing.T) {
 
 		fetcher.attestations[0].Payload = validSBOMPayload(t)
 
-		verif, err := verifier.New(cfg, metrics.New(), fetcher)
+		verif, err := verifier.New(context.Background(), cfg, metrics.New(), fetcher)
 		testutil.AssertNoError(t, err)
 
 		_, err = verif.Verify(
@@ -1377,7 +1377,7 @@ func TestVerifyIndexDigestFallback(t *testing.T) {
 			calls: atomic.Int32{},
 		}
 
-		verif, err := verifier.New(cfg, metrics.New(), fetcher)
+		verif, err := verifier.New(t.Context(), cfg, metrics.New(), fetcher)
 		testutil.AssertNoError(t, err)
 
 		result, err := verif.Verify(
@@ -1413,7 +1413,7 @@ func TestVerifyIndexDigestFallback(t *testing.T) {
 			calls: atomic.Int32{},
 		}
 
-		verif, err := verifier.New(cfg, metrics.New(), fetcher)
+		verif, err := verifier.New(t.Context(), cfg, metrics.New(), fetcher)
 		testutil.AssertNoError(t, err)
 
 		result, err := verif.Verify(
@@ -1453,7 +1453,7 @@ func TestVerifyIndexDigestFallback(t *testing.T) {
 			calls: atomic.Int32{},
 		}
 
-		verif, err := verifier.New(cfg, metrics.New(), fetcher)
+		verif, err := verifier.New(t.Context(), cfg, metrics.New(), fetcher)
 		testutil.AssertNoError(t, err)
 
 		result, err := verif.Verify(

@@ -77,7 +77,7 @@ func TestSetupReload(t *testing.T) {
 
 	met := metrics.New()
 
-	verif, err := verifier.New(cfg, met, nil)
+	verif, err := verifier.New(t.Context(), cfg, met, nil)
 	if err != nil {
 		t.Fatalf("creating verifier: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestSetupReloadNoConfig(t *testing.T) {
 	cfg := config.DefaultConfig()
 	met := metrics.New()
 
-	verif, err := verifier.New(cfg, met, nil)
+	verif, err := verifier.New(t.Context(), cfg, met, nil)
 	if err != nil {
 		t.Fatalf("creating verifier: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestSetupFileWatch(t *testing.T) {
 
 	met := metrics.New()
 
-	verif, err := verifier.New(cfg, met, nil)
+	verif, err := verifier.New(t.Context(), cfg, met, nil)
 	if err != nil {
 		t.Fatalf("creating verifier: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestSetupFileWatchNoConfig(t *testing.T) {
 	cfg := config.DefaultConfig()
 	met := metrics.New()
 
-	verif, err := verifier.New(cfg, met, nil)
+	verif, err := verifier.New(t.Context(), cfg, met, nil)
 	if err != nil {
 		t.Fatalf("creating verifier: %v", err)
 	}
@@ -237,7 +237,7 @@ func TestSetupSignals(t *testing.T) {
 	cfg := config.DefaultConfig()
 	met := metrics.New()
 
-	verif, err := verifier.New(cfg, met, nil)
+	verif, err := verifier.New(t.Context(), cfg, met, nil)
 	if err != nil {
 		t.Fatalf("creating verifier: %v", err)
 	}
@@ -270,7 +270,7 @@ func TestSetupSignalsWithConfig(t *testing.T) {
 
 	met := metrics.New()
 
-	verif, err := verifier.New(cfg, met, nil)
+	verif, err := verifier.New(t.Context(), cfg, met, nil)
 	if err != nil {
 		t.Fatalf("creating verifier: %v", err)
 	}
@@ -288,7 +288,7 @@ func TestSetupFileWatchNonexistentConfigPath(t *testing.T) {
 	cfg := config.DefaultConfig()
 	met := metrics.New()
 
-	verif, err := verifier.New(cfg, met, nil)
+	verif, err := verifier.New(t.Context(), cfg, met, nil)
 	if err != nil {
 		t.Fatalf("creating verifier: %v", err)
 	}
@@ -311,7 +311,7 @@ func TestSetupFileWatchPolicyDirWatchFailure(t *testing.T) {
 	cfg := config.DefaultConfig()
 	met := metrics.New()
 
-	verif, err := verifier.New(cfg, met, nil)
+	verif, err := verifier.New(t.Context(), cfg, met, nil)
 	if err != nil {
 		t.Fatalf("creating verifier: %v", err)
 	}
@@ -365,7 +365,7 @@ func TestHandleFileEventDebounceReplacement(t *testing.T) {
 
 	met := metrics.New()
 
-	verif, err := verifier.New(cfg, met, nil)
+	verif, err := verifier.New(t.Context(), cfg, met, nil)
 	if err != nil {
 		t.Fatalf("creating verifier: %v", err)
 	}
@@ -559,7 +559,7 @@ func TestHandleReloadLogLevel(t *testing.T) {
 
 	met := metrics.New()
 
-	verif, err := verifier.New(cfg, met, nil)
+	verif, err := verifier.New(t.Context(), cfg, met, nil)
 	if err != nil {
 		t.Fatalf("creating verifier: %v", err)
 	}
@@ -595,7 +595,7 @@ func TestHandleReloadNoLogLevel(t *testing.T) {
 
 	met := metrics.New()
 
-	verif, err := verifier.New(cfg, met, nil)
+	verif, err := verifier.New(t.Context(), cfg, met, nil)
 	if err != nil {
 		t.Fatalf("creating verifier: %v", err)
 	}
@@ -628,7 +628,7 @@ func TestHandleReloadUpdatesPluginRegistries(t *testing.T) {
 
 	met := metrics.New()
 
-	verif, err := verifier.New(cfg, met, nil)
+	verif, err := verifier.New(t.Context(), cfg, met, nil)
 	if err != nil {
 		t.Fatalf("creating verifier: %v", err)
 	}
@@ -667,7 +667,7 @@ func TestHandleReloadUpdatesPluginRegistriesNonEmpty(t *testing.T) {
 
 	met := metrics.New()
 
-	verif, err := verifier.New(cfg, met, nil)
+	verif, err := verifier.New(t.Context(), cfg, met, nil)
 	if err != nil {
 		t.Fatalf("creating verifier: %v", err)
 	}

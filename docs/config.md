@@ -8,6 +8,7 @@ nri-supply-chain plugin.
 - [Operational Config](#operational-config)
 - [Private Sigstore Instances](#private-sigstore-instances)
 - [Registries](#registries)
+- [Policy Distribution](#policy-distribution)
 - [Policy Files](#policy-files)
 - [CLI](#cli)
   - [Batch Verification](#batch-verification)
@@ -34,6 +35,11 @@ metrics_addr = "127.0.0.1:9090"
 circuit_breaker_threshold = 5
 circuit_breaker_cooldown = "30s"
 # fetch_rate_limit = 50
+
+# [policy]
+# source = "oci"
+# oci_ref = "ghcr.io/myorg/supply-chain-policies:v1"
+# poll_interval = "5m"
 
 # [sigstore]
 # tuf_mirror = "https://tuf.internal.example.com"
@@ -170,6 +176,65 @@ Fallback triggers on connection-level errors such as DNS failures, TCP
 connection refused, TLS handshake errors, timeouts, and server errors (HTTP
 5xx). Application-level errors (401, 403, 404) do not trigger fallback
 because the mirror responded successfully at the transport layer.
+
+## Policy Distribution
+
+By default, policy files are read from the local `policy_dir` directory. As an
+alternative, policies can be distributed as OCI artifacts stored in a container
+registry. This enables centralized policy management without requiring filesystem
+access on every node.
+
+```toml
+[policy]
+source = "oci"
+oci_ref = "ghcr.io/myorg/supply-chain-policies:v1"
+poll_interval = "5m"
+```
+
+| Field                  | Default | Description                                                                    |
+| ---------------------- | ------- | ------------------------------------------------------------------------------ |
+| `policy.source`        | `local` | Policy source: `local` (read from `policy_dir`) or `oci` (fetch from registry) |
+| `policy.oci_ref`       | (empty) | OCI image reference containing policy layers (required when source is `oci`)   |
+| `policy.poll_interval` | `5m`    | How often to poll the OCI registry for policy updates (minimum 30s)            |
+
+When `source = "oci"` is set, the `policy_dir` field is ignored for policy
+loading. The plugin fetches the OCI image at startup and polls for changes at
+the configured interval. Each layer in the OCI image is treated as a policy
+JSON file. The filename is determined by the `org.opencontainers.image.title`
+annotation on the layer descriptor. Layers whose media type is not one of the recognized policy types are skipped.
+The accepted media types are: `application/vnd.nri-supply-chain.policy.v1+json`,
+`application/json`, `application/vnd.oci.image.layer.v1.tar+gzip`,
+`application/vnd.oci.image.layer.v1.tar`, and empty (unset).
+
+Policy changes are detected by comparing the image manifest digest. When a new
+digest is found, the plugin reloads all policies from the updated image
+atomically. The verification cache is invalidated on reload to ensure the new
+policies take effect immediately.
+
+**Authentication.** The plugin authenticates to OCI registries using
+`authn.DefaultKeychain` from the
+[go-containerregistry](https://github.com/google/go-containerregistry) library.
+This keychain checks credentials in the following order:
+
+1. Docker config file (`~/.docker/config.json`, or the path in the
+   `DOCKER_CONFIG` environment variable)
+2. Podman auth file (`$XDG_RUNTIME_DIR/containers/auth.json`)
+3. Credential helpers configured in the Docker/Podman config (for example,
+   `docker-credential-gcr`, `docker-credential-ecr-login`)
+
+No additional configuration is needed when the node already has registry
+credentials configured for image pulls. The same credentials are used for
+fetching policy artifacts.
+
+To build and push an OCI policy artifact, use a tool like `oras` or
+`go-containerregistry` to create an image with one layer per policy file:
+
+```console
+oras push ghcr.io/myorg/supply-chain-policies:v1 \
+  --artifact-type application/vnd.nri-supply-chain.policies \
+  default.json:application/vnd.nri-supply-chain.policy.v1+json \
+  production.json:application/vnd.nri-supply-chain.policy.v1+json
+```
 
 ## Policy Files
 

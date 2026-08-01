@@ -315,7 +315,7 @@ func TestVerify(t *testing.T) {
 				imageRef = "nginx:latest"
 			}
 
-			verif, err := verifier.New(cfg, metrics.New(), nil)
+			verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 			testutil.AssertNoError(t, err)
 
 			result, err := verif.Verify(
@@ -351,7 +351,7 @@ func TestVerifyCache(t *testing.T) {
 	cfg.PolicyDir = dir
 	cfg.CacheTTL = config.Duration{Duration: time.Hour}
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
 	result1, err := verif.Verify(
@@ -387,7 +387,7 @@ func TestVerifyCacheWarnMode(t *testing.T) {
 	cfg.PolicyDir = dir
 	cfg.CacheTTL = config.Duration{Duration: time.Hour}
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
 	const cacheDigest = "sha256:11111111111111111111111111111111" +
@@ -437,7 +437,7 @@ func TestVerifyCacheEnforceMode(t *testing.T) {
 	cfg.PolicyDir = dir
 	cfg.CacheTTL = config.Duration{Duration: time.Hour}
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
 	const enforceDigest = "sha256:22222222222222222222222222222222" +
@@ -480,7 +480,7 @@ func TestVerifyNamespacePolicy(t *testing.T) {
 	cfg.Verification = config.ModeEnforce
 	cfg.PolicyDir = dir
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
 	_, err = verif.Verify(
@@ -545,7 +545,7 @@ func TestNew(t *testing.T) {
 			t.Parallel()
 
 			cfg := test.setup(t)
-			_, err := verifier.New(cfg, metrics.New(), nil)
+			_, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 
 			if test.wantErr {
 				if err == nil {
@@ -638,7 +638,7 @@ func TestReload(t *testing.T) {
 			cfg.Verification = config.ModeWarn
 			cfg.PolicyDir = dir
 
-			verif, err := verifier.New(cfg, metrics.New(), nil)
+			verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 			testutil.AssertNoError(t, err)
 
 			newCfg := test.newCfg(t)
@@ -668,7 +668,7 @@ func TestReloadPreservesCacheWhenConfigUnchanged(t *testing.T) {
 	cfg.PolicyDir = dir
 	cfg.CacheTTL = config.Duration{Duration: time.Hour}
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
 	const reloadDigest = "sha256:33333333333333333333333333333333" +
@@ -839,7 +839,7 @@ func TestReloadCreatesFetcherWhenTUFMirrorChanges(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = dir
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
 	newCfg := config.DefaultConfig()
@@ -922,7 +922,7 @@ func TestReloadClearsCacheWhenPolicyChanges(t *testing.T) {
 	cfg.PolicyDir = dir
 	cfg.CacheTTL = config.Duration{Duration: time.Hour}
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
 	const policyDigest = "sha256:44444444444444444444444444444444" +
@@ -963,7 +963,7 @@ func TestReady(t *testing.T) {
 
 		cfg := config.DefaultConfig()
 
-		verif, err := verifier.New(cfg, metrics.New(), nil)
+		verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 		testutil.AssertNoError(t, err)
 
 		ready, reason := verif.Ready()
@@ -982,7 +982,7 @@ func TestReady(t *testing.T) {
 		cfg.Verification = config.ModeWarn
 		cfg.PolicyDir = dir
 
-		verif, err := verifier.New(cfg, metrics.New(), nil)
+		verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 		testutil.AssertNoError(t, err)
 
 		ready, reason := verif.Ready()
@@ -1000,7 +1000,7 @@ func TestReady(t *testing.T) {
 		cfg.Verification = config.ModeWarn
 		cfg.PolicyDir = dir
 
-		verif, err := verifier.New(cfg, metrics.New(), nil)
+		verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 		testutil.AssertNoError(t, err)
 
 		ready, reason := verif.Ready()
@@ -1181,7 +1181,7 @@ func TestEnforcing(t *testing.T) {
 			cfg := config.DefaultConfig()
 			cfg.Verification = test.mode
 
-			verif, err := verifier.New(cfg, metrics.New(), nil)
+			verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 			testutil.AssertNoError(t, err)
 
 			if got := verif.Enforcing(); got != test.expected {
@@ -1410,7 +1410,7 @@ func TestNewValidateRuntimeError(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = dir
 
-	_, err := verifier.New(cfg, metrics.New(), nil)
+	_, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	if err == nil {
 		t.Fatal("expected error for nonexistent verifier key file")
 	}
@@ -1431,7 +1431,7 @@ func TestNewValidateEnforceError(t *testing.T) {
 	cfg.Verification = config.ModeEnforce
 	cfg.PolicyDir = dir
 
-	_, err := verifier.New(cfg, metrics.New(), nil)
+	_, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	if !errors.Is(err, policy.ErrSANPatternsRequired) {
 		t.Fatalf("expected ErrSANPatternsRequired, got %v", err)
 	}
@@ -1451,7 +1451,7 @@ func TestVerifyExcludeDoubleStarPattern(t *testing.T) {
 	cfg.Verification = config.ModeEnforce
 	cfg.PolicyDir = dir
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
 	result, err := verif.Verify(
@@ -1481,7 +1481,7 @@ func TestVerifyWarnModeAllowsOnContextCancel(t *testing.T) {
 	cfg.PolicyDir = dir
 	cfg.CacheTTL = config.Duration{Duration: 0}
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1509,7 +1509,7 @@ func TestVerifyEnforceModeRejectsOnContextCancel(t *testing.T) {
 	cfg.PolicyDir = dir
 	cfg.CacheTTL = config.Duration{Duration: 0}
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1535,7 +1535,7 @@ func TestVerifyIncludeAllowsMatchingImage(t *testing.T) {
 	cfg.Verification = config.ModeEnforce
 	cfg.PolicyDir = dir
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
 	result, err := verif.Verify(
@@ -1565,7 +1565,7 @@ func TestVerifyIncludeSkipsNonMatchingImage(t *testing.T) {
 	cfg.Verification = config.ModeEnforce
 	cfg.PolicyDir = dir
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
 	result, err := verif.Verify(
@@ -1593,7 +1593,7 @@ func TestVerifyEmptyIncludeVerifiesEverything(t *testing.T) {
 	cfg.Verification = config.ModeEnforce
 	cfg.PolicyDir = dir
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
 	_, err = verif.Verify(
@@ -1622,7 +1622,7 @@ func TestVerifyExcludeTakesPrecedenceOverInclude(t *testing.T) {
 	cfg.Verification = config.ModeEnforce
 	cfg.PolicyDir = dir
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
 	result, err := verif.Verify(
@@ -1658,7 +1658,7 @@ func TestVerifyPerNamespaceEnforceMode(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = dir
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
 	// Default namespace uses global warn mode, so verification failure is allowed.
@@ -1703,7 +1703,7 @@ func TestVerifyPerNamespaceWarnModeAllows(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = dir
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
 	const stagingDigest = "sha256:66666666666666666666666666666666" +
@@ -1733,7 +1733,7 @@ func TestNewRejectsLessStrictNamespaceMode(t *testing.T) {
 	cfg.Verification = config.ModeEnforce
 	cfg.PolicyDir = dir
 
-	_, err := verifier.New(cfg, metrics.New(), nil)
+	_, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	if !errors.Is(err, policy.ErrModeNotStricter) {
 		t.Fatalf("expected ErrModeNotStricter, got %v", err)
 	}
@@ -1752,7 +1752,7 @@ func TestNewAcceptsStricterNamespaceMode(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = dir
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
 	if verif == nil {
@@ -1773,7 +1773,7 @@ func TestEffectiveModeForNamespace(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = dir
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
 	mode := verif.EffectiveModeForNamespace("default")
@@ -1827,7 +1827,7 @@ func TestVerifyPerNamespaceEnforceCacheHit(t *testing.T) {
 	cfg.PolicyDir = dir
 	cfg.CacheTTL = config.Duration{Duration: time.Hour}
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
 	const cacheDigest = "sha256:77777777777777777777777777777777" +
@@ -1869,7 +1869,7 @@ func TestNewValidateEnforcePerNamespaceMode(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = dir
 
-	_, err := verifier.New(cfg, metrics.New(), nil)
+	_, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	if !errors.Is(err, policy.ErrSANPatternsRequired) {
 		t.Fatalf("expected ErrSANPatternsRequired for per-namespace enforce, got %v", err)
 	}
@@ -1885,7 +1885,7 @@ func TestReloadRejectsLessStrictNamespaceMode(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = dir
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
 	// Reload with a config where global is enforce but a namespace is warn.
@@ -1919,7 +1919,7 @@ func TestVerifyIncludeDoubleStarPattern(t *testing.T) {
 	cfg.Verification = config.ModeEnforce
 	cfg.PolicyDir = dir
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
 	result, err := verif.Verify(
@@ -1956,7 +1956,7 @@ func TestVerifyDetachedVerificationPopulatesCache(t *testing.T) {
 	cfg.PolicyDir = dir
 	cfg.CacheTTL = config.Duration{Duration: time.Hour}
 
-	verif, err := verifier.New(cfg, met, fetcher)
+	verif, err := verifier.New(t.Context(), cfg, met, fetcher)
 	testutil.AssertNoError(t, err)
 
 	defer verif.Stop()
@@ -2024,7 +2024,7 @@ func TestVerifyDetachedVerificationEnforceRetryHitsCache(t *testing.T) {
 	cfg.PolicyDir = dir
 	cfg.CacheTTL = config.Duration{Duration: time.Hour}
 
-	verif, err := verifier.New(cfg, met, fetcher)
+	verif, err := verifier.New(t.Context(), cfg, met, fetcher)
 	testutil.AssertNoError(t, err)
 
 	defer verif.Stop()
@@ -2086,7 +2086,7 @@ func TestVerifyImageRuleMatchOverrides(t *testing.T) {
 	cfg.Verification = config.ModeEnforce
 	cfg.PolicyDir = dir
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
 	// Image matching the rule gets allow policy (so missing SLSA is fine).
@@ -2122,7 +2122,7 @@ func TestVerifyImageRuleNoMatchUsesBase(t *testing.T) {
 	cfg.Verification = config.ModeEnforce
 	cfg.PolicyDir = dir
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
 	// Image not matching any rule uses base policy (deny).
@@ -2160,7 +2160,7 @@ func TestVerifyImageRuleFirstMatchWins(t *testing.T) {
 	cfg.Verification = config.ModeEnforce
 	cfg.PolicyDir = dir
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
 	// Image matches both rules; first rule (allow) should win.
@@ -2296,6 +2296,62 @@ func TestCacheNamespaceKey(t *testing.T) {
 	})
 }
 
+func TestOnPolicyUpdateAppliesNewPolicies(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{
+		"trust": {"builders": [{"id": "test", "maxLevel": 2}]},
+		"slsa": {"missingPolicy": "deny"}
+	}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+
+	met := metrics.New()
+
+	verif, err := verifier.New(t.Context(), cfg, met, nil)
+	testutil.AssertNoError(t, err)
+
+	const updateDigest = "sha256:cccccccccccccccccccccccccccccccc" +
+		"cccccccccccccccccccccccccccccccc"
+
+	// Before update: deny policy produces a failure reason.
+	result1, err := verif.Verify(
+		context.Background(), "nginx:latest", updateDigest, "", "default",
+	)
+	testutil.AssertNoError(t, err)
+
+	if result1.Reason == "" {
+		t.Fatal("expected non-empty reason with deny policy before update")
+	}
+
+	// Simulate an OCI policy update that switches to allow.
+	updatedPolicies := map[string]*policy.Policy{
+		"": {
+			Sections: policy.Sections{
+				SLSA: &policy.SLSAPolicy{MissingPolicy: "allow"},
+			},
+		},
+	}
+	err = verif.ExportOnPolicyUpdate(updatedPolicies)
+	testutil.AssertNoError(t, err)
+
+	// After update: allow policy produces no failure reason.
+	const postUpdateDigest = "sha256:dddddddddddddddddddddddddddddd" +
+		"dddddddddddddddddddddddddddddd"
+
+	result2, err := verif.Verify(
+		context.Background(), "nginx:latest", postUpdateDigest, "", "default",
+	)
+	testutil.AssertNoError(t, err)
+
+	if !result2.Allowed {
+		t.Errorf("expected allowed after policy update, got denied: %s", result2.Reason)
+	}
+}
+
 func TestVerifyImageRuleInheritance(t *testing.T) {
 	t.Parallel()
 
@@ -2318,7 +2374,7 @@ func TestVerifyImageRuleInheritance(t *testing.T) {
 	cfg.Verification = config.ModeEnforce
 	cfg.PolicyDir = dir
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
 	testutil.AssertNoError(t, err)
 
 	// Staging namespace inherits rules from default.

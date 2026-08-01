@@ -60,7 +60,7 @@ func BenchmarkVerifyCacheHit(b *testing.B) {
 	cfg.PolicyDir = dir
 	cfg.CacheTTL = config.Duration{Duration: time.Hour}
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(b.Context(), cfg, metrics.New(), nil)
 	if err != nil {
 		b.Fatalf("creating verifier: %v", err)
 	}
@@ -93,7 +93,7 @@ func BenchmarkVerifyCacheHitParallel(b *testing.B) {
 	cfg.PolicyDir = dir
 	cfg.CacheTTL = config.Duration{Duration: time.Hour}
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(b.Context(), cfg, metrics.New(), nil)
 	if err != nil {
 		b.Fatalf("creating verifier: %v", err)
 	}
@@ -143,7 +143,7 @@ func BenchmarkVerifyE2EWithMockFetcher(b *testing.B) {
 		err: nil,
 	}
 
-	verif, err := verifier.New(cfg, metrics.New(), fetcher)
+	verif, err := verifier.New(b.Context(), cfg, metrics.New(), fetcher)
 	if err != nil {
 		b.Fatalf("creating verifier: %v", err)
 	}
@@ -184,7 +184,7 @@ func BenchmarkVerifyE2EParallel(b *testing.B) {
 		err: nil,
 	}
 
-	verif, err := verifier.New(cfg, metrics.New(), fetcher)
+	verif, err := verifier.New(b.Context(), cfg, metrics.New(), fetcher)
 	if err != nil {
 		b.Fatalf("creating verifier: %v", err)
 	}
@@ -229,7 +229,7 @@ func BenchmarkVerifyE2EMultipleImages(b *testing.B) {
 		err: nil,
 	}
 
-	verif, err := verifier.New(cfg, metrics.New(), fetcher)
+	verif, err := verifier.New(b.Context(), cfg, metrics.New(), fetcher)
 	if err != nil {
 		b.Fatalf("creating verifier: %v", err)
 	}
@@ -251,7 +251,7 @@ func BenchmarkVerifyE2EMultipleImages(b *testing.B) {
 func BenchmarkVerifyDisabled(b *testing.B) {
 	cfg := config.DefaultConfig()
 
-	verif, err := verifier.New(cfg, metrics.New(), nil)
+	verif, err := verifier.New(b.Context(), cfg, metrics.New(), nil)
 	if err != nil {
 		b.Fatalf("creating verifier: %v", err)
 	}

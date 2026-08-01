@@ -82,6 +82,7 @@ type Verifier struct {
 	policyHashes map[string]string
 	inflight     singleflight.Group
 	inflightWg   sync.WaitGroup
+	poller       *policy.Poller
 }
 
 // NewFetcher creates a new OCI fetcher configured from cfg and pre-warms the
@@ -95,7 +96,12 @@ func NewFetcher(
 }
 
 // New creates a new Verifier with the given configuration, metrics, and attestation fetcher.
-func New(cfg *config.Config, met *metrics.Metrics, fetcher attestation.Fetcher) (*Verifier, error) {
+// The context is used for the OCI policy poller background goroutine when
+// policy source is "oci".
+func New(
+	ctx context.Context,
+	cfg *config.Config, met *metrics.Metrics, fetcher attestation.Fetcher,
+) (*Verifier, error) {
 	cfgCopy := *cfg
 
 	if ociFetcher, ok := fetcher.(*attestation.OCIFetcher); ok && ociFetcher != nil {
@@ -105,7 +111,7 @@ func New(cfg *config.Config, met *metrics.Metrics, fetcher attestation.Fetcher) 
 		})
 	}
 
-	policies, hashes, err := loadAndHashPolicies(&cfgCopy)
+	policies, hashes, ociDigest, err := loadAndHashPolicies(ctx, &cfgCopy, fetcher)
 	if err != nil {
 		return nil, err
 	}
@@ -127,8 +133,13 @@ func New(cfg *config.Config, met *metrics.Metrics, fetcher attestation.Fetcher) 
 		policyHashes: hashes,
 		inflight:     singleflight.Group{},
 		inflightWg:   sync.WaitGroup{},
+		poller:       nil,
 	}
 	verif.state.Store(snap)
+
+	if cfgCopy.Policy.Source == config.PolicySourceOCI {
+		verif.startPoller(ctx, &cfgCopy, fetcher, ociDigest)
+	}
 
 	return verif, nil
 }
@@ -245,10 +256,12 @@ func warnPermissiveMissingPolicies(label string, pol *policy.Policy) {
 }
 
 // Stop releases resources held by the verifier, including the cache's
-// background eviction goroutine. Waits for in-flight singleflight
-// verifications to complete before stopping the cache so they can
-// write their results. Acquires mu to serialize with Reload.
+// background eviction goroutine and the OCI policy poller. Waits for
+// in-flight singleflight verifications to complete before stopping
+// the cache so they can write their results.
 func (v *Verifier) Stop() {
+	v.stopPoller()
+
 	v.inflightWg.Wait()
 
 	v.mu.Lock()
@@ -408,7 +421,9 @@ func handleVerifyError(
 func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 	cfgCopy := *cfg
 
-	policies, newHashes, err := loadAndHashPolicies(&cfgCopy)
+	prev := v.state.Load()
+
+	policies, newHashes, ociDigest, err := loadAndHashPolicies(ctx, &cfgCopy, prev.fetcher)
 	if err != nil {
 		return err
 	}
@@ -418,9 +433,6 @@ func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 		return err
 	}
 
-	v.mu.Lock()
-	defer v.mu.Unlock()
-
 	if cfgCopy.Enabled() {
 		err = validatePoliciesModes(cfgCopy.Verification, policies)
 		if err != nil {
@@ -428,43 +440,92 @@ func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 
-	prev := v.state.Load()
-	policiesChanged := !policyHashesEqual(v.policyHashes, newHashes)
-	cacheInvalidated := cacheAffectingFieldsChanged(prev.config, &cfgCopy) || policiesChanged
-	newCache := reloadCache(prev, &cfgCopy, cacheInvalidated)
+	// Stop the old poller before acquiring mu to avoid deadlock: the
+	// poller callback (onPolicyUpdate) acquires mu, so stopping under
+	// mu would deadlock if the callback is in progress.
+	v.stopPoller()
 
-	logReloadChanges(ctx, prev.config, &cfgCopy, v.policyHashes, newHashes, cacheInvalidated)
-	circuitBreakers := v.reloadCircuitBreakers(prev, &cfgCopy)
-	fetcher := v.reloadFetcher(prev, &cfgCopy, newFetcher)
-	closeOldTransportCache(prev, newFetcher)
-	hostSem := prev.hostSem
+	v.mu.Lock()
+	defer v.mu.Unlock()
 
-	if policiesChanged {
-		attestation.ResetSANPatternWarnings()
-		slsa.ResetWarnings()
-		glob.ResetCache()
+	// Re-read after lock to use the latest snapshot (onPolicyUpdate may have run).
+	current := v.state.Load()
 
-		hostSem = &sync.Map{}
+	fetcher := v.applyReload(ctx, current, &cfgCopy, policies, newHashes, newFetcher)
+
+	// Start new poller if source is OCI (old poller already stopped above).
+	if cfgCopy.Policy.Source == config.PolicySourceOCI {
+		v.startPoller(ctx, &cfgCopy, fetcher, ociDigest)
 	}
-
-	v.state.Store(&snapshot{
-		config:          &cfgCopy,
-		policies:        policies,
-		cache:           newCache,
-		metrics:         prev.metrics,
-		fetcher:         fetcher,
-		circuitBreakers: circuitBreakers,
-		fetchSem:        prev.fetchSem,
-		hostSem:         hostSem,
-		auditLogger:     prev.auditLogger,
-	})
-	v.policyHashes = newHashes
 
 	if cfgCopy.Enabled() {
 		WarnEnforceDefaults(&cfgCopy, policies)
 	}
 
 	return nil
+}
+
+func (v *Verifier) applyReload( //nolint:ireturn // returns attestation.Fetcher interface
+	ctx context.Context,
+	current *snapshot,
+	cfgCopy *config.Config,
+	policies map[string]*policy.Policy,
+	newHashes map[string]string,
+	newFetcher *attestation.OCIFetcher,
+) attestation.Fetcher {
+	policiesChanged := !policyHashesEqual(v.policyHashes, newHashes)
+	cacheInvalidated := cacheAffectingFieldsChanged(current.config, cfgCopy) || policiesChanged
+	newCache := reloadCache(current, cfgCopy, cacheInvalidated)
+
+	logReloadChanges(ctx, current.config, cfgCopy, v.policyHashes, newHashes, cacheInvalidated)
+	circuitBreakers := v.reloadCircuitBreakers(current, cfgCopy)
+	fetcher := v.reloadFetcher(current, cfgCopy, newFetcher)
+	closeOldTransportCache(current, newFetcher)
+
+	hostSem := resetCachesIfChanged(current.hostSem, policiesChanged)
+
+	v.state.Store(&snapshot{
+		config:          cfgCopy,
+		policies:        policies,
+		cache:           newCache,
+		metrics:         current.metrics,
+		fetcher:         fetcher,
+		circuitBreakers: circuitBreakers,
+		fetchSem:        current.fetchSem,
+		hostSem:         hostSem,
+		auditLogger:     current.auditLogger,
+	})
+	v.policyHashes = newHashes
+
+	return fetcher
+}
+
+// stopPoller reads and nil-outs v.poller under v.mu, then stops the
+// poller outside the lock. Acquiring and releasing the lock internally
+// avoids a data race with Reload (which writes v.poller under v.mu)
+// and avoids deadlock (the poller callback acquires v.mu, so Stop must
+// not hold it).
+func (v *Verifier) stopPoller() {
+	v.mu.Lock()
+	p := v.poller
+	v.poller = nil
+	v.mu.Unlock()
+
+	if p != nil {
+		p.Stop()
+	}
+}
+
+func resetCachesIfChanged(prevHostSem *sync.Map, policiesChanged bool) *sync.Map {
+	if !policiesChanged {
+		return prevHostSem
+	}
+
+	attestation.ResetSANPatternWarnings()
+	slsa.ResetWarnings()
+	glob.ResetCache()
+
+	return &sync.Map{}
 }
 
 func (v *Verifier) handleCacheHit(
@@ -594,26 +655,154 @@ func (v *Verifier) reloadFetcher( //nolint:ireturn // returns prev.fetcher which
 }
 
 func loadAndHashPolicies(
+	ctx context.Context,
 	cfg *config.Config,
-) (policies map[string]*policy.Policy, hashes map[string]string, err error) {
+	fetcher attestation.Fetcher,
+) (policies map[string]*policy.Policy, hashes map[string]string, ociDigest string, err error) {
 	if cfg.Enabled() {
-		policies, err = policy.LoadAll(cfg.PolicyDir)
+		policies, ociDigest, err = loadPoliciesFromSource(ctx, cfg, fetcher)
 		if err != nil {
-			return nil, nil, fmt.Errorf("loading policies: %w", err)
+			return nil, nil, "", err
 		}
 
 		err = validatePoliciesRuntime(policies)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, "", err
 		}
 	}
 
 	hashes, err = hashPolicies(policies)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 
-	return policies, hashes, nil
+	return policies, hashes, ociDigest, nil
+}
+
+func loadPoliciesFromSource(
+	ctx context.Context, cfg *config.Config, fetcher attestation.Fetcher,
+) (policies map[string]*policy.Policy, ociDigest string, err error) {
+	if cfg.Policy.Source != config.PolicySourceOCI {
+		policies, err = policy.LoadAll(cfg.PolicyDir)
+		if err != nil {
+			return nil, "", fmt.Errorf("loading policies: %w", err)
+		}
+
+		return policies, "", nil
+	}
+
+	policyFetcher := policy.NewOCIFetcher(transportCacheFromFetcher(fetcher))
+
+	result, err := policyFetcher.FetchFromOCI(ctx, cfg.Policy.OCIRef)
+	if err != nil {
+		return nil, "", fmt.Errorf("loading OCI policies: %w", err)
+	}
+
+	slog.Info("Loaded policies from OCI artifact",
+		"oci_ref", cfg.Policy.OCIRef,
+		"digest", result.Digest,
+		"count", len(result.Policies),
+	)
+
+	return result.Policies, result.Digest, nil
+}
+
+func transportCacheFromFetcher(fetcher attestation.Fetcher) *registry.TransportCache {
+	if ociFetcher, ok := fetcher.(*attestation.OCIFetcher); ok && ociFetcher != nil {
+		return ociFetcher.TransportCache()
+	}
+
+	return nil
+}
+
+func (v *Verifier) startPoller(
+	ctx context.Context,
+	cfg *config.Config,
+	fetcher attestation.Fetcher,
+	ociDigest string,
+) {
+	policyFetcher := policy.NewOCIFetcher(transportCacheFromFetcher(fetcher))
+
+	pollerInstance := policy.NewPoller(
+		policyFetcher,
+		cfg.Policy.OCIRef,
+		cfg.Policy.PollInterval.Duration,
+		func(policies map[string]*policy.Policy) error {
+			return v.onPolicyUpdate(policies)
+		},
+	)
+
+	pollerInstance.SetCachedDigest(ociDigest)
+	pollerInstance.Start(ctx)
+
+	v.poller = pollerInstance
+}
+
+func (v *Verifier) onPolicyUpdate(policies map[string]*policy.Policy) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	state := v.state.Load()
+
+	newHashes, err := hashPolicies(policies)
+	if err != nil {
+		return fmt.Errorf("hashing updated OCI policies: %w", err)
+	}
+
+	if policyHashesEqual(v.policyHashes, newHashes) {
+		return nil
+	}
+
+	if state.config.Enabled() {
+		err = validatePoliciesModes(state.config.Verification, policies)
+		if err != nil {
+			return fmt.Errorf("validating updated OCI policies: %w", err)
+		}
+	}
+
+	err = validatePoliciesRuntime(policies)
+	if err != nil {
+		return fmt.Errorf("runtime validation of updated OCI policies: %w", err)
+	}
+
+	v.applyPolicyUpdate(state, policies, newHashes)
+
+	return nil
+}
+
+func (v *Verifier) applyPolicyUpdate(
+	state *snapshot, policies map[string]*policy.Policy, newHashes map[string]string,
+) {
+	state.cache.Stop()
+
+	attestation.ResetSANPatternWarnings()
+	slsa.ResetWarnings()
+	glob.ResetCache()
+
+	v.state.Store(&snapshot{
+		config:   state.config,
+		policies: policies,
+		cache: cache.NewWithGauge(
+			state.config.CacheTTL.Duration,
+			state.metrics.CacheEntriesTotal,
+			state.metrics.CacheEvictionsTotal,
+		),
+		metrics:         state.metrics,
+		fetcher:         state.fetcher,
+		circuitBreakers: state.circuitBreakers,
+		fetchSem:        state.fetchSem,
+		hostSem:         &sync.Map{},
+		auditLogger:     state.auditLogger,
+	})
+	v.policyHashes = newHashes
+
+	if state.config.Enabled() {
+		WarnEnforceDefaults(state.config, policies)
+	}
+
+	slog.Info("OCI policy update applied",
+		"policies_count", len(policies),
+	)
 }
 
 func createAndWarmFetcher(
@@ -681,13 +870,23 @@ func readTUFRootBytes(path string) ([]byte, error) {
 func cacheAffectingFieldsChanged(prev, next *config.Config) bool {
 	return prev.Verification != next.Verification ||
 		prev.PolicyDir != next.PolicyDir ||
-		prev.CacheTTL.Duration != next.CacheTTL.Duration ||
-		prev.CacheFailureTTL.Duration != next.CacheFailureTTL.Duration ||
+		cacheTimingsChanged(prev, next) ||
 		prev.FetchFailurePolicy != next.FetchFailurePolicy ||
-		prev.FetchTimeout.Duration != next.FetchTimeout.Duration ||
 		prev.Sigstore.TUFMirror != next.Sigstore.TUFMirror ||
 		prev.Sigstore.TUFRoot != next.Sigstore.TUFRoot ||
-		config.RegistriesChanged(prev.Registries, next.Registries)
+		config.RegistriesChanged(prev.Registries, next.Registries) ||
+		policySourceChanged(prev, next)
+}
+
+func cacheTimingsChanged(prev, next *config.Config) bool {
+	return prev.CacheTTL.Duration != next.CacheTTL.Duration ||
+		prev.CacheFailureTTL.Duration != next.CacheFailureTTL.Duration ||
+		prev.FetchTimeout.Duration != next.FetchTimeout.Duration
+}
+
+func policySourceChanged(prev, next *config.Config) bool {
+	return prev.Policy.Source != next.Policy.Source ||
+		prev.Policy.OCIRef != next.Policy.OCIRef
 }
 
 func (v *Verifier) verifyOnce(
