@@ -510,6 +510,8 @@ const (
 	testNamespaceProd       = "prod"
 	testBogusLevel          = "bogus"
 	testFlagConfig          = "--config"
+	testImgV1               = "img:v1"
+	testImgV2               = "img:v2"
 )
 
 func TestVersionSubcommand(t *testing.T) {
@@ -774,15 +776,15 @@ func TestRootCommandSetupFailure(t *testing.T) {
 	}
 }
 
-func TestVerifySubcommandTooManyArgs(t *testing.T) {
+func TestVerifySubcommandMultipleArgs(t *testing.T) {
 	t.Parallel()
 
 	cmd := newRootCmd()
-	cmd.SetArgs([]string{cmdVerify, "img:v1", "extra"})
+	cmd.SetArgs([]string{cmdVerify, testImgV1, testImgV2})
 
 	err := cmd.Execute()
 	if err == nil {
-		t.Fatal("expected error for too many args")
+		t.Fatal("expected error (verification disabled), not nil")
 	}
 }
 

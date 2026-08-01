@@ -157,7 +157,7 @@ daemon.
 
 ```text
 nri-supply-chain                         Run the NRI plugin daemon
-nri-supply-chain verify <image>          Verify an image
+nri-supply-chain verify <image> [...]    Verify one or more images
 nri-supply-chain validate                Validate config and policies
 nri-supply-chain version                 Print the version
 nri-supply-chain json-schema <type>      Print JSON Schema (policy, result)
@@ -225,13 +225,36 @@ Use `--output json` (or `-o json`) for machine-readable JSON output:
 }
 ```
 
-The `--verify-image` command uses distinct exit codes for CI/CD integration:
+### Batch Verification
+
+The verify command accepts multiple images as positional arguments. When more
+than one image is provided, the output switches from a single JSON object to a
+JSON array of results:
+
+```console
+nri-supply-chain verify alpine:latest nginx:1.25 --output json
+```
+
+```json
+[
+  {"image": "alpine:latest", "digest": "sha256:...", "namespace": "default", "allowed": true, "checkResults": [...]},
+  {"image": "nginx:1.25", "digest": "sha256:...", "namespace": "default", "allowed": true, "checkResults": [...]}
+]
+```
+
+### Exit Codes
+
+The verify command uses distinct exit codes for CI/CD integration:
 
 | Exit code | Meaning                                                  |
 | --------- | -------------------------------------------------------- |
 | 0         | Verification passed                                      |
 | 1         | Verification denied (policy violation)                   |
 | 2         | Internal/infrastructure error (config, network, parsing) |
+
+When verifying multiple images, the exit code is the worst (highest) across all
+images. If any image is denied (exit 1), the overall exit is 1. If any image
+hits an infrastructure error (exit 2), the overall exit is 2.
 
 The full JSON Schema for this output can be generated via:
 

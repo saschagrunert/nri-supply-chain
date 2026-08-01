@@ -143,6 +143,154 @@ func executeVerify(
 	return exitSuccess
 }
 
+func runVerifyBatch(
+	images []string, namespace, outputFormat string, cfg *config.Config,
+) int {
+	return runVerifyBatchTo(os.Stdout, images, namespace, outputFormat, cfg)
+}
+
+func runVerifyBatchTo(
+	writer io.Writer,
+	images []string, namespace, outputFormat string, cfg *config.Config,
+) int {
+	if outputFormat != outputFormatTable && outputFormat != outputFormatJSON {
+		slog.Error("Invalid output format", "format", outputFormat)
+
+		return exitError
+	}
+
+	if !cfg.Enabled() {
+		slog.Error("verify requires verification to be enabled")
+
+		return exitError
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	verif, err := newVerifier(ctx, cfg)
+	if err != nil {
+		slog.Error("Failed to create verifier", "error", err)
+
+		return exitError
+	}
+
+	defer verif.Stop()
+
+	return executeBatchVerify(ctx, writer, images, namespace, outputFormat, cfg, verif)
+}
+
+func executeBatchVerify(
+	ctx context.Context, writer io.Writer,
+	images []string, namespace, outputFormat string,
+	cfg *config.Config, verif *verifier.Verifier,
+) int {
+	results := make([]*verifyOutput, 0, len(images))
+	worstCode := exitSuccess
+
+	for _, imageRef := range images {
+		if ctx.Err() != nil {
+			slog.Error("Batch verification interrupted", "error", ctx.Err())
+
+			return exitError
+		}
+
+		code, out := verifySingleImage(ctx, imageRef, namespace, cfg, verif)
+		results = append(results, out)
+
+		if code > worstCode {
+			worstCode = code
+		}
+	}
+
+	outErr := outputBatchResults(writer, outputFormat, results)
+	if outErr != nil {
+		slog.Error("Failed to write output", "error", outErr)
+
+		return exitError
+	}
+
+	return worstCode
+}
+
+func verifySingleImage(
+	ctx context.Context, imageRef, namespace string,
+	cfg *config.Config, verif *verifier.Verifier,
+) (int, *verifyOutput) {
+	policyFile := resolvePolicyFile(cfg.PolicyDir, namespace)
+
+	resolved, err := resolveDigest(ctx, imageRef, cfg.FetchTimeout.Duration)
+	if err != nil {
+		slog.Error("Failed to resolve image digest", "image", imageRef, "error", err)
+
+		out := newVerifyOutput(imageRef, "", namespace, policyFile)
+		out.Mode = string(verif.EffectiveModeForNamespace(namespace))
+		out.Reason = err.Error()
+
+		return exitCodeForVerifyError(err), out
+	}
+
+	result, err := verif.Verify(
+		ctx, imageRef, resolved.digest, resolved.indexDigest, namespace,
+	)
+	out := newVerifyOutput(imageRef, resolved.digest, namespace, policyFile)
+	out.Mode = string(verif.EffectiveModeForNamespace(namespace))
+	out.CheckResults = checksFrom(result)
+
+	if err != nil {
+		slog.Error("Verification failed", "image", imageRef, "error", err)
+
+		out.Reason = err.Error()
+
+		return exitCodeForVerifyError(err), out
+	}
+
+	out.Allowed = result.Allowed
+	out.Reason = result.Reason
+
+	if !result.Allowed {
+		return exitDenied, out
+	}
+
+	return exitSuccess, out
+}
+
+func outputBatchResults(writer io.Writer, format string, results []*verifyOutput) error {
+	switch format {
+	case outputFormatJSON:
+		return outputBatchJSON(writer, results)
+	default:
+		return outputBatchTable(writer, results)
+	}
+}
+
+func outputBatchJSON(writer io.Writer, results []*verifyOutput) error {
+	enc := json.NewEncoder(writer)
+	enc.SetIndent("", "  ")
+
+	err := enc.Encode(results)
+	if err != nil {
+		return fmt.Errorf("encoding batch JSON output: %w", err)
+	}
+
+	return nil
+}
+
+func outputBatchTable(writer io.Writer, results []*verifyOutput) error {
+	for i, out := range results {
+		if i > 0 {
+			_, _ = fmt.Fprintln(writer)
+		}
+
+		err := outputVerifyTable(writer, out)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func exitCodeForVerifyError(err error) int {
 	if errors.Is(err, verifier.ErrVerificationFailed) {
 		return exitDenied
