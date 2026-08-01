@@ -466,7 +466,7 @@ func TestVerifyWithFetcher(t *testing.T) {
 			setupPayloads:      nil,
 			wantAllowed:        true,
 			wantErr:            nil,
-			wantCheckLen:       3,
+			wantCheckLen:       4,
 		},
 		{
 			name:       "parallel SLSA and VEX",
@@ -589,7 +589,7 @@ func TestVerifyWithFetcher(t *testing.T) {
 			setupPayloads:      nil,
 			wantAllowed:        true,
 			wantErr:            nil,
-			wantCheckLen:       3,
+			wantCheckLen:       4,
 		},
 		{
 			name: "VSA missing allow falls through",

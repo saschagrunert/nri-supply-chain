@@ -55,4 +55,59 @@ func TestBinAttestationsUnknownType(t *testing.T) {
 	if len(bins.vsa) != 0 {
 		t.Errorf("expected 0 VSA attestations, got %d", len(bins.vsa))
 	}
+
+	if len(bins.notation) != 0 {
+		t.Errorf("expected 0 Notation attestations, got %d", len(bins.notation))
+	}
+}
+
+func TestBinAttestationsNotation(t *testing.T) {
+	t.Parallel()
+
+	attestations := []attestation.VerifiedAttestation{
+		{
+			PredicateType: attestation.PredicateSLSAProvenanceV1,
+			Payload:       []byte("slsa1"),
+			Digest:        benchDigest,
+			SignatureType: attestation.SignatureTypeSigstore,
+		},
+		{
+			PredicateType: attestation.NotationSignatureMediaType,
+			Payload:       []byte("notation-ref"),
+			Digest:        benchDigest,
+			SignatureType: attestation.SignatureTypeNotation,
+		},
+		{
+			PredicateType: attestation.PredicateOpenVEX,
+			Payload:       []byte("vex1"),
+			Digest:        benchDigest,
+			SignatureType: attestation.SignatureTypeSigstore,
+		},
+	}
+
+	bins := binAttestations(attestations)
+
+	if len(bins.slsa) != 1 {
+		t.Errorf("expected 1 SLSA attestation, got %d", len(bins.slsa))
+	}
+
+	if len(bins.vex) != 1 {
+		t.Errorf("expected 1 VEX attestation, got %d", len(bins.vex))
+	}
+
+	if len(bins.vsa) != 0 {
+		t.Errorf("expected 0 VSA attestations, got %d", len(bins.vsa))
+	}
+
+	if len(bins.notation) != 1 {
+		t.Errorf("expected 1 Notation attestation, got %d", len(bins.notation))
+	}
+
+	if string(bins.notation[0].Payload) != "notation-ref" {
+		t.Errorf(
+			"expected notation payload %q, got %q",
+			"notation-ref",
+			string(bins.notation[0].Payload),
+		)
+	}
 }

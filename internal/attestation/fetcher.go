@@ -452,6 +452,10 @@ func (f *OCIFetcher) fetchOnce(
 		ctx, manifest.Manifests, ref, digest, remoteOpts, fetchOpts,
 	)
 
+	// Collect Notation signatures from referrers.
+	notationSigs := collectNotationSignatures(manifest.Manifests, ref, digest)
+	attestations = append(attestations, notationSigs...)
+
 	ctxErr := ctx.Err()
 	if ctxErr != nil {
 		return nil, fmt.Errorf("attestation fetch interrupted: %w", ctxErr)
@@ -468,6 +472,33 @@ func (f *OCIFetcher) fetchOnce(
 	}
 
 	return attestations, nil
+}
+
+func isNotationCandidate(artifactType string) bool {
+	return artifactType == NotationSignatureMediaType
+}
+
+func collectNotationSignatures(
+	manifests []ociV1.Descriptor, ref name.Digest, digest string,
+) []VerifiedAttestation {
+	var sigs []VerifiedAttestation
+
+	for idx := range manifests {
+		if !isNotationCandidate(manifests[idx].ArtifactType) {
+			continue
+		}
+
+		sigRef := ref.Context().Digest(manifests[idx].Digest.String())
+
+		sigs = append(sigs, VerifiedAttestation{
+			PredicateType: NotationSignatureMediaType,
+			Payload:       []byte(sigRef.String()),
+			Digest:        digest,
+			SignatureType: SignatureTypeNotation,
+		})
+	}
+
+	return sigs
 }
 
 func logReferrers(
@@ -658,6 +689,7 @@ func (f *OCIFetcher) processCosignLayer(
 		PredicateType: predicateType,
 		Payload:       payload,
 		Digest:        digest,
+		SignatureType: SignatureTypeSigstore,
 	}, true
 }
 
@@ -811,6 +843,7 @@ func (f *OCIFetcher) processDescriptor(
 		PredicateType: predicateType,
 		Payload:       payload,
 		Digest:        digest,
+		SignatureType: SignatureTypeSigstore,
 	}, true
 }
 

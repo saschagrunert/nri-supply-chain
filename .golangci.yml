@@ -144,6 +144,8 @@ linters:
             - github.com/fsnotify/fsnotify
             - github.com/google/go-containerregistry
             - github.com/invopop/jsonschema
+            - github.com/notaryproject/notation-core-go
+            - github.com/notaryproject/notation-go
             - github.com/olekukonko/tablewriter
             - github.com/olekukonko/tablewriter/tw
             - github.com/openvex/go-vex
@@ -158,8 +160,12 @@ linters:
       max-blank-identifiers: 3
     exhaustruct:
       exclude:
+        - 'crypto/x509\.Certificate'
+        - 'crypto/x509/pkix\.Name'
+        - 'encoding/pem\.Block'
         - 'github\.com/containerd/nri/pkg/api\..*'
         - 'github\.com/google/go-containerregistry/.*'
+        - 'github\.com/notaryproject/notation-go/verifier/trustpolicy\..*'
         - 'github\.com/openvex/go-vex/.*'
         - 'github\.com/prometheus/client_golang/prometheus\..*'
         - 'github\.com/olekukonko/tablewriter/tw\..*'

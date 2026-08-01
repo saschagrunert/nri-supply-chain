@@ -58,7 +58,7 @@ When a container is created, the plugin performs verification in this order:
 5. **Per-image rule resolution**: If the policy has `rules`, the image is
    matched against each rule's `images` patterns in order (first match
    wins). When a rule matches, its non-nil sections (trust, slsa, vex,
-   vsa, signatures) override the base policy for that verification.
+   vsa, signatures, notation) override the base policy for that verification.
 
 6. **Cache check**: If a cached result exists for this image digest and is
    within the configured TTL, returns it immediately.
@@ -78,8 +78,9 @@ When a container is created, the plugin performs verification in this order:
    - If no VSA is found, or the VSA is from an untrusted verifier or stale,
      fall through to direct verification.
 
-9. **Parallel SLSA + VEX verification**: When VSA does not short-circuit,
-   SLSA provenance and VEX checks run concurrently.
+9. **Parallel SLSA + VEX + Notation verification**: When VSA does not
+   short-circuit, SLSA provenance, VEX, and Notation signature checks run
+   concurrently.
 
 10. **Enforcement**: In `enforce` mode, failed verification rejects the
     container. In `warn` mode, failures are logged but allowed.
@@ -89,7 +90,7 @@ When a container is created, the plugin performs verification in this order:
 Latency model:
 
 - With trusted VSA: `fetch + VSA verify`
-- Without VSA: `fetch + max(SLSA verify, VEX verify)`
+- Without VSA: `fetch + max(SLSA verify, VEX verify, Notation verify)`
 
 ## Verification Types
 

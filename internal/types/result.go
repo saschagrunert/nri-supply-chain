@@ -41,6 +41,8 @@ const (
 	CheckTypeFetch CheckType = "fetch"
 	// CheckTypePolicy is the policy lookup result type.
 	CheckTypePolicy CheckType = "policy"
+	// CheckTypeNotation is the Notation/Notary v2 signature check type.
+	CheckTypeNotation CheckType = "notation"
 )
 
 // Result represents the outcome of a supply chain verification.
