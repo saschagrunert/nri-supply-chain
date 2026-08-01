@@ -35,6 +35,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/glob"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
+	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 	"github.com/saschagrunert/nri-supply-chain/internal/slsa"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
@@ -85,8 +86,10 @@ type Verifier struct {
 // Sigstore trusted root. The context bounds the warm-up; pass the application
 // context so startup can be cancelled. Tests that need the "no fetcher"
 // code path should pass nil to New directly.
-func NewFetcher(ctx context.Context, cfg *config.Config) (*attestation.OCIFetcher, error) {
-	return createAndWarmFetcher(ctx, cfg)
+func NewFetcher(
+	ctx context.Context, cfg *config.Config, transportCache *registry.TransportCache,
+) (*attestation.OCIFetcher, error) {
+	return createAndWarmFetcher(ctx, cfg, transportCache)
 }
 
 // New creates a new Verifier with the given configuration, metrics, and attestation fetcher.
@@ -274,6 +277,17 @@ func (v *Verifier) Ready() (ready bool, reason string) {
 	return true, ""
 }
 
+// TransportCache returns the transport cache from the current fetcher, or nil
+// if verification is disabled or the fetcher has no cache.
+func (v *Verifier) TransportCache() *registry.TransportCache {
+	state := v.state.Load()
+	if ociFetcher, ok := state.fetcher.(*attestation.OCIFetcher); ok {
+		return ociFetcher.TransportCache()
+	}
+
+	return nil
+}
+
 // Verify performs supply chain verification for the given image. When the image
 // was resolved from a manifest list, indexDigest should be the manifest list
 // digest so attestation lookup can find cosign-attached attestations. Pass ""
@@ -400,10 +414,9 @@ func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 	newCache := reloadCache(prev, &cfgCopy, cacheInvalidated)
 
 	logReloadChanges(ctx, prev.config, &cfgCopy, v.policyHashes, newHashes, cacheInvalidated)
-
 	circuitBreakers := v.reloadCircuitBreakers(prev, &cfgCopy)
 	fetcher := v.reloadFetcher(prev, &cfgCopy, newFetcher)
-
+	closeOldTransportCache(prev, newFetcher)
 	hostSem := prev.hostSem
 
 	if policiesChanged {
@@ -509,12 +522,28 @@ func (v *Verifier) prepareFetcher(
 		return nil, nil //nolint:nilnil // no config change, reuse existing
 	}
 
-	return createAndWarmFetcher(ctx, cfg)
+	// nil cache: the fetcher will build its own from cfg.Registries if needed.
+	return createAndWarmFetcher(ctx, cfg, nil)
+}
+
+func closeOldTransportCache(prev *snapshot, newFetcher *attestation.OCIFetcher) {
+	if newFetcher == nil {
+		return
+	}
+
+	old, ok := prev.fetcher.(*attestation.OCIFetcher)
+	if !ok {
+		return
+	}
+
+	if tc := old.TransportCache(); tc != nil {
+		tc.CloseIdleConnections()
+	}
 }
 
 // reloadFetcher returns the fetcher to use for the new snapshot. If a new
 // fetcher was pre-created, it is configured and returned; otherwise the existing
-// fetcher is updated with the new rate limit.
+// fetcher is updated with the new rate limit and registries.
 func (v *Verifier) reloadFetcher( //nolint:ireturn // returns prev.fetcher which is the Fetcher interface
 	prev *snapshot,
 	cfg *config.Config,
@@ -532,6 +561,10 @@ func (v *Verifier) reloadFetcher( //nolint:ireturn // returns prev.fetcher which
 
 	if ociFetcher, ok := prev.fetcher.(*attestation.OCIFetcher); ok {
 		ociFetcher.SetRateLimit(cfg.FetchRateLimit)
+
+		if config.RegistriesChanged(prev.config.Registries, cfg.Registries) {
+			ociFetcher.SetTransportCache(registry.NewTransportCacheOrNil(cfg.Registries))
+		}
 	}
 
 	return prev.fetcher
@@ -561,7 +594,7 @@ func loadAndHashPolicies(
 }
 
 func createAndWarmFetcher(
-	ctx context.Context, cfg *config.Config,
+	ctx context.Context, cfg *config.Config, transportCache *registry.TransportCache,
 ) (*attestation.OCIFetcher, error) {
 	ociFetcher, err := createFetcher(cfg)
 	if err != nil {
@@ -570,6 +603,12 @@ func createAndWarmFetcher(
 
 	if cfg.FetchRateLimit > 0 {
 		ociFetcher.SetRateLimit(cfg.FetchRateLimit)
+	}
+
+	if transportCache != nil {
+		ociFetcher.SetTransportCache(transportCache)
+	} else if len(cfg.Registries) > 0 {
+		ociFetcher.SetTransportCache(registry.NewTransportCache(cfg.Registries))
 	}
 
 	warmCtx, warmCancel := context.WithTimeout(ctx, warmTimeout)
@@ -624,7 +663,8 @@ func cacheAffectingFieldsChanged(prev, next *config.Config) bool {
 		prev.FetchFailurePolicy != next.FetchFailurePolicy ||
 		prev.FetchTimeout.Duration != next.FetchTimeout.Duration ||
 		prev.Sigstore.TUFMirror != next.Sigstore.TUFMirror ||
-		prev.Sigstore.TUFRoot != next.Sigstore.TUFRoot
+		prev.Sigstore.TUFRoot != next.Sigstore.TUFRoot ||
+		config.RegistriesChanged(prev.Registries, next.Registries)
 }
 
 func (v *Verifier) verifyOnce(

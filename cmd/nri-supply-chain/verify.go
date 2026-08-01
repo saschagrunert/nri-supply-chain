@@ -77,10 +77,14 @@ func runVerifyTo(
 		return exitError
 	}
 
+	cfg.WarnInsecureRegistries()
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	verif, err := newVerifier(ctx, cfg)
+	cache := registry.NewTransportCacheOrNil(cfg.Registries)
+
+	verif, err := newVerifier(ctx, cfg, cache)
 	if err != nil {
 		slog.Error("Failed to create verifier", "error", err)
 
@@ -89,17 +93,18 @@ func runVerifyTo(
 
 	defer verif.Stop()
 
-	return executeVerify(ctx, writer, imageRef, namespace, outputFormat, cfg, verif)
+	return executeVerify(ctx, writer, imageRef, namespace, outputFormat, cfg, verif, cache)
 }
 
 func executeVerify(
 	ctx context.Context, writer io.Writer,
 	imageRef, namespace, outputFormat string,
 	cfg *config.Config, verif *verifier.Verifier,
+	cache *registry.TransportCache,
 ) int {
 	policyFile := resolvePolicyFile(cfg.PolicyDir, namespace)
 
-	resolved, err := resolveDigest(ctx, imageRef, cfg.FetchTimeout.Duration)
+	resolved, err := resolveDigest(ctx, imageRef, cfg.FetchTimeout.Duration, cache)
 	if err != nil {
 		slog.Error("Failed to resolve image digest", "image", imageRef, "error", err)
 
@@ -165,10 +170,14 @@ func runVerifyBatchTo(
 		return exitError
 	}
 
+	cfg.WarnInsecureRegistries()
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	verif, err := newVerifier(ctx, cfg)
+	cache := registry.NewTransportCacheOrNil(cfg.Registries)
+
+	verif, err := newVerifier(ctx, cfg, cache)
 	if err != nil {
 		slog.Error("Failed to create verifier", "error", err)
 
@@ -177,13 +186,14 @@ func runVerifyBatchTo(
 
 	defer verif.Stop()
 
-	return executeBatchVerify(ctx, writer, images, namespace, outputFormat, cfg, verif)
+	return executeBatchVerify(ctx, writer, images, namespace, outputFormat, cfg, verif, cache)
 }
 
 func executeBatchVerify(
 	ctx context.Context, writer io.Writer,
 	images []string, namespace, outputFormat string,
 	cfg *config.Config, verif *verifier.Verifier,
+	cache *registry.TransportCache,
 ) int {
 	results := make([]*verifyOutput, 0, len(images))
 	worstCode := exitSuccess
@@ -195,7 +205,7 @@ func executeBatchVerify(
 			return exitError
 		}
 
-		code, out := verifySingleImage(ctx, imageRef, namespace, cfg, verif)
+		code, out := verifySingleImage(ctx, imageRef, namespace, cfg, verif, cache)
 		results = append(results, out)
 
 		if code > worstCode {
@@ -216,10 +226,11 @@ func executeBatchVerify(
 func verifySingleImage(
 	ctx context.Context, imageRef, namespace string,
 	cfg *config.Config, verif *verifier.Verifier,
+	cache *registry.TransportCache,
 ) (int, *verifyOutput) {
 	policyFile := resolvePolicyFile(cfg.PolicyDir, namespace)
 
-	resolved, err := resolveDigest(ctx, imageRef, cfg.FetchTimeout.Duration)
+	resolved, err := resolveDigest(ctx, imageRef, cfg.FetchTimeout.Duration, cache)
 	if err != nil {
 		slog.Error("Failed to resolve image digest", "image", imageRef, "error", err)
 
@@ -300,11 +311,11 @@ func exitCodeForVerifyError(err error) int {
 }
 
 func newVerifier(
-	ctx context.Context, cfg *config.Config,
+	ctx context.Context, cfg *config.Config, cache *registry.TransportCache,
 ) (*verifier.Verifier, error) {
 	met := metrics.New()
 
-	fetcher, err := verifier.NewFetcher(ctx, cfg)
+	fetcher, err := verifier.NewFetcher(ctx, cfg, cache)
 	if err != nil {
 		return nil, fmt.Errorf("creating fetcher: %w", err)
 	}
@@ -319,11 +330,12 @@ func newVerifier(
 
 func resolveDigest(
 	parent context.Context, imageRef string, timeout time.Duration,
+	cache *registry.TransportCache,
 ) (resolvedDigest, error) {
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
-	digest, indexDigest, err := registry.ResolveWithDefaultKeychain(ctx, imageRef)
+	digest, indexDigest, err := registry.ResolveWithRegistries(ctx, imageRef, cache)
 	if err != nil {
 		return resolvedDigest{}, fmt.Errorf("resolving digest: %w", err)
 	}

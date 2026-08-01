@@ -14,7 +14,13 @@
 
 package plugin
 
-import "context"
+import (
+	"context"
+	"sync"
+	"sync/atomic"
+
+	"github.com/saschagrunert/nri-supply-chain/internal/registry"
+)
 
 // ExportResolveImage exposes resolveImage for external tests.
 func ExportResolveImage(annotations map[string]string) (imageRef, digest string) {
@@ -47,11 +53,24 @@ func (p *Plugin) ExportSetDigestResolver(fn DigestResolveFunc) {
 	p.digestResolver = fn
 }
 
-// ExportDefaultDigestResolver exposes defaultDigestResolver for testing.
+// ExportDefaultDigestResolver exposes registryAwareResolver for testing.
 func ExportDefaultDigestResolver(
 	ctx context.Context, imageRef string,
 ) (digest, indexDigest string, err error) {
-	return defaultDigestResolver(ctx, imageRef)
+	plug := &Plugin{
+		verifier:       nil,
+		metrics:        nil,
+		configPath:     "",
+		connected:      atomic.Bool{},
+		digestResolver: nil,
+		fetchTimeout:   0,
+		prewarmDone:    nil,
+		prewarmMu:      sync.Mutex{},
+		prewarmCancel:  nil,
+		transportCache: atomic.Pointer[registry.TransportCache]{},
+	}
+
+	return plug.registryAwareResolver(ctx, imageRef)
 }
 
 // ExportSetPrewarmDone sets a callback that fires when prewarmCache completes.

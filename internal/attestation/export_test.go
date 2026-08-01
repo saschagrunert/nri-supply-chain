@@ -31,6 +31,8 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/verify"
 	"golang.org/x/sync/singleflight"
 	"golang.org/x/time/rate"
+
+	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 )
 
 // ExportDefaultVerifyBundle exposes verifyBundleWithCache (nil cache) for external tests.
@@ -168,11 +170,12 @@ func ExportTrustedRootMaxStaleness() time.Duration { return trustedRootMaxStalen
 // NewTestOCIFetcher creates a fetcher with injectable dependencies for testing.
 func NewTestOCIFetcher(verifier BundleVerifyFunc, imageFetcher ImageFetchFunc) *OCIFetcher {
 	return &OCIFetcher{
-		verifyBundle: verifier,
-		fetchImage:   imageFetcher,
-		referrers:    nil,
-		rootCache:    nil,
-		limiter:      atomic.Pointer[rate.Limiter]{},
+		verifyBundle:   verifier,
+		fetchImage:     imageFetcher,
+		referrers:      nil,
+		rootCache:      nil,
+		limiter:        atomic.Pointer[rate.Limiter]{},
+		transportCache: atomic.Pointer[registry.TransportCache]{},
 	}
 }
 
@@ -181,11 +184,12 @@ func NewTestOCIFetcherFull(
 	verifier BundleVerifyFunc, imageFetcher ImageFetchFunc, referrersFn ReferrersFunc,
 ) *OCIFetcher {
 	return &OCIFetcher{
-		verifyBundle: verifier,
-		fetchImage:   imageFetcher,
-		referrers:    referrersFn,
-		rootCache:    nil,
-		limiter:      atomic.Pointer[rate.Limiter]{},
+		verifyBundle:   verifier,
+		fetchImage:     imageFetcher,
+		referrers:      referrersFn,
+		rootCache:      nil,
+		limiter:        atomic.Pointer[rate.Limiter]{},
+		transportCache: atomic.Pointer[registry.TransportCache]{},
 	}
 }
 

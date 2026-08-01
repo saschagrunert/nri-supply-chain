@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -119,6 +120,27 @@ var (
 
 	// ErrTUFRootNotRegularFile indicates the sigstore.tuf_root path is not a regular file.
 	ErrTUFRootNotRegularFile = errors.New("sigstore.tuf_root is not a regular file")
+
+	// ErrRegistryPrefixEmpty indicates a registry entry has an empty prefix.
+	ErrRegistryPrefixEmpty = errors.New("registry prefix must not be empty")
+
+	// ErrRegistryCACertNotAbsolute indicates a registry CA cert path is not absolute.
+	ErrRegistryCACertNotAbsolute = errors.New("registry ca_cert path must be absolute")
+
+	// ErrRegistryCACertNotFound indicates a registry CA cert file does not exist.
+	ErrRegistryCACertNotFound = errors.New("registry ca_cert file not found")
+
+	// ErrDuplicateRegistryPrefix indicates multiple registries share the same prefix.
+	ErrDuplicateRegistryPrefix = errors.New("duplicate registry prefix")
+
+	// ErrRegistryPrefixInvalid indicates a registry prefix is not a valid hostname.
+	ErrRegistryPrefixInvalid = errors.New("registry prefix is not a valid hostname")
+
+	// ErrRegistryMirrorInvalid indicates a registry mirror is not a valid hostname.
+	ErrRegistryMirrorInvalid = errors.New("registry mirror is not a valid hostname")
+
+	// ErrRegistryMirrorSameAsPrefix indicates the mirror equals the prefix.
+	ErrRegistryMirrorSameAsPrefix = errors.New("registry mirror must differ from prefix")
 )
 
 // Duration wraps time.Duration to support TOML unmarshalling from strings.
@@ -167,6 +189,18 @@ type SigstoreConfig struct {
 	TUFRoot string `toml:"tuf_root"`
 }
 
+// Registry represents configuration for an OCI registry endpoint.
+type Registry struct {
+	// Prefix is the registry host prefix to match (e.g. "ghcr.io", "registry.internal.example.com").
+	Prefix string `toml:"prefix"`
+	// Mirror is an optional alternative registry host to redirect requests to.
+	Mirror string `toml:"mirror"`
+	// CACert is the path to a PEM-encoded CA certificate file for TLS verification.
+	CACert string `toml:"ca_cert"`
+	// Insecure allows connections to registries without TLS verification.
+	Insecure bool `toml:"insecure"`
+}
+
 // Config represents the operational configuration for the NRI supply chain plugin.
 type Config struct {
 	// Verification is the master toggle for supply chain verification.
@@ -203,6 +237,9 @@ type Config struct {
 	// Sigstore configures private Sigstore instance endpoints for keyless
 	// verification. When omitted, the public Sigstore instance is used.
 	Sigstore SigstoreConfig `toml:"sigstore"`
+	// Registries configures per-registry transport settings such as mirrors,
+	// custom CA certificates, and insecure (TLS-skip) connections.
+	Registries []Registry `toml:"registries"`
 }
 
 // DefaultConfig returns the default configuration.
@@ -220,6 +257,7 @@ func DefaultConfig() *Config {
 		FetchRateLimit:          0,
 		LogLevel:                "",
 		Sigstore:                SigstoreConfig{TUFMirror: "", TUFRoot: ""},
+		Registries:              nil,
 	}
 }
 
@@ -252,19 +290,7 @@ func (c *Config) Enabled() bool {
 func (c *Config) Validate() error {
 	var errs []error
 
-	switch c.Verification {
-	case ModeDisabled, ModeWarn, ModeEnforce:
-	default:
-		errs = append(errs, fmt.Errorf("%w: %q", ErrInvalidVerificationMode, c.Verification))
-	}
-
-	if c.LogLevel != "" {
-		switch c.LogLevel {
-		case "debug", "info", "warn", "error":
-		default:
-			errs = append(errs, fmt.Errorf("%w: %q", ErrInvalidLogLevel, c.LogLevel))
-		}
-	}
+	errs = append(errs, c.validateModeAndLogLevel()...)
 
 	err := c.validateMetricsAddr()
 	if err != nil {
@@ -286,40 +312,43 @@ func (c *Config) Validate() error {
 		errs = append(errs, err)
 	}
 
+	err = c.validateRegistries()
+	if err != nil {
+		errs = append(errs, err)
+	}
+
 	return errors.Join(errs...)
 }
 
 // ValidateRuntime performs runtime checks that require filesystem access.
 func (c *Config) ValidateRuntime() error {
-	if !c.Enabled() {
-		return nil
-	}
+	var errs []error
 
-	info, err := os.Stat(c.PolicyDir)
-	if err != nil {
-		return fmt.Errorf("invalid policy_dir %q: %w", c.PolicyDir, err)
-	}
-
-	if !info.IsDir() {
-		return fmt.Errorf("%w: %q", ErrPolicyDirNotDirectory, c.PolicyDir)
-	}
-
-	if c.Sigstore.TUFRoot != "" {
-		rootInfo, err := os.Stat(c.Sigstore.TUFRoot)
+	if c.Enabled() {
+		info, err := os.Stat(c.PolicyDir)
 		if err != nil {
-			return fmt.Errorf("%w: %q: %w", ErrTUFRootNotFound, c.Sigstore.TUFRoot, err)
+			errs = append(errs, fmt.Errorf("invalid policy_dir %q: %w", c.PolicyDir, err))
+		} else if !info.IsDir() {
+			errs = append(errs, fmt.Errorf("%w: %q", ErrPolicyDirNotDirectory, c.PolicyDir))
 		}
 
-		if !rootInfo.Mode().IsRegular() {
-			return fmt.Errorf("%w: %q", ErrTUFRootNotRegularFile, c.Sigstore.TUFRoot)
-		}
+		errs = append(errs, c.validateTUFRootRuntime()...)
+	}
 
-		if rootInfo.Size() == 0 {
-			return fmt.Errorf("%w: %q", ErrTUFRootEmpty, c.Sigstore.TUFRoot)
+	for idx := range c.Registries {
+		reg := &c.Registries[idx]
+		if reg.CACert != "" {
+			_, statErr := os.Stat(reg.CACert)
+			if statErr != nil {
+				errs = append(errs, fmt.Errorf(
+					"%w: registries[%d] ca_cert %q: %w",
+					ErrRegistryCACertNotFound, idx, reg.CACert, statErr,
+				))
+			}
 		}
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 // Normalize clamps fields to valid ranges. Call after Validate.
@@ -350,6 +379,202 @@ func (c *Config) Normalize() {
 			"cache_ttl", c.CacheTTL.Duration,
 		)
 	}
+
+	c.normalizeRegistryPrefixes()
+}
+
+// WarnInsecureRegistries logs a warning for each registry configured with
+// insecure TLS. Call at startup or reload time, not during validation.
+func (c *Config) WarnInsecureRegistries() {
+	for idx := range c.Registries {
+		if c.Registries[idx].Insecure {
+			slog.Warn("Registry configured with insecure TLS (skip verify)",
+				"prefix", c.Registries[idx].Prefix,
+				"index", idx,
+			)
+
+			if c.Verification == ModeEnforce {
+				slog.Warn(
+					"Insecure registry in enforce mode undermines integrity guarantees",
+					"prefix", c.Registries[idx].Prefix,
+				)
+			}
+		}
+	}
+}
+
+// RegistriesChanged reports whether two registry slices differ.
+func RegistriesChanged(prev, next []Registry) bool {
+	return !slices.Equal(prev, next)
+}
+
+func (c *Config) validateModeAndLogLevel() []error {
+	var errs []error
+
+	switch c.Verification {
+	case ModeDisabled, ModeWarn, ModeEnforce:
+	default:
+		errs = append(errs, fmt.Errorf("%w: %q", ErrInvalidVerificationMode, c.Verification))
+	}
+
+	if c.LogLevel != "" {
+		switch c.LogLevel {
+		case "debug", "info", "warn", "error":
+		default:
+			errs = append(errs, fmt.Errorf("%w: %q", ErrInvalidLogLevel, c.LogLevel))
+		}
+	}
+
+	return errs
+}
+
+func (c *Config) validateTUFRootRuntime() []error {
+	if c.Sigstore.TUFRoot == "" {
+		return nil
+	}
+
+	rootInfo, err := os.Stat(c.Sigstore.TUFRoot)
+	if err != nil {
+		return []error{fmt.Errorf(
+			"%w: %q: %w", ErrTUFRootNotFound, c.Sigstore.TUFRoot, err,
+		)}
+	}
+
+	if !rootInfo.Mode().IsRegular() {
+		return []error{fmt.Errorf(
+			"%w: %q", ErrTUFRootNotRegularFile, c.Sigstore.TUFRoot,
+		)}
+	}
+
+	if rootInfo.Size() == 0 {
+		return []error{fmt.Errorf(
+			"%w: %q", ErrTUFRootEmpty, c.Sigstore.TUFRoot,
+		)}
+	}
+
+	return nil
+}
+
+func isValidRegistryHost(host string) bool {
+	if host == "" || strings.ContainsAny(host, " \t\n/") {
+		return false
+	}
+
+	if strings.Contains(host, "://") {
+		return false
+	}
+
+	hostname := host
+
+	h, _, err := net.SplitHostPort(host)
+	if err == nil {
+		hostname = h
+	}
+
+	return !slices.Contains(strings.Split(hostname, "."), "")
+}
+
+func normalizePrefix(prefix string) string {
+	lower := strings.ToLower(prefix)
+
+	if lower == "docker.io" {
+		return "index.docker.io"
+	}
+
+	return lower
+}
+
+func (c *Config) normalizeRegistryPrefixes() {
+	for idx := range c.Registries {
+		c.Registries[idx].Prefix = normalizePrefix(c.Registries[idx].Prefix)
+		c.Registries[idx].Mirror = normalizePrefix(c.Registries[idx].Mirror)
+	}
+}
+
+func (c *Config) validateRegistries() error {
+	var errs []error //nolint:prealloc // conditional appends
+
+	seen := make(map[string]int, len(c.Registries))
+
+	for idx := range c.Registries {
+		errs = append(errs, c.validateRegistry(&c.Registries[idx], idx, seen)...)
+	}
+
+	return errors.Join(errs...)
+}
+
+func (c *Config) validateRegistry(
+	reg *Registry, idx int, seen map[string]int,
+) []error {
+	var errs []error
+
+	errs = append(errs, validateRegistryPrefix(reg, idx, seen)...)
+	errs = append(errs, validateRegistryMirror(reg, idx)...)
+
+	if reg.CACert != "" && !filepath.IsAbs(reg.CACert) {
+		errs = append(errs, fmt.Errorf(
+			"%w: registries[%d] ca_cert %q",
+			ErrRegistryCACertNotAbsolute, idx, reg.CACert,
+		))
+	}
+
+	return errs
+}
+
+func validateRegistryPrefix(
+	reg *Registry, idx int, seen map[string]int,
+) []error {
+	var errs []error
+
+	if reg.Prefix == "" {
+		return append(errs, fmt.Errorf(
+			"%w: registries[%d]", ErrRegistryPrefixEmpty, idx,
+		))
+	}
+
+	if !isValidRegistryHost(reg.Prefix) {
+		errs = append(errs, fmt.Errorf(
+			"%w: registries[%d] %q",
+			ErrRegistryPrefixInvalid, idx, reg.Prefix,
+		))
+	}
+
+	normalized := normalizePrefix(reg.Prefix)
+
+	if prevIdx, ok := seen[normalized]; ok {
+		errs = append(errs, fmt.Errorf(
+			"%w: %q at registries[%d] and registries[%d]",
+			ErrDuplicateRegistryPrefix, reg.Prefix, prevIdx, idx,
+		))
+	} else {
+		seen[normalized] = idx
+	}
+
+	return errs
+}
+
+func validateRegistryMirror(reg *Registry, idx int) []error {
+	if reg.Mirror == "" {
+		return nil
+	}
+
+	var errs []error
+
+	if !isValidRegistryHost(reg.Mirror) {
+		errs = append(errs, fmt.Errorf(
+			"%w: registries[%d] %q",
+			ErrRegistryMirrorInvalid, idx, reg.Mirror,
+		))
+	}
+
+	if normalizePrefix(reg.Mirror) == normalizePrefix(reg.Prefix) {
+		errs = append(errs, fmt.Errorf(
+			"%w: registries[%d] %q",
+			ErrRegistryMirrorSameAsPrefix, idx, reg.Prefix,
+		))
+	}
+
+	return errs
 }
 
 func (c *Config) validateMetricsAddr() error {

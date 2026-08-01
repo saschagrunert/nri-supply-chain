@@ -27,10 +27,15 @@ import (
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
+	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
-const testConfigFile = "test.toml"
+const (
+	testConfigFile     = "test.toml"
+	testPrefixGHCR     = "ghcr.io"
+	testMirrorInternal = "mirror.internal"
+)
 
 func TestHandleShutdown(t *testing.T) {
 	t.Parallel()
@@ -84,7 +89,7 @@ func TestSetupReload(t *testing.T) {
 	ctx := t.Context()
 
 	sigCh := make(chan os.Signal, 1)
-	setupReload(ctx, configPath, verif, met, sigCh, nil)
+	setupReload(ctx, configPath, verif, met, nil, sigCh, nil)
 
 	writeTestConfig(t, configPath, policyDir, "enforce")
 
@@ -116,7 +121,7 @@ func TestSetupReloadNoConfig(t *testing.T) {
 	ctx := t.Context()
 
 	sigCh := make(chan os.Signal, 1)
-	setupReload(ctx, "", verif, met, sigCh, nil)
+	setupReload(ctx, "", verif, met, nil, sigCh, nil)
 
 	sigCh <- syscall.SIGHUP
 
@@ -159,7 +164,7 @@ func TestSetupFileWatch(t *testing.T) {
 
 	ctx := t.Context()
 
-	cleanup, _ := setupFileWatch(ctx, configPath, policyDir, verif, met)
+	cleanup, _ := setupFileWatch(ctx, configPath, policyDir, verif, met, nil)
 	defer cleanup()
 
 	writeTestConfig(t, configPath, policyDir, "enforce")
@@ -187,7 +192,7 @@ func TestSetupFileWatchNoConfig(t *testing.T) {
 		t.Fatalf("creating verifier: %v", err)
 	}
 
-	cleanup, _ := setupFileWatch(t.Context(), "", "", verif, met)
+	cleanup, _ := setupFileWatch(t.Context(), "", "", verif, met, nil)
 	defer cleanup()
 
 	if verif.Enforcing() {
@@ -288,7 +293,7 @@ func TestSetupFileWatchNonexistentConfigPath(t *testing.T) {
 		t.Fatalf("creating verifier: %v", err)
 	}
 
-	cleanup, _ := setupFileWatch(t.Context(), "/nonexistent/config.toml", "", verif, met)
+	cleanup, _ := setupFileWatch(t.Context(), "/nonexistent/config.toml", "", verif, met, nil)
 	cleanup()
 }
 
@@ -311,7 +316,7 @@ func TestSetupFileWatchPolicyDirWatchFailure(t *testing.T) {
 		t.Fatalf("creating verifier: %v", err)
 	}
 
-	cleanup, _ := setupFileWatch(t.Context(), configPath, "/nonexistent/policies", verif, met)
+	cleanup, _ := setupFileWatch(t.Context(), configPath, "/nonexistent/policies", verif, met, nil)
 	cleanup()
 }
 
@@ -328,6 +333,7 @@ func TestHandleFileEventChmodIgnored(t *testing.T) {
 		event,
 		existingTimer,
 		testConfigFile,
+		nil,
 		nil,
 		nil,
 		nil,
@@ -369,7 +375,9 @@ func TestHandleFileEventDebounceReplacement(t *testing.T) {
 	defer oldTimer.Stop()
 
 	event := fsnotify.Event{Name: configPath, Op: fsnotify.Write}
-	newTimer := handleFileEvent(context.Background(), event, oldTimer, configPath, verif, met, nil)
+	newTimer := handleFileEvent(
+		context.Background(), event, oldTimer, configPath, verif, met, nil, nil,
+	)
 
 	if newTimer == nil {
 		t.Fatal("expected new timer, got nil")
@@ -386,7 +394,7 @@ func TestHandleFileEventNilDebounce(t *testing.T) {
 	t.Parallel()
 
 	event := fsnotify.Event{Name: testConfigFile, Op: fsnotify.Write}
-	result := handleFileEvent(context.Background(), event, nil, testConfigFile, nil, nil, nil)
+	result := handleFileEvent(context.Background(), event, nil, testConfigFile, nil, nil, nil, nil)
 
 	if result == nil {
 		t.Fatal("expected new timer, got nil")
@@ -423,7 +431,7 @@ func TestRunFileWatchContextCancel(t *testing.T) {
 	done := make(chan struct{})
 
 	go func() {
-		runFileWatch(ctx, watcher, configPath, nil, nil)
+		runFileWatch(ctx, watcher, configPath, nil, nil, nil)
 		close(done)
 	}()
 
@@ -456,7 +464,7 @@ func TestRunFileWatchChannelClosed(t *testing.T) {
 	done := make(chan struct{})
 
 	go func() {
-		runFileWatch(context.Background(), watcher, testConfigFile, nil, nil)
+		runFileWatch(context.Background(), watcher, testConfigFile, nil, nil, nil)
 		close(done)
 	}()
 
@@ -499,7 +507,7 @@ func TestRunFileWatchErrorChannel(t *testing.T) {
 	done := make(chan struct{})
 
 	go func() {
-		runFileWatch(ctx, watcher, configPath, nil, nil)
+		runFileWatch(ctx, watcher, configPath, nil, nil, nil)
 		close(done)
 	}()
 
@@ -556,7 +564,7 @@ func TestHandleReloadLogLevel(t *testing.T) {
 		t.Fatalf("creating verifier: %v", err)
 	}
 
-	handleReload(context.Background(), configPath, verif, met, nil)
+	handleReload(context.Background(), configPath, verif, met, nil, nil)
 
 	if logLevelVar.Level() != slog.LevelDebug {
 		t.Errorf("expected log level DEBUG after reload, got %v", logLevelVar.Level())
@@ -592,10 +600,188 @@ func TestHandleReloadNoLogLevel(t *testing.T) {
 		t.Fatalf("creating verifier: %v", err)
 	}
 
-	handleReload(context.Background(), configPath, verif, met, nil)
+	handleReload(context.Background(), configPath, verif, met, nil, nil)
 
 	// Without log_level in config, the level should remain unchanged.
 	if logLevelVar.Level() != slog.LevelDebug {
 		t.Errorf("expected log level to remain DEBUG, got %v", logLevelVar.Level())
 	}
+}
+
+//nolint:paralleltest // modifies package-level logLevelVar
+func TestHandleReloadUpdatesPluginRegistries(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	policyDir := filepath.Join(dir, "policies")
+
+	err := os.Mkdir(policyDir, 0o750)
+	if err != nil {
+		t.Fatalf("creating policy dir: %v", err)
+	}
+
+	writeTestConfig(t, configPath, policyDir, "warn")
+
+	cfg, err := config.LoadFromFile(configPath)
+	if err != nil {
+		t.Fatalf("loading config: %v", err)
+	}
+
+	met := metrics.New()
+
+	verif, err := verifier.New(cfg, met, nil)
+	if err != nil {
+		t.Fatalf("creating verifier: %v", err)
+	}
+
+	mock := &mockPluginReloader{cancelPrewarmCalled: false, transportCache: nil}
+	handleReload(context.Background(), configPath, verif, met, mock, nil)
+
+	if mock.transportCache != nil {
+		t.Error("expected nil transport cache when no registries configured")
+	}
+}
+
+//nolint:paralleltest // modifies package-level logLevelVar
+func TestHandleReloadUpdatesPluginRegistriesNonEmpty(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	policyDir := filepath.Join(dir, "policies")
+
+	err := os.Mkdir(policyDir, 0o750)
+	if err != nil {
+		t.Fatalf("creating policy dir: %v", err)
+	}
+
+	data := "verification = \"warn\"\npolicy_dir = \"" + policyDir + "\"\n" +
+		"[[registries]]\nprefix = \"" + testPrefixGHCR + "\"\nmirror = \"" + testMirrorInternal + "\"\n"
+
+	err = os.WriteFile(configPath, []byte(data), 0o600)
+	if err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	cfg, err := config.LoadFromFile(configPath)
+	if err != nil {
+		t.Fatalf("loading config: %v", err)
+	}
+
+	met := metrics.New()
+
+	verif, err := verifier.New(cfg, met, nil)
+	if err != nil {
+		t.Fatalf("creating verifier: %v", err)
+	}
+
+	mock := &mockPluginReloader{cancelPrewarmCalled: false, transportCache: nil}
+	handleReload(context.Background(), configPath, verif, met, mock, nil)
+
+	if mock.transportCache == nil {
+		t.Error("expected non-nil transport cache when registries configured")
+	}
+}
+
+type mockPluginReloader struct {
+	cancelPrewarmCalled bool
+	transportCache      *registry.TransportCache
+}
+
+func (m *mockPluginReloader) CancelPrewarm() {
+	m.cancelPrewarmCalled = true
+}
+
+func (m *mockPluginReloader) SetTransportCache(cache *registry.TransportCache) {
+	m.transportCache = cache
+}
+
+func (m *mockPluginReloader) TransportCache() *registry.TransportCache {
+	return m.transportCache
+}
+
+func TestUpdatePluginRegistries(t *testing.T) {
+	t.Parallel()
+
+	t.Run("non-empty registries sets cache", func(t *testing.T) {
+		t.Parallel()
+
+		mock := &mockPluginReloader{cancelPrewarmCalled: false, transportCache: nil}
+		updatePluginRegistries(mock, []config.Registry{
+			{Prefix: testPrefixGHCR, Mirror: testMirrorInternal, CACert: "", Insecure: false},
+		}, nil)
+
+		if mock.transportCache == nil {
+			t.Error("expected non-nil transport cache")
+		}
+	})
+
+	t.Run("uses shared cache when provided", func(t *testing.T) {
+		t.Parallel()
+
+		shared := registry.NewTransportCache([]config.Registry{
+			{Prefix: testPrefixGHCR, Mirror: testMirrorInternal, CACert: "", Insecure: false},
+		})
+		mock := &mockPluginReloader{cancelPrewarmCalled: false, transportCache: nil}
+		updatePluginRegistries(mock, shared.Registries(), shared)
+
+		if mock.transportCache != shared {
+			t.Error("expected plugin to use the shared transport cache")
+		}
+	})
+
+	t.Run("clears cache when registries removed", func(t *testing.T) {
+		t.Parallel()
+
+		mock := &mockPluginReloader{
+			cancelPrewarmCalled: false,
+			transportCache: registry.NewTransportCache([]config.Registry{
+				{Prefix: testPrefixGHCR, Mirror: testMirrorInternal, CACert: "", Insecure: false},
+			}),
+		}
+		updatePluginRegistries(mock, nil, nil)
+
+		if mock.transportCache != nil {
+			t.Error("expected nil transport cache after clearing registries")
+		}
+	})
+
+	t.Run("ignores stale shared cache", func(t *testing.T) {
+		t.Parallel()
+
+		staleRegs := []config.Registry{
+			{Prefix: "old.registry.io", Mirror: "", CACert: "", Insecure: false},
+		}
+		staleShared := registry.NewTransportCache(staleRegs)
+		newRegs := []config.Registry{
+			{Prefix: "new.registry.io", Mirror: "", CACert: "", Insecure: false},
+		}
+		mock := &mockPluginReloader{cancelPrewarmCalled: false, transportCache: nil}
+		updatePluginRegistries(mock, newRegs, staleShared)
+
+		if mock.transportCache == staleShared {
+			t.Error("expected plugin to not use stale shared cache")
+		}
+
+		if mock.transportCache == nil {
+			t.Fatal("expected a new transport cache to be created")
+		}
+
+		got := mock.transportCache.Registries()
+		if len(got) != 1 || got[0].Prefix != "new.registry.io" {
+			t.Errorf("expected new registries, got %v", got)
+		}
+	})
+
+	t.Run("skips replacement when registries unchanged", func(t *testing.T) {
+		t.Parallel()
+
+		regs := []config.Registry{
+			{Prefix: testPrefixGHCR, Mirror: testMirrorInternal, CACert: "", Insecure: false},
+		}
+		original := registry.NewTransportCache(regs)
+		mock := &mockPluginReloader{cancelPrewarmCalled: false, transportCache: original}
+		updatePluginRegistries(mock, regs, nil)
+
+		if mock.transportCache != original {
+			t.Error("expected transport cache to remain unchanged")
+		}
+	})
 }

@@ -38,6 +38,8 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/tuf"
 	"golang.org/x/sync/singleflight"
 	"golang.org/x/time/rate"
+
+	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 )
 
 var (
@@ -169,8 +171,9 @@ type OCIFetcher struct {
 	fetchImage   ImageFetchFunc
 	referrers    ReferrersFunc
 	// rootCache is captured by the verifyBundle closure; stored for exhaustruct compliance.
-	rootCache *trustedRootCache
-	limiter   atomic.Pointer[rate.Limiter]
+	rootCache      *trustedRootCache
+	limiter        atomic.Pointer[rate.Limiter]
+	transportCache atomic.Pointer[registry.TransportCache]
 }
 
 // NewOCIFetcher creates a new OCI-based attestation fetcher.
@@ -190,21 +193,23 @@ func NewOCIFetcher() *OCIFetcher {
 		) ([]byte, error) {
 			return verifyBundleWithCache(ctx, bundleBytes, opts, cachedRoot)
 		},
-		fetchImage: remote.Image,
-		referrers:  remote.Referrers,
-		rootCache:  cachedRoot,
-		limiter:    atomic.Pointer[rate.Limiter]{},
+		fetchImage:     remote.Image,
+		referrers:      remote.Referrers,
+		rootCache:      cachedRoot,
+		limiter:        atomic.Pointer[rate.Limiter]{},
+		transportCache: atomic.Pointer[registry.TransportCache]{},
 	}
 }
 
 // NewOCIFetcherWithVerifier creates a fetcher with a custom bundle verification function.
 func NewOCIFetcherWithVerifier(verifier BundleVerifyFunc) *OCIFetcher {
 	return &OCIFetcher{
-		verifyBundle: verifier,
-		fetchImage:   remote.Image,
-		referrers:    remote.Referrers,
-		rootCache:    nil,
-		limiter:      atomic.Pointer[rate.Limiter]{},
+		verifyBundle:   verifier,
+		fetchImage:     remote.Image,
+		referrers:      remote.Referrers,
+		rootCache:      nil,
+		limiter:        atomic.Pointer[rate.Limiter]{},
+		transportCache: atomic.Pointer[registry.TransportCache]{},
 	}
 }
 
@@ -245,10 +250,11 @@ func NewOCIFetcherWithTUFMirror(tufMirror string, tufRootBytes []byte) *OCIFetch
 		) ([]byte, error) {
 			return verifyBundleWithCache(ctx, bundleBytes, opts, cachedRoot)
 		},
-		fetchImage: remote.Image,
-		referrers:  remote.Referrers,
-		rootCache:  cachedRoot,
-		limiter:    atomic.Pointer[rate.Limiter]{},
+		fetchImage:     remote.Image,
+		referrers:      remote.Referrers,
+		rootCache:      cachedRoot,
+		limiter:        atomic.Pointer[rate.Limiter]{},
+		transportCache: atomic.Pointer[registry.TransportCache]{},
 	}
 }
 
@@ -274,6 +280,20 @@ func (f *OCIFetcher) SetRateLimit(requestsPerSecond float64) {
 		rate.Limit(requestsPerSecond), int(requestsPerSecond)+1,
 	)
 	f.limiter.Store(lim)
+}
+
+// SetTransportCache configures per-registry transport settings (mirrors, custom
+// CAs, insecure) via a shared TransportCache. The cache provides connection
+// pooling and TLS session reuse across requests. Safe for concurrent use.
+func (f *OCIFetcher) SetTransportCache(cache *registry.TransportCache) {
+	if old := f.transportCache.Swap(cache); old != nil {
+		old.CloseIdleConnections()
+	}
+}
+
+// TransportCache returns the current transport cache, or nil if none is set.
+func (f *OCIFetcher) TransportCache() *registry.TransportCache {
+	return f.transportCache.Load()
 }
 
 // Warm pre-fetches the Sigstore trusted root so that the first verification
@@ -314,14 +334,30 @@ func (f *OCIFetcher) Fetch(
 		defer cancel()
 	}
 
-	ref, err := parseDigestRef(imageRef, opts.Digest)
-	if err != nil {
-		return nil, fmt.Errorf("parsing image reference: %w", err)
-	}
+	// Apply registry mirror rewriting and custom transport if configured.
+	effectiveRef := imageRef
 
 	remoteOpts := []remote.Option{
 		remote.WithAuthFromKeychain(authn.DefaultKeychain),
 		remote.WithContext(ctx),
+	}
+
+	if cache := f.transportCache.Load(); cache != nil {
+		rewritten, transportOpt, regErr := registry.OptionsForRegistries(cache, imageRef)
+		if regErr != nil {
+			return nil, fmt.Errorf("building registry options: %w", regErr)
+		}
+
+		effectiveRef = rewritten
+
+		if transportOpt != nil {
+			remoteOpts = append(remoteOpts, transportOpt)
+		}
+	}
+
+	ref, err := parseDigestRef(effectiveRef, opts.Digest)
+	if err != nil {
+		return nil, fmt.Errorf("parsing image reference: %w", err)
 	}
 
 	return f.fetchWithRetry(ctx, ref, opts.Digest, remoteOpts, opts)
