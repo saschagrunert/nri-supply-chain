@@ -7,6 +7,7 @@ require (
 	github.com/containerd/nri v0.12.1
 	github.com/fatih/color v1.19.0
 	github.com/fsnotify/fsnotify v1.10.1
+	github.com/google/cel-go v0.30.0
 	github.com/google/go-containerregistry v0.21.7
 	github.com/invopop/jsonschema v0.14.0
 	github.com/notaryproject/notation-go v1.3.2
@@ -22,7 +23,9 @@ require (
 )
 
 require (
+	cel.dev/expr v0.25.1 // indirect
 	github.com/Azure/go-ntlmssp v0.1.1 // indirect
+	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -118,6 +121,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
 	golang.org/x/crypto v0.54.0 // indirect
+	golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546 // indirect
 	golang.org/x/mod v0.37.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect

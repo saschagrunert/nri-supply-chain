@@ -43,6 +43,8 @@ const (
 	CheckTypePolicy CheckType = "policy"
 	// CheckTypeNotation is the Notation/Notary v2 signature check type.
 	CheckTypeNotation CheckType = "notation"
+	// CheckTypeCEL is the CEL custom rule check type.
+	CheckTypeCEL CheckType = "cel"
 )
 
 // Result represents the outcome of a supply chain verification.

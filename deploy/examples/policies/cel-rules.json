@@ -1,0 +1,19 @@
+{
+  "trust": {
+    "builders": [
+      {
+        "id": "https://github.com/actions/runner",
+        "maxLevel": 3
+      }
+    ]
+  },
+  "cel": {
+    "rules": [
+      {
+        "match": "image.registry == 'ghcr.io'",
+        "require": "slsa.verified == true",
+        "message": "GHCR images must have SLSA provenance"
+      }
+    ]
+  }
+}

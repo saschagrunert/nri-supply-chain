@@ -173,6 +173,9 @@ jobs:
           - name: artifact-policy
             package: ./internal/attestation/
             target: FuzzArtifactPolicy
+          - name: cel
+            package: ./internal/cel/
+            target: FuzzCompileAndEvaluate
           - name: config-load
             package: ./internal/config/
             target: FuzzLoadFromString

@@ -346,6 +346,53 @@ EOF
 	[[ "$status" -eq 0 ]]
 }
 
+@test "policy with valid CEL rules passes validation" {
+	mkdir -p "$TEST_DIR/policies"
+	cat >"$TEST_DIR/policies/default.json" <<EOF
+{
+    "cel": {
+        "rules": [
+            {
+                "match": "image.registry == 'ghcr.io'",
+                "require": "slsa.verified == true",
+                "message": "GHCR images must have SLSA provenance"
+            }
+        ]
+    },
+    "slsa": {"missingPolicy": "allow"}
+}
+EOF
+	cat >"$TEST_DIR/config.toml" <<EOF
+verification = "enforce"
+policy_dir = "$TEST_DIR/policies"
+EOF
+	run_binary --config "$TEST_DIR/config.toml" validate
+	[[ "$status" -eq 0 ]]
+}
+
+@test "policy with invalid CEL syntax rejected" {
+	mkdir -p "$TEST_DIR/policies"
+	cat >"$TEST_DIR/policies/default.json" <<EOF
+{
+    "cel": {
+        "rules": [
+            {
+                "require": "image.registry ===== 'invalid'",
+                "message": "this expression has bad syntax"
+            }
+        ]
+    }
+}
+EOF
+	cat >"$TEST_DIR/config.toml" <<EOF
+verification = "enforce"
+policy_dir = "$TEST_DIR/policies"
+EOF
+	run_binary --config "$TEST_DIR/config.toml" validate
+	[[ "$status" -ne 0 ]]
+	[[ "$output" == *"CEL"* ]]
+}
+
 @test "policy with VSA configuration" {
 	mkdir -p "$TEST_DIR/policies" "$TEST_DIR/keys"
 	touch "$TEST_DIR/keys/v.pub"

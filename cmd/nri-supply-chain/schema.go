@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"reflect"
+	"strings"
 
 	"github.com/invopop/jsonschema"
 
@@ -61,7 +63,20 @@ func VerifyResultJSONSchema() ([]byte, error) {
 func generateSchema(
 	target any, title, description string,
 ) ([]byte, error) {
-	schema := jsonschema.Reflect(target)
+	reflector := &jsonschema.Reflector{
+		// Prefix types from the internal/cel package with "CEL" so that
+		// cel.Policy becomes "CELPolicy" in $defs and does not collide
+		// with the top-level policy.Policy definition.
+		Namer: func(t reflect.Type) string {
+			if strings.HasSuffix(t.PkgPath(), "/internal/cel") {
+				return "CEL" + t.Name()
+			}
+
+			return ""
+		},
+	}
+
+	schema := reflector.Reflect(target)
 	schema.ID = ""
 	schema.Title = title
 	schema.Description = description

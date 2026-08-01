@@ -20,12 +20,14 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
+	celengine "github.com/saschagrunert/nri-supply-chain/internal/cel"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/notation"
@@ -132,6 +134,12 @@ func runVSAAndParallelChecks(
 
 	if len(bins.vsa) == 0 {
 		prependVSAWarning(result, pol, "no VSA attestation found for image "+imageRef)
+	}
+
+	celCheck := runCELCheck(pol, imageRef, digest, namespace, parsedRef, result)
+	if celCheck != nil {
+		result.CheckResults = append(result.CheckResults, *celCheck)
+		applyCheckResult(result, celCheck)
 	}
 
 	return result
@@ -647,6 +655,55 @@ func runNotationCheck(
 	}
 
 	return result
+}
+
+func runCELCheck(
+	pol *policy.Policy, imageRef, digest, namespace string,
+	parsedRef name.Reference, result *types.Result,
+) *types.CheckResult {
+	if pol.CompiledCEL == nil {
+		return nil
+	}
+
+	registry, repository := extractRegistryRepo(parsedRef, imageRef)
+
+	var slsaResult, vexResult *types.CheckResult
+
+	for idx := range result.CheckResults {
+		switch result.CheckResults[idx].Type {
+		case types.CheckTypeSLSA:
+			slsaResult = &result.CheckResults[idx]
+		case types.CheckTypeVEX:
+			vexResult = &result.CheckResults[idx]
+		case types.CheckTypeVSA, types.CheckTypeFetch, types.CheckTypePolicy,
+			types.CheckTypeCEL, types.CheckTypeNotation:
+			// Not used for CEL variable construction.
+		}
+	}
+
+	vars := celengine.BuildVars(
+		imageRef, registry, repository, digest, namespace,
+		slsaResult, vexResult,
+	)
+
+	return celengine.Evaluate(pol.CompiledCEL, vars)
+}
+
+func extractRegistryRepo(
+	parsedRef name.Reference, imageRef string,
+) (reg, repo string) {
+	if parsedRef == nil {
+		return imageRef, imageRef
+	}
+
+	ctx := parsedRef.Context()
+	reg = ctx.RegistryStr()
+	repo = ctx.RepositoryStr()
+
+	// Remove registry prefix from full repository path if present.
+	repo = strings.TrimPrefix(repo, reg+"/")
+
+	return reg, repo
 }
 
 func resultHasFailures(result *types.Result) bool {

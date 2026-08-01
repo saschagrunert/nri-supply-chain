@@ -187,12 +187,17 @@ func loadPublicKeyFromPEM(path string) (crypto.PublicKey, error) {
 		return nil, fmt.Errorf("%w in %q", errNoPEMBlock, path)
 	}
 
-	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		return nil, fmt.Errorf("parsing public key: %w", err)
+	pub, pkixErr := x509.ParsePKIXPublicKey(block.Bytes)
+	if pkixErr == nil {
+		return pub, nil
 	}
 
-	return pub, nil
+	rsaKey, rsaErr := x509.ParsePKCS1PublicKey(block.Bytes)
+	if rsaErr == nil {
+		return rsaKey, nil
+	}
+
+	return nil, fmt.Errorf("parsing public key: %w", pkixErr)
 }
 
 func computeKeyHint(pub crypto.PublicKey) string {

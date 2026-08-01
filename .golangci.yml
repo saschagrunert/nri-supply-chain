@@ -142,6 +142,7 @@ linters:
             - github.com/containerd/nri
             - github.com/fatih/color
             - github.com/fsnotify/fsnotify
+            - github.com/google/cel-go
             - github.com/google/go-containerregistry
             - github.com/invopop/jsonschema
             - github.com/notaryproject/notation-core-go
@@ -165,6 +166,7 @@ linters:
         - 'encoding/pem\.Block'
         - 'github\.com/containerd/nri/pkg/api\..*'
         - 'github\.com/google/go-containerregistry/.*'
+        - 'github\.com/invopop/jsonschema\.Reflector'
         - 'github\.com/notaryproject/notation-go/verifier/trustpolicy\..*'
         - 'github\.com/openvex/go-vex/.*'
         - 'github\.com/prometheus/client_golang/prometheus\..*'
@@ -172,6 +174,7 @@ linters:
         - 'github\.com/prometheus/client_golang/prometheus/promhttp\..*'
         - 'github\.com/saschagrunert/nri-supply-chain/internal/attestation\.FetchOptions'
         - 'github\.com/saschagrunert/nri-supply-chain/internal/attestation\.VerifiedAttestation'
+        - 'github\.com/saschagrunert/nri-supply-chain/internal/cel\..*'
         - 'github\.com/saschagrunert/nri-supply-chain/internal/policy\..*'
         - 'github\.com/sigstore/sigstore-go/.*'
         - 'github\.com/sigstore/sigstore/.*'

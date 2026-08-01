@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	celengine "github.com/saschagrunert/nri-supply-chain/internal/cel"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
@@ -49,6 +50,8 @@ const (
 	testNotationCertPath       = "/etc/certs/ca.pem"
 	testNotationRuleName       = "rule1"
 	testDockerGlob             = "docker.io/**"
+	testCELExprTrue            = "true"
+	testCELExprSLSAVerified    = "slsa.verified == true"
 )
 
 type validateTest struct {
@@ -3357,5 +3360,458 @@ func TestApplyRuleNotation(t *testing.T) {
 			"expected rule Notation deny, got %v",
 			resolved.NotationMissingPolicy(),
 		)
+	}
+}
+
+func TestPolicyValidateCELValid(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{
+		Sections: policy.Sections{
+			CEL: &celengine.Policy{
+				Rules: []celengine.Rule{
+					{
+						Match:   "image.registry == 'ghcr.io'",
+						Require: testCELExprSLSAVerified,
+						Message: "GHCR images must have SLSA",
+					},
+				},
+			},
+		},
+	}
+
+	testutil.AssertNoError(t, pol.Validate())
+
+	if pol.CompiledCEL == nil {
+		t.Error("expected CompiledCEL to be populated after validation")
+	}
+}
+
+func TestPolicyValidateCELSyntaxError(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{
+		Sections: policy.Sections{
+			CEL: &celengine.Policy{
+				Rules: []celengine.Rule{
+					{Require: "invalid +++"},
+				},
+			},
+		},
+	}
+
+	err := pol.Validate()
+	if !errors.Is(err, policy.ErrCELCompileFailed) {
+		t.Errorf("expected ErrCELCompileFailed, got %v", err)
+	}
+}
+
+func TestPolicyValidateCELNilSection(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{}
+
+	testutil.AssertNoError(t, pol.Validate())
+
+	if pol.CompiledCEL != nil {
+		t.Error("expected CompiledCEL to be nil when no CEL section")
+	}
+}
+
+func TestPolicyValidateCELEmptyRules(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{
+		Sections: policy.Sections{
+			CEL: &celengine.Policy{
+				Rules: nil,
+			},
+		},
+	}
+
+	testutil.AssertNoError(t, pol.Validate())
+
+	if pol.CompiledCEL != nil {
+		t.Error("expected CompiledCEL to be nil with empty rules")
+	}
+}
+
+func TestCloneSectionsCEL(t *testing.T) {
+	t.Parallel()
+
+	original := &policy.Policy{
+		Sections: policy.Sections{
+			CEL: &celengine.Policy{
+				Rules: []celengine.Rule{
+					{Require: testCELExprTrue, Message: "original"},
+				},
+			},
+		},
+	}
+
+	clone := policy.MergeWithDefault(&policy.Policy{}, original)
+
+	if clone.CEL == nil {
+		t.Fatal("expected CEL to be cloned")
+	}
+
+	if len(clone.CEL.Rules) != 1 {
+		t.Fatalf("expected 1 cloned rule, got %d", len(clone.CEL.Rules))
+	}
+
+	// Mutate clone and verify original is unaffected.
+	clone.CEL.Rules[0].Message = "mutated"
+
+	if original.CEL.Rules[0].Message != "original" {
+		t.Error("clone mutation affected original CEL rules")
+	}
+}
+
+func TestApplySectionsCELOverride(t *testing.T) {
+	t.Parallel()
+
+	base := &policy.Policy{
+		Sections: policy.Sections{
+			CEL: &celengine.Policy{
+				Rules: []celengine.Rule{
+					{Require: testCELExprTrue, Message: "base"},
+				},
+			},
+			SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionAllow},
+		},
+	}
+
+	rule := &policy.ImageRule{
+		Images: []string{testRuleImagesGlob},
+		Sections: policy.Sections{
+			CEL: &celengine.Policy{
+				Rules: []celengine.Rule{
+					{Require: "false", Message: "override"},
+				},
+			},
+		},
+	}
+
+	resolved := policy.ApplyRule(base, rule)
+
+	if resolved.CEL == nil {
+		t.Fatal("expected CEL section on resolved policy")
+	}
+
+	if resolved.CEL.Rules[0].Message != "override" {
+		t.Errorf("expected override CEL rule, got %s", resolved.CEL.Rules[0].Message)
+	}
+
+	if resolved.SLSAMissingPolicy() != types.ActionAllow {
+		t.Errorf("expected base SLSA to be preserved, got %v", resolved.SLSAMissingPolicy())
+	}
+}
+
+func TestLoadPolicyWithCEL(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "default.json"), `{
+		"cel": {
+			"rules": [
+				{
+					"match": "image.registry == 'ghcr.io'",
+					"require": "slsa.verified == true",
+					"message": "GHCR images must have SLSA provenance"
+				}
+			]
+		}
+	}`)
+
+	policies, err := policy.LoadAll(dir)
+	testutil.AssertNoError(t, err)
+
+	pol := policies[""]
+	if pol.CEL == nil {
+		t.Fatal("expected CEL section to be loaded")
+	}
+
+	if len(pol.CEL.Rules) != 1 {
+		t.Fatalf("expected 1 CEL rule, got %d", len(pol.CEL.Rules))
+	}
+
+	if pol.CompiledCEL == nil {
+		t.Error("expected CEL rules to be compiled during validation")
+	}
+}
+
+func TestLoadPolicyWithCELInheritance(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "default.json"), `{
+		"cel": {
+			"rules": [
+				{
+					"require": "slsa.verified == true",
+					"message": "default CEL rule"
+				}
+			]
+		}
+	}`)
+	writeFile(t, filepath.Join(dir, "staging.json"), `{
+		"inherits": true
+	}`)
+
+	policies, err := policy.LoadAll(dir)
+	testutil.AssertNoError(t, err)
+
+	staging := policies["staging"]
+	if staging.CEL == nil {
+		t.Fatal("expected CEL to be inherited")
+	}
+
+	if staging.CEL.Rules[0].Message != "default CEL rule" {
+		t.Errorf("expected inherited CEL rule message, got %s", staging.CEL.Rules[0].Message)
+	}
+
+	if staging.CompiledCEL == nil {
+		t.Error("expected CompiledCEL to be inherited from default")
+	}
+}
+
+func TestApplyRulePreservesCompiledCEL(t *testing.T) {
+	t.Parallel()
+
+	base := &policy.Policy{
+		Sections: policy.Sections{
+			CEL: &celengine.Policy{
+				Rules: []celengine.Rule{
+					{Require: testCELExprSLSAVerified, Message: "base CEL"},
+				},
+			},
+			SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionAllow},
+		},
+	}
+
+	testutil.AssertNoError(t, base.Validate())
+
+	if base.CompiledCEL == nil {
+		t.Fatal("expected base CompiledCEL after validation")
+	}
+
+	// Rule without CEL should inherit base's CompiledCEL.
+	rule := &policy.ImageRule{
+		Images: []string{testRuleImagesGlob},
+		Sections: policy.Sections{
+			SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
+		},
+	}
+
+	resolved := policy.ApplyRule(base, rule)
+
+	if resolved.CompiledCEL == nil {
+		t.Error("expected CompiledCEL to be preserved from base when rule has no CEL")
+	}
+
+	if resolved.SLSAMissingPolicy() != types.ActionDeny {
+		t.Errorf("expected SLSA deny from rule, got %v", resolved.SLSAMissingPolicy())
+	}
+}
+
+func TestApplyRuleCELOverrideCompiledCEL(t *testing.T) {
+	t.Parallel()
+
+	base := &policy.Policy{
+		Sections: policy.Sections{
+			CEL: &celengine.Policy{
+				Rules: []celengine.Rule{
+					{Require: testCELExprTrue, Message: "base"},
+				},
+			},
+		},
+	}
+
+	testutil.AssertNoError(t, base.Validate())
+
+	// Rule with its own CEL should use its CompiledCEL.
+	rulePol := &policy.Policy{
+		Rules: []policy.ImageRule{
+			{
+				Images: []string{testRuleImagesGlob},
+				Sections: policy.Sections{
+					CEL: &celengine.Policy{
+						Rules: []celengine.Rule{
+							{Require: "false", Message: "rule override"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	testutil.AssertNoError(t, rulePol.Validate())
+
+	if rulePol.Rules[0].CompiledCEL == nil {
+		t.Fatal("expected rule CompiledCEL after validation")
+	}
+
+	resolved := policy.ApplyRule(base, &rulePol.Rules[0])
+
+	if resolved.CompiledCEL == nil {
+		t.Fatal("expected CompiledCEL on resolved policy")
+	}
+
+	if resolved.CEL.Rules[0].Message != "rule override" {
+		t.Errorf("expected rule CEL, got %s", resolved.CEL.Rules[0].Message)
+	}
+}
+
+func TestPolicyValidateRuleCELSyntaxError(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{
+		Rules: []policy.ImageRule{
+			{
+				Images: []string{testRuleImagesGlob},
+				Sections: policy.Sections{
+					CEL: &celengine.Policy{
+						Rules: []celengine.Rule{
+							{Require: "invalid +++"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err := pol.Validate()
+	if !errors.Is(err, policy.ErrCELCompileFailed) {
+		t.Errorf("expected ErrCELCompileFailed for rule CEL, got %v", err)
+	}
+}
+
+func TestLoadPolicyWithCELOverride(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "default.json"), `{
+		"cel": {
+			"rules": [
+				{
+					"require": "true",
+					"message": "default"
+				}
+			]
+		}
+	}`)
+	writeFile(t, filepath.Join(dir, "production.json"), `{
+		"inherits": true,
+		"cel": {
+			"rules": [
+				{
+					"require": "slsa.verified == true && vex.verified == true",
+					"message": "production requires all checks"
+				}
+			]
+		}
+	}`)
+
+	policies, err := policy.LoadAll(dir)
+	testutil.AssertNoError(t, err)
+
+	prod := policies["production"]
+	if prod.CEL == nil {
+		t.Fatal("expected CEL section on production policy")
+	}
+
+	if len(prod.CEL.Rules) != 1 {
+		t.Fatalf("expected 1 CEL rule, got %d", len(prod.CEL.Rules))
+	}
+
+	if prod.CEL.Rules[0].Message != "production requires all checks" {
+		t.Errorf("expected production CEL rule, got %s", prod.CEL.Rules[0].Message)
+	}
+
+	if prod.CompiledCEL == nil {
+		t.Error("expected CompiledCEL to be set after CEL override")
+	}
+}
+
+func TestCloneRulesPreservesCompiledCEL(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{
+		Rules: []policy.ImageRule{
+			{
+				Images: []string{testRuleImagesGlob},
+				Sections: policy.Sections{
+					CEL: &celengine.Policy{
+						Rules: []celengine.Rule{
+							{Require: testCELExprSLSAVerified, Message: "rule CEL"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	testutil.AssertNoError(t, pol.Validate())
+
+	if pol.Rules[0].CompiledCEL == nil {
+		t.Fatal("expected CompiledCEL on rule after validation")
+	}
+
+	// MergeWithDefault clones rules via cloneRules. The cloned rules
+	// must preserve CompiledCEL so that per-rule CEL is not silently lost.
+	defaultPol := &policy.Policy{
+		Sections: policy.Sections{
+			SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionAllow},
+		},
+	}
+
+	nsPol := &policy.Policy{
+		Rules: pol.Rules,
+	}
+
+	merged := policy.MergeWithDefault(nsPol, defaultPol)
+
+	if len(merged.Rules) != 1 {
+		t.Fatalf("expected 1 merged rule, got %d", len(merged.Rules))
+	}
+
+	if merged.Rules[0].CompiledCEL == nil {
+		t.Error("expected CompiledCEL to be preserved after cloneRules")
+	}
+}
+
+func TestInheritedRulesPreserveCompiledCEL(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "default.json"), `{
+		"rules": [
+			{
+				"images": ["ghcr.io/**"],
+				"cel": {
+					"rules": [
+						{
+							"require": "slsa.verified == true",
+							"message": "inherited rule CEL"
+						}
+					]
+				}
+			}
+		]
+	}`)
+	writeFile(t, filepath.Join(dir, "staging.json"), `{
+		"inherits": true
+	}`)
+
+	policies, err := policy.LoadAll(dir)
+	testutil.AssertNoError(t, err)
+
+	staging := policies["staging"]
+	if len(staging.Rules) != 1 {
+		t.Fatalf("expected 1 inherited rule, got %d", len(staging.Rules))
+	}
+
+	if staging.Rules[0].CompiledCEL == nil {
+		t.Error("expected CompiledCEL to be preserved on inherited rule")
 	}
 }
