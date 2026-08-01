@@ -345,8 +345,10 @@ func TestWarnValidationEnforceDefaults(t *testing.T) {
 			}(),
 			policies: map[string]*policy.Policy{
 				"": {
-					SLSA: &policy.SLSAPolicy{
-						MissingPolicy: sctypes.ActionAllow,
+					Sections: policy.Sections{
+						SLSA: &policy.SLSAPolicy{
+							MissingPolicy: sctypes.ActionAllow,
+						},
 					},
 				},
 			},
@@ -362,8 +364,10 @@ func TestWarnValidationEnforceDefaults(t *testing.T) {
 			}(),
 			policies: map[string]*policy.Policy{
 				testNamespaceProd: {
-					SLSA: &policy.SLSAPolicy{
-						MissingPolicy: sctypes.ActionDeny,
+					Sections: policy.Sections{
+						SLSA: &policy.SLSAPolicy{
+							MissingPolicy: sctypes.ActionDeny,
+						},
 					},
 				},
 			},
@@ -379,8 +383,10 @@ func TestWarnValidationEnforceDefaults(t *testing.T) {
 			}(),
 			policies: map[string]*policy.Policy{
 				"": {
-					SLSA: &policy.SLSAPolicy{
-						MissingPolicy: sctypes.ActionDeny,
+					Sections: policy.Sections{
+						SLSA: &policy.SLSAPolicy{
+							MissingPolicy: sctypes.ActionDeny,
+						},
 					},
 				},
 			},
@@ -396,11 +402,13 @@ func TestWarnValidationEnforceDefaults(t *testing.T) {
 			}(),
 			policies: map[string]*policy.Policy{
 				"secure": {
-					SLSA: &policy.SLSAPolicy{
-						MissingPolicy: sctypes.ActionDeny,
-					},
-					VEX: &policy.VEXPolicy{
-						MissingPolicy: sctypes.ActionDeny,
+					Sections: policy.Sections{
+						SLSA: &policy.SLSAPolicy{
+							MissingPolicy: sctypes.ActionDeny,
+						},
+						VEX: &policy.VEXPolicy{
+							MissingPolicy: sctypes.ActionDeny,
+						},
 					},
 				},
 			},

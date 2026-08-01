@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -291,7 +292,6 @@ func (v *Verifier) Verify(
 
 	slog.DebugContext(ctx, "Verifying image",
 		"image", imageRef, "digest", digest, "namespace", namespace)
-
 	pol := policyForNamespace(state.policies, namespace)
 
 	if pol == nil {
@@ -322,19 +322,31 @@ func (v *Verifier) Verify(
 		), nil
 	}
 
-	effectiveMode := pol.EffectiveMode(state.config.Verification)
+	resolvedPol, ruleIdx := resolveImagePolicy(ctx, pol, imageRef)
+	cacheNS := cacheNamespaceKey(namespace, ruleIdx)
+	effectiveMode := resolvedPol.EffectiveMode(state.config.Verification)
 
-	result, err := v.handleCacheHit(ctx, state, effectiveMode, imageRef, digest, namespace)
+	result, err := v.handleCacheHit(ctx, state, effectiveMode, imageRef, digest, namespace, cacheNS)
 	if result != nil || err != nil {
 		return result, err
 	}
 
-	result, err = v.verifyOnce(ctx, state, pol, imageRef, digest, indexDigest, namespace)
+	result, err = v.verifyOnce(
+		ctx, state, resolvedPol, imageRef, digest, indexDigest, namespace, cacheNS,
+	)
 	if err != nil {
 		return handleVerifyError(ctx, state, effectiveMode, imageRef, digest, namespace, err)
 	}
 
 	return applyEnforcement(ctx, effectiveMode, result, imageRef)
+}
+
+func cacheNamespaceKey(namespace string, ruleIdx int) string {
+	if ruleIdx < 0 {
+		return namespace
+	}
+
+	return namespace + "\x00r" + strconv.Itoa(ruleIdx)
 }
 
 func handleVerifyError(
@@ -425,9 +437,9 @@ func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 func (v *Verifier) handleCacheHit(
 	ctx context.Context, state *snapshot,
 	mode config.VerificationMode,
-	imageRef, digest, namespace string,
+	imageRef, digest, namespace, cacheNS string,
 ) (*types.Result, error) {
-	cached := state.cache.Get(digest, namespace)
+	cached := state.cache.Get(digest, cacheNS)
 	if cached == nil {
 		state.metrics.CacheMissesTotal.Inc()
 
@@ -617,9 +629,9 @@ func cacheAffectingFieldsChanged(prev, next *config.Config) bool {
 
 func (v *Verifier) verifyOnce(
 	ctx context.Context, state *snapshot, pol *policy.Policy,
-	imageRef, digest, indexDigest, namespace string,
+	imageRef, digest, indexDigest, namespace, cacheNS string,
 ) (*types.Result, error) {
-	flightKey := digest + "\x00" + namespace
+	flightKey := digest + "\x00" + cacheNS
 
 	flightCh := v.inflight.DoChan(flightKey, func() (any, error) {
 		// Add(1) is inside the closure so only the executing goroutine
@@ -630,7 +642,7 @@ func (v *Verifier) verifyOnce(
 		v.inflightWg.Add(1)
 		defer v.inflightWg.Done()
 
-		if cached := state.cache.Get(digest, namespace); cached != nil {
+		if cached := state.cache.Get(digest, cacheNS); cached != nil {
 			return cached, nil
 		}
 
@@ -646,9 +658,9 @@ func (v *Verifier) verifyOnce(
 		result := runChecks(checkCtx, state, pol, imageRef, digest, indexDigest, namespace)
 
 		if resultShouldUseShorterTTL(result) && state.config.CacheFailureTTL.Duration > 0 {
-			state.cache.SetWithTTL(digest, namespace, result, state.config.CacheFailureTTL.Duration)
+			state.cache.SetWithTTL(digest, cacheNS, result, state.config.CacheFailureTTL.Duration)
 		} else {
-			state.cache.Set(digest, namespace, result)
+			state.cache.Set(digest, cacheNS, result)
 		}
 
 		return result, nil

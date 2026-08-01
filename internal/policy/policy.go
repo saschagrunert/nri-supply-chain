@@ -115,28 +115,18 @@ var (
 	ErrModeNotStricter = errors.New(
 		"namespace policy mode cannot be less strict than the global verification mode",
 	)
+
+	// ErrRuleImagesRequired indicates a rule has no images patterns.
+	ErrRuleImagesRequired = errors.New(
+		"rules[].images is required and must be non-empty",
+	)
 )
 
-// Policy defines the trust roots and per-namespace verification settings.
-type Policy struct {
-	// Mode overrides the global verification mode for this namespace.
-	// Valid values: "disabled", "warn", "enforce". When empty, the global mode applies.
-	// The per-namespace mode can only be equal to or stricter than the global
-	// mode (disabled < warn < enforce).
-	Mode config.VerificationMode `json:"mode,omitempty" jsonschema:"enum=disabled,enum=warn,enum=enforce"`
-	// Inherits, when true, causes this namespace policy to inherit unset
-	// fields from the default policy. Only valid on namespace policies.
-	Inherits *bool `json:"inherits,omitempty"`
+// Sections groups the verification settings that can be overridden
+// per-image via ImageRule. Embedded in both Policy and ImageRule.
+type Sections struct {
 	// Trust contains trust roots for verification (builders, verifiers, issuers, etc.).
 	Trust *TrustPolicy `json:"trust,omitempty"`
-	// Include is a list of glob patterns for images that require verification.
-	// When set, only images matching at least one pattern are verified; all
-	// others skip verification. When empty, all images are eligible for
-	// verification (the default). If both Include and Exclude are set,
-	// Exclude takes precedence: an image matching both is skipped.
-	Include []string `json:"include,omitempty"`
-	// Exclude is a list of glob patterns for images that skip verification.
-	Exclude []string `json:"exclude,omitempty"`
 	// SLSA contains SLSA provenance verification settings.
 	SLSA *SLSAPolicy `json:"slsa,omitempty"`
 	// VEX contains VEX verification settings.
@@ -145,6 +135,32 @@ type Policy struct {
 	VSA *VSAPolicy `json:"vsa,omitempty"`
 	// Signatures contains attestation signature verification settings.
 	Signatures *SignaturesPolicy `json:"signatures,omitempty"`
+}
+
+// Policy defines the trust roots and per-namespace verification settings.
+type Policy struct {
+	Sections
+
+	// Mode overrides the global verification mode for this namespace.
+	// Valid values: "disabled", "warn", "enforce". When empty, the global mode applies.
+	// The per-namespace mode can only be equal to or stricter than the global
+	// mode (disabled < warn < enforce).
+	Mode config.VerificationMode `json:"mode,omitempty" jsonschema:"enum=disabled,enum=warn,enum=enforce"`
+	// Inherits, when true, causes this namespace policy to inherit unset
+	// fields from the default policy. Only valid on namespace policies.
+	Inherits *bool `json:"inherits,omitempty"`
+	// Include is a list of glob patterns for images that require verification.
+	// When set, only images matching at least one pattern are verified; all
+	// others skip verification. When empty, all images are eligible for
+	// verification (the default). If both Include and Exclude are set,
+	// Exclude takes precedence: an image matching both is skipped.
+	Include []string `json:"include,omitempty"`
+	// Exclude is a list of glob patterns for images that skip verification.
+	Exclude []string `json:"exclude,omitempty"`
+	// Rules is an ordered list of per-image verification overrides. When an
+	// image matches a rule's Images patterns, the rule's non-nil fields
+	// override the base policy for that verification. First match wins.
+	Rules []ImageRule `json:"rules,omitempty"`
 }
 
 // TrustPolicy contains trust roots for verification.
@@ -228,6 +244,18 @@ type SignaturesPolicy struct {
 	RequireTransparencyLog bool `json:"requireTransparencyLog,omitempty"`
 }
 
+// ImageRule defines per-image verification overrides within a namespace policy.
+// When an image matches the glob patterns in Images, the non-nil fields in this
+// rule override the corresponding fields of the base policy. The first matching
+// rule wins (rules are evaluated in array order).
+type ImageRule struct {
+	Sections
+
+	// Images is a required list of glob patterns. An image matching any
+	// pattern is considered a match for this rule.
+	Images []string `json:"images"`
+}
+
 // EffectiveMode returns the per-namespace mode if set, otherwise the global mode.
 func (p *Policy) EffectiveMode(global config.VerificationMode) config.VerificationMode {
 	if p.Mode != "" {
@@ -293,19 +321,15 @@ func (p *Policy) Hash() (string, error) {
 
 // MergeWithDefault creates a new policy by starting from a copy of the default
 // policy and overriding fields that are set in the namespace policy. Each
-// top-level section (Trust, Include, Exclude, SLSA, VEX, VSA, Signatures) is
-// replaced entirely if set in the namespace policy. The Inherits field is
-// cleared on the result. Inherited structs are shallow-copied to prevent
-// mutations from affecting the default.
+// top-level section (Trust, Include, Exclude, SLSA, VEX, VSA, Signatures,
+// Rules) is replaced entirely if set in the namespace policy. The Inherits
+// field is cleared on the result. Inherited structs are shallow-copied to
+// prevent mutations from affecting the default.
 func MergeWithDefault(namespace, defaultPol *Policy) *Policy {
 	merged := clonePolicy(defaultPol)
 
 	if namespace.Mode != "" {
 		merged.Mode = namespace.Mode
-	}
-
-	if namespace.Trust != nil {
-		merged.Trust = cloneTrust(namespace.Trust)
 	}
 
 	if namespace.Include != nil {
@@ -316,25 +340,10 @@ func MergeWithDefault(namespace, defaultPol *Policy) *Policy {
 		merged.Exclude = slices.Clone(namespace.Exclude)
 	}
 
-	if namespace.SLSA != nil {
-		slsaCopy := *namespace.SLSA
-		slsaCopy.KnownParameters = slices.Clone(slsaCopy.KnownParameters)
-		merged.SLSA = &slsaCopy
-	}
+	applySections(&merged.Sections, namespace.Sections)
 
-	if namespace.VEX != nil {
-		vexCopy := *namespace.VEX
-		merged.VEX = &vexCopy
-	}
-
-	if namespace.VSA != nil {
-		vsaCopy := *namespace.VSA
-		merged.VSA = &vsaCopy
-	}
-
-	if namespace.Signatures != nil {
-		sigCopy := *namespace.Signatures
-		merged.Signatures = &sigCopy
+	if namespace.Rules != nil {
+		merged.Rules = cloneRules(namespace.Rules)
 	}
 
 	return merged
@@ -342,37 +351,99 @@ func MergeWithDefault(namespace, defaultPol *Policy) *Policy {
 
 func clonePolicy(pol *Policy) *Policy {
 	clone := &Policy{
-		Mode:    pol.Mode,
-		Include: slices.Clone(pol.Include),
-		Exclude: slices.Clone(pol.Exclude),
+		Mode:     pol.Mode,
+		Include:  slices.Clone(pol.Include),
+		Exclude:  slices.Clone(pol.Exclude),
+		Sections: cloneSections(pol.Sections),
 	}
 
-	if pol.Trust != nil {
-		clone.Trust = cloneTrust(pol.Trust)
-	}
-
-	if pol.SLSA != nil {
-		sp := *pol.SLSA
-		sp.KnownParameters = slices.Clone(sp.KnownParameters)
-		clone.SLSA = &sp
-	}
-
-	if pol.VEX != nil {
-		v := *pol.VEX
-		clone.VEX = &v
-	}
-
-	if pol.VSA != nil {
-		v := *pol.VSA
-		clone.VSA = &v
-	}
-
-	if pol.Signatures != nil {
-		s := *pol.Signatures
-		clone.Signatures = &s
+	if pol.Rules != nil {
+		clone.Rules = cloneRules(pol.Rules)
 	}
 
 	return clone
+}
+
+// ApplyRule creates a new policy by cloning the base and overriding fields
+// that are set in the rule. The returned policy has Rules cleared.
+func ApplyRule(base *Policy, rule *ImageRule) *Policy {
+	resolved := clonePolicy(base)
+	resolved.Rules = nil
+
+	applySections(&resolved.Sections, rule.Sections)
+
+	return resolved
+}
+
+func cloneRules(rules []ImageRule) []ImageRule {
+	cloned := make([]ImageRule, len(rules))
+
+	for idx, rule := range rules {
+		cloned[idx] = ImageRule{
+			Images:   slices.Clone(rule.Images),
+			Sections: cloneSections(rule.Sections),
+		}
+	}
+
+	return cloned
+}
+
+func cloneSections(src Sections) Sections {
+	var dst Sections
+
+	if src.Trust != nil {
+		dst.Trust = cloneTrust(src.Trust)
+	}
+
+	if src.SLSA != nil {
+		sp := *src.SLSA
+		sp.KnownParameters = slices.Clone(sp.KnownParameters)
+		dst.SLSA = &sp
+	}
+
+	if src.VEX != nil {
+		v := *src.VEX
+		dst.VEX = &v
+	}
+
+	if src.VSA != nil {
+		v := *src.VSA
+		dst.VSA = &v
+	}
+
+	if src.Signatures != nil {
+		s := *src.Signatures
+		dst.Signatures = &s
+	}
+
+	return dst
+}
+
+func applySections(dst *Sections, src Sections) {
+	if src.Trust != nil {
+		dst.Trust = cloneTrust(src.Trust)
+	}
+
+	if src.SLSA != nil {
+		sp := *src.SLSA
+		sp.KnownParameters = slices.Clone(sp.KnownParameters)
+		dst.SLSA = &sp
+	}
+
+	if src.VEX != nil {
+		v := *src.VEX
+		dst.VEX = &v
+	}
+
+	if src.VSA != nil {
+		v := *src.VSA
+		dst.VSA = &v
+	}
+
+	if src.Signatures != nil {
+		s := *src.Signatures
+		dst.Signatures = &s
+	}
 }
 
 func cloneTrust(tp *TrustPolicy) *TrustPolicy {
@@ -450,6 +521,11 @@ func (p *Policy) Validate() error {
 		p.resolveVSADuration()
 	}
 
+	err = p.validateRules()
+	if err != nil {
+		errs = append(errs, err)
+	}
+
 	return errors.Join(errs...)
 }
 
@@ -458,12 +534,20 @@ func (p *Policy) Validate() error {
 // The mode parameter is the effective mode for this policy (per-namespace
 // mode if set, otherwise the global mode).
 func (p *Policy) ValidateEnforce() error {
-	if p.Trust == nil {
-		return nil
+	if p.Trust != nil {
+		if len(p.Trust.Issuers) > 0 && len(p.Trust.SANPatterns) == 0 {
+			return ErrSANPatternsRequired
+		}
 	}
 
-	if len(p.Trust.Issuers) > 0 && len(p.Trust.SANPatterns) == 0 {
-		return ErrSANPatternsRequired
+	for idx, rule := range p.Rules {
+		if rule.Trust == nil {
+			continue
+		}
+
+		if len(rule.Trust.Issuers) > 0 && len(rule.Trust.SANPatterns) == 0 {
+			return fmt.Errorf("rules[%d]: %w", idx, ErrSANPatternsRequired)
+		}
 	}
 
 	return nil
@@ -475,20 +559,34 @@ func (p *Policy) ValidateEnforce() error {
 //
 // TOCTOU: the file could change between Lstat and LoadVerifierFromPEMFile.
 func (p *Policy) ValidateRuntime() error {
-	if p.Trust == nil {
-		return nil
-	}
-
 	var errs []error
 
-	for idx, verif := range p.Trust.Verifiers {
-		for kidx, key := range verif.Keys {
-			err := validateKeyFile(
-				idx, verif.ID, key,
-				fmt.Sprintf("keys[%d] file", kidx),
-			)
-			if err != nil {
-				errs = append(errs, err)
+	if p.Trust != nil {
+		for idx, verif := range p.Trust.Verifiers {
+			for kidx, key := range verif.Keys {
+				prefix := fmt.Sprintf("trust.verifiers[%d]", idx)
+
+				err := validateKeyFile(prefix, verif.ID, key, kidx)
+				if err != nil {
+					errs = append(errs, err)
+				}
+			}
+		}
+	}
+
+	for rIdx, rule := range p.Rules {
+		if rule.Trust == nil {
+			continue
+		}
+
+		for idx, verif := range rule.Trust.Verifiers {
+			for kidx, key := range verif.Keys {
+				prefix := fmt.Sprintf("rules[%d].trust.verifiers[%d]", rIdx, idx)
+
+				err := validateKeyFile(prefix, verif.ID, key, kidx)
+				if err != nil {
+					errs = append(errs, err)
+				}
 			}
 		}
 	}
@@ -496,27 +594,22 @@ func (p *Policy) ValidateRuntime() error {
 	return errors.Join(errs...)
 }
 
-func validateKeyFile(idx int, verifierID, keyPath, label string) error {
+func validateKeyFile(prefix, verifierID, keyPath string, keyIdx int) error {
+	label := fmt.Sprintf("%s %q: keys[%d] file %q", prefix, verifierID, keyIdx, keyPath)
+
 	info, err := os.Lstat(keyPath)
 	if err != nil {
-		return fmt.Errorf(
-			"trust.verifiers[%d] %q: %s %q: %w",
-			idx, verifierID, label, keyPath, err,
-		)
+		return fmt.Errorf("%s: %w", label, err)
 	}
 
 	if info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf(
-			"trust.verifiers[%d] %q: %s %q: %w (symlinks are not allowed)",
-			idx, verifierID, label, keyPath, ErrNotRegularFile,
+			"%s: %w (symlinks are not allowed)", label, ErrNotRegularFile,
 		)
 	}
 
 	if !info.Mode().IsRegular() {
-		return fmt.Errorf(
-			"trust.verifiers[%d] %q: %s %q: %w",
-			idx, verifierID, label, keyPath, ErrNotRegularFile,
-		)
+		return fmt.Errorf("%s: %w", label, ErrNotRegularFile)
 	}
 
 	return nil
@@ -983,6 +1076,72 @@ func (p *Policy) validateVSA() error {
 	}
 
 	return errors.Join(errs...)
+}
+
+func (p *Policy) validateRules() error {
+	if len(p.Rules) == 0 {
+		return nil
+	}
+
+	var errs []error
+
+	for idx := range p.Rules {
+		errs = append(errs, p.validateRule(idx)...)
+	}
+
+	return errors.Join(errs...)
+}
+
+func (p *Policy) validateRule(idx int) []error {
+	rule := &p.Rules[idx]
+
+	if len(rule.Images) == 0 {
+		return []error{fmt.Errorf(
+			"%w: rules[%d]", ErrRuleImagesRequired, idx,
+		)}
+	}
+
+	var errs []error
+
+	err := validateNonEmpty(fmt.Sprintf("rules[%d].images", idx), rule.Images)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	err = validateGlobPatterns(fmt.Sprintf("rules[%d].images", idx), rule.Images)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	rulePol := &Policy{
+		Sections: rule.Sections,
+	}
+
+	err = rulePol.validateTrust()
+	if err != nil {
+		errs = append(errs, fmt.Errorf("rules[%d]: %w", idx, err))
+	}
+
+	err = rulePol.validateSLSA()
+	if err != nil {
+		errs = append(errs, fmt.Errorf("rules[%d]: %w", idx, err))
+	}
+
+	err = rulePol.validateVEX()
+	if err != nil {
+		errs = append(errs, fmt.Errorf("rules[%d]: %w", idx, err))
+	}
+
+	err = rulePol.validateVSA()
+	if err != nil {
+		errs = append(errs, fmt.Errorf("rules[%d]: %w", idx, err))
+	} else {
+		// resolveVSADuration mutates rulePol.VSA.MaxAgeDuration, which
+		// is the same pointer as p.Rules[idx].VSA, so no copy-back needed.
+		rulePol.resolveVSADuration()
+	}
+
+	return errs
 }
 
 // resolveVSADuration parses MaxAge into MaxAgeDuration. Safe to call only

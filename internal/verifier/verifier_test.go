@@ -1986,3 +1986,271 @@ func TestVerifyDetachedVerificationEnforceRetryHitsCache(t *testing.T) {
 		t.Error("expected cache hit on retry after detached verification completed")
 	}
 }
+
+func TestVerifyImageRuleMatchOverrides(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{
+		"trust": {"builders": [{"id": "test", "maxLevel": 3}]},
+		"slsa": {"missingPolicy": "deny"},
+		"rules": [
+			{
+				"images": ["docker.io/trusted/**"],
+				"slsa": {"missingPolicy": "allow"}
+			}
+		]
+	}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+	cfg.PolicyDir = dir
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	// Image matching the rule gets allow policy (so missing SLSA is fine).
+	result, err := verif.Verify(
+		context.Background(),
+		"docker.io/trusted/app:latest",
+		testDigest, "", "default",
+	)
+	testutil.AssertNoError(t, err)
+
+	if !result.Allowed {
+		t.Errorf("expected rule-matched image to be allowed, got denied: %s",
+			result.Reason)
+	}
+}
+
+func TestVerifyImageRuleNoMatchUsesBase(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{
+		"trust": {"builders": [{"id": "test", "maxLevel": 3}]},
+		"slsa": {"missingPolicy": "deny"},
+		"rules": [
+			{
+				"images": ["docker.io/trusted/**"],
+				"slsa": {"missingPolicy": "allow"}
+			}
+		]
+	}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+	cfg.PolicyDir = dir
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	// Image not matching any rule uses base policy (deny).
+	_, err = verif.Verify(
+		context.Background(),
+		"docker.io/other/app:latest",
+		testDigest, "", "default",
+	)
+
+	if !errors.Is(err, verifier.ErrVerificationFailed) {
+		t.Fatalf("expected ErrVerificationFailed for non-matching image, got %v", err)
+	}
+}
+
+func TestVerifyImageRuleFirstMatchWins(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{
+		"trust": {"builders": [{"id": "test", "maxLevel": 3}]},
+		"slsa": {"missingPolicy": "deny"},
+		"rules": [
+			{
+				"images": ["docker.io/myorg/**"],
+				"slsa": {"missingPolicy": "allow"}
+			},
+			{
+				"images": ["docker.io/**"],
+				"slsa": {"missingPolicy": "deny"}
+			}
+		]
+	}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+	cfg.PolicyDir = dir
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	// Image matches both rules; first rule (allow) should win.
+	result, err := verif.Verify(
+		context.Background(),
+		"docker.io/myorg/app:latest",
+		testDigest, "", "default",
+	)
+	testutil.AssertNoError(t, err)
+
+	if !result.Allowed {
+		t.Errorf("expected first matching rule to win (allow), got denied: %s",
+			result.Reason)
+	}
+}
+
+func TestResolveImagePolicyNoRules(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{
+		Sections: policy.Sections{
+			SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
+		},
+	}
+
+	resolved, ruleIdx := verifier.ExportResolveImagePolicy(
+		context.Background(), pol, "ghcr.io/myorg/app:latest",
+	)
+
+	if ruleIdx != -1 {
+		t.Errorf("expected ruleIdx -1 for no rules, got %d", ruleIdx)
+	}
+
+	if resolved != pol {
+		t.Error("expected same policy returned when no rules")
+	}
+}
+
+func TestResolveImagePolicyRuleMatch(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{
+		Sections: policy.Sections{
+			SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
+		},
+		Rules: []policy.ImageRule{
+			{
+				Images: []string{"ghcr.io/myorg/**"},
+				Sections: policy.Sections{
+					SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionAllow},
+				},
+			},
+		},
+	}
+
+	resolved, ruleIdx := verifier.ExportResolveImagePolicy(
+		context.Background(), pol, "ghcr.io/myorg/app:latest",
+	)
+
+	if ruleIdx != 0 {
+		t.Errorf("expected ruleIdx 0, got %d", ruleIdx)
+	}
+
+	if resolved.SLSAMissingPolicy() != types.ActionAllow {
+		t.Errorf("expected rule SLSA allow, got %v", resolved.SLSAMissingPolicy())
+	}
+
+	if resolved.Rules != nil {
+		t.Error("expected resolved policy to have nil Rules")
+	}
+}
+
+func TestResolveImagePolicyNoMatch(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{
+		Sections: policy.Sections{
+			SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
+		},
+		Rules: []policy.ImageRule{
+			{
+				Images: []string{"ghcr.io/specific/**"},
+				Sections: policy.Sections{
+					SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionAllow},
+				},
+			},
+		},
+	}
+
+	resolved, ruleIdx := verifier.ExportResolveImagePolicy(
+		context.Background(), pol, "docker.io/other/app:latest",
+	)
+
+	if ruleIdx != -1 {
+		t.Errorf("expected ruleIdx -1 for no match, got %d", ruleIdx)
+	}
+
+	if resolved.SLSAMissingPolicy() != types.ActionDeny {
+		t.Errorf("expected base SLSA deny, got %v", resolved.SLSAMissingPolicy())
+	}
+}
+
+func TestCacheNamespaceKey(t *testing.T) {
+	t.Parallel()
+
+	t.Run("no rule returns namespace", func(t *testing.T) {
+		t.Parallel()
+
+		key := verifier.ExportCacheNamespaceKey("default", -1)
+		if key != "default" {
+			t.Errorf("expected %q, got %q", "default", key)
+		}
+	})
+
+	t.Run("with rule includes index", func(t *testing.T) {
+		t.Parallel()
+
+		key := verifier.ExportCacheNamespaceKey("default", 0)
+		if key == "default" {
+			t.Error("expected cache key to differ from plain namespace when rule matched")
+		}
+	})
+
+	t.Run("different rules produce different keys", func(t *testing.T) {
+		t.Parallel()
+
+		key0 := verifier.ExportCacheNamespaceKey("default", 0)
+		key1 := verifier.ExportCacheNamespaceKey("default", 1)
+
+		if key0 == key1 {
+			t.Error("expected different cache keys for different rule indices")
+		}
+	})
+}
+
+func TestVerifyImageRuleInheritance(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{
+		"trust": {"builders": [{"id": "test", "maxLevel": 3}]},
+		"slsa": {"missingPolicy": "deny"},
+		"rules": [
+			{
+				"images": ["docker.io/trusted/**"],
+				"slsa": {"missingPolicy": "allow"}
+			}
+		]
+	}`)
+	testutil.WritePolicy(t, dir, "staging.json", `{
+		"inherits": true
+	}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+	cfg.PolicyDir = dir
+
+	verif, err := verifier.New(cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	// Staging namespace inherits rules from default.
+	result, err := verif.Verify(
+		context.Background(),
+		"docker.io/trusted/app:latest",
+		testDigest, "", "staging",
+	)
+	testutil.AssertNoError(t, err)
+
+	if !result.Allowed {
+		t.Errorf("expected inherited rule to allow image, got denied: %s",
+			result.Reason)
+	}
+}

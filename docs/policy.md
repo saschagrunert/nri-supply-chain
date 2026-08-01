@@ -22,6 +22,7 @@ patterns for the nri-supply-chain plugin.
   - [<code>vex</code> (object)](#vex-object)
   - [<code>vsa</code> (object)](#vsa-object)
   - [<code>signatures</code> (object)](#signatures-object)
+  - [<code>rules</code> (array of objects)](#rules-array-of-objects)
 - [Verification Types](#verification-types)
   - [SLSA Provenance](#slsa-provenance)
     - [Custom build systems](#custom-build-systems)
@@ -34,6 +35,7 @@ patterns for the nri-supply-chain plugin.
 - [Namespace Overrides](#namespace-overrides)
 - [Deployment Patterns](#deployment-patterns)
   - [Gradual rollout](#gradual-rollout)
+  - [Per-image policy rules](#per-image-policy-rules)
   - [VSA-accelerated verification](#vsa-accelerated-verification)
   - [Key rotation](#key-rotation)
   - [Multi-verification mode](#multi-verification-mode)
@@ -183,17 +185,57 @@ nri-supply-chain json-schema policy
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$ref": "#/$defs/Policy",
   "$defs": {
+    "ImageRule": {
+      "properties": {
+        "trust": {
+          "$ref": "#/$defs/TrustPolicy"
+        },
+        "slsa": {
+          "$ref": "#/$defs/SLSAPolicy"
+        },
+        "vex": {
+          "$ref": "#/$defs/VEXPolicy"
+        },
+        "vsa": {
+          "$ref": "#/$defs/VSAPolicy"
+        },
+        "signatures": {
+          "$ref": "#/$defs/SignaturesPolicy"
+        },
+        "images": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": ["images"]
+    },
     "Policy": {
       "properties": {
+        "trust": {
+          "$ref": "#/$defs/TrustPolicy"
+        },
+        "slsa": {
+          "$ref": "#/$defs/SLSAPolicy"
+        },
+        "vex": {
+          "$ref": "#/$defs/VEXPolicy"
+        },
+        "vsa": {
+          "$ref": "#/$defs/VSAPolicy"
+        },
+        "signatures": {
+          "$ref": "#/$defs/SignaturesPolicy"
+        },
         "mode": {
           "type": "string",
           "enum": ["disabled", "warn", "enforce"]
         },
         "inherits": {
           "type": "boolean"
-        },
-        "trust": {
-          "$ref": "#/$defs/TrustPolicy"
         },
         "include": {
           "items": {
@@ -207,17 +249,11 @@ nri-supply-chain json-schema policy
           },
           "type": "array"
         },
-        "slsa": {
-          "$ref": "#/$defs/SLSAPolicy"
-        },
-        "vex": {
-          "$ref": "#/$defs/VEXPolicy"
-        },
-        "vsa": {
-          "$ref": "#/$defs/VSAPolicy"
-        },
-        "signatures": {
-          "$ref": "#/$defs/SignaturesPolicy"
+        "rules": {
+          "items": {
+            "$ref": "#/$defs/ImageRule"
+          },
+          "type": "array"
         }
       },
       "additionalProperties": false,
@@ -457,6 +493,68 @@ given type remains, the per-type `missingPolicy` applies.
 | ------------------------ | ---- | ------- | ------------------------------------------------------------------- |
 | `requireTransparencyLog` | bool | `false` | Require Rekor transparency log inclusion for attestation signatures |
 
+### `rules` (array of objects)
+
+Per-image policy overrides. Each rule matches images by glob patterns and
+overrides specific verification sections for those images. The first matching
+rule wins; images that do not match any rule use the base policy.
+
+Each rule is an object with:
+
+| Field        | Type   | Required | Description                                               |
+| ------------ | ------ | -------- | --------------------------------------------------------- |
+| `images`     | array  | yes      | Glob patterns to match against image references           |
+| `trust`      | object | no       | Override trust roots (same schema as top-level `trust`)   |
+| `slsa`       | object | no       | Override SLSA settings (same schema as top-level `slsa`)  |
+| `vex`        | object | no       | Override VEX settings (same schema as top-level `vex`)    |
+| `vsa`        | object | no       | Override VSA settings (same schema as top-level `vsa`)    |
+| `signatures` | object | no       | Override signature settings (same schema as `signatures`) |
+
+Fields not set in a rule are inherited from the base policy. The `images`
+patterns use the same glob syntax as `include` and `exclude`.
+
+Rules are evaluated after `include`/`exclude` filtering. An image that is
+excluded never reaches rule evaluation.
+
+When a namespace policy sets `"inherits": true`, rules are inherited from the
+default policy unless the namespace policy defines its own `rules` array (which
+replaces the default rules entirely, same as other top-level sections). Setting
+`"rules": []` (an empty array) explicitly clears inherited rules so that the
+namespace falls back to its base policy for all images.
+
+Example:
+
+```json
+{
+  "trust": {
+    "builders": [
+      {
+        "id": "https://github.com/actions/runner",
+        "maxLevel": 3
+      }
+    ],
+    "issuers": ["https://token.actions.githubusercontent.com"],
+    "sanPatterns": ["https://github.com/myorg/**"]
+  },
+  "slsa": { "missingPolicy": "warn" },
+  "rules": [
+    {
+      "images": ["ghcr.io/myorg/critical-*"],
+      "slsa": { "missingPolicy": "deny" },
+      "vex": { "missingPolicy": "deny" }
+    },
+    {
+      "images": ["ghcr.io/myorg/internal-*"],
+      "slsa": { "missingPolicy": "allow" }
+    }
+  ]
+}
+```
+
+In this example, `ghcr.io/myorg/critical-app:latest` requires provenance and
+VEX attestations. `ghcr.io/myorg/internal-tool:v1` allows missing provenance.
+All other images use the base policy (`warn` on missing provenance).
+
 ## Verification Types
 
 ### SLSA Provenance
@@ -635,9 +733,9 @@ A file named `<namespace>.json` in the policy directory overrides
 
 By default, the override is a full replacement. If a namespace policy sets
 `"inherits": true`, unset top-level fields (`trust`, `include`, `exclude`,
-`slsa`, `vex`, `vsa`, `signatures`) are inherited from the default policy. Each
-top-level section that is set in the namespace policy replaces the default's
-section entirely. The default policy itself cannot set `inherits`.
+`slsa`, `vex`, `vsa`, `signatures`, `rules`) are inherited from the default
+policy. Each top-level section that is set in the namespace policy replaces
+the default's section entirely. The default policy itself cannot set `inherits`.
 
 This is useful for:
 
@@ -747,6 +845,47 @@ warn mode):
   }
 }
 ```
+
+### Per-image policy rules
+
+Apply different verification strictness to different images within the same
+namespace. This avoids the need for separate namespace policies when images
+share a namespace but have different risk profiles:
+
+```json
+{
+  "trust": {
+    "builders": [
+      {
+        "id": "https://github.com/actions/runner",
+        "maxLevel": 3
+      }
+    ],
+    "issuers": ["https://token.actions.githubusercontent.com"],
+    "sanPatterns": ["https://github.com/myorg/**"]
+  },
+  "slsa": { "missingPolicy": "warn" },
+  "vex": { "missingPolicy": "allow" },
+  "rules": [
+    {
+      "images": ["ghcr.io/myorg/payment-*", "ghcr.io/myorg/auth-*"],
+      "slsa": { "missingPolicy": "deny" },
+      "vex": { "missingPolicy": "deny" }
+    },
+    {
+      "images": ["ghcr.io/myorg/debug-*"],
+      "slsa": { "missingPolicy": "allow" }
+    }
+  ]
+}
+```
+
+Payment and auth services require full attestation coverage. Debug tools allow
+missing provenance. Everything else gets the base policy (warn on missing
+provenance, allow missing VEX).
+
+Rules use first-match-wins semantics, so place more specific patterns before
+broader ones.
 
 ### VSA-accelerated verification
 
