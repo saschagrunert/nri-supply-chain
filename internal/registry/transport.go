@@ -445,9 +445,17 @@ func ResolveWithRegistries(
 			fallbackOpts = append(fallbackOpts, fallback.TransportOpt)
 		}
 
-		digest, indexDigest, err = ResolveDigest(ctx, fallback.OriginalRef, fallbackOpts...)
+		digest, indexDigest, fallbackErr := ResolveDigest(
+			ctx, fallback.OriginalRef, fallbackOpts...,
+		)
+		if fallbackErr != nil {
+			return "", "", true, fmt.Errorf(
+				"fallback to %s: %w (mirror %s: %w)",
+				fallback.OriginalRef, fallbackErr, rewrittenRef, err,
+			)
+		}
 
-		return digest, indexDigest, true, err
+		return digest, indexDigest, true, nil
 	}
 
 	return digest, indexDigest, false, err

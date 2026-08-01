@@ -437,7 +437,15 @@ func (f *OCIFetcher) fetchWithFallback(
 		return nil, fmt.Errorf("parsing fallback reference: %w", err)
 	}
 
-	return f.fetchWithRetry(ctx, fallbackRef, opts.Digest, fallbackOpts, opts)
+	result, fallbackErr := f.fetchWithRetry(ctx, fallbackRef, opts.Digest, fallbackOpts, opts)
+	if fallbackErr != nil {
+		return nil, fmt.Errorf(
+			"fallback to %s: %w (mirror %s: %w)",
+			fallback.OriginalRef, fallbackErr, mirrorRef, mirrorErr,
+		)
+	}
+
+	return result, nil
 }
 
 func fallbackOriginalHost(originalRef string) string {
