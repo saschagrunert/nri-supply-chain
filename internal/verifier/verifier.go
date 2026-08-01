@@ -227,7 +227,7 @@ func warnPermissiveMissingPolicies(label string, pol *policy.Policy) {
 		)
 	}
 
-	if pol.NotationMissingPolicy() == types.ActionAllow {
+	if pol.Notation != nil && pol.NotationMissingPolicy() == types.ActionAllow {
 		slog.Warn("enforce mode with default Notation missing_policy=allow allows "+
 			"containers without Notation signatures; consider setting notation.missingPolicy=deny",
 			"policy", label,
