@@ -34,6 +34,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/types"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
+	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 )
 
 const (
@@ -1511,5 +1512,128 @@ func TestFetchSkipsCosignTagWhenReferrersExist(t *testing.T) {
 
 	if len(result) != 1 {
 		t.Errorf("expected 1 attestation, got %d", len(result))
+	}
+}
+
+func TestFallbackOriginalHost(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		ref  string
+		want string
+	}{
+		{
+			name: "docker.io reference",
+			ref:  "docker.io/library/nginx:latest",
+			want: "index.docker.io",
+		},
+		{
+			name: "ghcr.io reference",
+			ref:  "ghcr.io/owner/repo:v1",
+			want: "ghcr.io",
+		},
+		{
+			name: "localhost reference",
+			ref:  "localhost:5000/test/image:v1",
+			want: "localhost:5000",
+		},
+		{
+			name: "invalid reference returns input",
+			ref:  "not a valid ref %%",
+			want: "not a valid ref %%",
+		},
+		{
+			name: "empty string returns empty",
+			ref:  "",
+			want: "",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := attestation.ExportFallbackOriginalHost(test.ref)
+			if got != test.want {
+				t.Errorf("fallbackOriginalHost(%q) = %q, want %q", test.ref, got, test.want)
+			}
+		})
+	}
+}
+
+func TestFetchWithFallbackCallsCallback(t *testing.T) {
+	t.Parallel()
+
+	var callbackHost atomic.Value
+
+	fetcher := attestation.NewTestOCIFetcherFull(
+		func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
+			return nil, nil
+		},
+		func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+			return empty.Image, nil
+		},
+		func(_ name.Digest, _ ...remote.Option) (ociV1.ImageIndex, error) {
+			return &fakeImageIndex{manifests: nil, err: nil}, nil
+		},
+	)
+
+	fetcher.SetMirrorFallbackCallback(func(host string) {
+		callbackHost.Store(host)
+	})
+
+	fallback := &registry.FallbackInfo{
+		OriginalRef:  "ghcr.io/owner/repo:v1",
+		TransportOpt: nil,
+	}
+
+	_, _ = fetcher.ExportFetchWithFallback(
+		context.Background(),
+		"mirror.example.com/owner/repo:v1",
+		fallback,
+		errPlainTest,
+		&attestation.FetchOptions{Digest: testFetchDigest},
+	)
+
+	host, ok := callbackHost.Load().(string)
+	if !ok || host != "ghcr.io" {
+		t.Errorf("expected callback with host %q, got %q", "ghcr.io", host)
+	}
+}
+
+func TestFetchWithFallbackInvalidRef(t *testing.T) {
+	t.Parallel()
+
+	fetcher := attestation.NewTestOCIFetcherFull(
+		func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
+			return nil, nil
+		},
+		func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+			return empty.Image, nil
+		},
+		func(_ name.Digest, _ ...remote.Option) (ociV1.ImageIndex, error) {
+			return &fakeImageIndex{manifests: nil, err: nil}, nil
+		},
+	)
+
+	fallback := &registry.FallbackInfo{
+		OriginalRef:  "not valid ref %%",
+		TransportOpt: nil,
+	}
+
+	_, err := fetcher.ExportFetchWithFallback(
+		context.Background(),
+		"mirror.example.com/test:v1",
+		fallback,
+		errPlainTest,
+		&attestation.FetchOptions{Digest: testFetchDigest},
+	)
+	if err == nil {
+		t.Error("expected error for invalid fallback reference")
+	}
+
+	if !strings.Contains(err.Error(), "parsing fallback reference") {
+		t.Errorf("expected 'parsing fallback reference' error, got: %v", err)
 	}
 }

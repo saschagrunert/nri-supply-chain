@@ -220,15 +220,17 @@ func buildTrustPolicyDocument(notationPolicy *policy.NotationPolicy) *trustpolic
 }
 
 // verifySignatureEntry verifies a single Notation signature against the
-// trust policy. Phase 1: verification passes based on trust policy
-// validation alone (performed by the caller). Cryptographic signature
-// verification will be added in a follow-up.
+// trust policy. Verification currently passes based on trust policy
+// validation alone (performed by the caller). Full cryptographic signature
+// verification requires notation-go's repository interface to pull and
+// verify the signature envelope against the trust store certificate chain.
 func verifySignatureEntry(
 	ctx context.Context,
 	signatureRef, imageRef, digest string,
 ) *types.CheckResult {
 	slog.DebugContext(ctx,
-		"Notation signature entry verified via trust policy (cryptographic verification pending)",
+		"Notation signature accepted via trust policy"+
+			" (cryptographic verification not yet implemented)",
 		"image", imageRef,
 		"digest", digest,
 		"signatureRef", signatureRef,
@@ -240,7 +242,7 @@ func verifySignatureEntry(
 func passResult() *types.CheckResult {
 	return types.PassResult(
 		checkType,
-		"Notation trust policy matched (cryptographic verification pending)",
+		"Notation trust policy matched (cryptographic verification not yet implemented)",
 	)
 }
 

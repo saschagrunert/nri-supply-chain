@@ -302,3 +302,61 @@ teardown_file() {
 		--request-timeout="${KUBECTL_TIMEOUT}s"
 	assert_log_contains "Container rejected"
 }
+
+@test "per-image rule overrides base policy for matching image" {
+	write_policy "default" '{
+		"slsa": {"missingPolicy": "deny"},
+		"vex": {"missingPolicy": "allow"},
+		"rules": [
+			{
+				"images": ["localhost:5050/test/*"],
+				"slsa": {"missingPolicy": "allow"}
+			}
+		]
+	}'
+	reload_plugin
+
+	run_pod "rule-match-pod" "$POLICY_IMAGE"
+	wait_for_pod_status "rule-match-pod" "Running"
+
+	write_policy "default" '{
+		"trust": {
+			"builders": [{"id": "https://github.com/actions/runner", "maxLevel": 3}]
+		},
+		"slsa": {"missingPolicy": "deny"},
+		"vex": {"missingPolicy": "allow"}
+	}'
+	reload_plugin
+}
+
+@test "per-image rule does not apply to non-matching image" {
+	local OTHER_IMAGE
+	OTHER_IMAGE=$(push_test_image "other/nomatch:v1")
+
+	write_policy "default" '{
+		"slsa": {"missingPolicy": "deny"},
+		"vex": {"missingPolicy": "allow"},
+		"rules": [
+			{
+				"images": ["localhost:5050/test/policy-test:*"],
+				"slsa": {"missingPolicy": "allow"}
+			}
+		]
+	}'
+	reload_plugin
+
+	run_pod "rule-hit-pod" "$POLICY_IMAGE"
+	wait_for_pod_status "rule-hit-pod" "Running"
+
+	run_pod "rule-miss-pod" "$OTHER_IMAGE" || true
+	assert_log_contains "Container rejected"
+
+	write_policy "default" '{
+		"trust": {
+			"builders": [{"id": "https://github.com/actions/runner", "maxLevel": 3}]
+		},
+		"slsa": {"missingPolicy": "deny"},
+		"vex": {"missingPolicy": "allow"}
+	}'
+	reload_plugin
+}

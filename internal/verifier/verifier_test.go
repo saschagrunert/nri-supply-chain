@@ -22,6 +22,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -2389,4 +2390,54 @@ func TestVerifyImageRuleInheritance(t *testing.T) {
 		t.Errorf("expected inherited rule to allow image, got denied: %s",
 			result.Reason)
 	}
+}
+
+func TestConcurrentVerifyAndReload(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{
+		"slsa": {"missingPolicy": "allow"},
+		"vex": {"missingPolicy": "allow"}
+	}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+	cfg.CacheTTL = config.Duration{Duration: time.Second}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	verif, err := verifier.New(ctx, cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	defer verif.Stop()
+
+	const numVerifiers = 10
+
+	var wg sync.WaitGroup
+
+	for i := range numVerifiers {
+		wg.Go(func() {
+			digest := fmt.Sprintf("sha256:%064x", i)
+
+			for ctx.Err() == nil {
+				_, _ = verif.Verify(ctx, "nginx:latest", digest, "", "default")
+			}
+		})
+	}
+
+	wg.Go(func() {
+		for ctx.Err() == nil {
+			reloadCfg := config.DefaultConfig()
+			reloadCfg.Verification = config.ModeWarn
+			reloadCfg.PolicyDir = dir
+			reloadCfg.CacheTTL = config.Duration{Duration: time.Second}
+
+			_ = verif.Reload(ctx, reloadCfg)
+		}
+	})
+
+	wg.Wait()
 }
