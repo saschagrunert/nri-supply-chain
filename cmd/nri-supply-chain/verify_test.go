@@ -39,6 +39,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/types"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
+	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	internaltypes "github.com/saschagrunert/nri-supply-chain/internal/types"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
@@ -76,7 +77,7 @@ func TestOutputVerifyResultAllowed(t *testing.T) {
 
 	out := captureVerifyOutput(
 		t, testImageNginx, testDigest,
-		verifier.DefaultPolicyLabel, true, "verified", checks,
+		policy.DefaultPolicyLabel, true, "verified", checks,
 	)
 
 	if out.Image != testImageNginx {
@@ -87,8 +88,8 @@ func TestOutputVerifyResultAllowed(t *testing.T) {
 		t.Errorf("Digest = %q, want %q", out.Digest, testDigest)
 	}
 
-	if out.Namespace != verifier.DefaultPolicyLabel {
-		t.Errorf("Namespace = %q, want %q", out.Namespace, verifier.DefaultPolicyLabel)
+	if out.Namespace != policy.DefaultPolicyLabel {
+		t.Errorf("Namespace = %q, want %q", out.Namespace, policy.DefaultPolicyLabel)
 	}
 
 	if !out.Allowed {
@@ -481,7 +482,7 @@ func TestRunVerifyInvalidOutputFormat(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 
-	if code := runVerify(testImageV1, verifier.DefaultPolicyLabel, "xml", cfg); code != exitError {
+	if code := runVerify(testImageV1, policy.DefaultPolicyLabel, "xml", cfg); code != exitError {
 		t.Errorf("exit code = %d, want %d", code, exitError)
 	}
 }
@@ -500,7 +501,7 @@ func TestRunVerifyResolveDigestFails(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = dir
 
-	code := runVerify(":::invalid-ref", verifier.DefaultPolicyLabel, outputFormatJSON, cfg)
+	code := runVerify(":::invalid-ref", policy.DefaultPolicyLabel, outputFormatJSON, cfg)
 	if code != exitError {
 		t.Errorf("exit code = %d, want %d", code, exitError)
 	}
@@ -511,7 +512,7 @@ func TestRunVerifyDisabledErrors(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 
-	code := runVerify("example.com/test:latest", verifier.DefaultPolicyLabel, outputFormatJSON, cfg)
+	code := runVerify("example.com/test:latest", policy.DefaultPolicyLabel, outputFormatJSON, cfg)
 	if code != exitError {
 		t.Errorf("expected exit code %d for disabled verification, got %d", exitError, code)
 	}
@@ -578,7 +579,7 @@ func TestRunVerifyExitCodes(t *testing.T) {
 
 			var buf bytes.Buffer
 
-			code := runVerifyTo(&buf, imgRef, verifier.DefaultPolicyLabel, outputFormatJSON, cfg)
+			code := runVerifyTo(&buf, imgRef, policy.DefaultPolicyLabel, outputFormatJSON, cfg)
 			if code != test.wantCode {
 				t.Errorf("exit code = %d, want %d", code, test.wantCode)
 			}
@@ -639,7 +640,7 @@ func TestRunVerifyVerifierNewError(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = policyDir
 
-	code := runVerify("test:latest", verifier.DefaultPolicyLabel, outputFormatJSON, cfg)
+	code := runVerify("test:latest", policy.DefaultPolicyLabel, outputFormatJSON, cfg)
 	if code != exitError {
 		t.Errorf("exit code = %d, want %d", code, exitError)
 	}
@@ -675,7 +676,7 @@ func TestRunVerifyWarnModeWithChecks(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = policyDir
 
-	out, code := captureRunVerify(t, imgRef, verifier.DefaultPolicyLabel, outputFormatJSON, cfg)
+	out, code := captureRunVerify(t, imgRef, policy.DefaultPolicyLabel, outputFormatJSON, cfg)
 
 	if code != exitSuccess {
 		t.Errorf("expected exit code %d, got %d", exitSuccess, code)
@@ -1009,7 +1010,7 @@ func TestRunVerifyBatchAllAllowed(t *testing.T) {
 	code := runVerifyBatchTo(
 		&buf,
 		[]string{imgRef1, imgRef2},
-		verifier.DefaultPolicyLabel,
+		policy.DefaultPolicyLabel,
 		outputFormatJSON,
 		cfg,
 	)
@@ -1102,7 +1103,7 @@ func TestRunVerifyBatchExitCodes(t *testing.T) {
 			code := runVerifyBatchTo(
 				&buf,
 				images,
-				verifier.DefaultPolicyLabel,
+				policy.DefaultPolicyLabel,
 				outputFormatJSON,
 				cfg,
 			)
@@ -1120,7 +1121,7 @@ func TestRunVerifyBatchDisabledErrors(t *testing.T) {
 
 	code := runVerifyBatch(
 		[]string{testImageAlpine},
-		verifier.DefaultPolicyLabel,
+		policy.DefaultPolicyLabel,
 		outputFormatJSON,
 		cfg,
 	)
@@ -1136,7 +1137,7 @@ func TestRunVerifyBatchInvalidOutputFormat(t *testing.T) {
 
 	code := runVerifyBatch(
 		[]string{testImageAlpine},
-		verifier.DefaultPolicyLabel,
+		policy.DefaultPolicyLabel,
 		"xml",
 		cfg,
 	)
@@ -1180,7 +1181,7 @@ func TestRunVerifyBatchTableOutput(t *testing.T) {
 	code := runVerifyBatchTo(
 		&buf,
 		[]string{imgRef},
-		verifier.DefaultPolicyLabel,
+		policy.DefaultPolicyLabel,
 		outputFormatTable,
 		cfg,
 	)

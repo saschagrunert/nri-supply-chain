@@ -69,7 +69,7 @@ func validatePoliciesRuntime(policies map[string]*policy.Policy) error {
 		if err != nil {
 			label := ns
 			if label == "" {
-				label = DefaultPolicyLabel
+				label = policy.DefaultPolicyLabel
 			}
 
 			errs = append(errs, fmt.Errorf("policy %q: %w", label, err))
@@ -87,7 +87,7 @@ func validatePoliciesModes(
 	for ns, pol := range policies {
 		label := ns
 		if label == "" {
-			label = DefaultPolicyLabel
+			label = policy.DefaultPolicyLabel
 		}
 
 		// Validate per-namespace mode strictness against global mode.

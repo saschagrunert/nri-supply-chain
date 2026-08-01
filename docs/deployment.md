@@ -161,7 +161,10 @@ policy_dir = "/etc/nri-supply-chain/policies"
   "trust": {
     "builders": [{ "id": "https://github.com/actions/runner", "maxLevel": 3 }],
     "verifiers": [
-      { "id": "https://example.com/verifier", "key": "/etc/keys/verifier.pub" }
+      {
+        "id": "https://example.com/verifier",
+        "keys": ["/etc/keys/verifier.pub"]
+      }
     ],
     "sources": ["github.com/myorg/*"]
   },
@@ -195,7 +198,7 @@ already attested the image.
     "verifiers": [
       {
         "id": "https://verifier.internal/prod",
-        "key": "/etc/keys/verifier.pub"
+        "keys": ["/etc/keys/verifier.pub"]
       }
     ]
   },

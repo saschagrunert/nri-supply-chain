@@ -21,9 +21,11 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -151,18 +153,20 @@ func buildKeyMaterial(keyPaths []string) (*root.TrustedPublicKeyMaterial, error)
 	verifiers := make(map[string]*root.ExpiringKey, len(keyPaths))
 
 	for _, keyPath := range keyPaths {
-		// SHA-256 is the only algorithm supported for key hint computation
-		// and artifact digest matching. Supporting additional algorithms
-		// would require policy-level configuration.
-		keyVerifier, err := signature.LoadVerifierFromPEMFile(keyPath, crypto.SHA256)
+		pubKey, err := loadPublicKeyFromPEM(keyPath)
 		if err != nil {
 			return nil, fmt.Errorf("loading public key %q: %w", keyPath, err)
 		}
 
-		hint, err := computeKeyHint(keyVerifier)
+		// SHA-256 is the only algorithm supported for key hint computation
+		// and artifact digest matching. Supporting additional algorithms
+		// would require policy-level configuration.
+		keyVerifier, err := signature.LoadVerifier(pubKey, crypto.SHA256)
 		if err != nil {
-			return nil, fmt.Errorf("computing key hint for %q: %w", keyPath, err)
+			return nil, fmt.Errorf("creating verifier for %q: %w", keyPath, err)
 		}
+
+		hint := computeKeyHint(pubKey)
 
 		// Zero-value time.Time means no validity period bounds; the key
 		// is accepted regardless of signing time.
@@ -172,20 +176,37 @@ func buildKeyMaterial(keyPaths []string) (*root.TrustedPublicKeyMaterial, error)
 	return root.NewTrustedPublicKeyMaterialFromMapping(verifiers), nil
 }
 
-func computeKeyHint(v signature.Verifier) (string, error) {
-	pub, err := v.PublicKey()
+func loadPublicKeyFromPEM(path string) (crypto.PublicKey, error) {
+	data, err := os.ReadFile(path) //nolint:gosec // path is validated by policy.ValidateRuntime
 	if err != nil {
-		return "", fmt.Errorf("extracting public key: %w", err)
+		return nil, fmt.Errorf("reading PEM file: %w", err)
 	}
 
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, fmt.Errorf("%w in %q", errNoPEMBlock, path)
+	}
+
+	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parsing public key: %w", err)
+	}
+
+	return pub, nil
+}
+
+func computeKeyHint(pub crypto.PublicKey) string {
 	der, err := x509.MarshalPKIXPublicKey(pub)
 	if err != nil {
-		return "", fmt.Errorf("encoding public key to DER: %w", err)
+		// This should not happen for keys that were successfully parsed
+		// from PKIX format. If it does, return an empty hint that will
+		// never match any bundle key ID.
+		return ""
 	}
 
 	sum := sha256.Sum256(der)
 
-	return base64.StdEncoding.EncodeToString(sum[:]), nil
+	return base64.StdEncoding.EncodeToString(sum[:])
 }
 
 func buildKeylessConfig(
