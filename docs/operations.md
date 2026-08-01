@@ -196,16 +196,16 @@ Key-based verification is not affected by this limit.
 
 ## Security Considerations
 
-**fetch_failure_policy default is fail-open.** The default value `"warn"` allows
-containers through when attestation fetches fail, even in `enforce` mode. If the
-registry is unreachable, every image passes verification. The per-host circuit
-breaker amplifies this: once the failure threshold is reached for a given
-registry, all subsequent fetch attempts to that registry short-circuit to
-`fetch_failure_policy` until the cooldown expires. Set
-`fetch_failure_policy = "deny"` in production to ensure fetch failures block
-container creation. Note that `"deny"` means registry outages will prevent all
-new containers from starting, trading availability for security. Choose based on
-your threat model.
+**fetch_failure_policy in enforce mode defaults to deny.** In enforce mode,
+`fetch_failure_policy` defaults to `"deny"` so that registry outages cannot
+silently bypass verification. In warn mode the default remains `"warn"`. You
+can override this by setting `fetch_failure_policy` explicitly in the config.
+The per-host circuit breaker amplifies the effect: once the failure threshold
+is reached for a given registry, all subsequent fetch attempts short-circuit to
+`fetch_failure_policy` until the cooldown expires. With `"deny"`, registry
+outages will prevent new containers from starting, trading availability for
+security. Set `fetch_failure_policy = "allow"` or `"warn"` explicitly if your
+threat model favors availability.
 
 **Metrics label cardinality.** Several metrics use `namespace` and `registry`
 labels whose cardinality depends on the cluster. In multi-tenant clusters with
@@ -217,11 +217,11 @@ per registry: bucket counters + sum + count) and consider Prometheus recording
 rules to pre-aggregate if the series count grows large.
 
 **Enforce-mode startup warnings.** When running in `enforce` mode, the plugin
-logs warnings at startup if permissive defaults are still in place. It warns
-when `fetch_failure_policy` is `warn` or `allow` (since fetch failures would let
-containers through), and when any policy has `slsa.missingPolicy` or
-`vex.missingPolicy` set to `allow`. Review these warnings and tighten the
-settings before relying on enforce mode in production.
+logs warnings at startup if permissive settings are in place. It warns
+when `fetch_failure_policy` is explicitly set to `warn` or `allow` (since
+fetch failures would let containers through), and when any policy has
+`slsa.missingPolicy` or `vex.missingPolicy` set to `allow`. Review these
+warnings and tighten the settings before relying on enforce mode in production.
 
 **SAN patterns for keyless verification.** In `enforce` mode, `trust.sanPatterns`
 is required when `trust.issuers` is configured. The plugin rejects the policy at
@@ -263,8 +263,9 @@ is `allow` or `warn`, the result is cached for `cache_failure_ttl` (default 5
 minutes). During that window, subsequent containers with the same digest are
 admitted without contacting the registry. If a registry outage is short-lived,
 containers may pass verification for up to 5 minutes after the registry recovers,
-because the cached "allowed" result has not yet expired. Set
-`fetch_failure_policy = "deny"` to prevent this, or reduce `cache_failure_ttl`
+because the cached "allowed" result has not yet expired. In enforce mode the
+default `fetch_failure_policy` is `deny`, which prevents this. In warn mode,
+set `fetch_failure_policy = "deny"` explicitly or reduce `cache_failure_ttl`
 to shorten the window.
 
 **Metrics exposure.** The default `metrics_addr` binds to `127.0.0.1:9090`

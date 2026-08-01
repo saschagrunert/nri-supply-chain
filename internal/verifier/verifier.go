@@ -196,8 +196,7 @@ func warnPermissiveFetchPolicy(cfg *config.Config) {
 	case types.ActionDeny:
 	case types.ActionWarn, types.ActionAllow:
 		slog.Warn(
-			"enforce mode with permissive fetch_failure_policy allows containers on fetch failure; "+
-				"consider setting fetch_failure_policy=deny",
+			"enforce mode with permissive fetch_failure_policy allows containers on fetch failure",
 			"fetch_failure_policy",
 			cfg.FetchFailurePolicy,
 			"circuit_breaker_threshold",

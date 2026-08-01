@@ -210,6 +210,7 @@ type Config struct {
 	FetchTimeout Duration `toml:"fetch_timeout"`
 	// FetchFailurePolicy controls behavior when attestation fetch fails due to
 	// network errors. Valid values: "allow", "warn" (default), "deny".
+	// In enforce mode the effective default changes to "deny".
 	FetchFailurePolicy types.Action `toml:"fetch_failure_policy"`
 	// CacheTTL is how long verification results are cached per image digest + namespace.
 	CacheTTL Duration `toml:"cache_ttl"`
@@ -349,6 +350,21 @@ func (c *Config) ValidateRuntime() error {
 	}
 
 	return errors.Join(errs...)
+}
+
+// ApplyModeDefaults overrides permissive defaults when the verification mode
+// demands stricter behavior. In enforce mode the effective fetch_failure_policy
+// changes from "warn" to "deny" unless the user set it explicitly.
+func (c *Config) ApplyModeDefaults(fetchFailurePolicyExplicit bool) {
+	if c.Verification != ModeEnforce || fetchFailurePolicyExplicit {
+		return
+	}
+
+	if c.FetchFailurePolicy == types.ActionWarn {
+		c.FetchFailurePolicy = types.ActionDeny
+
+		slog.Warn("enforce mode: fetch_failure_policy defaulting to deny")
+	}
 }
 
 // Normalize clamps fields to valid ranges. Call after Validate.
@@ -758,6 +774,8 @@ func load(decode func(*Config) (toml.MetaData, error)) (*Config, error) {
 
 		return nil, fmt.Errorf("%w: %s", ErrUnknownConfigKeys, strings.Join(keys, ", "))
 	}
+
+	cfg.ApplyModeDefaults(meta.IsDefined("fetch_failure_policy"))
 
 	err = cfg.Validate()
 	if err != nil {
