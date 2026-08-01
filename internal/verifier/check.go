@@ -28,6 +28,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
+	"github.com/saschagrunert/nri-supply-chain/internal/notation"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/slsa"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
@@ -175,7 +176,13 @@ func runChecksWithoutFetcher(
 
 	met.VerificationDuration.WithLabelValues(string(types.CheckTypeVEX)).Observe(0)
 
-	result := combineResults(slsaResult, vexResult)
+	notationResult := handleMissingAttestation(
+		pol.NotationMissingPolicy(), types.CheckTypeNotation, detail,
+	)
+
+	met.VerificationDuration.WithLabelValues(string(types.CheckTypeNotation)).Observe(0)
+
+	result := combineResults(slsaResult, vexResult, notationResult)
 
 	prependVSAWarning(result, pol, detail)
 
@@ -390,52 +397,105 @@ func prependVSAWarning(result *types.Result, pol *policy.Policy, detail string) 
 
 func runParallelChecks(
 	ctx context.Context, bins *attestationBins,
-	pol *policy.Policy, met *metrics.Metrics, imageRef, digest, namespace string,
+	pol *policy.Policy, met *metrics.Metrics,
+	imageRef, digest, namespace string,
 	parsedRef name.Reference,
 ) *types.Result {
 	var (
-		slsaResult *types.CheckResult
-		vexResult  *types.CheckResult
-		waitGroup  sync.WaitGroup
+		slsaResult     *types.CheckResult
+		vexResult      *types.CheckResult
+		notationResult *types.CheckResult
+		waitGroup      sync.WaitGroup
 	)
 
-	const numChecks = 2
-
+	const numChecks = 3
 	waitGroup.Add(numChecks)
 
-	go func() {
-		defer waitGroup.Done()
-		defer func() {
-			if r := recover(); r != nil {
-				slog.Error("Panic during SLSA check",
-					"panic", r, "stack", string(debug.Stack()))
+	go runParallelSLSA(
+		ctx, &waitGroup, &slsaResult,
+		bins.slsa, pol, met, imageRef, digest, namespace,
+	)
 
-				slsaResult = types.FailResult(types.CheckTypeSLSA,
-					"internal error during SLSA check", nil)
-			}
-		}()
+	go runParallelVEX(
+		ctx, &waitGroup, &vexResult,
+		bins.vex, pol, met, imageRef, digest, namespace, parsedRef,
+	)
 
-		slsaResult = runSLSACheck(ctx, bins.slsa, pol, met, imageRef, digest, namespace)
-	}()
-
-	go func() {
-		defer waitGroup.Done()
-		defer func() {
-			if r := recover(); r != nil {
-				slog.Error("Panic during VEX check",
-					"panic", r, "stack", string(debug.Stack()))
-
-				vexResult = types.FailResult(types.CheckTypeVEX,
-					"internal error during VEX check", nil)
-			}
-		}()
-
-		vexResult = runVEXCheck(ctx, bins.vex, pol, met, imageRef, digest, namespace, parsedRef)
-	}()
+	go runParallelNotation(
+		ctx, &waitGroup, &notationResult,
+		bins.notation, pol, met, imageRef, digest, namespace,
+	)
 
 	waitGroup.Wait()
 
-	return combineResults(slsaResult, vexResult)
+	return combineResults(slsaResult, vexResult, notationResult)
+}
+
+func runParallelSLSA(
+	ctx context.Context, waitGroup *sync.WaitGroup, result **types.CheckResult,
+	atts []attestation.VerifiedAttestation,
+	pol *policy.Policy, met *metrics.Metrics,
+	imageRef, digest, namespace string,
+) {
+	defer waitGroup.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("Panic during SLSA check",
+				"panic", r, "stack", string(debug.Stack()))
+
+			*result = types.FailResult(
+				types.CheckTypeSLSA,
+				"internal error during SLSA check", nil,
+			)
+		}
+	}()
+
+	*result = runSLSACheck(ctx, atts, pol, met, imageRef, digest, namespace)
+}
+
+func runParallelVEX(
+	ctx context.Context, waitGroup *sync.WaitGroup, result **types.CheckResult,
+	atts []attestation.VerifiedAttestation,
+	pol *policy.Policy, met *metrics.Metrics,
+	imageRef, digest, namespace string,
+	parsedRef name.Reference,
+) {
+	defer waitGroup.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("Panic during VEX check",
+				"panic", r, "stack", string(debug.Stack()))
+
+			*result = types.FailResult(
+				types.CheckTypeVEX,
+				"internal error during VEX check", nil,
+			)
+		}
+	}()
+
+	*result = runVEXCheck(ctx, atts, pol, met, imageRef, digest, namespace, parsedRef)
+}
+
+func runParallelNotation(
+	ctx context.Context, waitGroup *sync.WaitGroup, result **types.CheckResult,
+	atts []attestation.VerifiedAttestation,
+	pol *policy.Policy, met *metrics.Metrics,
+	imageRef, digest, namespace string,
+) {
+	defer waitGroup.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("Panic during Notation check",
+				"panic", r, "stack", string(debug.Stack()))
+
+			*result = types.FailResult(
+				types.CheckTypeNotation,
+				"internal error during Notation check", nil,
+			)
+		}
+	}()
+
+	*result = runNotationCheck(ctx, atts, pol, met, imageRef, digest, namespace)
 }
 
 func runSLSACheck(
@@ -536,6 +596,59 @@ func runVEXCheck(
 	return result
 }
 
+func runNotationCheck(
+	ctx context.Context,
+	notationAtts []attestation.VerifiedAttestation,
+	pol *policy.Policy, met *metrics.Metrics,
+	imageRef, digest, namespace string,
+) *types.CheckResult {
+	start := time.Now()
+
+	defer func() {
+		met.VerificationDuration.WithLabelValues(
+			string(types.CheckTypeNotation),
+		).Observe(time.Since(start).Seconds())
+	}()
+
+	if len(notationAtts) == 0 {
+		slog.WarnContext(ctx, "No Notation signature found",
+			"reason", "missing_signature",
+			"image", imageRef,
+		)
+
+		return handleMissingAttestation(
+			pol.NotationMissingPolicy(),
+			types.CheckTypeNotation,
+			"no Notation signature found for image "+imageRef,
+		)
+	}
+
+	result, err := notation.VerifyMultiple(
+		ctx, notationAtts, imageRef, digest, pol,
+	)
+	if err != nil {
+		slog.ErrorContext(ctx, "Notation verification error",
+			"error", err,
+			"reason", "verification_error",
+			"image", imageRef,
+		)
+
+		met.VerificationTotal.WithLabelValues(
+			string(types.CheckTypeNotation), "error", namespace,
+		).Inc()
+
+		return types.FailResult(
+			types.CheckTypeNotation,
+			fmt.Sprintf(
+				"Notation verification error for %s: %s", imageRef, err,
+			),
+			err,
+		)
+	}
+
+	return result
+}
+
 func resultHasFailures(result *types.Result) bool {
 	if !result.Allowed {
 		return true
@@ -605,19 +718,29 @@ func appendReason(result *types.Result, detail string) {
 }
 
 type attestationBins struct {
-	vsa  []attestation.VerifiedAttestation
-	slsa []attestation.VerifiedAttestation
-	vex  []attestation.VerifiedAttestation
+	vsa      []attestation.VerifiedAttestation
+	slsa     []attestation.VerifiedAttestation
+	vex      []attestation.VerifiedAttestation
+	notation []attestation.VerifiedAttestation
 }
 
 func binAttestations(attestations []attestation.VerifiedAttestation) attestationBins {
 	bins := attestationBins{
-		vsa:  make([]attestation.VerifiedAttestation, 0, len(attestations)),
-		slsa: make([]attestation.VerifiedAttestation, 0, len(attestations)),
-		vex:  make([]attestation.VerifiedAttestation, 0, len(attestations)),
+		vsa:      make([]attestation.VerifiedAttestation, 0, len(attestations)),
+		slsa:     make([]attestation.VerifiedAttestation, 0, len(attestations)),
+		vex:      make([]attestation.VerifiedAttestation, 0, len(attestations)),
+		notation: make([]attestation.VerifiedAttestation, 0, len(attestations)),
 	}
 
 	for idx := range attestations {
+		// Route by signature type first: Notation signatures carry
+		// signature manifests, not in-toto attestation payloads.
+		if attestations[idx].SignatureType == attestation.SignatureTypeNotation {
+			bins.notation = append(bins.notation, attestations[idx])
+
+			continue
+		}
+
 		switch attestations[idx].PredicateType {
 		case attestation.PredicateVSA:
 			bins.vsa = append(bins.vsa, attestations[idx])

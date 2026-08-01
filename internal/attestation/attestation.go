@@ -58,6 +58,19 @@ const (
 
 	// cosignAttestationTagSuffix is the tag suffix cosign uses for attestation images.
 	cosignAttestationTagSuffix = ".att"
+
+	// NotationSignatureMediaType is the OCI artifact type for Notation signatures.
+	NotationSignatureMediaType = "application/vnd.cncf.notary.signature"
+)
+
+// SignatureType distinguishes signature formats for routing during verification.
+type SignatureType string
+
+const (
+	// SignatureTypeSigstore indicates a Sigstore bundle signature.
+	SignatureTypeSigstore SignatureType = "sigstore"
+	// SignatureTypeNotation indicates a Notation/Notary v2 signature.
+	SignatureTypeNotation SignatureType = "notation"
 )
 
 // BundleVerifyFunc verifies a Sigstore bundle and returns the extracted DSSE payload.
@@ -68,6 +81,7 @@ type VerifiedAttestation struct {
 	PredicateType string
 	Payload       []byte
 	Digest        string
+	SignatureType SignatureType
 }
 
 // Fetcher discovers and verifies attestations for a container image.

@@ -279,6 +279,14 @@ const ExportAnnotationPredicateType = annotationPredicateType
 // ExportDSSEPayloadType exposes dssePayloadType for external tests.
 const ExportDSSEPayloadType = dssePayloadType
 
+// ExportNotationSignatureMediaType exposes NotationSignatureMediaType for external tests.
+const ExportNotationSignatureMediaType = NotationSignatureMediaType
+
+// ExportIsNotationCandidate exposes isNotationCandidate for external tests.
+func ExportIsNotationCandidate(artifactType string) bool {
+	return isNotationCandidate(artifactType)
+}
+
 // ExportMaxCircuitBreakers exposes maxCircuitBreakers for external tests.
 const ExportMaxCircuitBreakers = maxCircuitBreakers
 

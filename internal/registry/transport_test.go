@@ -63,10 +63,9 @@ func writeSelfSignedCACert(tb testing.TB, dir string) string {
 		tb.Fatalf("generating key: %v", err)
 	}
 
-	//nolint:exhaustruct // only setting relevant test fields
 	subject := pkix.Name{CommonName: "test-ca"}
 
-	template := &x509.Certificate{ //nolint:exhaustruct // only setting relevant fields
+	template := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
 		Subject:      subject,
 		NotBefore:    time.Now().Add(-time.Hour),
@@ -82,7 +81,7 @@ func writeSelfSignedCACert(tb testing.TB, dir string) string {
 
 	certPath := filepath.Join(dir, "ca.pem")
 
-	pemBlock := &pem.Block{ //nolint:exhaustruct // Headers is optional
+	pemBlock := &pem.Block{
 		Type:  "CERTIFICATE",
 		Bytes: certDER,
 	}

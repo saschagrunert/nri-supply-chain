@@ -123,6 +123,61 @@ var (
 	ErrRuleImagesRequired = errors.New(
 		"rules[].images is required and must be non-empty",
 	)
+
+	// ErrNotationTrustStoreNameRequired indicates a trust store is missing its name.
+	ErrNotationTrustStoreNameRequired = errors.New(
+		"notation trust store name is required",
+	)
+
+	// ErrNotationTrustStoreTypeInvalid indicates an invalid trust store type.
+	ErrNotationTrustStoreTypeInvalid = errors.New(
+		"notation trust store type must be \"ca\" or \"signingAuthority\"",
+	)
+
+	// ErrNotationTrustStoreCertsRequired indicates a trust store has no certificates.
+	ErrNotationTrustStoreCertsRequired = errors.New(
+		"notation trust store must have at least one certificate",
+	)
+
+	// ErrNotationCertNotAbsolute indicates a certificate path is not absolute.
+	ErrNotationCertNotAbsolute = errors.New(
+		"notation certificate path must be absolute",
+	)
+
+	// ErrNotationTrustPolicyNameRequired indicates a trust policy rule is missing its name.
+	ErrNotationTrustPolicyNameRequired = errors.New(
+		"notation trust policy rule name is required",
+	)
+
+	// ErrNotationTrustPolicyScopesRequired indicates a trust policy rule has no registry scopes.
+	ErrNotationTrustPolicyScopesRequired = errors.New(
+		"notation trust policy rule must have at least one registry scope",
+	)
+
+	// ErrNotationTrustPolicyStoresRequired indicates a trust policy rule has no trust stores.
+	ErrNotationTrustPolicyStoresRequired = errors.New(
+		"notation trust policy rule must have at least one trust store",
+	)
+
+	// ErrNotationTrustPolicyIdentitiesRequired indicates a trust policy rule has no trusted identities.
+	ErrNotationTrustPolicyIdentitiesRequired = errors.New(
+		"notation trust policy rule must have at least one trusted identity",
+	)
+
+	// ErrNotationVerificationLevelInvalid indicates an invalid verification level.
+	ErrNotationVerificationLevelInvalid = errors.New(
+		"notation verification level must be \"strict\", \"permissive\", \"audit\", or \"skip\"",
+	)
+
+	// ErrDuplicateNotationTrustStoreName indicates a duplicate trust store name.
+	ErrDuplicateNotationTrustStoreName = errors.New(
+		"duplicate notation trust store name",
+	)
+
+	// ErrDuplicateNotationTrustPolicyName indicates a duplicate trust policy rule name.
+	ErrDuplicateNotationTrustPolicyName = errors.New(
+		"duplicate notation trust policy rule name",
+	)
 )
 
 // Sections groups the verification settings that can be overridden
@@ -138,6 +193,8 @@ type Sections struct {
 	VSA *VSAPolicy `json:"vsa,omitempty"`
 	// Signatures contains attestation signature verification settings.
 	Signatures *SignaturesPolicy `json:"signatures,omitempty"`
+	// Notation contains Notation/Notary v2 signature verification settings.
+	Notation *NotationPolicy `json:"notation,omitempty"`
 }
 
 // Policy defines the trust roots and per-namespace verification settings.
@@ -247,6 +304,41 @@ type SignaturesPolicy struct {
 	RequireTransparencyLog bool `json:"requireTransparencyLog,omitempty"`
 }
 
+// NotationPolicy contains Notation/Notary v2 signature verification settings.
+type NotationPolicy struct {
+	// MissingPolicy controls behavior when no Notation signature is found.
+	MissingPolicy types.Action `json:"missingPolicy,omitempty"`
+	// TrustStores defines the certificate trust stores for signature verification.
+	TrustStores []NotationTrustStore `json:"trustStores,omitempty"`
+	// TrustPolicy defines the trust policy rules that map registry scopes to trust stores.
+	TrustPolicy []NotationTrustPolicyRule `json:"trustPolicy,omitempty"`
+	// VerificationLevel controls how strict verification is.
+	// Valid values: "strict", "permissive", "audit", "skip". Defaults to "strict".
+	VerificationLevel string `json:"verificationLevel,omitempty"`
+}
+
+// NotationTrustStore defines a named collection of certificates used for Notation verification.
+type NotationTrustStore struct {
+	// Name is the trust store name (referenced by trust policy rules as "type:name").
+	Name string `json:"name"`
+	// Type is the trust store type: "ca" or "signingAuthority".
+	Type string `json:"type"`
+	// Certificates is a list of absolute paths to PEM-encoded certificate files.
+	Certificates []string `json:"certificates"`
+}
+
+// NotationTrustPolicyRule maps registry scopes to trust stores and trusted identities.
+type NotationTrustPolicyRule struct {
+	// Name is a human-readable name for this trust policy rule.
+	Name string `json:"name"`
+	// RegistryScopes is a list of registry scope patterns this rule applies to.
+	RegistryScopes []string `json:"registryScopes"`
+	// TrustStores references trust stores in "type:name" format.
+	TrustStores []string `json:"trustStores"`
+	// TrustedIdentities is a list of distinguished name patterns or "*" to trust all.
+	TrustedIdentities []string `json:"trustedIdentities"`
+}
+
 // ImageRule defines per-image verification overrides within a namespace policy.
 // When an image matches the glob patterns in Images, the non-nil fields in this
 // rule override the corresponding fields of the base policy. The first matching
@@ -296,6 +388,17 @@ func (p *Policy) VEXMissingPolicy() types.Action {
 func (p *Policy) VSAMissingPolicy() types.Action {
 	if p.VSA != nil && p.VSA.MissingPolicy != "" {
 		return p.VSA.MissingPolicy
+	}
+
+	return types.ActionAllow
+}
+
+// NotationMissingPolicy returns the effective Notation missing policy.
+// Defaults to allow so that the plugin can be deployed in warn mode
+// without requiring Notation signatures from the start.
+func (p *Policy) NotationMissingPolicy() types.Action {
+	if p.Notation != nil && p.Notation.MissingPolicy != "" {
+		return p.Notation.MissingPolicy
 	}
 
 	return types.ActionAllow
@@ -423,6 +526,43 @@ func applySections(dst *Sections, src Sections) {
 		s := *src.Signatures
 		dst.Signatures = &s
 	}
+
+	if src.Notation != nil {
+		dst.Notation = cloneNotation(src.Notation)
+	}
+}
+
+func cloneNotation(notationPolicy *NotationPolicy) *NotationPolicy {
+	clone := *notationPolicy
+
+	if notationPolicy.TrustStores != nil {
+		clone.TrustStores = make([]NotationTrustStore, len(notationPolicy.TrustStores))
+
+		for idx, ts := range notationPolicy.TrustStores {
+			clone.TrustStores[idx] = NotationTrustStore{
+				Name:         ts.Name,
+				Type:         ts.Type,
+				Certificates: slices.Clone(ts.Certificates),
+			}
+		}
+	}
+
+	if notationPolicy.TrustPolicy != nil {
+		clone.TrustPolicy = make(
+			[]NotationTrustPolicyRule, len(notationPolicy.TrustPolicy),
+		)
+
+		for idx, rule := range notationPolicy.TrustPolicy {
+			clone.TrustPolicy[idx] = NotationTrustPolicyRule{
+				Name:              rule.Name,
+				RegistryScopes:    slices.Clone(rule.RegistryScopes),
+				TrustStores:       slices.Clone(rule.TrustStores),
+				TrustedIdentities: slices.Clone(rule.TrustedIdentities),
+			}
+		}
+	}
+
+	return &clone
 }
 
 func cloneTrust(tp *TrustPolicy) *TrustPolicy {
@@ -468,39 +608,9 @@ func (p *Policy) Validate() error {
 		errs = append(errs, fmt.Errorf("%w: %q", ErrInvalidPolicyMode, p.Mode))
 	}
 
-	err := p.validateTrust()
-	if err != nil {
-		errs = append(errs, err)
-	}
+	errs = append(errs, p.validateSections()...)
 
-	err = p.validateInclude()
-	if err != nil {
-		errs = append(errs, err)
-	}
-
-	err = p.validateExclude()
-	if err != nil {
-		errs = append(errs, err)
-	}
-
-	err = p.validateSLSA()
-	if err != nil {
-		errs = append(errs, err)
-	}
-
-	err = p.validateVEX()
-	if err != nil {
-		errs = append(errs, err)
-	}
-
-	err = p.validateVSA()
-	if err != nil {
-		errs = append(errs, err)
-	} else {
-		p.resolveVSADuration()
-	}
-
-	err = p.validateRules()
+	err := p.validateRules()
 	if err != nil {
 		errs = append(errs, err)
 	}
@@ -553,24 +663,95 @@ func (p *Policy) ValidateRuntime() error {
 		}
 	}
 
+	errs = append(errs, validateNotationCertFiles("", p.Notation)...)
+
 	for rIdx, rule := range p.Rules {
-		if rule.Trust == nil {
-			continue
+		if rule.Trust != nil {
+			for idx, verif := range rule.Trust.Verifiers {
+				for kidx, key := range verif.Keys {
+					prefix := fmt.Sprintf("rules[%d].trust.verifiers[%d]", rIdx, idx)
+
+					err := validateKeyFile(prefix, verif.ID, key, kidx)
+					if err != nil {
+						errs = append(errs, err)
+					}
+				}
+			}
 		}
 
-		for idx, verif := range rule.Trust.Verifiers {
-			for kidx, key := range verif.Keys {
-				prefix := fmt.Sprintf("rules[%d].trust.verifiers[%d]", rIdx, idx)
+		errs = append(errs, validateNotationCertFiles(
+			fmt.Sprintf("rules[%d].", rIdx), rule.Notation,
+		)...)
+	}
 
-				err := validateKeyFile(prefix, verif.ID, key, kidx)
-				if err != nil {
-					errs = append(errs, err)
-				}
+	return errors.Join(errs...)
+}
+
+func (p *Policy) validateSections() []error {
+	var errs []error
+
+	appendErr := func(err error) {
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	appendErr(p.validateTrust())
+	appendErr(p.validateInclude())
+	appendErr(p.validateExclude())
+	appendErr(p.validateSLSA())
+	appendErr(p.validateVEX())
+
+	err := p.validateVSA()
+	if err != nil {
+		errs = append(errs, err)
+	} else {
+		p.resolveVSADuration()
+	}
+
+	appendErr(p.validateNotation())
+
+	return errs
+}
+
+func validateNotationCertFiles(
+	prefix string, notationPolicy *NotationPolicy,
+) []error {
+	if notationPolicy == nil {
+		return nil
+	}
+
+	var errs []error
+
+	for idx, store := range notationPolicy.TrustStores {
+		for cidx, certPath := range store.Certificates {
+			label := fmt.Sprintf(
+				"%snotation.trustStores[%d] %q: certificates[%d] file %q",
+				prefix, idx, store.Name, cidx, certPath,
+			)
+
+			info, err := os.Lstat(certPath)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", label, err))
+
+				continue
+			}
+
+			if info.Mode()&os.ModeSymlink != 0 {
+				errs = append(errs, fmt.Errorf(
+					"%s: %w (symlinks are not allowed)", label, ErrNotRegularFile,
+				))
+
+				continue
+			}
+
+			if !info.Mode().IsRegular() {
+				errs = append(errs, fmt.Errorf("%s: %w", label, ErrNotRegularFile))
 			}
 		}
 	}
 
-	return errors.Join(errs...)
+	return errs
 }
 
 func validateKeyFile(prefix, verifierID, keyPath string, keyIdx int) error {
@@ -1065,6 +1246,197 @@ func (p *Policy) validateVSA() error {
 	return errors.Join(errs...)
 }
 
+func (p *Policy) validateNotation() error {
+	if p.Notation == nil {
+		return nil
+	}
+
+	var errs []error
+
+	if p.Notation.MissingPolicy != "" {
+		err := types.ValidateAction(
+			"notation.missingPolicy", p.Notation.MissingPolicy,
+		)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("validating notation policy: %w", err))
+		}
+	}
+
+	if p.Notation.VerificationLevel != "" {
+		switch p.Notation.VerificationLevel {
+		case "strict", "permissive", "audit", "skip":
+		default:
+			errs = append(errs, fmt.Errorf(
+				"%w: got %q",
+				ErrNotationVerificationLevelInvalid,
+				p.Notation.VerificationLevel,
+			))
+		}
+	}
+
+	errs = append(errs, validateNotationTrustStores(p.Notation.TrustStores)...)
+	errs = append(errs, validateNotationTrustPolicy(p.Notation.TrustPolicy)...)
+
+	return errors.Join(errs...)
+}
+
+func validateNotationTrustStores(stores []NotationTrustStore) []error {
+	var errs []error
+
+	seenNames := make(map[string]bool, len(stores))
+
+	for idx, store := range stores {
+		if store.Name == "" {
+			errs = append(errs, fmt.Errorf(
+				"%w: notation.trustStores[%d]",
+				ErrNotationTrustStoreNameRequired, idx,
+			))
+
+			continue
+		}
+
+		if seenNames[store.Name] {
+			errs = append(errs, fmt.Errorf(
+				"%w %q at notation.trustStores[%d]",
+				ErrDuplicateNotationTrustStoreName, store.Name, idx,
+			))
+
+			continue
+		}
+
+		seenNames[store.Name] = true
+
+		if store.Type != "ca" && store.Type != "signingAuthority" {
+			errs = append(errs, fmt.Errorf(
+				"%w: notation.trustStores[%d] %q: got %q",
+				ErrNotationTrustStoreTypeInvalid,
+				idx, store.Name, store.Type,
+			))
+		}
+
+		if len(store.Certificates) == 0 {
+			errs = append(errs, fmt.Errorf(
+				"%w: notation.trustStores[%d] %q",
+				ErrNotationTrustStoreCertsRequired, idx, store.Name,
+			))
+		}
+
+		errs = append(errs, validateNotationStoreCerts(idx, &store)...)
+	}
+
+	return errs
+}
+
+func validateNotationStoreCerts(idx int, store *NotationTrustStore) []error {
+	var errs []error
+
+	for cidx, cert := range store.Certificates {
+		if cert == "" {
+			errs = append(errs, fmt.Errorf(
+				"%w in notation.trustStores[%d].certificates[%d]",
+				ErrEmptyValue, idx, cidx,
+			))
+
+			continue
+		}
+
+		if !filepath.IsAbs(cert) {
+			errs = append(errs, fmt.Errorf(
+				"%w: notation.trustStores[%d] %q: certificates[%d] got %q",
+				ErrNotationCertNotAbsolute, idx, store.Name, cidx, cert,
+			))
+		}
+	}
+
+	return errs
+}
+
+func validateNotationTrustPolicy(rules []NotationTrustPolicyRule) []error {
+	errs := make([]error, 0, len(rules))
+
+	seenNames := make(map[string]bool, len(rules))
+
+	for idx, rule := range rules {
+		errs = append(errs, validateSingleNotationTrustPolicy(
+			idx, &rule, seenNames,
+		)...)
+	}
+
+	return errs
+}
+
+func validateSingleNotationTrustPolicy(
+	idx int, rule *NotationTrustPolicyRule, seenNames map[string]bool,
+) []error {
+	var errs []error
+
+	if rule.Name == "" {
+		return append(errs, fmt.Errorf(
+			"%w: notation.trustPolicy[%d]",
+			ErrNotationTrustPolicyNameRequired, idx,
+		))
+	}
+
+	if seenNames[rule.Name] {
+		return append(errs, fmt.Errorf(
+			"%w %q at notation.trustPolicy[%d]",
+			ErrDuplicateNotationTrustPolicyName, rule.Name, idx,
+		))
+	}
+
+	seenNames[rule.Name] = true
+
+	if len(rule.RegistryScopes) == 0 {
+		errs = append(errs, fmt.Errorf(
+			"%w: notation.trustPolicy[%d] %q",
+			ErrNotationTrustPolicyScopesRequired, idx, rule.Name,
+		))
+	}
+
+	if len(rule.TrustStores) == 0 {
+		errs = append(errs, fmt.Errorf(
+			"%w: notation.trustPolicy[%d] %q",
+			ErrNotationTrustPolicyStoresRequired, idx, rule.Name,
+		))
+	}
+
+	if len(rule.TrustedIdentities) == 0 {
+		errs = append(errs, fmt.Errorf(
+			"%w: notation.trustPolicy[%d] %q",
+			ErrNotationTrustPolicyIdentitiesRequired, idx, rule.Name,
+		))
+	}
+
+	errs = append(errs, validateNotationTrustPolicyFields(idx, rule)...)
+
+	return errs
+}
+
+func validateNotationTrustPolicyFields(
+	idx int, rule *NotationTrustPolicyRule,
+) []error {
+	var errs []error
+
+	prefix := fmt.Sprintf("notation.trustPolicy[%d]", idx)
+
+	err := validateNonEmpty(prefix+".registryScopes", rule.RegistryScopes)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	err = validateNonEmpty(prefix+".trustStores", rule.TrustStores)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	err = validateNonEmpty(prefix+".trustedIdentities", rule.TrustedIdentities)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	return errs
+}
+
 func (p *Policy) validateRules() error {
 	if len(p.Rules) == 0 {
 		return nil
@@ -1126,6 +1498,11 @@ func (p *Policy) validateRule(idx int) []error {
 		// resolveVSADuration mutates rulePol.VSA.MaxAgeDuration, which
 		// is the same pointer as p.Rules[idx].VSA, so no copy-back needed.
 		rulePol.resolveVSADuration()
+	}
+
+	err = rulePol.validateNotation()
+	if err != nil {
+		errs = append(errs, fmt.Errorf("rules[%d]: %w", idx, err))
 	}
 
 	return errs

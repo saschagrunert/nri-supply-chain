@@ -44,6 +44,11 @@ const (
 	testBaseBuilderID          = "base-builder"
 	testRuleBuilderID          = "rule-builder"
 	testMutatedValue           = "mutated"
+	testNotationStoreName      = "myca"
+	testNotationStoreRef       = "ca:myca"
+	testNotationCertPath       = "/etc/certs/ca.pem"
+	testNotationRuleName       = "rule1"
+	testDockerGlob             = "docker.io/**"
 )
 
 type validateTest struct {
@@ -2677,7 +2682,7 @@ func TestMergeWithDefaultIncludesRules(t *testing.T) {
 		nsPol := &policy.Policy{
 			Rules: []policy.ImageRule{
 				{
-					Images: []string{"docker.io/**"},
+					Images: []string{testDockerGlob},
 					Sections: policy.Sections{
 						VEX: &policy.VEXPolicy{MissingPolicy: types.ActionWarn},
 					},
@@ -2691,7 +2696,7 @@ func TestMergeWithDefaultIncludesRules(t *testing.T) {
 			t.Fatalf("expected 1 overridden rule, got %d", len(merged.Rules))
 		}
 
-		if merged.Rules[0].Images[0] != "docker.io/**" {
+		if merged.Rules[0].Images[0] != testDockerGlob {
 			t.Errorf("expected namespace rule images, got %v", merged.Rules[0].Images)
 		}
 	})
@@ -2911,5 +2916,446 @@ func TestApplyRuleSignaturesOverride(t *testing.T) {
 
 	if resolved.SLSAMissingPolicy() != types.ActionAllow {
 		t.Errorf("expected base SLSA allow, got %v", resolved.SLSAMissingPolicy())
+	}
+}
+
+func TestNotationMissingPolicy(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		policy   policy.Policy
+		expected types.Action
+	}{
+		{
+			name:     "nil notation defaults to allow",
+			policy:   emptyPolicy(),
+			expected: types.ActionAllow,
+		},
+		{
+			name: testEmptyMissingPolicyName,
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Notation: &policy.NotationPolicy{
+						MissingPolicy: "",
+					},
+				},
+			},
+			expected: types.ActionAllow,
+		},
+		{
+			name: testExplicitDenyName,
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Notation: &policy.NotationPolicy{
+						MissingPolicy: types.ActionDeny,
+					},
+				},
+			},
+			expected: types.ActionDeny,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := test.policy.NotationMissingPolicy(); got != test.expected {
+				t.Errorf("expected %q, got %q", test.expected, got)
+			}
+		})
+	}
+}
+
+func validNotationPolicy() *policy.NotationPolicy {
+	return &policy.NotationPolicy{
+		MissingPolicy:     types.ActionDeny,
+		VerificationLevel: "strict",
+		TrustStores: []policy.NotationTrustStore{
+			{
+				Name:         testNotationStoreName,
+				Type:         "ca",
+				Certificates: []string{testNotationCertPath},
+			},
+		},
+		TrustPolicy: []policy.NotationTrustPolicyRule{
+			{
+				Name:              "default",
+				RegistryScopes:    []string{"*"},
+				TrustStores:       []string{testNotationStoreRef},
+				TrustedIdentities: []string{"*"},
+			},
+		},
+	}
+}
+
+func TestPolicyValidateNotation(t *testing.T) {
+	t.Parallel()
+
+	runValidateTests(t, []validateTest{
+		{
+			name: "valid notation config",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Notation: validNotationPolicy(),
+				},
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name: "invalid verification level",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Notation: &policy.NotationPolicy{
+						MissingPolicy:     types.ActionDeny,
+						VerificationLevel: "invalid",
+						TrustStores: []policy.NotationTrustStore{
+							{
+								Name:         testNotationStoreName,
+								Type:         "ca",
+								Certificates: []string{testNotationCertPath},
+							},
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrNotationVerificationLevelInvalid,
+		},
+		{
+			name: "trust store missing name",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Notation: &policy.NotationPolicy{
+						TrustStores: []policy.NotationTrustStore{
+							{
+								Name:         "",
+								Type:         "ca",
+								Certificates: []string{testNotationCertPath},
+							},
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrNotationTrustStoreNameRequired,
+		},
+		{
+			name: "trust store invalid type",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Notation: &policy.NotationPolicy{
+						TrustStores: []policy.NotationTrustStore{
+							{
+								Name:         testNotationStoreName,
+								Type:         "invalid",
+								Certificates: []string{testNotationCertPath},
+							},
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrNotationTrustStoreTypeInvalid,
+		},
+		{
+			name: "trust store no certificates",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Notation: &policy.NotationPolicy{
+						TrustStores: []policy.NotationTrustStore{
+							{
+								Name:         testNotationStoreName,
+								Type:         "ca",
+								Certificates: nil,
+							},
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrNotationTrustStoreCertsRequired,
+		},
+		{
+			name: "trust store relative certificate path",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Notation: &policy.NotationPolicy{
+						TrustStores: []policy.NotationTrustStore{
+							{
+								Name:         testNotationStoreName,
+								Type:         "ca",
+								Certificates: []string{"relative/path.pem"},
+							},
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrNotationCertNotAbsolute,
+		},
+		{
+			name: "duplicate trust store name",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Notation: &policy.NotationPolicy{
+						TrustStores: []policy.NotationTrustStore{
+							{
+								Name:         testNotationStoreName,
+								Type:         "ca",
+								Certificates: []string{testNotationCertPath},
+							},
+							{
+								Name:         testNotationStoreName,
+								Type:         "ca",
+								Certificates: []string{"/etc/certs/ca2.pem"},
+							},
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrDuplicateNotationTrustStoreName,
+		},
+		{
+			name: "trust policy missing name",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Notation: &policy.NotationPolicy{
+						TrustPolicy: []policy.NotationTrustPolicyRule{
+							{
+								Name:              "",
+								RegistryScopes:    []string{"*"},
+								TrustStores:       []string{testNotationStoreRef},
+								TrustedIdentities: []string{"*"},
+							},
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrNotationTrustPolicyNameRequired,
+		},
+		{
+			name: "trust policy missing registry scopes",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Notation: &policy.NotationPolicy{
+						TrustPolicy: []policy.NotationTrustPolicyRule{
+							{
+								Name:              testNotationRuleName,
+								RegistryScopes:    nil,
+								TrustStores:       []string{testNotationStoreRef},
+								TrustedIdentities: []string{"*"},
+							},
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrNotationTrustPolicyScopesRequired,
+		},
+		{
+			name: "trust policy missing trust stores",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Notation: &policy.NotationPolicy{
+						TrustPolicy: []policy.NotationTrustPolicyRule{
+							{
+								Name:              testNotationRuleName,
+								RegistryScopes:    []string{"*"},
+								TrustStores:       nil,
+								TrustedIdentities: []string{"*"},
+							},
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrNotationTrustPolicyStoresRequired,
+		},
+		{
+			name: "trust policy missing trusted identities",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Notation: &policy.NotationPolicy{
+						TrustPolicy: []policy.NotationTrustPolicyRule{
+							{
+								Name:              testNotationRuleName,
+								RegistryScopes:    []string{"*"},
+								TrustStores:       []string{testNotationStoreRef},
+								TrustedIdentities: nil,
+							},
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrNotationTrustPolicyIdentitiesRequired,
+		},
+		{
+			name: "duplicate trust policy name",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Notation: &policy.NotationPolicy{
+						TrustPolicy: []policy.NotationTrustPolicyRule{
+							{
+								Name:              testNotationRuleName,
+								RegistryScopes:    []string{"*"},
+								TrustStores:       []string{testNotationStoreRef},
+								TrustedIdentities: []string{"*"},
+							},
+							{
+								Name:              testNotationRuleName,
+								RegistryScopes:    []string{testDockerGlob},
+								TrustStores:       []string{testNotationStoreRef},
+								TrustedIdentities: []string{"*"},
+							},
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrDuplicateNotationTrustPolicyName,
+		},
+		{
+			name: "valid permissive verification level",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Notation: &policy.NotationPolicy{
+						VerificationLevel: "permissive",
+						TrustStores: []policy.NotationTrustStore{
+							{
+								Name:         testNotationStoreName,
+								Type:         "ca",
+								Certificates: []string{testNotationCertPath},
+							},
+						},
+					},
+				},
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+	})
+}
+
+func TestPolicyValidateNotationMissingPolicy(t *testing.T) {
+	t.Parallel()
+
+	runValidateTests(t, []validateTest{
+		{
+			name: "notation invalid missing policy",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Notation: &policy.NotationPolicy{
+						MissingPolicy: testInvalidValue,
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: types.ErrInvalidAction,
+		},
+	})
+}
+
+func TestPolicyValidateNotationRuntime(t *testing.T) {
+	t.Parallel()
+
+	t.Run("valid cert file", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		certPath := filepath.Join(dir, "ca.pem")
+
+		err := os.WriteFile(certPath, []byte("PEM DATA"), 0o600)
+		if err != nil {
+			t.Fatalf("writing cert: %v", err)
+		}
+
+		pol := &policy.Policy{
+			Sections: policy.Sections{
+				Notation: &policy.NotationPolicy{
+					TrustStores: []policy.NotationTrustStore{
+						{
+							Name:         testNotationStoreName,
+							Type:         "ca",
+							Certificates: []string{certPath},
+						},
+					},
+				},
+			},
+		}
+
+		err = pol.ValidateRuntime()
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("missing cert file", func(t *testing.T) {
+		t.Parallel()
+
+		pol := &policy.Policy{
+			Sections: policy.Sections{
+				Notation: &policy.NotationPolicy{
+					TrustStores: []policy.NotationTrustStore{
+						{
+							Name:         testNotationStoreName,
+							Type:         "ca",
+							Certificates: []string{"/nonexistent/cert.pem"},
+						},
+					},
+				},
+			},
+		}
+
+		err := pol.ValidateRuntime()
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("expected os.ErrNotExist, got: %v", err)
+		}
+	})
+}
+
+func TestApplyRuleNotation(t *testing.T) {
+	t.Parallel()
+
+	base := &policy.Policy{
+		Sections: policy.Sections{
+			Notation: &policy.NotationPolicy{
+				MissingPolicy: types.ActionAllow,
+			},
+		},
+	}
+
+	rule := &policy.ImageRule{
+		Images: []string{testRuleImagesGlob},
+		Sections: policy.Sections{
+			Notation: &policy.NotationPolicy{
+				MissingPolicy:     types.ActionDeny,
+				VerificationLevel: "strict",
+				TrustStores: []policy.NotationTrustStore{
+					{
+						Name:         testNotationStoreName,
+						Type:         "ca",
+						Certificates: []string{testNotationCertPath},
+					},
+				},
+			},
+		},
+	}
+
+	resolved := policy.ApplyRule(base, rule)
+
+	if resolved.NotationMissingPolicy() != types.ActionDeny {
+		t.Errorf(
+			"expected rule Notation deny, got %v",
+			resolved.NotationMissingPolicy(),
+		)
 	}
 }

@@ -226,6 +226,14 @@ func warnPermissiveMissingPolicies(label string, pol *policy.Policy) {
 			"vex_missing_policy", pol.VEXMissingPolicy(),
 		)
 	}
+
+	if pol.NotationMissingPolicy() == types.ActionAllow {
+		slog.Warn("enforce mode with default Notation missing_policy=allow allows "+
+			"containers without Notation signatures; consider setting notation.missingPolicy=deny",
+			"policy", label,
+			"notation_missing_policy", pol.NotationMissingPolicy(),
+		)
+	}
 }
 
 // Stop releases resources held by the verifier, including the cache's

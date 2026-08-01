@@ -22,6 +22,7 @@ patterns for the nri-supply-chain plugin.
   - [<code>vex</code> (object)](#vex-object)
   - [<code>vsa</code> (object)](#vsa-object)
   - [<code>signatures</code> (object)](#signatures-object)
+  - [<code>notation</code> (object)](#notation-object)
   - [<code>rules</code> (array of objects)](#rules-array-of-objects)
 - [Verification Types](#verification-types)
   - [SLSA Provenance](#slsa-provenance)
@@ -29,6 +30,7 @@ patterns for the nri-supply-chain plugin.
   - [VEX (Vulnerability Exploitability eXchange)](#vex-vulnerability-exploitability-exchange)
   - [VSA (Verification Summary Attestation)](#vsa-verification-summary-attestation)
   - [Signature Verification](#signature-verification)
+  - [Notation (Notary v2) Signature Verification](#notation-notary-v2-signature-verification)
 - [Pattern Matching](#pattern-matching)
   - [<code>include</code>, <code>exclude</code>, and <code>trust.sources</code>](#include-exclude-and-trustsources)
   - [<code>trust.sanPatterns</code>](#trustsanpatterns)
@@ -202,6 +204,9 @@ nri-supply-chain json-schema policy
         "signatures": {
           "$ref": "#/$defs/SignaturesPolicy"
         },
+        "notation": {
+          "$ref": "#/$defs/NotationPolicy"
+        },
         "images": {
           "items": {
             "type": "string"
@@ -212,6 +217,77 @@ nri-supply-chain json-schema policy
       "additionalProperties": false,
       "type": "object",
       "required": ["images"]
+    },
+    "NotationPolicy": {
+      "properties": {
+        "missingPolicy": {
+          "type": "string"
+        },
+        "trustStores": {
+          "items": {
+            "$ref": "#/$defs/NotationTrustStore"
+          },
+          "type": "array"
+        },
+        "trustPolicy": {
+          "items": {
+            "$ref": "#/$defs/NotationTrustPolicyRule"
+          },
+          "type": "array"
+        },
+        "verificationLevel": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "NotationTrustPolicyRule": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "registryScopes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "trustStores": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "trustedIdentities": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": ["name", "registryScopes", "trustStores", "trustedIdentities"]
+    },
+    "NotationTrustStore": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "certificates": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": ["name", "type", "certificates"]
     },
     "Policy": {
       "properties": {
@@ -229,6 +305,9 @@ nri-supply-chain json-schema policy
         },
         "signatures": {
           "$ref": "#/$defs/SignaturesPolicy"
+        },
+        "notation": {
+          "$ref": "#/$defs/NotationPolicy"
         },
         "mode": {
           "type": "string",
@@ -493,6 +572,36 @@ given type remains, the per-type `missingPolicy` applies.
 | ------------------------ | ---- | ------- | ------------------------------------------------------------------- |
 | `requireTransparencyLog` | bool | `false` | Require Rekor transparency log inclusion for attestation signatures |
 
+### `notation` (object)
+
+Notation/Notary v2 signature verification settings. When configured, the plugin
+discovers Notation signatures via the OCI Referrers API and verifies them
+against the configured trust stores and trust policy.
+
+| Field               | Type   | Default  | Description                                                                                    |
+| ------------------- | ------ | -------- | ---------------------------------------------------------------------------------------------- |
+| `missingPolicy`     | string | `allow`  | Behavior when no Notation signature is found: `allow`, `warn`, `deny`                          |
+| `verificationLevel` | string | `strict` | How strict verification is: `strict`, `permissive`, `audit`, `skip`                            |
+| `trustStores`       | array  | (none)   | Named certificate trust stores for signature verification (see below)                          |
+| `trustPolicy`       | array  | (none)   | Trust policy rules that map registry scopes to trust stores and trusted identities (see below) |
+
+Each `trustStores` entry:
+
+| Field          | Type   | Required | Description                                                        |
+| -------------- | ------ | -------- | ------------------------------------------------------------------ |
+| `name`         | string | yes      | Trust store name (referenced by trust policy rules as `type:name`) |
+| `type`         | string | yes      | Trust store type: `ca` or `signingAuthority`                       |
+| `certificates` | array  | yes      | Absolute paths to PEM-encoded certificate files                    |
+
+Each `trustPolicy` entry:
+
+| Field               | Type   | Required | Description                                                                         |
+| ------------------- | ------ | -------- | ----------------------------------------------------------------------------------- |
+| `name`              | string | yes      | Human-readable name for this trust policy rule                                      |
+| `registryScopes`    | array  | yes      | Registry scope patterns this rule applies to (e.g., `"*"` or `"docker.io/myorg/*"`) |
+| `trustStores`       | array  | yes      | Trust store references in `type:name` format (e.g., `"ca:myca"`)                    |
+| `trustedIdentities` | array  | yes      | Distinguished name patterns or `"*"` to trust all signers                           |
+
 ### `rules` (array of objects)
 
 Per-image policy overrides. Each rule matches images by glob patterns and
@@ -509,6 +618,7 @@ Each rule is an object with:
 | `vex`        | object | no       | Override VEX settings (same schema as top-level `vex`)    |
 | `vsa`        | object | no       | Override VSA settings (same schema as top-level `vsa`)    |
 | `signatures` | object | no       | Override signature settings (same schema as `signatures`) |
+| `notation`   | object | no       | Override Notation settings (same schema as `notation`)    |
 
 Fields not set in a rule are inherited from the base policy. The `images`
 patterns use the same glob syntax as `include` and `exclude`.
@@ -685,6 +795,60 @@ When `signatures.requireTransparencyLog` is true, attestations must include a
 valid Rekor transparency log entry. This is recommended for keyless
 verification and optional for key-based.
 
+### Notation (Notary v2) Signature Verification
+
+Verifies [Notation](https://notaryproject.dev) (Notary v2) signatures
+discovered via the OCI Referrers API. This provides an alternative to Sigstore
+bundle signatures for image trust verification.
+
+Notation signatures are discovered by querying the OCI registry's Referrers API
+for manifests with media type `application/vnd.cncf.notary.signature`. These
+signatures are verified against the trust stores and trust policy configured in
+the `notation` section.
+
+Verification flow:
+
+1. **Signature discovery**: Notation signatures are discovered alongside
+   Sigstore attestations during the fetch phase.
+2. **Trust policy matching**: The image reference is matched against the
+   `registryScopes` in the trust policy rules to find the applicable rule.
+3. **Certificate verification**: Signatures are verified against the
+   certificates in the referenced trust stores.
+4. **Identity verification**: The signer identity is checked against the
+   `trustedIdentities` in the matching trust policy rule.
+
+When multiple Notation signatures exist, verification passes if any single
+signature is valid (any-pass semantics).
+
+Notation verification runs in parallel with SLSA and VEX checks. The results
+are combined: all configured checks must pass for the overall result to pass.
+
+Example configuration:
+
+```json
+{
+  "notation": {
+    "missingPolicy": "deny",
+    "verificationLevel": "strict",
+    "trustStores": [
+      {
+        "name": "acme-ca",
+        "type": "ca",
+        "certificates": ["/etc/notation/certs/acme-ca.pem"]
+      }
+    ],
+    "trustPolicy": [
+      {
+        "name": "default",
+        "registryScopes": ["*"],
+        "trustStores": ["ca:acme-ca"],
+        "trustedIdentities": ["*"]
+      }
+    ]
+  }
+}
+```
+
 ## Pattern Matching
 
 The plugin uses glob patterns in several contexts, with slightly different
@@ -733,7 +897,7 @@ A file named `<namespace>.json` in the policy directory overrides
 
 By default, the override is a full replacement. If a namespace policy sets
 `"inherits": true`, unset top-level fields (`trust`, `include`, `exclude`,
-`slsa`, `vex`, `vsa`, `signatures`, `rules`) are inherited from the default
+`slsa`, `vex`, `vsa`, `signatures`, `notation`, `rules`) are inherited from the default
 policy. Each top-level section that is set in the namespace policy replaces
 the default's section entirely. The default policy itself cannot set `inherits`.
 
