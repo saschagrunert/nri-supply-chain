@@ -534,7 +534,7 @@ func TestPassResult(t *testing.T) {
 	}
 
 	const wantDetail = "Notation trust policy matched" +
-		" (cryptographic verification pending)"
+		" (cryptographic verification not yet implemented)"
 
 	if result.Detail != wantDetail {
 		t.Errorf("detail = %q, want %q", result.Detail, wantDetail)

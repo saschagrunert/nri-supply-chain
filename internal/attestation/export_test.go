@@ -321,6 +321,22 @@ func (r *CircuitBreakerRegistry) ExportCooldown() time.Duration {
 	return r.cooldown
 }
 
+// ExportFallbackOriginalHost exposes fallbackOriginalHost for external tests.
+func ExportFallbackOriginalHost(originalRef string) string {
+	return fallbackOriginalHost(originalRef)
+}
+
+// ExportFetchWithFallback exposes fetchWithFallback for external tests.
+func (f *OCIFetcher) ExportFetchWithFallback(
+	ctx context.Context,
+	mirrorRef string,
+	fallback *registry.FallbackInfo,
+	mirrorErr error,
+	opts *FetchOptions,
+) ([]VerifiedAttestation, error) {
+	return f.fetchWithFallback(ctx, mirrorRef, fallback, mirrorErr, opts)
+}
+
 // NewTestMessageSignatureBundle creates a bundle with a message signature (no DSSE envelope).
 func NewTestMessageSignatureBundle() *bundle.Bundle {
 	protoBundle := &protobundle.Bundle{

@@ -253,6 +253,22 @@ func warnPermissiveMissingPolicies(label string, pol *policy.Policy) {
 			"sbom_missing_policy", pol.SBOMMissingPolicy(),
 		)
 	}
+
+	if pol.VSA != nil && pol.VSAMissingPolicy() == types.ActionAllow {
+		slog.Warn("enforce mode with default VSA missing_policy=allow allows "+
+			"containers without VSA attestations; consider setting vsa.missingPolicy=deny",
+			"policy", label,
+			"vsa_missing_policy", pol.VSAMissingPolicy(),
+		)
+	}
+
+	if pol.Notation != nil {
+		slog.Warn("Notation is configured but cryptographic signature verification "+
+			"is not yet implemented; signatures are accepted based on trust policy "+
+			"validation only",
+			"policy", label,
+		)
+	}
 }
 
 // Stop releases resources held by the verifier, including the cache's
