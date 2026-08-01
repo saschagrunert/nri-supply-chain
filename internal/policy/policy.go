@@ -30,6 +30,7 @@ import (
 	"strings"
 	"time"
 
+	celengine "github.com/saschagrunert/nri-supply-chain/internal/cel"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/glob"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
@@ -178,6 +179,9 @@ var (
 	ErrDuplicateNotationTrustPolicyName = errors.New(
 		"duplicate notation trust policy rule name",
 	)
+
+	// ErrCELCompileFailed indicates a CEL expression failed to compile.
+	ErrCELCompileFailed = errors.New("CEL compilation failed")
 )
 
 // Sections groups the verification settings that can be overridden
@@ -195,6 +199,8 @@ type Sections struct {
 	Signatures *SignaturesPolicy `json:"signatures,omitempty"`
 	// Notation contains Notation/Notary v2 signature verification settings.
 	Notation *NotationPolicy `json:"notation,omitempty"`
+	// CEL contains custom CEL expression rules for verification.
+	CEL *celengine.Policy `json:"cel,omitempty"`
 }
 
 // Policy defines the trust roots and per-namespace verification settings.
@@ -221,6 +227,8 @@ type Policy struct {
 	// image matches a rule's Images patterns, the rule's non-nil fields
 	// override the base policy for that verification. First match wins.
 	Rules []ImageRule `json:"rules,omitempty"`
+	// CompiledCEL holds the compiled CEL programs, populated during Validate.
+	CompiledCEL *celengine.CompiledPolicy `json:"-"`
 }
 
 // TrustPolicy contains trust roots for verification.
@@ -349,6 +357,9 @@ type ImageRule struct {
 	// Images is a required list of glob patterns. An image matching any
 	// pattern is considered a match for this rule.
 	Images []string `json:"images"`
+	// CompiledCEL holds the compiled CEL programs for this rule, populated
+	// during Validate.
+	CompiledCEL *celengine.CompiledPolicy `json:"-"`
 }
 
 // EffectiveMode returns the per-namespace mode if set, otherwise the global mode.
@@ -448,6 +459,12 @@ func MergeWithDefault(namespace, defaultPol *Policy) *Policy {
 
 	applySections(&merged.Sections, namespace.Sections)
 
+	// When the namespace overrides CEL, use its compiled programs
+	// instead of the default's. Both were compiled during Load().
+	if namespace.CEL != nil {
+		merged.CompiledCEL = namespace.CompiledCEL
+	}
+
 	if namespace.Rules != nil {
 		merged.Rules = cloneRules(namespace.Rules)
 	}
@@ -457,10 +474,11 @@ func MergeWithDefault(namespace, defaultPol *Policy) *Policy {
 
 func clonePolicy(pol *Policy) *Policy {
 	clone := &Policy{
-		Mode:     pol.Mode,
-		Include:  slices.Clone(pol.Include),
-		Exclude:  slices.Clone(pol.Exclude),
-		Sections: cloneSections(pol.Sections),
+		Mode:        pol.Mode,
+		Include:     slices.Clone(pol.Include),
+		Exclude:     slices.Clone(pol.Exclude),
+		Sections:    cloneSections(pol.Sections),
+		CompiledCEL: pol.CompiledCEL, // compiled programs are read-only, safe to share
 	}
 
 	if pol.Rules != nil {
@@ -478,6 +496,11 @@ func ApplyRule(base *Policy, rule *ImageRule) *Policy {
 
 	applySections(&resolved.Sections, rule.Sections)
 
+	// When the rule overrides CEL, use its compiled programs.
+	if rule.CompiledCEL != nil {
+		resolved.CompiledCEL = rule.CompiledCEL
+	}
+
 	return resolved
 }
 
@@ -486,8 +509,9 @@ func cloneRules(rules []ImageRule) []ImageRule {
 
 	for idx, rule := range rules {
 		cloned[idx] = ImageRule{
-			Images:   slices.Clone(rule.Images),
-			Sections: cloneSections(rule.Sections),
+			Images:      slices.Clone(rule.Images),
+			Sections:    cloneSections(rule.Sections),
+			CompiledCEL: rule.CompiledCEL, // compiled programs are read-only, safe to share
 		}
 	}
 
@@ -529,6 +553,10 @@ func applySections(dst *Sections, src Sections) {
 
 	if src.Notation != nil {
 		dst.Notation = cloneNotation(src.Notation)
+	}
+
+	if src.CEL != nil {
+		dst.CEL = cloneCEL(src.CEL)
 	}
 }
 
@@ -582,6 +610,16 @@ func cloneTrust(tp *TrustPolicy) *TrustPolicy {
 	return &trust
 }
 
+func cloneCEL(src *celengine.Policy) *celengine.Policy {
+	cloned := &celengine.Policy{
+		Rules: make([]celengine.Rule, len(src.Rules)),
+	}
+
+	copy(cloned.Rules, src.Rules)
+
+	return cloned
+}
+
 // ValidateModeStrictness checks that the per-namespace mode is at least as
 // strict as the global verification mode. Returns nil if Mode is empty (no
 // per-namespace override).
@@ -613,6 +651,11 @@ func (p *Policy) Validate() error {
 	err := p.validateRules()
 	if err != nil {
 		errs = append(errs, err)
+	}
+
+	celErr := p.validateAndCompileCEL()
+	if celErr != nil {
+		errs = append(errs, celErr)
 	}
 
 	return errors.Join(errs...)
@@ -1505,6 +1548,13 @@ func (p *Policy) validateRule(idx int) []error {
 		errs = append(errs, fmt.Errorf("rules[%d]: %w", idx, err))
 	}
 
+	celErr := rulePol.validateAndCompileCEL()
+	if celErr != nil {
+		errs = append(errs, fmt.Errorf("rules[%d]: %w", idx, celErr))
+	} else {
+		p.Rules[idx].CompiledCEL = rulePol.CompiledCEL
+	}
+
 	return errs
 }
 
@@ -1521,4 +1571,19 @@ func (p *Policy) resolveVSADuration() {
 	}
 
 	p.VSA.MaxAgeDuration = maxAge
+}
+
+func (p *Policy) validateAndCompileCEL() error {
+	if p.CEL == nil || len(p.CEL.Rules) == 0 {
+		return nil
+	}
+
+	compiled, err := celengine.Compile(p.CEL.Rules)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrCELCompileFailed, err)
+	}
+
+	p.CompiledCEL = compiled
+
+	return nil
 }

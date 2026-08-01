@@ -24,6 +24,7 @@ patterns for the nri-supply-chain plugin.
   - [<code>signatures</code> (object)](#signatures-object)
   - [<code>notation</code> (object)](#notation-object)
   - [<code>rules</code> (array of objects)](#rules-array-of-objects)
+  - [<code>cel</code> (object)](#cel-object)
 - [Verification Types](#verification-types)
   - [SLSA Provenance](#slsa-provenance)
     - [Custom build systems](#custom-build-systems)
@@ -187,6 +188,35 @@ nri-supply-chain json-schema policy
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$ref": "#/$defs/Policy",
   "$defs": {
+    "CELPolicy": {
+      "properties": {
+        "rules": {
+          "items": {
+            "$ref": "#/$defs/CELRule"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": ["rules"]
+    },
+    "CELRule": {
+      "properties": {
+        "match": {
+          "type": "string"
+        },
+        "require": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": ["require"]
+    },
     "ImageRule": {
       "properties": {
         "trust": {
@@ -206,6 +236,9 @@ nri-supply-chain json-schema policy
         },
         "notation": {
           "$ref": "#/$defs/NotationPolicy"
+        },
+        "cel": {
+          "$ref": "#/$defs/CELPolicy"
         },
         "images": {
           "items": {
@@ -308,6 +341,9 @@ nri-supply-chain json-schema policy
         },
         "notation": {
           "$ref": "#/$defs/NotationPolicy"
+        },
+        "cel": {
+          "$ref": "#/$defs/CELPolicy"
         },
         "mode": {
           "type": "string",
@@ -619,6 +655,7 @@ Each rule is an object with:
 | `vsa`        | object | no       | Override VSA settings (same schema as top-level `vsa`)    |
 | `signatures` | object | no       | Override signature settings (same schema as `signatures`) |
 | `notation`   | object | no       | Override Notation settings (same schema as `notation`)    |
+| `cel`        | object | no       | Override CEL rules (same schema as top-level `cel`)       |
 
 Fields not set in a rule are inherited from the base policy. The `images`
 patterns use the same glob syntax as `include` and `exclude`.
@@ -664,6 +701,80 @@ Example:
 In this example, `ghcr.io/myorg/critical-app:latest` requires provenance and
 VEX attestations. `ghcr.io/myorg/internal-tool:v1` allows missing provenance.
 All other images use the base policy (`warn` on missing provenance).
+
+### `cel` (object)
+
+Custom verification rules using [CEL (Common Expression Language)](https://github.com/google/cel-go).
+CEL rules run after all standard checks (SLSA, VEX, VSA) complete and can
+reference their results. All rules must pass (all-must-pass semantics).
+Expressions are compiled at policy load time, so syntax errors are caught
+early. CEL rules are not evaluated when a trusted VSA short-circuits
+verification (see [verification.md](verification.md) step 8).
+
+| Field   | Type  | Description                                   |
+| ------- | ----- | --------------------------------------------- |
+| `rules` | array | CEL rules to evaluate (see rule fields below) |
+
+Each rule is an object with:
+
+| Field     | Type   | Required | Description                                                                                                                           |
+| --------- | ------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `match`   | string | no       | CEL expression that determines whether this rule applies. When empty or omitted, the rule always applies. Must evaluate to a boolean. |
+| `require` | string | yes      | CEL expression that must evaluate to `true` for the check to pass.                                                                    |
+| `message` | string | no       | Human-readable message shown when `require` evaluates to `false`.                                                                     |
+
+**Available variables:**
+
+| Variable           | Type   | Description                                        |
+| ------------------ | ------ | -------------------------------------------------- |
+| `image.ref`        | string | Full image reference                               |
+| `image.registry`   | string | Registry host                                      |
+| `image.repository` | string | Repository path                                    |
+| `image.digest`     | string | Image digest                                       |
+| `image.namespace`  | string | Kubernetes namespace                               |
+| `slsa.verified`    | bool   | Whether SLSA check passed                          |
+| `slsa.builderID`   | string | Builder ID from provenance (reserved, always `""`) |
+| `slsa.buildType`   | string | Build type (reserved, always `""`)                 |
+| `slsa.source`      | string | Source URI (reserved, always `""`)                 |
+| `vex.verified`     | bool   | Whether VEX check passed                           |
+| `vex.status`       | string | VEX status (reserved, always `""`)                 |
+| `vsa.verified`     | bool   | Whether VSA check passed                           |
+| `vsa.verifierID`   | string | VSA verifier ID (reserved, always `""`)            |
+| `vsa.result`       | string | PASSED/FAILED (reserved, always `""`)              |
+| `vsa.level`        | int    | SLSA build level (reserved, always `0`)            |
+
+Standard string functions are available via `ext.Strings()`: `startsWith`,
+`endsWith`, `contains`, `matches`.
+
+**Limits:**
+
+- Maximum expression size: 4096 bytes
+- Maximum number of rules: 64
+- Runtime cost limit: 100,000 (protects against expensive expressions)
+
+Example:
+
+```json
+{
+  "cel": {
+    "rules": [
+      {
+        "match": "image.registry == 'ghcr.io'",
+        "require": "slsa.verified == true",
+        "message": "GHCR images must have SLSA provenance"
+      },
+      {
+        "require": "!(image.namespace == 'production') || (slsa.verified == true && vex.verified == true)",
+        "message": "Production images require both SLSA and VEX verification"
+      }
+    ]
+  }
+}
+```
+
+The `cel` section can be set at the top level, in per-image `rules`, and in
+namespace overrides. When `"inherits": true` is set, the CEL section is
+inherited from the default policy unless the namespace policy defines its own.
 
 ## Verification Types
 
