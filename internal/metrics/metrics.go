@@ -73,7 +73,9 @@ type Metrics struct {
 	FetchDuration *prometheus.HistogramVec
 	// PrewarmDurationSeconds measures cache pre-warming duration.
 	PrewarmDurationSeconds *prometheus.HistogramVec
-	registry               *prometheus.Registry
+	// MirrorFallbackTotal counts mirror fallback events by registry and type.
+	MirrorFallbackTotal *prometheus.CounterVec
+	registry            *prometheus.Registry
 }
 
 // New creates and registers all supply chain verification metrics.
@@ -144,7 +146,13 @@ func New() *Metrics {
 		),
 		FetchDuration:          newFetchDuration(),
 		PrewarmDurationSeconds: newPrewarmDuration(),
-		registry:               prometheus.NewRegistry(),
+		MirrorFallbackTotal: newCounterVec(
+			"mirror_fallback_total",
+			"Total number of mirror fallback events.",
+			labelRegistry,
+			labelType,
+		),
+		registry: prometheus.NewRegistry(),
 	}
 
 	met.register()
@@ -293,6 +301,7 @@ func (m *Metrics) register() {
 		m.VerificationInterruptedTotal,
 		m.FetchDuration,
 		m.PrewarmDurationSeconds,
+		m.MirrorFallbackTotal,
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{
 			PidFn:        nil,
 			Namespace:    "",

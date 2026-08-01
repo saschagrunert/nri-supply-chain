@@ -1003,7 +1003,10 @@ func TestConfigValidateRegistries(t *testing.T) {
 
 		cfg := config.DefaultConfig()
 		cfg.Registries = []config.Registry{
-			{Prefix: testRegistryGHCR, Mirror: testMirrorInternal, CACert: "", Insecure: false},
+			{
+				Prefix: testRegistryGHCR, Mirror: testMirrorInternal,
+				CACert: "", Insecure: false,
+			},
 		}
 
 		testutil.AssertNoError(t, cfg.Validate())
@@ -1014,7 +1017,10 @@ func TestConfigValidateRegistries(t *testing.T) {
 
 		cfg := config.DefaultConfig()
 		cfg.Registries = []config.Registry{
-			{Prefix: "", Mirror: testMirrorInternal, CACert: "", Insecure: false},
+			{
+				Prefix: "", Mirror: testMirrorInternal,
+				CACert: "", Insecure: false,
+			},
 		}
 
 		err := cfg.Validate()
@@ -1028,7 +1034,10 @@ func TestConfigValidateRegistries(t *testing.T) {
 
 		cfg := config.DefaultConfig()
 		cfg.Registries = []config.Registry{
-			{Prefix: testRegistryGHCR, Mirror: "", CACert: "relative/path.pem", Insecure: false},
+			{
+				Prefix: testRegistryGHCR, Mirror: "",
+				CACert: "relative/path.pem", Insecure: false,
+			},
 		}
 
 		err := cfg.Validate()
@@ -1042,7 +1051,10 @@ func TestConfigValidateRegistries(t *testing.T) {
 
 		cfg := config.DefaultConfig()
 		cfg.Registries = []config.Registry{
-			{Prefix: testRegistryGHCR, Mirror: "", CACert: "/etc/ssl/ca.pem", Insecure: false},
+			{
+				Prefix: testRegistryGHCR, Mirror: "",
+				CACert: "/etc/ssl/ca.pem", Insecure: false,
+			},
 		}
 
 		testutil.AssertNoError(t, cfg.Validate())
@@ -1053,7 +1065,10 @@ func TestConfigValidateRegistries(t *testing.T) {
 
 		cfg := config.DefaultConfig()
 		cfg.Registries = []config.Registry{
-			{Prefix: "dev-registry.local", Mirror: "", CACert: "", Insecure: true},
+			{
+				Prefix: "dev-registry.local", Mirror: "",
+				CACert: "", Insecure: true,
+			},
 		}
 
 		testutil.AssertNoError(t, cfg.Validate())
@@ -1064,8 +1079,14 @@ func TestConfigValidateRegistries(t *testing.T) {
 
 		cfg := config.DefaultConfig()
 		cfg.Registries = []config.Registry{
-			{Prefix: "", Mirror: "mirror", CACert: "", Insecure: false},
-			{Prefix: testRegistryGHCR, Mirror: "", CACert: "relative.pem", Insecure: false},
+			{
+				Prefix: "", Mirror: "mirror",
+				CACert: "", Insecure: false,
+			},
+			{
+				Prefix: testRegistryGHCR, Mirror: "",
+				CACert: "relative.pem", Insecure: false,
+			},
 		}
 
 		err := cfg.Validate()
@@ -1085,7 +1106,10 @@ func TestConfigValidateRegistries(t *testing.T) {
 
 		cfg := config.DefaultConfig()
 		cfg.Registries = []config.Registry{
-			{Prefix: testRegistryGHCR, Mirror: testMirrorInternal, CACert: "", Insecure: false},
+			{
+				Prefix: testRegistryGHCR, Mirror: testMirrorInternal,
+				CACert: "", Insecure: false,
+			},
 			{
 				Prefix: testRegistryGHCR, Mirror: "other-mirror.example.com",
 				CACert: "", Insecure: false,
@@ -1136,7 +1160,10 @@ func TestConfigValidateRuntimeRegistryCACert(t *testing.T) {
 
 		cfg := config.DefaultConfig()
 		cfg.Registries = []config.Registry{
-			{Prefix: testRegistryGHCR, Mirror: "", CACert: certPath, Insecure: false},
+			{
+				Prefix: testRegistryGHCR, Mirror: "",
+				CACert: certPath, Insecure: false,
+			},
 		}
 
 		testutil.AssertNoError(t, cfg.ValidateRuntime())
@@ -1147,7 +1174,10 @@ func TestConfigValidateRuntimeRegistryCACert(t *testing.T) {
 
 		cfg := config.DefaultConfig()
 		cfg.Registries = []config.Registry{
-			{Prefix: testRegistryGHCR, Mirror: "", CACert: "/nonexistent/ca.pem", Insecure: false},
+			{
+				Prefix: testRegistryGHCR, Mirror: "",
+				CACert: "/nonexistent/ca.pem", Insecure: false,
+			},
 		}
 
 		err := cfg.ValidateRuntime()
@@ -1161,7 +1191,10 @@ func TestConfigValidateRuntimeRegistryCACert(t *testing.T) {
 
 		cfg := config.DefaultConfig()
 		cfg.Registries = []config.Registry{
-			{Prefix: testRegistryGHCR, Mirror: testMirrorInternal, CACert: "", Insecure: false},
+			{
+				Prefix: testRegistryGHCR, Mirror: testMirrorInternal,
+				CACert: "", Insecure: false,
+			},
 		}
 
 		testutil.AssertNoError(t, cfg.ValidateRuntime())
@@ -1650,7 +1683,10 @@ func TestNormalizePrefixCaseInsensitive(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = t.TempDir()
 	cfg.Registries = []config.Registry{
-		{Prefix: "GHCR.IO", Mirror: "MIRROR.INTERNAL", CACert: "", Insecure: false},
+		{
+			Prefix: "GHCR.IO", Mirror: "MIRROR.INTERNAL", CACert: "",
+			Insecure: false,
+		},
 	}
 
 	err := cfg.Validate()
@@ -1676,8 +1712,14 @@ func TestNormalizeDuplicateCaseInsensitive(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = t.TempDir()
 	cfg.Registries = []config.Registry{
-		{Prefix: testPrefixGHCR, Mirror: "mirror1.internal", CACert: "", Insecure: false},
-		{Prefix: "GHCR.IO", Mirror: "mirror2.internal", CACert: "", Insecure: false},
+		{
+			Prefix: testPrefixGHCR, Mirror: "mirror1.internal", CACert: "",
+			Insecure: false,
+		},
+		{
+			Prefix: "GHCR.IO", Mirror: "mirror2.internal", CACert: "",
+			Insecure: false,
+		},
 	}
 
 	err := cfg.Validate()
@@ -1710,7 +1752,10 @@ func TestValidateRegistryPrefixInvalid(t *testing.T) {
 			cfg.Verification = config.ModeWarn
 			cfg.PolicyDir = t.TempDir()
 			cfg.Registries = []config.Registry{
-				{Prefix: tc.prefix, Mirror: "mirror.internal", CACert: "", Insecure: false},
+				{
+					Prefix: tc.prefix, Mirror: "mirror.internal", CACert: "",
+					Insecure: false,
+				},
 			}
 
 			err := cfg.Validate()
@@ -1729,7 +1774,10 @@ func TestValidateRegistryMirrorInvalid(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = t.TempDir()
 	cfg.Registries = []config.Registry{
-		{Prefix: testPrefixGHCR, Mirror: "https://mirror.internal", CACert: "", Insecure: false},
+		{
+			Prefix: testPrefixGHCR, Mirror: "https://mirror.internal", CACert: "",
+			Insecure: false,
+		},
 	}
 
 	err := cfg.Validate()
@@ -1745,7 +1793,9 @@ func TestValidateRegistryMirrorSameAsPrefix(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = t.TempDir()
 	cfg.Registries = []config.Registry{
-		{Prefix: testPrefixGHCR, Mirror: "ghcr.io", CACert: "", Insecure: false},
+		{
+			Prefix: testPrefixGHCR, Mirror: "ghcr.io", CACert: "", Insecure: false,
+		},
 	}
 
 	err := cfg.Validate()
@@ -1774,7 +1824,10 @@ func TestRegistriesChanged(t *testing.T) {
 		{name: "removed", prev: []config.Registry{reg}, next: nil, want: true},
 		{name: "equal", prev: []config.Registry{reg}, next: []config.Registry{reg}, want: false},
 		{name: "mirror changed", prev: []config.Registry{reg}, next: []config.Registry{
-			{Prefix: testPrefixGHCR, Mirror: "other.internal", CACert: "", Insecure: false},
+			{
+				Prefix: testPrefixGHCR, Mirror: "other.internal", CACert: "",
+				Insecure: false,
+			},
 		}, want: true},
 	}
 

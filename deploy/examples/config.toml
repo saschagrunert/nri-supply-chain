@@ -39,3 +39,9 @@ circuit_breaker_cooldown = "30s"
 # Log level override from config (takes effect on reload).
 # Valid values: "debug", "info", "warn", "error".
 # log_level = "info"
+
+# Registry mirror with automatic fallback to the original registry.
+# When the mirror is unreachable, requests fall back to ghcr.io.
+# [[registries]]
+# prefix = "ghcr.io"
+# mirror = "mirror.internal.example.com"

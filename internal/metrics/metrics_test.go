@@ -93,6 +93,10 @@ func TestNewMetrics(t *testing.T) {
 	if met.FetchDuration == nil {
 		t.Error("expected FetchDuration to be set")
 	}
+
+	if met.MirrorFallbackTotal == nil {
+		t.Error("expected MirrorFallbackTotal to be set")
+	}
 }
 
 func TestMetricsHandler(t *testing.T) {
@@ -172,6 +176,7 @@ func TestMetricsIncrement(t *testing.T) {
 	met.ConfigReloadErrorsTotal.Inc()
 	met.VerificationInterruptedTotal.Inc()
 	met.FetchDuration.WithLabelValues("ghcr.io").Observe(0.25)
+	met.MirrorFallbackTotal.WithLabelValues("ghcr.io", "digest").Inc()
 
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequestWithContext(
@@ -211,6 +216,7 @@ func TestMetricsIncrement(t *testing.T) {
 		`nri_supply_chain_config_reload_errors_total 1`,
 		`nri_supply_chain_verification_interrupted_total 1`,
 		`nri_supply_chain_fetch_duration_seconds_bucket{registry="ghcr.io",le="0.25"} 1`,
+		`nri_supply_chain_mirror_fallback_total{registry="ghcr.io",type="digest"} 1`,
 	} {
 		if !strings.Contains(bodyStr, expected) {
 			t.Errorf("expected %q in metrics output", expected)

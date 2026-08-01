@@ -170,12 +170,14 @@ func ExportTrustedRootMaxStaleness() time.Duration { return trustedRootMaxStalen
 // NewTestOCIFetcher creates a fetcher with injectable dependencies for testing.
 func NewTestOCIFetcher(verifier BundleVerifyFunc, imageFetcher ImageFetchFunc) *OCIFetcher {
 	return &OCIFetcher{
-		verifyBundle:   verifier,
-		fetchImage:     imageFetcher,
-		referrers:      nil,
-		rootCache:      nil,
-		limiter:        atomic.Pointer[rate.Limiter]{},
-		transportCache: atomic.Pointer[registry.TransportCache]{},
+		verifyBundle:       verifier,
+		fetchImage:         imageFetcher,
+		referrers:          nil,
+		rootCache:          nil,
+		limiter:            atomic.Pointer[rate.Limiter]{},
+		transportCache:     atomic.Pointer[registry.TransportCache]{},
+		onMirrorFallback:   nil,
+		onMirrorFallbackMu: sync.RWMutex{},
 	}
 }
 
@@ -184,12 +186,14 @@ func NewTestOCIFetcherFull(
 	verifier BundleVerifyFunc, imageFetcher ImageFetchFunc, referrersFn ReferrersFunc,
 ) *OCIFetcher {
 	return &OCIFetcher{
-		verifyBundle:   verifier,
-		fetchImage:     imageFetcher,
-		referrers:      referrersFn,
-		rootCache:      nil,
-		limiter:        atomic.Pointer[rate.Limiter]{},
-		transportCache: atomic.Pointer[registry.TransportCache]{},
+		verifyBundle:       verifier,
+		fetchImage:         imageFetcher,
+		referrers:          referrersFn,
+		rootCache:          nil,
+		limiter:            atomic.Pointer[rate.Limiter]{},
+		transportCache:     atomic.Pointer[registry.TransportCache]{},
+		onMirrorFallback:   nil,
+		onMirrorFallbackMu: sync.RWMutex{},
 	}
 }
 

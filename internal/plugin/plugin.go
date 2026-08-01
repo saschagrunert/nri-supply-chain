@@ -27,6 +27,7 @@ import (
 
 	"github.com/containerd/nri/pkg/api"
 	"github.com/containerd/nri/pkg/stub"
+	"github.com/google/go-containerregistry/pkg/name"
 	"golang.org/x/sync/semaphore"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
@@ -281,14 +282,27 @@ func (p *Plugin) CreateContainer(
 func (p *Plugin) registryAwareResolver(
 	ctx context.Context, imageRef string,
 ) (digest, indexDigest string, err error) {
-	digest, indexDigest, err = registry.ResolveWithRegistries(
+	digest, indexDigest, fallbackUsed, resolveErr := registry.ResolveWithRegistries(
 		ctx, imageRef, p.transportCache.Load(),
 	)
-	if err != nil {
-		return "", "", fmt.Errorf("resolving digest: %w", err)
+	if resolveErr != nil {
+		return "", "", fmt.Errorf("resolving digest: %w", resolveErr)
+	}
+
+	if fallbackUsed {
+		p.metrics.MirrorFallbackTotal.WithLabelValues(registryHostFromRef(imageRef), "digest").Inc()
 	}
 
 	return digest, indexDigest, nil
+}
+
+func registryHostFromRef(imageRef string) string {
+	ref, err := name.ParseReference(imageRef)
+	if err != nil {
+		return imageRef
+	}
+
+	return ref.Context().RegistryStr()
 }
 
 func (p *Plugin) handleMissingAnnotations(

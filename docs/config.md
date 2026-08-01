@@ -164,6 +164,13 @@ registry entry apply to the actual connection target. When a `mirror` is set,
 that target is the mirror host, not the original registry. Configure `ca_cert`
 with the mirror's CA certificate when the mirror uses internal PKI.
 
+**Mirror fallback:** When a mirror is configured, the plugin automatically
+retries requests against the original registry if the mirror is unreachable.
+Fallback triggers on connection-level errors such as DNS failures, TCP
+connection refused, TLS handshake errors, timeouts, and server errors (HTTP
+5xx). Application-level errors (401, 403, 404) do not trigger fallback
+because the mirror responded successfully at the transport layer.
+
 ## Policy Files
 
 Policy files are JSON documents in `policy_dir`. The file `default.json`

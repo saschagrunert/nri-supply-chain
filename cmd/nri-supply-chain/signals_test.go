@@ -705,7 +705,10 @@ func TestUpdatePluginRegistries(t *testing.T) {
 
 		mock := &mockPluginReloader{cancelPrewarmCalled: false, transportCache: nil}
 		updatePluginRegistries(mock, []config.Registry{
-			{Prefix: testPrefixGHCR, Mirror: testMirrorInternal, CACert: "", Insecure: false},
+			{
+				Prefix: testPrefixGHCR, Mirror: testMirrorInternal,
+				CACert: "", Insecure: false,
+			},
 		}, nil)
 
 		if mock.transportCache == nil {
@@ -717,7 +720,10 @@ func TestUpdatePluginRegistries(t *testing.T) {
 		t.Parallel()
 
 		shared := registry.NewTransportCache([]config.Registry{
-			{Prefix: testPrefixGHCR, Mirror: testMirrorInternal, CACert: "", Insecure: false},
+			{
+				Prefix: testPrefixGHCR, Mirror: testMirrorInternal,
+				CACert: "", Insecure: false,
+			},
 		})
 		mock := &mockPluginReloader{cancelPrewarmCalled: false, transportCache: nil}
 		updatePluginRegistries(mock, shared.Registries(), shared)
@@ -733,7 +739,10 @@ func TestUpdatePluginRegistries(t *testing.T) {
 		mock := &mockPluginReloader{
 			cancelPrewarmCalled: false,
 			transportCache: registry.NewTransportCache([]config.Registry{
-				{Prefix: testPrefixGHCR, Mirror: testMirrorInternal, CACert: "", Insecure: false},
+				{
+					Prefix: testPrefixGHCR, Mirror: testMirrorInternal,
+					CACert: "", Insecure: false,
+				},
 			}),
 		}
 		updatePluginRegistries(mock, nil, nil)
@@ -747,11 +756,17 @@ func TestUpdatePluginRegistries(t *testing.T) {
 		t.Parallel()
 
 		staleRegs := []config.Registry{
-			{Prefix: "old.registry.io", Mirror: "", CACert: "", Insecure: false},
+			{
+				Prefix: "old.registry.io", Mirror: "",
+				CACert: "", Insecure: false,
+			},
 		}
 		staleShared := registry.NewTransportCache(staleRegs)
 		newRegs := []config.Registry{
-			{Prefix: "new.registry.io", Mirror: "", CACert: "", Insecure: false},
+			{
+				Prefix: "new.registry.io", Mirror: "",
+				CACert: "", Insecure: false,
+			},
 		}
 		mock := &mockPluginReloader{cancelPrewarmCalled: false, transportCache: nil}
 		updatePluginRegistries(mock, newRegs, staleShared)
@@ -774,7 +789,10 @@ func TestUpdatePluginRegistries(t *testing.T) {
 		t.Parallel()
 
 		regs := []config.Registry{
-			{Prefix: testPrefixGHCR, Mirror: testMirrorInternal, CACert: "", Insecure: false},
+			{
+				Prefix: testPrefixGHCR, Mirror: testMirrorInternal,
+				CACert: "", Insecure: false,
+			},
 		}
 		original := registry.NewTransportCache(regs)
 		mock := &mockPluginReloader{cancelPrewarmCalled: false, transportCache: original}
