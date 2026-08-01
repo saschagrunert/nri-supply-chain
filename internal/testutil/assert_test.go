@@ -16,6 +16,7 @@ package testutil_test
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -23,7 +24,10 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 )
 
-var errTestSentinel = errors.New("test error")
+var (
+	errTestSentinel = errors.New("test error")
+	errTestOther    = errors.New("other error")
+)
 
 func TestAssertEqual(t *testing.T) {
 	t.Parallel()
@@ -55,6 +59,43 @@ func TestAssertError(t *testing.T) {
 	t.Parallel()
 
 	testutil.AssertError(t, errTestSentinel)
+}
+
+func TestAssertErrorIs(t *testing.T) {
+	t.Parallel()
+
+	wrapped := fmt.Errorf("context: %w", errTestSentinel)
+	testutil.AssertErrorIs(t, wrapped, errTestSentinel)
+}
+
+func TestAssertErrorIsFails(t *testing.T) {
+	t.Parallel()
+
+	ft := &testing.T{}
+
+	testutil.AssertErrorIs(ft, errTestOther, errTestSentinel)
+
+	if !ft.Failed() {
+		t.Error("expected AssertErrorIs to mark test as failed for non-matching error")
+	}
+}
+
+func TestAssertContains(t *testing.T) {
+	t.Parallel()
+
+	testutil.AssertContains(t, "hello world", "world")
+}
+
+func TestAssertContainsFails(t *testing.T) {
+	t.Parallel()
+
+	ft := &testing.T{}
+
+	testutil.AssertContains(ft, "hello", "world")
+
+	if !ft.Failed() {
+		t.Error("expected AssertContains to mark test as failed for missing substring")
+	}
 }
 
 func TestMustMarshal(t *testing.T) {

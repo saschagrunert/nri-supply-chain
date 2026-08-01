@@ -46,13 +46,24 @@ When a container is created, the plugin performs verification in this order:
    [policy directory](policy.md). Falls back to `default.json` if no
    namespace-specific policy exists.
 
-3. **Exclusion check**: If the image matches any `exclude` glob pattern in the
-   policy, verification is skipped.
+3. **Include check**: If the policy has `include` patterns, only images
+   matching at least one pattern proceed. Images that do not match any
+   include pattern skip verification. When `include` is empty (the
+   default), all images are eligible.
 
-4. **Cache check**: If a cached result exists for this image digest and is
+4. **Exclusion check**: If the image matches any `exclude` glob pattern in the
+   policy, verification is skipped. Exclude takes precedence over include:
+   an image matching both is skipped.
+
+5. **Per-image rule resolution**: If the policy has `rules`, the image is
+   matched against each rule's `images` patterns in order (first match
+   wins). When a rule matches, its non-nil sections (trust, slsa, vex,
+   vsa, signatures) override the base policy for that verification.
+
+6. **Cache check**: If a cached result exists for this image digest and is
    within the configured TTL, returns it immediately.
 
-5. **Attestation fetch**: Discovers attestations via the OCI Referrers API.
+7. **Attestation fetch**: Discovers attestations via the OCI Referrers API.
    Filters for DSSE-enveloped Sigstore bundles, verifies each bundle's
    signature (keyless or key-based), and extracts payloads. Unsigned or
    incorrectly signed bundles are discarded. If the Referrers API returns no
@@ -61,19 +72,19 @@ When a container is created, the plugin performs verification in this order:
    repository. The same signature verification applies to cosign tag
    attestations.
 
-6. **VSA-first evaluation**:
+8. **VSA-first evaluation**:
    - If a trusted PASSED VSA is found, skip SLSA and VEX checks entirely.
    - If a trusted FAILED VSA is found, hard reject immediately (no fallback).
    - If no VSA is found, or the VSA is from an untrusted verifier or stale,
      fall through to direct verification.
 
-7. **Parallel SLSA + VEX verification**: When VSA does not short-circuit,
+9. **Parallel SLSA + VEX verification**: When VSA does not short-circuit,
    SLSA provenance and VEX checks run concurrently.
 
-8. **Enforcement**: In `enforce` mode, failed verification rejects the
-   container. In `warn` mode, failures are logged but allowed.
+10. **Enforcement**: In `enforce` mode, failed verification rejects the
+    container. In `warn` mode, failures are logged but allowed.
 
-9. **Caching**: The result is cached for future lookups.
+11. **Caching**: The result is cached for future lookups.
 
 Latency model:
 

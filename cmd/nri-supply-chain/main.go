@@ -178,7 +178,7 @@ func newVerifyCmd(configPath, logLevel *string) *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&namespace, "namespace", "n",
-		verifier.DefaultPolicyLabel, "namespace for verification")
+		policy.DefaultPolicyLabel, "namespace for verification")
 	cmd.Flags().StringVarP(&outputFormat, "output", "o",
 		outputFormatTable, "output format: table, json")
 
@@ -380,7 +380,7 @@ func runValidation(cfg *config.Config) int {
 	for ns, pol := range policies {
 		label := ns
 		if label == "" {
-			label = verifier.DefaultPolicyLabel
+			label = policy.DefaultPolicyLabel
 		}
 
 		err := pol.ValidateRuntime()

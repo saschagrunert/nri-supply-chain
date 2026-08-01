@@ -29,6 +29,7 @@ var (
 	errNoTrustedMaterial   = errors.New("no trusted keys or issuers configured")
 	errAllBundlesFailed    = errors.New("all bundle verifications failed")
 	errNoIssuers           = errors.New("at least one issuer is required")
+	errNoPEMBlock          = errors.New("no PEM block found")
 )
 
 const (

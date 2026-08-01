@@ -57,7 +57,9 @@ const (
 	maxVerificationTimeout      = 5 * time.Minute
 
 	// DefaultPolicyLabel is the display label used for the default (namespace-less) policy.
-	DefaultPolicyLabel = "default"
+	//
+	// Deprecated: Use policy.DefaultPolicyLabel instead.
+	DefaultPolicyLabel = policy.DefaultPolicyLabel
 )
 
 type snapshot struct {
@@ -168,7 +170,7 @@ func WarnEnforceDefaults(cfg *config.Config, policies map[string]*policy.Policy)
 
 		label := namespace
 		if label == "" {
-			label = DefaultPolicyLabel
+			label = policy.DefaultPolicyLabel
 		}
 
 		warnPermissiveMissingPolicies(label, pol)

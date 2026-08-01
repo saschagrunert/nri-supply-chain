@@ -257,6 +257,11 @@ func buildOCIPURL(imageRef, imageDigest string, parsedImageRef name.Reference) s
 
 		ref, err = name.ParseReference(imageRef)
 		if err != nil {
+			slog.Debug("Failed to parse image reference for PURL construction",
+				"image", imageRef,
+				"error", err,
+			)
+
 			return ""
 		}
 	}

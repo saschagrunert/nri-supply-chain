@@ -9,7 +9,9 @@ nri-supply-chain plugin.
 - [Private Sigstore Instances](#private-sigstore-instances)
 - [Registries](#registries)
 - [Policy Files](#policy-files)
-- [CLI Flags](#cli-flags)
+- [CLI](#cli)
+  - [Batch Verification](#batch-verification)
+  - [Exit Codes](#exit-codes)
 
 <!-- /toc -->
 
@@ -174,7 +176,10 @@ default for that namespace. By default this is a full replacement; set
   "trust": {
     "builders": [{ "id": "https://github.com/actions/runner", "maxLevel": 3 }],
     "verifiers": [
-      { "id": "https://example.com/verifier", "key": "/etc/keys/verifier.pub" }
+      {
+        "id": "https://example.com/verifier",
+        "keys": ["/etc/keys/verifier.pub"]
+      }
     ],
     "issuers": ["https://accounts.google.com"],
     "sanPatterns": ["*@myorg.com", "https://github.com/myorg/*"],

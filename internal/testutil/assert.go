@@ -17,8 +17,10 @@ package testutil
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -46,6 +48,28 @@ func AssertError(t *testing.T, err error) {
 
 	if err == nil {
 		t.Fatal("expected error, got nil")
+	}
+}
+
+// AssertErrorIs asserts that err is non-nil and matches target via errors.Is.
+func AssertErrorIs(t *testing.T, err, target error) {
+	t.Helper()
+
+	if err == nil {
+		t.Fatalf("expected error wrapping %v, got nil", target)
+	}
+
+	if !errors.Is(err, target) {
+		t.Errorf("expected error wrapping %v, got %v", target, err)
+	}
+}
+
+// AssertContains asserts that s contains substr.
+func AssertContains(t *testing.T, s, substr string) {
+	t.Helper()
+
+	if !strings.Contains(s, substr) {
+		t.Errorf("expected %q to contain %q", s, substr)
 	}
 }
 

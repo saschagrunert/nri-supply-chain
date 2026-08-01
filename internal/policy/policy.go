@@ -39,6 +39,9 @@ const (
 	maxSLSALevel      = 3
 	maxPolicyFileSize = 1 << 20
 	maxPolicyFiles    = 1000
+
+	// DefaultPolicyLabel is the display label used for the default (namespace-less) policy.
+	DefaultPolicyLabel = "default"
 )
 
 var (
@@ -390,31 +393,7 @@ func cloneRules(rules []ImageRule) []ImageRule {
 
 func cloneSections(src Sections) Sections {
 	var dst Sections
-
-	if src.Trust != nil {
-		dst.Trust = cloneTrust(src.Trust)
-	}
-
-	if src.SLSA != nil {
-		sp := *src.SLSA
-		sp.KnownParameters = slices.Clone(sp.KnownParameters)
-		dst.SLSA = &sp
-	}
-
-	if src.VEX != nil {
-		v := *src.VEX
-		dst.VEX = &v
-	}
-
-	if src.VSA != nil {
-		v := *src.VSA
-		dst.VSA = &v
-	}
-
-	if src.Signatures != nil {
-		s := *src.Signatures
-		dst.Signatures = &s
-	}
+	applySections(&dst, src)
 
 	return dst
 }
@@ -557,7 +536,7 @@ func (p *Policy) ValidateEnforce() error {
 // such as verifying that verifier key files exist on disk. Uses Lstat to
 // detect symlinks (Stat would silently follow them).
 //
-// TOCTOU: the file could change between Lstat and LoadVerifierFromPEMFile.
+// TOCTOU: the file could change between Lstat and loadPublicKeyFromPEM.
 func (p *Policy) ValidateRuntime() error {
 	var errs []error
 
@@ -621,7 +600,15 @@ func Load(policyPath string) (*Policy, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading policy file %q: %w", policyPath, err)
 	}
-	defer func() { _ = file.Close() }()
+	defer func() {
+		closeErr := file.Close()
+		if closeErr != nil {
+			slog.Warn("Failed to close policy file",
+				"path", policyPath,
+				"error", closeErr,
+			)
+		}
+	}()
 
 	data, err := io.ReadAll(io.LimitReader(file, maxPolicyFileSize+1))
 	if err != nil {
