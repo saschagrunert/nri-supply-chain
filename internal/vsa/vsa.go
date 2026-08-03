@@ -16,6 +16,7 @@
 package vsa
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -114,7 +115,8 @@ type VerifyResult struct {
 // Verify checks a VSA attestation against the given policy.
 // HardReject is true when a trusted verifier reports FAILED, preventing fallback to direct verification.
 // When parsedImageRef is non-nil it is used instead of re-parsing imageRef.
-func Verify(
+func Verify( //nolint:revive // ctx reserved for future context-aware logging
+	ctx context.Context,
 	att []byte,
 	pol *policy.Policy,
 	imageRef string,

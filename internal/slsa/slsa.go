@@ -16,6 +16,7 @@
 package slsa
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -99,7 +100,9 @@ type Metadata struct {
 }
 
 // Verify checks a SLSA provenance attestation against the given policy.
-func Verify(att []byte, pol *policy.Policy, imageDigest string) (*types.CheckResult, error) {
+func Verify(
+	ctx context.Context, att []byte, pol *policy.Policy, imageDigest string,
+) (*types.CheckResult, error) {
 	var stmt Statement
 
 	err := json.Unmarshal(att, &stmt)
@@ -113,14 +116,14 @@ func Verify(att []byte, pol *policy.Policy, imageDigest string) (*types.CheckRes
 		)
 	}
 
-	warnEmptyTrust(pol)
+	warnEmptyTrust(ctx, pol)
 
 	err = verifySubjectDigest(stmt.Subject, imageDigest)
 	if err != nil {
 		return failResult(err.Error()), nil
 	}
 
-	err = verifyBuilder(stmt.Predicate.RunDetails.Builder, pol)
+	err = verifyBuilder(ctx, stmt.Predicate.RunDetails.Builder, pol)
 	if err != nil {
 		return failResult(err.Error()), nil
 	}
@@ -152,6 +155,7 @@ func Verify(att []byte, pol *policy.Policy, imageDigest string) (*types.CheckRes
 
 // VerifyMultiple checks multiple provenance attestations, accepting if any valid one passes.
 func VerifyMultiple(
+	ctx context.Context,
 	attestations []attestation.VerifiedAttestation, pol *policy.Policy, imageDigest string,
 ) (*types.CheckResult, error) {
 	var (
@@ -160,7 +164,7 @@ func VerifyMultiple(
 	)
 
 	for idx := range attestations {
-		result, err := Verify(attestations[idx].Payload, pol, imageDigest)
+		result, err := Verify(ctx, attestations[idx].Payload, pol, imageDigest)
 		if err != nil {
 			parseErrors = append(parseErrors, err.Error())
 
@@ -210,7 +214,7 @@ func verifySubjectDigest(subjects []Subject, imageDigest string) error {
 // When a matched builder has a MaxLevel configured, a warning is logged because
 // SLSA provenance does not declare a build level, so MaxLevel can only be
 // enforced via VSA verification (vsa.minimumLevel).
-func verifyBuilder(builder Builder, pol *policy.Policy) error {
+func verifyBuilder(ctx context.Context, builder Builder, pol *policy.Policy) error {
 	builders := pol.Builders()
 	if len(builders) == 0 {
 		return nil
@@ -220,7 +224,7 @@ func verifyBuilder(builder Builder, pol *policy.Policy) error {
 		if trusted.ID == builder.ID {
 			if trusted.MaxLevel > 0 {
 				if _, loaded := warnedMaxLevel.LoadOrStore(builder.ID, struct{}{}); !loaded {
-					slog.Warn(
+					slog.WarnContext(ctx,
 						"Builder has maxLevel configured but SLSA provenance does not "+
 							"declare build levels; use VSA verification to enforce levels",
 						"builder", builder.ID,
@@ -326,7 +330,7 @@ func ResetWarnings() {
 	warnedEmptyTrust.Clear()
 }
 
-func warnEmptyTrust(pol *policy.Policy) {
+func warnEmptyTrust(ctx context.Context, pol *policy.Policy) {
 	if len(pol.Builders()) > 0 {
 		return
 	}
@@ -339,8 +343,9 @@ func warnEmptyTrust(pol *policy.Policy) {
 		return
 	}
 
-	slog.Warn("SLSA verification has no trusted builders, sources, or build types configured; " +
-		"any provenance will pass builder and source checks")
+	slog.WarnContext(ctx,
+		"SLSA verification has no trusted builders, sources, or build types configured; "+
+			"any provenance will pass builder and source checks")
 }
 
 func failResult(detail string) *types.CheckResult {

@@ -78,7 +78,7 @@ func ExportBuildVerificationCfgWithCache(
 
 // ExportParseDigestRef exposes parseDigestRef for external tests.
 func ExportParseDigestRef(imageRef, digest string) (name.Digest, error) {
-	return parseDigestRef(imageRef, digest)
+	return parseDigestRef(imageRef, digest, nil)
 }
 
 // ExportExtractVerifiedPayload exposes extractVerifiedPayload for external tests.
@@ -285,6 +285,38 @@ const ExportNotationSignatureMediaType = NotationSignatureMediaType
 // ExportIsNotationCandidate exposes isNotationCandidate for external tests.
 func ExportIsNotationCandidate(artifactType string) bool {
 	return isNotationCandidate(artifactType)
+}
+
+// ExportMaxAttestationSize returns the maxAttestationSize constant for external tests.
+const ExportMaxAttestationSize = maxAttestationSize
+
+// FetchNotationSignature exposes fetchNotationSignature for external tests.
+func (f *OCIFetcher) FetchNotationSignature(
+	ctx context.Context,
+	desc *v1.Descriptor,
+	ref name.Digest,
+	digest string,
+	remoteOpts []remote.Option,
+) (VerifiedAttestation, bool) {
+	return f.fetchNotationSignature(ctx, desc, ref, digest, remoteOpts)
+}
+
+// ExportReadNotationEnvelope exposes readNotationEnvelope for external tests.
+func ExportReadNotationEnvelope(
+	ctx context.Context, img v1.Image, descDigest string,
+) ([]byte, bool) {
+	return readNotationEnvelope(ctx, img, descDigest)
+}
+
+// CollectNotationSignatures exposes collectNotationSignatures for external tests.
+func (f *OCIFetcher) CollectNotationSignatures(
+	ctx context.Context,
+	manifests []v1.Descriptor,
+	ref name.Digest,
+	digest string,
+	remoteOpts []remote.Option,
+) []VerifiedAttestation {
+	return f.collectNotationSignatures(ctx, manifests, ref, digest, remoteOpts)
 }
 
 // ExportMaxCircuitBreakers exposes maxCircuitBreakers for external tests.

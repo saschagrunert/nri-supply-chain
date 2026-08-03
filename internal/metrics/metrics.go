@@ -33,6 +33,14 @@ const (
 
 	bucketFetchMid     = 15
 	bucketFetchTimeout = 30
+
+	bucketPrewarmShort   = 1
+	bucketPrewarmMedLow  = 5
+	bucketPrewarmMed     = 10
+	bucketPrewarmMedHigh = 30
+	bucketPrewarmLong    = 60
+	bucketPrewarmLonger  = 120
+	bucketPrewarmMax     = 300
 )
 
 // Metrics holds Prometheus metrics for supply chain verification.
@@ -247,7 +255,11 @@ func newPrewarmDuration() *prometheus.HistogramVec {
 			Namespace: namespace,
 			Name:      "prewarm_duration_seconds",
 			Help:      "Duration of cache pre-warming in seconds.",
-			Buckets:   []float64{1, 5, 10, 30, 60, 120, 300},
+			Buckets: []float64{
+				bucketPrewarmShort, bucketPrewarmMedLow, bucketPrewarmMed,
+				bucketPrewarmMedHigh, bucketPrewarmLong, bucketPrewarmLonger,
+				bucketPrewarmMax,
+			},
 		},
 		[]string{labelResult},
 	)

@@ -36,22 +36,15 @@ import (
 )
 
 const (
-	checkType     = types.CheckTypeVEX
-	metaKeyStatus = "status"
+	checkType                = types.CheckTypeVEX
+	metaKeyStatus            = "status"
+	statusAffected           = "affected"
+	statusNotAffected        = "not_affected"
+	statusUnderInvestigation = "under_investigation"
 )
 
-var (
-	// ErrInvalidVEX indicates the VEX document could not be parsed.
-	ErrInvalidVEX = errors.New("invalid VEX document")
-
-	// ErrSubjectMismatch indicates the in-toto subject does not match the image.
-	ErrSubjectMismatch = errors.New("VEX subject digest mismatch")
-
-	// ErrEmptySubjects indicates a VEX statement has no subjects when a digest
-	// is available for binding, which means subject verification cannot be
-	// performed.
-	ErrEmptySubjects = errors.New("VEX statement has no subjects for digest binding")
-)
+// ErrInvalidVEX indicates the VEX document could not be parsed.
+var ErrInvalidVEX = errors.New("invalid VEX document")
 
 // formatHint is used for lightweight format detection on the predicate JSON.
 type formatHint struct {
@@ -69,9 +62,9 @@ func Verify(
 	att []byte, pol *policy.Policy, imageRef, imageDigest string,
 	parsedImageRef name.Reference,
 ) (*types.CheckResult, error) {
-	predicate, err := verifySubjectAndExtract(att, imageDigest)
+	predicate, err := intoto.VerifySubjectAndExtractPredicate(att, imageDigest)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrInvalidVEX, err)
 	}
 
 	purl := buildOCIPURL(imageRef, imageDigest, parsedImageRef)
@@ -184,24 +177,24 @@ func buildResult(
 	if len(affectedNames) > 0 {
 		detail := fmt.Sprintf(
 			"vulnerabilities %s have status %q",
-			strings.Join(affectedNames, ", "), "affected",
+			strings.Join(affectedNames, ", "), statusAffected,
 		)
 
 		result := failResult(detail)
-		result.Metadata = map[string]any{metaKeyStatus: "affected"}
+		result.Metadata = map[string]any{metaKeyStatus: statusAffected}
 
 		return result
 	}
 
 	if hasUnderInvestigation {
 		result := handleUnderInvestigation(pol)
-		result.Metadata = map[string]any{metaKeyStatus: "under_investigation"}
+		result.Metadata = map[string]any{metaKeyStatus: statusUnderInvestigation}
 
 		return result
 	}
 
 	result := passResult()
-	result.Metadata = map[string]any{metaKeyStatus: "not_affected"}
+	result.Metadata = map[string]any{metaKeyStatus: statusNotAffected}
 
 	return result
 }
@@ -244,14 +237,14 @@ func VerifyMultiple(
 
 	if len(failDetails) > 0 {
 		result := failResult(strings.Join(failDetails, "; "))
-		result.Metadata = map[string]any{metaKeyStatus: "affected"}
+		result.Metadata = map[string]any{metaKeyStatus: statusAffected}
 
 		return result, nil
 	}
 
 	if anyUnderInvestigation {
 		result := handleUnderInvestigation(pol)
-		result.Metadata = map[string]any{metaKeyStatus: "under_investigation"}
+		result.Metadata = map[string]any{metaKeyStatus: statusUnderInvestigation}
 
 		return result, nil
 	}
@@ -263,49 +256,13 @@ func VerifyMultiple(
 	}
 
 	result := passResult()
-	result.Metadata = map[string]any{metaKeyStatus: "not_affected"}
+	result.Metadata = map[string]any{metaKeyStatus: statusNotAffected}
 
 	return result, nil
 }
 
 func isUnderInvestigation(result *types.CheckResult) bool {
 	return result.Status == types.StatusWarn
-}
-
-func verifySubjectAndExtract(att []byte, imageDigest string) ([]byte, error) {
-	var stmt intoto.Statement
-
-	err := json.Unmarshal(att, &stmt)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidVEX, err)
-	}
-
-	if imageDigest != "" && len(stmt.Subject) == 0 {
-		return nil, fmt.Errorf(
-			"%w: digest %q available but statement has no subjects",
-			ErrEmptySubjects, imageDigest,
-		)
-	}
-
-	if len(stmt.Subject) > 0 && imageDigest != "" {
-		if !intoto.SubjectMatchesDigest(stmt.Subject, imageDigest) {
-			return nil, fmt.Errorf(
-				"%w: none of the subjects match %q",
-				ErrSubjectMismatch, imageDigest,
-			)
-		}
-	} else if imageDigest == "" && len(stmt.Subject) > 0 {
-		return nil, fmt.Errorf(
-			"%w: statement has %d subjects but no digest for binding",
-			ErrSubjectMismatch, len(stmt.Subject),
-		)
-	}
-
-	if len(stmt.Predicate) > 0 {
-		return stmt.Predicate, nil
-	}
-
-	return att, nil
 }
 
 func handleUnderInvestigation(pol *policy.Policy) *types.CheckResult {

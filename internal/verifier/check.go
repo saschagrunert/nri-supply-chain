@@ -95,7 +95,7 @@ func runChecks(
 	}
 
 	attestations, attestDigest, fetchErr := timedFetchAttestations(
-		ctx, state, imageRef, digest, indexDigest, pol, host,
+		ctx, state, imageRef, digest, indexDigest, pol, host, parsedRef,
 	)
 	if fetchErr != nil {
 		recordBreakerFailure(ctx, breaker, state.metrics, host, state.config.FetchFailurePolicy)
@@ -201,7 +201,8 @@ func runChecksWithoutFetcher(
 
 func timedFetchAttestations(
 	ctx context.Context, state *snapshot,
-	imageRef, digest, indexDigest string, pol *policy.Policy, host string,
+	imageRef, digest, indexDigest string, pol *policy.Policy,
+	host string, parsedRef name.Reference,
 ) ([]attestation.VerifiedAttestation, string, error) {
 	start := time.Now()
 
@@ -210,21 +211,22 @@ func timedFetchAttestations(
 			Observe(time.Since(start).Seconds())
 	}()
 
-	return fetchAttestations(ctx, state, imageRef, digest, indexDigest, pol)
+	return fetchAttestations(ctx, state, imageRef, digest, indexDigest, pol, parsedRef)
 }
 
 func fetchAttestations(
 	ctx context.Context, state *snapshot,
 	imageRef, digest, indexDigest string, pol *policy.Policy,
+	parsedRef name.Reference,
 ) ([]attestation.VerifiedAttestation, string, error) {
-	opts := buildFetchOpts(pol, digest, state.config.FetchTimeout.Duration)
+	opts := buildFetchOpts(pol, digest, state.config.FetchTimeout.Duration, parsedRef)
 
 	var indexErr error
 
 	// When the image resolved from a manifest list, try the index digest
 	// first: cosign attaches attestations to the manifest list digest.
 	if indexDigest != "" {
-		indexOpts := buildFetchOpts(pol, indexDigest, state.config.FetchTimeout.Duration)
+		indexOpts := buildFetchOpts(pol, indexDigest, state.config.FetchTimeout.Duration, parsedRef)
 
 		atts, err := state.fetcher.Fetch(ctx, imageRef, indexOpts)
 		if err == nil && len(atts) > 0 {
@@ -267,11 +269,13 @@ func fetchAttestations(
 
 func buildFetchOpts(
 	pol *policy.Policy, digest string, timeout time.Duration,
+	parsedRef name.Reference,
 ) *attestation.FetchOptions {
 	opts := &attestation.FetchOptions{
 		RequireTransparencyLog: pol.Signatures != nil && pol.Signatures.RequireTransparencyLog,
 		Timeout:                timeout,
 		Digest:                 digest,
+		ParsedRef:              parsedRef,
 	}
 
 	if pol.Trust != nil {
@@ -340,7 +344,7 @@ func checkVSA(
 	var passed *vsa.VerifyResult
 
 	for idx := range vsaAttestations {
-		vsaResult, err := vsa.Verify(vsaAttestations[idx].Payload, pol, digestRef, nil)
+		vsaResult, err := vsa.Verify(ctx, vsaAttestations[idx].Payload, pol, digestRef, nil)
 		if err != nil {
 			slog.WarnContext(ctx, "VSA verification error", "error", err)
 
@@ -512,7 +516,7 @@ func runSBOMCheck(
 		payloads = append(payloads, sbomAtts[idx].Payload)
 	}
 
-	result, err := sbom.VerifyMultiple(payloads, pol, digest)
+	result, err := sbom.VerifyMultiple(ctx, payloads, pol, digest)
 	if err != nil {
 		slog.ErrorContext(ctx, "SBOM verification error",
 			"error", err,
@@ -562,7 +566,7 @@ func runSLSACheck(
 		)
 	}
 
-	result, err := slsa.VerifyMultiple(slsaAtts, pol, digest)
+	result, err := slsa.VerifyMultiple(ctx, slsaAtts, pol, digest)
 	if err != nil {
 		slog.ErrorContext(ctx, "SLSA verification error",
 			"error", err,

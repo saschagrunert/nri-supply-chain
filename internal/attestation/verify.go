@@ -25,7 +25,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -37,9 +36,12 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/verify"
 	"github.com/sigstore/sigstore/pkg/signature"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/fileutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/glob"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
+
+var pemKeyCache sync.Map //nolint:gochecknoglobals // per-process key cache
 
 func verifyBundleWithCache(
 	ctx context.Context,
@@ -177,7 +179,13 @@ func buildKeyMaterial(keyPaths []string) (*root.TrustedPublicKeyMaterial, error)
 }
 
 func loadPublicKeyFromPEM(path string) (crypto.PublicKey, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // path is validated by policy.ValidateRuntime
+	if cached, ok := pemKeyCache.Load(path); ok {
+		key, _ := cached.(crypto.PublicKey)
+
+		return key, nil
+	}
+
+	data, err := fileutil.ReadLimited(path, fileutil.MaxCredentialFileSize)
 	if err != nil {
 		return nil, fmt.Errorf("reading PEM file: %w", err)
 	}
@@ -189,11 +197,15 @@ func loadPublicKeyFromPEM(path string) (crypto.PublicKey, error) {
 
 	pub, pkixErr := x509.ParsePKIXPublicKey(block.Bytes)
 	if pkixErr == nil {
+		pemKeyCache.Store(path, pub)
+
 		return pub, nil
 	}
 
 	rsaKey, rsaErr := x509.ParsePKCS1PublicKey(block.Bytes)
 	if rsaErr == nil {
+		pemKeyCache.Store(path, rsaKey)
+
 		return rsaKey, nil
 	}
 

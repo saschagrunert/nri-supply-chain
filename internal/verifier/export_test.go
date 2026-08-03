@@ -18,6 +18,8 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/google/go-containerregistry/pkg/name"
+
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
@@ -119,6 +121,11 @@ func ExportResolveImagePolicy(
 // ExportCacheNamespaceKey exposes cacheNamespaceKey for external tests.
 func ExportCacheNamespaceKey(namespace string, ruleIdx int) string {
 	return cacheNamespaceKey(namespace, ruleIdx)
+}
+
+// ExportExtractRegistryRepo exposes extractRegistryRepo for external tests.
+func ExportExtractRegistryRepo(parsedRef name.Reference, imageRef string) (reg, repo string) {
+	return extractRegistryRepo(parsedRef, imageRef)
 }
 
 // ExportOnPolicyUpdate exposes onPolicyUpdate for external tests.

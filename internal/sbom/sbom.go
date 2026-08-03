@@ -16,6 +16,7 @@
 package sbom
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,13 +32,6 @@ const checkType = types.CheckTypeSBOM
 var (
 	// ErrInvalidSBOM indicates the SBOM document could not be parsed.
 	ErrInvalidSBOM = errors.New("invalid SBOM document")
-
-	// ErrSubjectMismatch indicates the in-toto subject does not match the image.
-	ErrSubjectMismatch = errors.New("SBOM subject digest mismatch")
-
-	// ErrEmptySubjects indicates an SBOM statement has no subjects when a
-	// digest is available for binding.
-	ErrEmptySubjects = errors.New("SBOM statement has no subjects for digest binding")
 
 	// ErrUnsupportedFormat indicates the SBOM format is not recognized.
 	ErrUnsupportedFormat = errors.New("unsupported SBOM format")
@@ -109,12 +103,13 @@ type cyclonedxLicenseRef struct {
 }
 
 // Verify checks a single SBOM attestation against the given policy.
-func Verify(
+func Verify( //nolint:revive // ctx reserved for future context-aware logging
+	ctx context.Context,
 	att []byte, pol *policy.Policy, imageDigest string,
 ) (*types.CheckResult, error) {
-	predicate, err := verifySubjectAndExtract(att, imageDigest)
+	predicate, err := intoto.VerifySubjectAndExtractPredicate(att, imageDigest)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrInvalidSBOM, err)
 	}
 
 	return verifySBOMPredicate(predicate, pol)
@@ -123,6 +118,7 @@ func Verify(
 // VerifyMultiple checks multiple SBOM attestations. Any denied license or
 // component in any document causes failure.
 func VerifyMultiple(
+	ctx context.Context,
 	attestations [][]byte, pol *policy.Policy, imageDigest string,
 ) (*types.CheckResult, error) {
 	var (
@@ -132,7 +128,7 @@ func VerifyMultiple(
 	)
 
 	for _, att := range attestations {
-		result, err := Verify(att, pol, imageDigest)
+		result, err := Verify(ctx, att, pol, imageDigest)
 		if err != nil {
 			verifyErrors = append(verifyErrors, err.Error())
 
@@ -506,37 +502,6 @@ func componentInList(purl string, list []string) bool {
 	}
 
 	return false
-}
-
-func verifySubjectAndExtract(att []byte, imageDigest string) ([]byte, error) {
-	var stmt intoto.Statement
-
-	err := json.Unmarshal(att, &stmt)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidSBOM, err)
-	}
-
-	if imageDigest != "" && len(stmt.Subject) == 0 {
-		return nil, fmt.Errorf(
-			"%w: digest %q available but statement has no subjects",
-			ErrEmptySubjects, imageDigest,
-		)
-	}
-
-	if len(stmt.Subject) > 0 && imageDigest != "" {
-		if !intoto.SubjectMatchesDigest(stmt.Subject, imageDigest) {
-			return nil, fmt.Errorf(
-				"%w: none of the subjects match %q",
-				ErrSubjectMismatch, imageDigest,
-			)
-		}
-	}
-
-	if len(stmt.Predicate) > 0 {
-		return stmt.Predicate, nil
-	}
-
-	return att, nil
 }
 
 func passResult() *types.CheckResult {

@@ -241,12 +241,14 @@ func (p *Plugin) CreateContainer(
 	imageRef, digest := resolveImage(annotations)
 	namespace := pod.GetNamespace()
 
-	slog.DebugContext(ctx, "NRI container info",
-		"container_id", ctr.GetId(),
-		"container_name", ctr.GetName(),
-		"annotations", filterRelevantAnnotations(annotations),
-		"labels", ctr.GetLabels(),
-	)
+	if slog.Default().Enabled(ctx, slog.LevelDebug) {
+		slog.DebugContext(ctx, "NRI container info",
+			"container_id", ctr.GetId(),
+			"container_name", ctr.GetName(),
+			"annotations", filterRelevantAnnotations(annotations),
+			"labels", ctr.GetLabels(),
+		)
+	}
 
 	digest, indexDigest := p.resolveDigestIfMissing(ctx, imageRef, digest, namespace, pod, ctr)
 

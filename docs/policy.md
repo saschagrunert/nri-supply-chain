@@ -1026,7 +1026,10 @@ infrastructure.
 
 When `signatures.requireTransparencyLog` is true, attestations must include a
 valid Rekor transparency log entry. This is recommended for keyless
-verification and optional for key-based.
+verification and optional for key-based. In enforce mode, the plugin logs a
+warning when key-only verification is used without transparency log
+requirements, because a compromised signing key cannot be time-bounded or
+revoked without log entries.
 
 ### Notation (Notary v2) Signature Verification
 

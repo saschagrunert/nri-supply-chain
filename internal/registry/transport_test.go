@@ -29,8 +29,10 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -964,6 +966,125 @@ func TestOptionsForRegistriesReturnsFallback(t *testing.T) {
 
 		if fallback != nil {
 			t.Error("expected nil fallback for non-matching registry")
+		}
+	})
+}
+
+const testUnreachableRegistry = "localhost:19999"
+
+func TestResolveWithRegistriesFallbackPaths(t *testing.T) {
+	t.Parallel()
+
+	t.Run("connection refused mirror triggers fallback", func(t *testing.T) {
+		t.Parallel()
+
+		cache := registry.NewTransportCache([]config.Registry{
+			{
+				Prefix:   testUnreachableRegistry,
+				Mirror:   "localhost:1",
+				CACert:   "",
+				Insecure: false,
+			},
+		})
+
+		_, _, fallbackUsed, err := registry.ResolveWithRegistries(
+			t.Context(), testUnreachableRegistry+"/test/image:v1", cache,
+		)
+		if err == nil {
+			t.Fatal("expected error when both mirror and fallback fail")
+		}
+
+		if !fallbackUsed {
+			t.Error("expected fallbackUsed=true when mirror has connection error")
+		}
+
+		if !strings.Contains(err.Error(), "fallback to") {
+			t.Errorf("error should mention fallback attempt, got: %v", err)
+		}
+	})
+
+	t.Run("context cancellation prevents fallback", func(t *testing.T) {
+		t.Parallel()
+
+		cache := registry.NewTransportCache([]config.Registry{
+			{
+				Prefix:   testUnreachableRegistry,
+				Mirror:   "localhost:1",
+				CACert:   "",
+				Insecure: false,
+			},
+		})
+
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+
+		_, _, fallbackUsed, err := registry.ResolveWithRegistries(
+			ctx, testUnreachableRegistry+"/test/image:v1", cache,
+		)
+		if err == nil {
+			t.Fatal("expected error with cancelled context")
+		}
+
+		if fallbackUsed {
+			t.Error("expected fallbackUsed=false when context is cancelled")
+		}
+	})
+
+	t.Run("no mirror means no fallback", func(t *testing.T) {
+		t.Parallel()
+
+		cache := registry.NewTransportCache([]config.Registry{
+			{
+				Prefix:   testUnreachableRegistry,
+				Mirror:   "",
+				CACert:   "",
+				Insecure: false,
+			},
+		})
+
+		_, _, fallbackUsed, err := registry.ResolveWithRegistries(
+			t.Context(), testUnreachableRegistry+"/test/image:v1", cache,
+		)
+		if err == nil {
+			t.Fatal("expected error for unreachable registry")
+		}
+
+		if fallbackUsed {
+			t.Error("expected fallbackUsed=false when no mirror is configured")
+		}
+	})
+
+	t.Run("non-connection error does not trigger fallback", func(t *testing.T) {
+		t.Parallel()
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer srv.Close()
+
+		// Extract port and use localhost for HTTP scheme in go-containerregistry.
+		host := strings.TrimPrefix(srv.URL, "http://")
+		_, port, _ := net.SplitHostPort(host)
+		mirrorHost := "localhost:" + port
+
+		cache := registry.NewTransportCache([]config.Registry{
+			{
+				Prefix:   testRegistryGHCR,
+				Mirror:   mirrorHost,
+				CACert:   "",
+				Insecure: false,
+			},
+		})
+
+		_, _, fallbackUsed, err := registry.ResolveWithRegistries(
+			t.Context(), testImageGHCR, cache,
+		)
+		if err == nil {
+			t.Fatal("expected error from mirror returning 404")
+		}
+
+		if fallbackUsed {
+			t.Error("expected fallbackUsed=false for non-connection error")
 		}
 	})
 }

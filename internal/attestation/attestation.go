@@ -20,6 +20,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/google/go-containerregistry/pkg/name"
 )
 
 var (
@@ -111,4 +113,5 @@ type FetchOptions struct {
 	RequireTransparencyLog bool
 	Timeout                time.Duration
 	Digest                 string
+	ParsedRef              name.Reference
 }

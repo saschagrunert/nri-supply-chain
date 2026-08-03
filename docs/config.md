@@ -34,6 +34,7 @@ policy_dir = "/etc/nri-supply-chain/policies"
 metrics_addr = "127.0.0.1:9090"
 circuit_breaker_threshold = 5
 circuit_breaker_cooldown = "30s"
+# verification_timeout = "5m"
 # fetch_rate_limit = 50
 
 # [policy]
@@ -58,6 +59,7 @@ circuit_breaker_cooldown = "30s"
 | `metrics_addr`              | `127.0.0.1:9090`                 | Prometheus metrics HTTP listen address                                                                                                                                        |
 | `circuit_breaker_threshold` | `5`                              | Consecutive fetch failures before a per-host circuit breaker opens                                                                                                            |
 | `circuit_breaker_cooldown`  | `30s`                            | Duration the circuit breaker stays open before allowing a probe                                                                                                               |
+| `verification_timeout`      | `5m`                             | Maximum time for a single image verification. Must be positive, maximum 30m.                                                                                                  |
 | `fetch_rate_limit`          | `0` (unlimited)                  | Maximum registry fetch requests per second (max 10,000)                                                                                                                       |
 
 See [operations.md](operations.md) for the metrics reference, config reload
@@ -98,7 +100,7 @@ verification fails because the default public Sigstore root keys do not match
 the private deployment's keys. The path must be absolute and the file must
 exist and be non-empty at startup.
 
-The `tuf_mirror` URL must use the `http` or `https` scheme. Reachability is
+The `tuf_mirror` URL must use the `https` scheme. Reachability is
 not validated at config load time; a failure to reach the mirror is handled at
 verification time through the normal fetch failure policy. The plugin does not
 fall back to the public Sigstore instance when a configured mirror is
@@ -191,11 +193,11 @@ oci_ref = "ghcr.io/myorg/supply-chain-policies:v1"
 poll_interval = "5m"
 ```
 
-| Field                  | Default | Description                                                                    |
-| ---------------------- | ------- | ------------------------------------------------------------------------------ |
-| `policy.source`        | `local` | Policy source: `local` (read from `policy_dir`) or `oci` (fetch from registry) |
-| `policy.oci_ref`       | (empty) | OCI image reference containing policy layers (required when source is `oci`)   |
-| `policy.poll_interval` | `5m`    | How often to poll the OCI registry for policy updates (minimum 30s)            |
+| Field                  | Default | Description                                                                                                                                             |
+| ---------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `policy.source`        | `local` | Policy source: `local` (read from `policy_dir`) or `oci` (fetch from registry)                                                                          |
+| `policy.oci_ref`       | (empty) | OCI image reference containing policy layers (required when source is `oci`). Using a digest reference is recommended over a mutable tag for integrity. |
+| `policy.poll_interval` | `5m`    | How often to poll the OCI registry for policy updates (minimum 30s)                                                                                     |
 
 When `source = "oci"` is set, the `policy_dir` field is ignored for policy
 loading. The plugin fetches the OCI image at startup and polls for changes at

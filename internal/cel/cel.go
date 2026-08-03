@@ -60,9 +60,10 @@ var (
 	// ErrCostLimitExceeded indicates a CEL expression exceeded the cost limit.
 	ErrCostLimitExceeded = errors.New("CEL expression exceeded cost limit")
 
-	envOnce  sync.Once //nolint:gochecknoglobals // singleton CEL environment
-	envVal   *cel.Env  //nolint:gochecknoglobals // singleton CEL environment
-	errEnvCE error     //nolint:gochecknoglobals // singleton CEL environment init error
+	envMu    sync.Mutex //nolint:gochecknoglobals // guards CEL singleton reset in tests
+	envOnce  sync.Once  //nolint:gochecknoglobals // singleton CEL environment
+	envVal   *cel.Env   //nolint:gochecknoglobals // singleton CEL environment
+	errEnvCE error      //nolint:gochecknoglobals // singleton CEL environment init error
 )
 
 // Rule defines a single CEL policy rule with an optional match filter
@@ -96,6 +97,9 @@ type CompiledPolicy struct {
 }
 
 func initEnvironment() (*cel.Env, error) {
+	envMu.Lock()
+	defer envMu.Unlock()
+
 	envOnce.Do(func() {
 		envVal, errEnvCE = cel.NewEnv(
 			cel.Variable("image", cel.MapType(cel.StringType, cel.DynType)),
@@ -115,6 +119,9 @@ func initEnvironment() (*cel.Env, error) {
 }
 
 func resetEnvironment() {
+	envMu.Lock()
+	defer envMu.Unlock()
+
 	envOnce = sync.Once{}
 	envVal = nil
 	errEnvCE = nil

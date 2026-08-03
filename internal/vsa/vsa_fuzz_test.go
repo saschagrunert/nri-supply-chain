@@ -15,6 +15,7 @@
 package vsa_test
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -56,6 +57,6 @@ func FuzzVerify(f *testing.F) {
 	}
 
 	f.Fuzz(func(_ *testing.T, data []byte) {
-		vsa.Verify(data, pol, testImageRef, nil)
+		vsa.Verify(context.Background(), data, pol, testImageRef, nil)
 	})
 }
