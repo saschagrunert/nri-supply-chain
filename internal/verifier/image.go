@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	"golang.org/x/sync/semaphore"
@@ -56,33 +57,32 @@ func acquireFetchSlots(
 
 const maxHostSemEntries = 1000
 
-func acquireHostSem(hostSem *sync.Map, host string) *semaphore.Weighted {
-	if val, ok := hostSem.Load(host); ok {
+type hostSemMap struct {
+	m     sync.Map
+	count atomic.Int64
+}
+
+func acquireHostSem(hsm *hostSemMap, host string) *semaphore.Weighted {
+	if val, ok := hsm.m.Load(host); ok {
 		return val.(*semaphore.Weighted) //nolint:forcetypeassert // hostSem is private, only stores *Weighted
 	}
 
 	sem := semaphore.NewWeighted(maxConcurrentFetchesPerHost)
 
-	val, loaded := hostSem.LoadOrStore(host, sem)
+	val, loaded := hsm.m.LoadOrStore(host, sem)
 	if loaded {
 		return val.(*semaphore.Weighted) //nolint:forcetypeassert // hostSem is private, only stores *Weighted
 	}
 
-	count := 0
+	newCount := hsm.count.Add(1)
 
-	hostSem.Range(func(_, _ any) bool {
-		count++
+	// Between LoadOrStore and Delete, another goroutine can Load the entry
+	// and use the semaphore; this is acceptable since the overflow path
+	// only triggers at 1000+ distinct registry hosts.
+	if newCount > maxHostSemEntries {
+		hsm.m.Delete(host)
+		hsm.count.Add(-1)
 
-		return count <= maxHostSemEntries
-	})
-
-	// The just-stored entry is included in the Range count, so "more than
-	// maxHostSemEntries" means the map had maxHostSemEntries entries before
-	// this store. Between LoadOrStore and Delete, another goroutine can Load
-	// the entry and use the semaphore; this is acceptable since the overflow
-	// path only triggers at 1000+ distinct registry hosts.
-	if count > maxHostSemEntries {
-		hostSem.Delete(host)
 		slog.Warn("Per-host semaphore map at capacity, using untracked semaphore",
 			"host", host, "capacity", maxHostSemEntries)
 

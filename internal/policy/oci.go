@@ -60,9 +60,13 @@ type OCIFetchResult struct {
 // ImageFetchFunc pulls an OCI image by reference.
 type ImageFetchFunc func(ref name.Reference, options ...remote.Option) (ociV1.Image, error)
 
+// HeadFetchFunc performs a HEAD request for an OCI reference and returns its descriptor.
+type HeadFetchFunc func(ref name.Reference, options ...remote.Option) (*ociV1.Descriptor, error)
+
 // OCIFetcher pulls policy files from an OCI registry artifact.
 type OCIFetcher struct {
 	fetchImage     ImageFetchFunc
+	fetchHead      HeadFetchFunc
 	transportCache *registry.TransportCache
 }
 
@@ -70,24 +74,28 @@ type OCIFetcher struct {
 func NewOCIFetcher(tc *registry.TransportCache) *OCIFetcher {
 	return &OCIFetcher{
 		fetchImage:     remote.Image,
+		fetchHead:      remote.Head,
 		transportCache: tc,
 	}
 }
 
 // NewOCIFetcherWithImageFunc creates an OCI policy fetcher with a custom image
-// fetch function, useful for testing.
+// fetch function, useful for testing. CheckDigest falls back to fetching the
+// full image to derive the digest, matching the mock's behavior.
 func NewOCIFetcherWithImageFunc(
 	fn ImageFetchFunc, tc *registry.TransportCache,
 ) *OCIFetcher {
 	return &OCIFetcher{
 		fetchImage:     fn,
+		fetchHead:      nil,
 		transportCache: tc,
 	}
 }
 
-// CheckDigest fetches the manifest for the given OCI reference and returns
-// its digest without downloading layers. Use this for cheap change detection
-// before calling FetchFromOCI.
+// CheckDigest returns the manifest digest for the given OCI reference without
+// downloading layers. When a HEAD function is available (production path), it
+// issues a single HEAD request. When using a custom image fetch function
+// (testing), it falls back to fetching the image to derive the digest.
 func (f *OCIFetcher) CheckDigest(
 	ctx context.Context, ociRef string,
 ) (string, error) {
@@ -99,6 +107,15 @@ func (f *OCIFetcher) CheckDigest(
 	remoteOpts, err := f.buildRemoteOptions(ctx, ociRef)
 	if err != nil {
 		return "", err
+	}
+
+	if f.fetchHead != nil {
+		desc, headErr := f.fetchHead(ref, remoteOpts...)
+		if headErr != nil {
+			return "", fmt.Errorf("HEAD request for OCI policy artifact %q: %w", ociRef, headErr)
+		}
+
+		return desc.Digest.String(), nil
 	}
 
 	img, err := f.fetchImage(ref, remoteOpts...)

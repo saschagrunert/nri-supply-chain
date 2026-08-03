@@ -398,9 +398,15 @@ func OptionsForRegistries(
 
 	// Build fallback info when a mirror is configured.
 	if reg.Mirror != "" {
+		var fallbackTransportOpt remote.Option
+
+		if roundTripper != nil {
+			fallbackTransportOpt = remote.WithTransport(roundTripper)
+		}
+
 		fallback = &FallbackInfo{
 			OriginalRef:  imageRef,
-			TransportOpt: nil, // original registry uses default transport
+			TransportOpt: fallbackTransportOpt,
 		}
 	}
 

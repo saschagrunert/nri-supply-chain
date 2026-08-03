@@ -427,24 +427,32 @@ func runParallelChecks(
 	const numChecks = 4
 	waitGroup.Add(numChecks)
 
-	go runParallelSLSA(
-		ctx, &waitGroup, &slsaResult,
-		bins.slsa, pol, met, imageRef, digest, namespace,
+	go runParallelCheck(
+		&waitGroup, &slsaResult, types.CheckTypeSLSA,
+		func() *types.CheckResult {
+			return runSLSACheck(ctx, bins.slsa, pol, met, imageRef, digest, namespace)
+		},
 	)
 
-	go runParallelVEX(
-		ctx, &waitGroup, &vexResult,
-		bins.vex, pol, met, imageRef, digest, namespace, parsedRef,
+	go runParallelCheck(
+		&waitGroup, &vexResult, types.CheckTypeVEX,
+		func() *types.CheckResult {
+			return runVEXCheck(ctx, bins.vex, pol, met, imageRef, digest, namespace, parsedRef)
+		},
 	)
 
-	go runParallelNotation(
-		ctx, &waitGroup, &notationResult,
-		bins.notation, pol, met, imageRef, digest, namespace,
+	go runParallelCheck(
+		&waitGroup, &notationResult, types.CheckTypeNotation,
+		func() *types.CheckResult {
+			return runNotationCheck(ctx, bins.notation, pol, met, imageRef, digest, namespace)
+		},
 	)
 
-	go runParallelSBOM(
-		ctx, &waitGroup, &sbomResult,
-		bins.sbom, pol, met, imageRef, digest, namespace,
+	go runParallelCheck(
+		&waitGroup, &sbomResult, types.CheckTypeSBOM,
+		func() *types.CheckResult {
+			return runSBOMCheck(ctx, bins.sbom, pol, met, imageRef, digest, namespace)
+		},
 	)
 
 	waitGroup.Wait()
@@ -452,93 +460,27 @@ func runParallelChecks(
 	return combineResults(slsaResult, vexResult, notationResult, sbomResult)
 }
 
-func runParallelSLSA(
-	ctx context.Context, waitGroup *sync.WaitGroup, result **types.CheckResult,
-	atts []attestation.VerifiedAttestation,
-	pol *policy.Policy, met *metrics.Metrics,
-	imageRef, digest, namespace string,
+func runParallelCheck(
+	waitGroup *sync.WaitGroup,
+	result **types.CheckResult,
+	checkType types.CheckType,
+	checkFunc func() *types.CheckResult,
 ) {
 	defer waitGroup.Done()
 	defer func() {
 		if r := recover(); r != nil {
-			slog.Error("Panic during SLSA check",
+			slog.Error("Panic during check",
+				"type", checkType,
 				"panic", r, "stack", string(debug.Stack()))
 
 			*result = types.FailResult(
-				types.CheckTypeSLSA,
-				"internal error during SLSA check", nil,
+				checkType,
+				"internal error during "+string(checkType)+" check", nil,
 			)
 		}
 	}()
 
-	*result = runSLSACheck(ctx, atts, pol, met, imageRef, digest, namespace)
-}
-
-func runParallelVEX(
-	ctx context.Context, waitGroup *sync.WaitGroup, result **types.CheckResult,
-	atts []attestation.VerifiedAttestation,
-	pol *policy.Policy, met *metrics.Metrics,
-	imageRef, digest, namespace string,
-	parsedRef name.Reference,
-) {
-	defer waitGroup.Done()
-	defer func() {
-		if r := recover(); r != nil {
-			slog.Error("Panic during VEX check",
-				"panic", r, "stack", string(debug.Stack()))
-
-			*result = types.FailResult(
-				types.CheckTypeVEX,
-				"internal error during VEX check", nil,
-			)
-		}
-	}()
-
-	*result = runVEXCheck(ctx, atts, pol, met, imageRef, digest, namespace, parsedRef)
-}
-
-func runParallelNotation(
-	ctx context.Context, waitGroup *sync.WaitGroup, result **types.CheckResult,
-	atts []attestation.VerifiedAttestation,
-	pol *policy.Policy, met *metrics.Metrics,
-	imageRef, digest, namespace string,
-) {
-	defer waitGroup.Done()
-	defer func() {
-		if r := recover(); r != nil {
-			slog.Error("Panic during Notation check",
-				"panic", r, "stack", string(debug.Stack()))
-
-			*result = types.FailResult(
-				types.CheckTypeNotation,
-				"internal error during Notation check", nil,
-			)
-		}
-	}()
-
-	*result = runNotationCheck(ctx, atts, pol, met, imageRef, digest, namespace)
-}
-
-func runParallelSBOM(
-	ctx context.Context, waitGroup *sync.WaitGroup, result **types.CheckResult,
-	atts []attestation.VerifiedAttestation,
-	pol *policy.Policy, met *metrics.Metrics,
-	imageRef, digest, namespace string,
-) {
-	defer waitGroup.Done()
-	defer func() {
-		if r := recover(); r != nil {
-			slog.Error("Panic during SBOM check",
-				"panic", r, "stack", string(debug.Stack()))
-
-			*result = types.FailResult(
-				types.CheckTypeSBOM,
-				"internal error during SBOM check", nil,
-			)
-		}
-	}()
-
-	*result = runSBOMCheck(ctx, atts, pol, met, imageRef, digest, namespace)
+	*result = checkFunc()
 }
 
 func runSBOMCheck(
@@ -876,13 +818,7 @@ type attestationBins struct {
 }
 
 func binAttestations(attestations []attestation.VerifiedAttestation) attestationBins {
-	bins := attestationBins{
-		vsa:      make([]attestation.VerifiedAttestation, 0, len(attestations)),
-		slsa:     make([]attestation.VerifiedAttestation, 0, len(attestations)),
-		vex:      make([]attestation.VerifiedAttestation, 0, len(attestations)),
-		notation: make([]attestation.VerifiedAttestation, 0, len(attestations)),
-		sbom:     make([]attestation.VerifiedAttestation, 0, len(attestations)),
-	}
+	var bins attestationBins
 
 	for idx := range attestations {
 		// Route by signature type first: Notation signatures carry
