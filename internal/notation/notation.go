@@ -187,12 +187,6 @@ func validatePolicyForImage(notationPolicy *policy.NotationPolicy, imageRef stri
 	return nil
 }
 
-// BuildTrustPolicyDocument constructs a Notation trust policy document from
-// the policy configuration. Exported for testing.
-func BuildTrustPolicyDocument(notationPolicy *policy.NotationPolicy) *trustpolicy.Document {
-	return buildTrustPolicyDocument(notationPolicy)
-}
-
 func buildTrustPolicyDocument(notationPolicy *policy.NotationPolicy) *trustpolicy.Document {
 	level := defaultVerificationLevel
 	if notationPolicy.VerificationLevel != "" {

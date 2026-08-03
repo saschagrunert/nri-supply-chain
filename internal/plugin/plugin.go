@@ -27,7 +27,6 @@ import (
 
 	"github.com/containerd/nri/pkg/api"
 	"github.com/containerd/nri/pkg/stub"
-	"github.com/google/go-containerregistry/pkg/name"
 	"golang.org/x/sync/semaphore"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
@@ -290,19 +289,10 @@ func (p *Plugin) registryAwareResolver(
 	}
 
 	if fallbackUsed {
-		p.metrics.MirrorFallbackTotal.WithLabelValues(registryHostFromRef(imageRef), "digest").Inc()
+		p.metrics.MirrorFallbackTotal.WithLabelValues(registry.Host(imageRef), "digest").Inc()
 	}
 
 	return digest, indexDigest, nil
-}
-
-func registryHostFromRef(imageRef string) string {
-	ref, err := name.ParseReference(imageRef)
-	if err != nil {
-		return imageRef
-	}
-
-	return ref.Context().RegistryStr()
 }
 
 func (p *Plugin) handleMissingAnnotations(
@@ -542,7 +532,7 @@ func (p *Plugin) runPrewarmVerifications(
 
 		err := sem.Acquire(ctx, 1)
 		if err != nil {
-			slog.Warn("Pre-warm cache cancelled", "error", err)
+			slog.WarnContext(ctx, "Pre-warm cache cancelled", "error", err)
 
 			return verified.Load(), true
 		}
@@ -572,7 +562,7 @@ func (p *Plugin) runPrewarmVerifications(
 
 	err := sem.Acquire(ctx, prewarmConcurrency)
 	if err != nil {
-		slog.Warn("Pre-warm cache wait cancelled", "error", err)
+		slog.WarnContext(ctx, "Pre-warm cache wait cancelled", "error", err)
 
 		return verified.Load(), true
 	}

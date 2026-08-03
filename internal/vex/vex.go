@@ -28,6 +28,7 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/name"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/intoto"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 	"github.com/saschagrunert/nri-supply-chain/internal/vex/cyclonedxvex"
@@ -48,15 +49,6 @@ var (
 	// performed.
 	ErrEmptySubjects = errors.New("VEX statement has no subjects for digest binding")
 )
-
-type inTotoStatement struct {
-	Subject   []inTotoSubject `json:"subject"`
-	Predicate json.RawMessage `json:"predicate"`
-}
-
-type inTotoSubject struct {
-	Digest map[string]string `json:"digest"`
-}
 
 // formatHint is used for lightweight format detection on the predicate JSON.
 type formatHint struct {
@@ -260,7 +252,7 @@ func isUnderInvestigation(result *types.CheckResult) bool {
 }
 
 func verifySubjectAndExtract(att []byte, imageDigest string) ([]byte, error) {
-	var stmt inTotoStatement
+	var stmt intoto.Statement
 
 	err := json.Unmarshal(att, &stmt)
 	if err != nil {
@@ -275,7 +267,7 @@ func verifySubjectAndExtract(att []byte, imageDigest string) ([]byte, error) {
 	}
 
 	if len(stmt.Subject) > 0 && imageDigest != "" {
-		if !subjectMatchesDigest(stmt.Subject, imageDigest) {
+		if !intoto.SubjectMatchesDigest(stmt.Subject, imageDigest) {
 			return nil, fmt.Errorf(
 				"%w: none of the subjects match %q",
 				ErrSubjectMismatch, imageDigest,
@@ -293,16 +285,6 @@ func verifySubjectAndExtract(att []byte, imageDigest string) ([]byte, error) {
 	}
 
 	return att, nil
-}
-
-func subjectMatchesDigest(subjects []inTotoSubject, imageDigest string) bool {
-	for _, subject := range subjects {
-		if types.MatchDigestInMap(imageDigest, subject.Digest) {
-			return true
-		}
-	}
-
-	return false
 }
 
 func handleUnderInvestigation(pol *policy.Policy) *types.CheckResult {

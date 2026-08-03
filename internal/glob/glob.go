@@ -32,6 +32,9 @@ var (
 
 // ResetCache clears the compiled regexp cache. Call this after a config reload
 // so stale patterns from old policies do not persist.
+// The Clear/Store sequence is not atomic, so cachedCount may briefly drift by
+// ~1 under concurrent access. This is benign because maxCachedPatterns is a
+// soft limit.
 func ResetCache() {
 	compiledPatterns.Clear()
 	cachedCount.Store(0)

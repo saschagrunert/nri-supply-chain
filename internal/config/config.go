@@ -36,6 +36,12 @@ import (
 // VerificationMode controls the supply chain verification behavior.
 type VerificationMode string
 
+// Strictness is a numeric strictness level for verification modes.
+type Strictness int
+
+// PolicySource selects where policy files are loaded from.
+type PolicySource string
+
 const (
 	// ModeDisabled disables supply chain verification.
 	ModeDisabled VerificationMode = "disabled"
@@ -45,11 +51,11 @@ const (
 	ModeEnforce VerificationMode = "enforce"
 
 	// StrictnessDisabled is the strictness level for "disabled" mode.
-	StrictnessDisabled = 0
+	StrictnessDisabled Strictness = 0
 	// StrictnessWarn is the strictness level for "warn" mode.
-	StrictnessWarn = 1
+	StrictnessWarn Strictness = 1
 	// StrictnessEnforce is the strictness level for "enforce" mode.
-	StrictnessEnforce = 2
+	StrictnessEnforce Strictness = 2
 
 	defaultFetchTimeout            = 30 * time.Second
 	defaultCacheTTL                = 24 * time.Hour
@@ -59,9 +65,9 @@ const (
 	maxFetchRateLimit              = 10000.0
 
 	// PolicySourceLocal loads policies from the local filesystem (default).
-	PolicySourceLocal = "local"
+	PolicySourceLocal PolicySource = "local"
 	// PolicySourceOCI loads policies from an OCI registry artifact.
-	PolicySourceOCI = "oci"
+	PolicySourceOCI PolicySource = "oci"
 
 	defaultPollInterval = 5 * time.Minute
 	minPollInterval     = 30 * time.Second
@@ -226,7 +232,7 @@ type Registry struct {
 // (default) or from an OCI registry artifact.
 type PolicyConfig struct {
 	// Source selects the policy source: "local" (default) or "oci".
-	Source string `toml:"source"`
+	Source PolicySource `toml:"source"`
 	// OCIRef is the OCI reference for the remote policy artifact
 	// (e.g. "ghcr.io/myorg/policies:v1"). Required when Source is "oci".
 	OCIRef string `toml:"oci_ref"`
@@ -305,7 +311,7 @@ func DefaultConfig() *Config {
 
 // Strictness returns the numeric strictness level of the mode.
 // disabled=0, warn=1, enforce=2. Unknown modes return -1.
-func (m VerificationMode) Strictness() int {
+func (m VerificationMode) Strictness() Strictness {
 	switch m {
 	case ModeDisabled:
 		return StrictnessDisabled

@@ -206,6 +206,11 @@ func loadCACertPool(path string) (*x509.CertPool, error) {
 
 	pool, err := x509.SystemCertPool()
 	if err != nil || pool == nil {
+		if err != nil {
+			slog.Warn("Failed to load system certificate pool, using empty pool",
+				"error", err)
+		}
+
 		pool = x509.NewCertPool()
 	}
 
@@ -440,7 +445,8 @@ func ResolveWithRegistries(
 
 	digest, indexDigest, err = ResolveDigest(ctx, rewrittenRef, opts...)
 	if err != nil && fallback != nil && ctx.Err() == nil && IsConnectionError(err) {
-		slog.Warn("Mirror unreachable for digest resolution, falling back to original registry",
+		slog.WarnContext(ctx,
+			"Mirror unreachable for digest resolution, falling back to original registry",
 			"mirror_ref", rewrittenRef,
 			"original_ref", fallback.OriginalRef,
 			"error", err,

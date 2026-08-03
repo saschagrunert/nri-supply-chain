@@ -32,8 +32,7 @@ const (
 	schemaResult = "result"
 )
 
-// PolicyJSONSchema generates the JSON Schema for policy configuration files.
-func PolicyJSONSchema() ([]byte, error) {
+func policyJSONSchema() ([]byte, error) {
 	return generateSchema(
 		&policy.Policy{},
 		"nri-supply-chain Policy",
@@ -42,8 +41,7 @@ func PolicyJSONSchema() ([]byte, error) {
 	)
 }
 
-// VerifyResultJSONSchema generates the JSON Schema for verify output.
-func VerifyResultJSONSchema() ([]byte, error) {
+func verifyResultJSONSchema() ([]byte, error) {
 	return generateSchema(
 		&verifyOutput{
 			Image:        "",
@@ -99,9 +97,9 @@ func printJSONSchema(schemaType string) int {
 
 	switch schemaType {
 	case schemaPolicy:
-		data, err = PolicyJSONSchema()
+		data, err = policyJSONSchema()
 	case schemaResult:
-		data, err = VerifyResultJSONSchema()
+		data, err = verifyResultJSONSchema()
 	default:
 		slog.Error(
 			"Unknown schema type, use 'policy' or 'result'",

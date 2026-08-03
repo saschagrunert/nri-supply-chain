@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/intoto"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
@@ -59,15 +60,6 @@ var (
 	// errNotCycloneDX indicates the document is not a valid CycloneDX document.
 	errNotCycloneDX = errors.New("no components found, not a valid CycloneDX document")
 )
-
-type inTotoStatement struct {
-	Subject   []inTotoSubject `json:"subject"`
-	Predicate json.RawMessage `json:"predicate"`
-}
-
-type inTotoSubject struct {
-	Digest map[string]string `json:"digest"`
-}
 
 // spdxDocument represents the subset of an SPDX 2.3 JSON document needed for
 // license and component deny-list checks.
@@ -517,7 +509,7 @@ func componentInList(purl string, list []string) bool {
 }
 
 func verifySubjectAndExtract(att []byte, imageDigest string) ([]byte, error) {
-	var stmt inTotoStatement
+	var stmt intoto.Statement
 
 	err := json.Unmarshal(att, &stmt)
 	if err != nil {
@@ -532,7 +524,7 @@ func verifySubjectAndExtract(att []byte, imageDigest string) ([]byte, error) {
 	}
 
 	if len(stmt.Subject) > 0 && imageDigest != "" {
-		if !subjectMatchesDigest(stmt.Subject, imageDigest) {
+		if !intoto.SubjectMatchesDigest(stmt.Subject, imageDigest) {
 			return nil, fmt.Errorf(
 				"%w: none of the subjects match %q",
 				ErrSubjectMismatch, imageDigest,
@@ -545,16 +537,6 @@ func verifySubjectAndExtract(att []byte, imageDigest string) ([]byte, error) {
 	}
 
 	return att, nil
-}
-
-func subjectMatchesDigest(subjects []inTotoSubject, imageDigest string) bool {
-	for _, subject := range subjects {
-		if types.MatchDigestInMap(imageDigest, subject.Digest) {
-			return true
-		}
-	}
-
-	return false
 }
 
 func passResult() *types.CheckResult {

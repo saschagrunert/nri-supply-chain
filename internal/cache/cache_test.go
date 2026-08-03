@@ -42,7 +42,8 @@ func TestNewWithGaugeResetsToZero(t *testing.T) {
 	})
 	testGauge.Set(42)
 
-	_ = cache.NewWithGauge(time.Hour, testGauge, nil)
+	c := cache.NewWithGauge(time.Hour, testGauge, nil)
+	t.Cleanup(c.Stop)
 
 	val := testutil.ToFloat64(testGauge)
 	if val != 0 {
@@ -54,6 +55,8 @@ func TestNewWithGaugeNilGauge(t *testing.T) {
 	t.Parallel()
 
 	testCache := cache.NewWithGauge(time.Hour, nil, nil)
+	t.Cleanup(testCache.Stop)
+
 	testCache.Set(testDigest, "default", &types.Result{
 		Allowed: true, Reason: "ok", CheckResults: nil,
 	})
@@ -72,6 +75,7 @@ func TestGaugeUpdatesOnSetAndClear(t *testing.T) {
 	})
 
 	testCache := cache.NewWithGauge(time.Hour, testGauge, nil)
+	t.Cleanup(testCache.Stop)
 
 	testCache.Set("sha256:b2c3d4e5f6a1b2c3d4e5f6a1b2"+
 		"c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3", "default", &types.Result{
@@ -107,6 +111,7 @@ func TestGaugeUpdatesOnExpiry(t *testing.T) {
 	})
 
 	testCache := cache.NewWithGauge(time.Millisecond, testGauge, nil)
+	t.Cleanup(testCache.Stop)
 
 	testCache.Set("sha256:b2c3d4e5f6a1b2c3d4e5f6a1b2"+
 		"c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3", "default", &types.Result{
@@ -134,6 +139,7 @@ func TestCacheGetSet(t *testing.T) {
 	t.Parallel()
 
 	c := cache.New(time.Hour)
+	t.Cleanup(c.Stop)
 
 	result := &types.Result{Allowed: true, Reason: "test", CheckResults: nil}
 	c.Set(testDigest, "default", result)
@@ -150,6 +156,7 @@ func TestCacheMiss(t *testing.T) {
 	t.Parallel()
 
 	c := cache.New(time.Hour)
+	t.Cleanup(c.Stop)
 
 	if got := c.Get(
 		"sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
@@ -163,6 +170,7 @@ func TestCacheNamespaceIsolation(t *testing.T) {
 	t.Parallel()
 
 	testCache := cache.New(time.Hour)
+	t.Cleanup(testCache.Stop)
 
 	testCache.Set(testDigest, "ns1", &types.Result{
 		Allowed: true, Reason: "ns1", CheckResults: nil,
@@ -186,6 +194,7 @@ func TestCacheExpiry(t *testing.T) {
 	t.Parallel()
 
 	testCache := cache.New(time.Millisecond)
+	t.Cleanup(testCache.Stop)
 
 	testCache.Set(testDigest, "default", &types.Result{
 		Allowed: true, Reason: "", CheckResults: nil,
@@ -216,6 +225,7 @@ func TestCacheCapacityEviction(t *testing.T) {
 	t.Parallel()
 
 	testCache := cache.New(time.Hour)
+	t.Cleanup(testCache.Stop)
 
 	for idx := range 10001 {
 		testCache.Set(
@@ -239,6 +249,7 @@ func TestCacheLen(t *testing.T) {
 	t.Parallel()
 
 	testCache := cache.New(time.Hour)
+	t.Cleanup(testCache.Stop)
 
 	if testCache.Len() != 0 {
 		t.Errorf("expected empty cache, got %d", testCache.Len())
@@ -257,6 +268,7 @@ func TestCacheCapacityEvictsExpired(t *testing.T) {
 	t.Parallel()
 
 	testCache := cache.New(time.Millisecond)
+	t.Cleanup(testCache.Stop)
 
 	for idx := range 10000 {
 		testCache.Set(
@@ -285,6 +297,7 @@ func TestCacheOverwriteUpdatesExpiry(t *testing.T) {
 	t.Parallel()
 
 	testCache := cache.New(time.Hour)
+	t.Cleanup(testCache.Stop)
 
 	testCache.Set(testDigest, "default", &types.Result{
 		Allowed: true, Reason: "old", CheckResults: nil,
@@ -307,6 +320,7 @@ func TestCacheConcurrent(t *testing.T) {
 	t.Parallel()
 
 	testCache := cache.New(50 * time.Millisecond)
+	t.Cleanup(testCache.Stop)
 
 	const goroutines = 10
 
@@ -349,6 +363,7 @@ func TestCacheCapacityEvictionUpdatesGauge(t *testing.T) {
 	})
 
 	testCache := cache.NewWithGauge(time.Hour, testGauge, nil)
+	t.Cleanup(testCache.Stop)
 
 	for idx := range 10001 {
 		testCache.Set(
@@ -376,6 +391,7 @@ func TestCacheOverwriteAtCapacityKeepsGauge(t *testing.T) {
 	})
 
 	testCache := cache.NewWithGauge(time.Hour, testGauge, nil)
+	t.Cleanup(testCache.Stop)
 
 	for idx := range cache.DefaultMaxSize {
 		testCache.Set(
@@ -409,6 +425,7 @@ func TestCacheSetWithTTLOverride(t *testing.T) {
 	t.Parallel()
 
 	testCache := cache.New(time.Hour)
+	t.Cleanup(testCache.Stop)
 
 	// Set with a short TTL.
 	testCache.SetWithTTL(
@@ -468,6 +485,7 @@ func TestCacheSetWithTTLZeroDoesNotCache(t *testing.T) {
 	t.Parallel()
 
 	testCache := cache.New(time.Hour)
+	t.Cleanup(testCache.Stop)
 
 	// Zero TTL should skip caching entirely.
 	testCache.SetWithTTL(testDigest, "default", &types.Result{
@@ -483,6 +501,8 @@ func TestCacheClear(t *testing.T) {
 	t.Parallel()
 
 	testCache := cache.New(time.Hour)
+	t.Cleanup(testCache.Stop)
+
 	testCache.Set(testDigest, "default", &types.Result{
 		Allowed: true, Reason: "", CheckResults: nil,
 	})

@@ -178,7 +178,7 @@ func TestBuildTrustPolicyDocument(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			doc := BuildTrustPolicyDocument(tc.np)
+			doc := buildTrustPolicyDocument(tc.np)
 
 			if doc.Version != tc.wantVersion {
 				t.Errorf("version = %q, want %q", doc.Version, tc.wantVersion)
@@ -213,7 +213,7 @@ func TestBuildTrustPolicyDocumentFieldMapping(t *testing.T) {
 		},
 	}
 
-	doc := BuildTrustPolicyDocument(np)
+	doc := buildTrustPolicyDocument(np)
 
 	if len(doc.TrustPolicies) != 1 {
 		t.Fatalf("expected 1 trust policy, got %d", len(doc.TrustPolicies))

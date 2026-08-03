@@ -321,11 +321,6 @@ func (r *CircuitBreakerRegistry) ExportCooldown() time.Duration {
 	return r.cooldown
 }
 
-// ExportFallbackOriginalHost exposes fallbackOriginalHost for external tests.
-func ExportFallbackOriginalHost(originalRef string) string {
-	return fallbackOriginalHost(originalRef)
-}
-
 // ExportFetchWithFallback exposes fetchWithFallback for external tests.
 func (f *OCIFetcher) ExportFetchWithFallback(
 	ctx context.Context,
