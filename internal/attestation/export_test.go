@@ -16,6 +16,7 @@ package attestation
 
 import (
 	"context"
+	"crypto"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -51,6 +52,11 @@ func ExportBuildCertificateID(issuers, sanPatterns []string) (verify.Certificate
 // ExportBuildKeyMaterial exposes buildKeyMaterial for external tests.
 func ExportBuildKeyMaterial(keys []string) (*root.TrustedPublicKeyMaterial, error) {
 	return buildKeyMaterial(keys)
+}
+
+// ExportLoadPublicKeyFromPEM exposes loadPublicKeyFromPEM for external tests.
+func ExportLoadPublicKeyFromPEM(path string) (crypto.PublicKey, error) {
+	return loadPublicKeyFromPEM(path)
 }
 
 // ExportBuildVerificationCfgErr exposes buildVerificationConfig for external tests,

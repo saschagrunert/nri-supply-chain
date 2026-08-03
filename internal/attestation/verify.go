@@ -43,6 +43,13 @@ import (
 
 var pemKeyCache sync.Map //nolint:gochecknoglobals // per-process key cache
 
+// ResetPEMKeyCache clears cached PEM public keys so that rotated keys on disk
+// are re-read on the next verification cycle. Call this after a config reload
+// when policies have changed.
+func ResetPEMKeyCache() {
+	pemKeyCache.Clear()
+}
+
 func verifyBundleWithCache(
 	ctx context.Context,
 	bundleBytes []byte,
