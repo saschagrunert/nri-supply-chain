@@ -553,6 +553,7 @@ func resetCachesIfChanged(prevHostSem *hostSemMap, policiesChanged bool) *hostSe
 		return prevHostSem
 	}
 
+	attestation.ResetPEMKeyCache()
 	attestation.ResetSANPatternWarnings()
 	slsa.ResetWarnings()
 	glob.ResetCache()
@@ -807,6 +808,7 @@ func (v *Verifier) applyPolicyUpdate(
 ) {
 	state.cache.Stop()
 
+	attestation.ResetPEMKeyCache()
 	attestation.ResetSANPatternWarnings()
 	slsa.ResetWarnings()
 	glob.ResetCache()

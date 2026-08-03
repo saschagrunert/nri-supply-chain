@@ -15,6 +15,7 @@
 package attestation_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -407,6 +408,8 @@ func TestBuildCertificateIdentityMissingSANFallback(t *testing.T) {
 func TestBuildKeyMaterial(t *testing.T) {
 	t.Parallel()
 
+	t.Cleanup(attestation.ResetPEMKeyCache)
+
 	tests := []struct {
 		name    string
 		keys    func(t *testing.T) []string
@@ -469,8 +472,75 @@ func TestBuildKeyMaterial(t *testing.T) {
 	}
 }
 
+func TestResetPEMKeyCacheClearsEntries(t *testing.T) {
+	t.Parallel()
+
+	t.Cleanup(attestation.ResetPEMKeyCache)
+
+	keyPath := writeTestKey(t)
+
+	// Load the key to populate the cache.
+	_, err := attestation.ExportBuildKeyMaterial([]string{keyPath})
+	if err != nil {
+		t.Fatalf("initial key load: %v", err)
+	}
+
+	// Overwrite the file with a different key.
+	newPriv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generating replacement key: %v", err)
+	}
+
+	newPubDER, err := x509.MarshalPKIXPublicKey(&newPriv.PublicKey)
+	if err != nil {
+		t.Fatalf("marshalling replacement key: %v", err)
+	}
+
+	err = os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: newPubDER,
+	}), 0o600)
+	if err != nil {
+		t.Fatalf("writing replacement key: %v", err)
+	}
+
+	// Without reset, the cached (old) key is still returned.
+	cachedKey, err := attestation.ExportLoadPublicKeyFromPEM(keyPath)
+	if err != nil {
+		t.Fatalf("load before reset: %v", err)
+	}
+
+	cachedDER, err := x509.MarshalPKIXPublicKey(cachedKey)
+	if err != nil {
+		t.Fatalf("marshalling cached key: %v", err)
+	}
+
+	if bytes.Equal(cachedDER, newPubDER) {
+		t.Fatal("cache returned the new key before reset")
+	}
+
+	attestation.ResetPEMKeyCache()
+
+	// After reset, the new key is loaded from disk.
+	freshKey, err := attestation.ExportLoadPublicKeyFromPEM(keyPath)
+	if err != nil {
+		t.Fatalf("load after reset: %v", err)
+	}
+
+	freshDER, err := x509.MarshalPKIXPublicKey(freshKey)
+	if err != nil {
+		t.Fatalf("marshalling fresh key: %v", err)
+	}
+
+	if !bytes.Equal(freshDER, newPubDER) {
+		t.Fatal("expected new key after cache reset, got stale cached key")
+	}
+}
+
 func TestBuildVerificationConfig(t *testing.T) {
 	t.Parallel()
+
+	t.Cleanup(attestation.ResetPEMKeyCache)
 
 	tests := []struct {
 		name      string
