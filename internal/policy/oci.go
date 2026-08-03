@@ -200,7 +200,7 @@ func (f *OCIFetcher) buildRemoteOptions(
 	return opts, nil
 }
 
-func extractPoliciesFromImage(
+func extractPoliciesFromImage( //nolint:cyclop // slightly above threshold due to edge-case warning
 	img ociV1.Image,
 ) (map[string]*Policy, error) {
 	layers, err := img.Layers()
@@ -244,6 +244,11 @@ func extractPoliciesFromImage(
 		}
 
 		policies[namespace] = pol
+	}
+
+	if len(policies) == 0 && len(layers) > 0 {
+		slog.Warn("All OCI policy layers were skipped or invalid",
+			"layers_count", len(layers))
 	}
 
 	return policies, nil

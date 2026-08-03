@@ -409,7 +409,8 @@ func (f *OCIFetcher) fetchWithFallback(
 	mirrorErr error,
 	opts *FetchOptions,
 ) ([]VerifiedAttestation, error) {
-	slog.Warn("Mirror unreachable for attestation fetch, falling back to original registry",
+	slog.WarnContext(ctx,
+		"Mirror unreachable for attestation fetch, falling back to original registry",
 		"mirror_ref", mirrorRef,
 		"original_ref", fallback.OriginalRef,
 		"error", mirrorErr,
@@ -420,7 +421,7 @@ func (f *OCIFetcher) fetchWithFallback(
 	f.onMirrorFallbackMu.RUnlock()
 
 	if cb != nil {
-		cb(fallbackOriginalHost(fallback.OriginalRef))
+		cb(registry.Host(fallback.OriginalRef))
 	}
 
 	fallbackOpts := []remote.Option{
@@ -446,15 +447,6 @@ func (f *OCIFetcher) fetchWithFallback(
 	}
 
 	return result, nil
-}
-
-func fallbackOriginalHost(originalRef string) string {
-	ref, err := name.ParseReference(originalRef)
-	if err != nil {
-		return originalRef
-	}
-
-	return ref.Context().RegistryStr()
 }
 
 func retryJitter(base time.Duration) time.Duration {

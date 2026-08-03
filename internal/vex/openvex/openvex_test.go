@@ -16,11 +16,11 @@ package openvex_test
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 
 	openvexlib "github.com/openvex/go-vex/pkg/vex"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/vex/openvex"
 )
 
@@ -28,17 +28,6 @@ const (
 	testDigest     = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
 	testVEXContext = "https://openvex.dev/ns/v0.2.0"
 )
-
-func mustMarshal(t *testing.T, v any) []byte {
-	t.Helper()
-
-	data, err := json.Marshal(v)
-	if err != nil {
-		t.Fatalf("failed to marshal: %v", err)
-	}
-
-	return data
-}
 
 func validDoc(status openvexlib.Status) openvexlib.VEX {
 	return openvexlib.VEX{
@@ -64,7 +53,7 @@ func TestVerifyNotAffected(t *testing.T) {
 	t.Parallel()
 
 	doc := validDoc(openvexlib.StatusNotAffected)
-	data := mustMarshal(t, doc)
+	data := testutil.MustMarshal(t, doc)
 
 	result, err := openvex.Verify(context.Background(), data, testDigest, "")
 	if err != nil {
@@ -80,7 +69,7 @@ func TestVerifyAffected(t *testing.T) {
 	t.Parallel()
 
 	doc := validDoc(openvexlib.StatusAffected)
-	data := mustMarshal(t, doc)
+	data := testutil.MustMarshal(t, doc)
 
 	result, err := openvex.Verify(context.Background(), data, testDigest, "")
 	if err != nil {
@@ -100,7 +89,7 @@ func TestVerifyUnderInvestigation(t *testing.T) {
 	t.Parallel()
 
 	doc := validDoc(openvexlib.StatusUnderInvestigation)
-	data := mustMarshal(t, doc)
+	data := testutil.MustMarshal(t, doc)
 
 	result, err := openvex.Verify(context.Background(), data, testDigest, "")
 	if err != nil {
@@ -116,7 +105,7 @@ func TestVerifyFixed(t *testing.T) {
 	t.Parallel()
 
 	doc := validDoc(openvexlib.StatusFixed)
-	data := mustMarshal(t, doc)
+	data := testutil.MustMarshal(t, doc)
 
 	result, err := openvex.Verify(context.Background(), data, testDigest, "")
 	if err != nil {

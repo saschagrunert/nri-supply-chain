@@ -330,3 +330,50 @@ func TestResolveDigestNetworkError(t *testing.T) {
 		t.Fatal("expected error for closed server")
 	}
 }
+
+func TestHost(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		ref  string
+		want string
+	}{
+		{
+			name: "docker.io reference",
+			ref:  "docker.io/library/nginx:latest",
+			want: testRegistryDockerIO,
+		},
+		{
+			name: "ghcr.io reference",
+			ref:  "ghcr.io/owner/repo:v1",
+			want: "ghcr.io",
+		},
+		{
+			name: "localhost reference",
+			ref:  "localhost:5000/test/image:v1",
+			want: "localhost:5000",
+		},
+		{
+			name: "invalid reference returns input",
+			ref:  "not a valid ref %%",
+			want: "not a valid ref %%",
+		},
+		{
+			name: "empty string returns empty",
+			ref:  "",
+			want: "",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := registry.Host(test.ref)
+			if got != test.want {
+				t.Errorf("Host(%q) = %q, want %q", test.ref, got, test.want)
+			}
+		})
+	}
+}

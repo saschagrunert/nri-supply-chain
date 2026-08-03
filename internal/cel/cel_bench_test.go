@@ -38,7 +38,7 @@ func BenchmarkCompile(b *testing.B) {
 	b.ResetTimer()
 
 	for range b.N {
-		celengine.ResetEnvironment()
+		celengine.ResetEnvironmentForTest()
 
 		_, _ = celengine.Compile(rules)
 	}

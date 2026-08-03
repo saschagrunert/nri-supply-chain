@@ -1565,7 +1565,7 @@ func TestVerificationModeStrictness(t *testing.T) {
 	tests := []struct {
 		name     string
 		mode     config.VerificationMode
-		expected int
+		expected config.Strictness
 	}{
 		{name: "mode disabled", mode: config.ModeDisabled, expected: config.StrictnessDisabled},
 		{name: "mode warn", mode: config.ModeWarn, expected: config.StrictnessWarn},

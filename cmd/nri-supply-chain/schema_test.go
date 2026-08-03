@@ -31,7 +31,7 @@ const (
 func TestPolicyJSONSchemaMatchesDocs(t *testing.T) {
 	t.Parallel()
 
-	schemaBytes, err := PolicyJSONSchema()
+	schemaBytes, err := policyJSONSchema()
 	if err != nil {
 		t.Fatalf("generating schema: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestPolicyJSONSchemaMatchesDocs(t *testing.T) {
 func TestVerifyResultJSONSchemaMatchesDocs(t *testing.T) {
 	t.Parallel()
 
-	schemaBytes, err := VerifyResultJSONSchema()
+	schemaBytes, err := verifyResultJSONSchema()
 	if err != nil {
 		t.Fatalf("generating schema: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestPrintJSONSchemaUnknown(t *testing.T) {
 func TestVerifyResultJSONSchema(t *testing.T) {
 	t.Parallel()
 
-	data, err := VerifyResultJSONSchema()
+	data, err := verifyResultJSONSchema()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

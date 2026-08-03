@@ -31,6 +31,17 @@ import (
 // ErrNoPlatformMatch indicates that no image in a manifest list matches the current platform.
 var ErrNoPlatformMatch = errors.New("no matching platform image in manifest list")
 
+// Host extracts the registry host from an image reference string.
+// On parse failure it returns imageRef unchanged.
+func Host(imageRef string) string {
+	ref, err := name.ParseReference(imageRef)
+	if err != nil {
+		return imageRef
+	}
+
+	return ref.Context().RegistryStr()
+}
+
 // ResolveDigest resolves an image reference to its digest, handling manifest lists
 // by selecting the platform-specific image.
 func ResolveDigest(

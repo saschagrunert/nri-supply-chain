@@ -79,7 +79,7 @@ func runChecks(
 
 	if breaker != nil && !breaker.Allow() {
 		return handleFetchError(
-			state.config, state.metrics,
+			ctx, state.config, state.metrics,
 			fmt.Errorf("%w: %s", ErrCircuitBreakerOpen, imageRef),
 			imageRef, host,
 		)
@@ -88,7 +88,7 @@ func runChecks(
 	if state.fetchSem != nil {
 		release, semErr := acquireFetchSlots(ctx, state, host)
 		if semErr != nil {
-			return handleFetchError(state.config, state.metrics, semErr, imageRef, host)
+			return handleFetchError(ctx, state.config, state.metrics, semErr, imageRef, host)
 		}
 
 		defer release()
@@ -100,7 +100,7 @@ func runChecks(
 	if fetchErr != nil {
 		recordBreakerFailure(ctx, breaker, state.metrics, host, state.config.FetchFailurePolicy)
 
-		return handleFetchError(state.config, state.metrics, fetchErr, imageRef, host)
+		return handleFetchError(ctx, state.config, state.metrics, fetchErr, imageRef, host)
 	}
 
 	if breaker != nil {
@@ -173,31 +173,26 @@ func runChecksWithoutFetcher(
 		}
 	}
 
-	slsaResult := handleMissingAttestation(
-		pol.SLSAMissingPolicy(), types.CheckTypeSLSA, detail,
-	)
+	missingChecks := []struct {
+		checkType     types.CheckType
+		missingPolicy types.Action
+	}{
+		{types.CheckTypeSLSA, pol.SLSAMissingPolicy()},
+		{types.CheckTypeVEX, pol.VEXMissingPolicy()},
+		{types.CheckTypeNotation, pol.NotationMissingPolicy()},
+		{types.CheckTypeSBOM, pol.SBOMMissingPolicy()},
+	}
 
-	met.VerificationDuration.WithLabelValues(string(types.CheckTypeSLSA)).Observe(0)
+	results := make([]*types.CheckResult, 0, len(missingChecks))
 
-	vexResult := handleMissingAttestation(
-		pol.VEXMissingPolicy(), types.CheckTypeVEX, detail,
-	)
+	for _, mc := range missingChecks {
+		checkResult := handleMissingAttestation(mc.missingPolicy, mc.checkType, detail)
+		met.VerificationDuration.WithLabelValues(string(mc.checkType)).Observe(0)
 
-	met.VerificationDuration.WithLabelValues(string(types.CheckTypeVEX)).Observe(0)
+		results = append(results, checkResult)
+	}
 
-	notationResult := handleMissingAttestation(
-		pol.NotationMissingPolicy(), types.CheckTypeNotation, detail,
-	)
-
-	met.VerificationDuration.WithLabelValues(string(types.CheckTypeNotation)).Observe(0)
-
-	sbomResult := handleMissingAttestation(
-		pol.SBOMMissingPolicy(), types.CheckTypeSBOM, detail,
-	)
-
-	met.VerificationDuration.WithLabelValues(string(types.CheckTypeSBOM)).Observe(0)
-
-	result := combineResults(slsaResult, vexResult, notationResult, sbomResult)
+	result := combineResults(results...)
 
 	prependVSAWarning(result, pol, detail)
 
@@ -301,12 +296,14 @@ func buildFetchOpts(
 }
 
 func handleFetchError(
-	cfg *config.Config, met *metrics.Metrics,
+	ctx context.Context, cfg *config.Config, met *metrics.Metrics,
 	fetchErr error, imageRef, host string,
 ) *types.Result {
 	met.FetchErrorsTotal.WithLabelValues("attestation", host).Inc()
 
-	slog.Warn("Attestation fetch failed", "image", imageRef, "host", host, "error", fetchErr)
+	slog.WarnContext(ctx, "Attestation fetch failed",
+		"image", imageRef, "host", host, "error", fetchErr,
+	)
 
 	detail := "attestation fetch failed for " + imageRef
 	if errors.Is(fetchErr, ErrCircuitBreakerOpen) {

@@ -15,11 +15,11 @@
 package cyclonedxvex_test
 
 import (
-	"encoding/json"
 	"testing"
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/vex/cyclonedxvex"
 )
 
@@ -28,17 +28,6 @@ const (
 	testCompRef  = "comp-nginx"
 	testCompName = "nginx"
 )
-
-func mustMarshal(t *testing.T, v any) []byte {
-	t.Helper()
-
-	data, err := json.Marshal(v)
-	if err != nil {
-		t.Fatalf("failed to marshal: %v", err)
-	}
-
-	return data
-}
 
 func bomWithVuln(state cdx.ImpactAnalysisState, affectsRef string) *cdx.BOM {
 	bom := cdx.NewBOM()
@@ -124,7 +113,7 @@ func TestVerifyImpactAnalysisStates(t *testing.T) {
 			t.Parallel()
 
 			bom := bomWithVuln(test.state, testCompRef)
-			data := mustMarshal(t, bom)
+			data := testutil.MustMarshal(t, bom)
 
 			result, err := cyclonedxvex.Verify(data, testDigest, "")
 			if err != nil {
@@ -151,7 +140,7 @@ func TestVerifyComponentMatchByDigest(t *testing.T) {
 	t.Parallel()
 
 	bom := bomWithVuln(cdx.IASExploitable, testCompRef)
-	data := mustMarshal(t, bom)
+	data := testutil.MustMarshal(t, bom)
 
 	result, err := cyclonedxvex.Verify(data, testDigest, "")
 	if err != nil {
@@ -167,7 +156,7 @@ func TestVerifyComponentNoMatch(t *testing.T) {
 	t.Parallel()
 
 	bom := bomWithVuln(cdx.IASExploitable, "unknown-ref")
-	data := mustMarshal(t, bom)
+	data := testutil.MustMarshal(t, bom)
 
 	otherDigest := "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 
@@ -196,7 +185,7 @@ func TestVerifyDirectRefDigestMatch(t *testing.T) {
 		},
 	}
 
-	data := mustMarshal(t, bom)
+	data := testutil.MustMarshal(t, bom)
 
 	result, err := cyclonedxvex.Verify(data, testDigest, "")
 	if err != nil {
@@ -236,7 +225,7 @@ func TestVerifyPURLMatch(t *testing.T) {
 		},
 	}
 
-	data := mustMarshal(t, bom)
+	data := testutil.MustMarshal(t, bom)
 
 	result, err := cyclonedxvex.Verify(data, testDigest, purl)
 	if err != nil {
@@ -252,7 +241,7 @@ func TestVerifyEmptyVulnerabilities(t *testing.T) {
 	t.Parallel()
 
 	bom := cdx.NewBOM()
-	data := mustMarshal(t, bom)
+	data := testutil.MustMarshal(t, bom)
 
 	result, err := cyclonedxvex.Verify(data, testDigest, "")
 	if err != nil {
@@ -273,7 +262,7 @@ func TestVerifyNilVulnerabilities(t *testing.T) {
 
 	bom := cdx.NewBOM()
 	bom.Vulnerabilities = nil
-	data := mustMarshal(t, bom)
+	data := testutil.MustMarshal(t, bom)
 
 	result, err := cyclonedxvex.Verify(data, testDigest, "")
 	if err != nil {
@@ -330,7 +319,7 @@ func TestVerifyNoAnalysis(t *testing.T) {
 		},
 	}
 
-	data := mustMarshal(t, bom)
+	data := testutil.MustMarshal(t, bom)
 
 	result, err := cyclonedxvex.Verify(data, testDigest, "")
 	if err != nil {
@@ -353,7 +342,7 @@ func TestVerifyEmptyAffects(t *testing.T) {
 		},
 	}
 
-	data := mustMarshal(t, bom)
+	data := testutil.MustMarshal(t, bom)
 
 	result, err := cyclonedxvex.Verify(data, testDigest, "")
 	if err != nil {
@@ -379,7 +368,7 @@ func TestVerifyUnknownVulnerabilityName(t *testing.T) {
 		},
 	}
 
-	data := mustMarshal(t, bom)
+	data := testutil.MustMarshal(t, bom)
 
 	result, err := cyclonedxvex.Verify(data, testDigest, "")
 	if err != nil {
@@ -423,7 +412,7 @@ func TestVerifyMultipleVulnerabilities(t *testing.T) {
 		},
 	}
 
-	data := mustMarshal(t, bom)
+	data := testutil.MustMarshal(t, bom)
 
 	result, err := cyclonedxvex.Verify(data, testDigest, "")
 	if err != nil {
@@ -453,7 +442,7 @@ func TestVerifyUnrecognizedStateTreatedAsAffected(t *testing.T) {
 		},
 	}
 
-	data := mustMarshal(t, bom)
+	data := testutil.MustMarshal(t, bom)
 
 	result, err := cyclonedxvex.Verify(data, testDigest, "")
 	if err != nil {
@@ -481,7 +470,7 @@ func TestVerifyEmptyAnalysisState(t *testing.T) {
 		},
 	}
 
-	data := mustMarshal(t, bom)
+	data := testutil.MustMarshal(t, bom)
 
 	result, err := cyclonedxvex.Verify(data, testDigest, "")
 	if err != nil {

@@ -18,6 +18,7 @@ package cel
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/google/cel-go/cel"
@@ -113,8 +114,7 @@ func initEnvironment() (*cel.Env, error) {
 	return envVal, nil
 }
 
-// ResetEnvironment resets the singleton CEL environment for testing.
-func ResetEnvironment() {
+func resetEnvironment() {
 	envOnce = sync.Once{}
 	envVal = nil
 	errEnvCE = nil
@@ -297,7 +297,7 @@ func evalBool(prog cel.Program, vars map[string]any) (bool, error) {
 }
 
 func isCostError(err error) bool {
-	return err != nil && (err.Error() == "operation cancelled: actual cost limit exceeded" ||
+	return err != nil && (strings.Contains(err.Error(), "actual cost limit exceeded") ||
 		errors.Is(err, ErrCostLimitExceeded))
 }
 

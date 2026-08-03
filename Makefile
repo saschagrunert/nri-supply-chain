@@ -142,7 +142,7 @@ e2e: build $(KUBERNIX) $(COSIGN) $(CRANE) ## Run bats e2e tests (requires root a
 ##@ Verification
 
 .PHONY: verify-all
-verify-all: lint verify-shfmt verify-shellcheck verify-mdtoc verify-jsonschema verify-tidy verify-dependencies govulncheck verify-prettier ## Run all verification targets
+verify-all: lint verify-shfmt verify-shellcheck verify-mdtoc verify-jsonschema verify-tidy verify-dependencies govulncheck verify-prettier verify-typos ## Run all verification targets
 
 .PHONY: lint
 lint: $(GOLANGCI_LINT) ## Run golangci-lint
@@ -198,6 +198,10 @@ verify-tidy: ## Verify go.mod is tidy
 .PHONY: verify-dependencies
 verify-dependencies: $(ZEITGEIST) ## Verify external dependencies
 	$(ZEITGEIST) validate --local-only --base-path . --config dependencies.yaml
+
+.PHONY: verify-typos
+verify-typos: ## Check for typos in source files
+	typos
 
 .PHONY: verify-prettier
 verify-prettier: ## Verify file formatting with prettier

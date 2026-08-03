@@ -42,6 +42,7 @@ import (
 )
 
 const (
+	testRegistryDockerIO    = "index.docker.io"
 	testRegistryGHCR        = "ghcr.io"
 	testMirrorInternal      = "mirror.internal"
 	testImageGHCR           = "ghcr.io/myorg/myimage:v1.0"
@@ -661,7 +662,7 @@ func TestFindMatchingRegistryBareImage(t *testing.T) {
 
 	registries := []config.Registry{
 		{
-			Prefix: "index.docker.io", Mirror: testMirrorInternal,
+			Prefix: testRegistryDockerIO, Mirror: testMirrorInternal,
 			CACert: "", Insecure: false,
 		},
 	}
@@ -671,8 +672,8 @@ func TestFindMatchingRegistryBareImage(t *testing.T) {
 		t.Fatal("expected nginx:latest to match index.docker.io prefix")
 	}
 
-	if reg.Prefix != "index.docker.io" {
-		t.Errorf("expected prefix %q, got %q", "index.docker.io", reg.Prefix)
+	if reg.Prefix != testRegistryDockerIO {
+		t.Errorf("expected prefix %q, got %q", testRegistryDockerIO, reg.Prefix)
 	}
 }
 
