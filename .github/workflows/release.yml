@@ -93,6 +93,7 @@ jobs:
         with:
           image-ref: ghcr.io/${{ github.repository }}:${{ steps.release.outputs.version }}
           exit-code: "1"
+          trivyignores: .trivyignore
       - name: Generate container image SBOM
         env:
           IMAGE: ghcr.io/${{ github.repository }}
