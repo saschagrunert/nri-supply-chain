@@ -71,15 +71,17 @@ must pass verification.
 
    ```text
    Image: ghcr.io/saschagrunert/nri-supply-chain:0.2.0
-   Digest: sha256:1a8b39eeff74b8bb3e20c7f9fa773d4a9935241f7cc4e1217067c8186c2cee3c
+   Digest: sha256:34a4a6da1f757b30f1dd51e91eab94c97a0a618345320d1d2c35687a30559351
    Namespace: default
    Policy: /etc/nri-supply-chain/policies/default.json
    Mode: enforce
    Result: ALLOWED
 
-   TYPE   STATUS   DETAIL
-   SLSA   pass     SLSA provenance verified
-   VEX    pass     VEX verification passed
+   TYPE       STATUS   DETAIL
+   SLSA       pass     SLSA provenance verified
+   VEX        pass     VEX verification passed
+   NOTATION   pass     no Notation signature found for image ghcr.io/saschagrunert/nri-supply-chain:0.2.0
+   SBOM       pass     no SBOM attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.2.0
    ```
 
    Use `--output json` for machine-readable output:
@@ -87,7 +89,7 @@ must pass verification.
    ```json
    {
      "image": "ghcr.io/saschagrunert/nri-supply-chain:0.2.0",
-     "digest": "sha256:1a8b39eeff74b8bb3e20c7f9fa773d4a9935241f7cc4e1217067c8186c2cee3c",
+     "digest": "sha256:34a4a6da1f757b30f1dd51e91eab94c97a0a618345320d1d2c35687a30559351",
      "namespace": "default",
      "allowed": true,
      "checkResults": [
@@ -102,6 +104,18 @@ must pass verification.
          "passed": true,
          "status": "pass",
          "detail": "VEX verification passed"
+       },
+       {
+         "type": "notation",
+         "passed": true,
+         "status": "pass",
+         "detail": "no Notation signature found for image ghcr.io/saschagrunert/nri-supply-chain:0.2.0"
+       },
+       {
+         "type": "sbom",
+         "passed": true,
+         "status": "pass",
+         "detail": "no SBOM attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.2.0"
        }
      ]
    }
@@ -135,7 +149,7 @@ must pass verification.
 
    ```text
    Image: ghcr.io/saschagrunert/nri-supply-chain:0.2.0
-   Digest: sha256:1a8b39eeff74b8bb3e20c7f9fa773d4a9935241f7cc4e1217067c8186c2cee3c
+   Digest: sha256:34a4a6da1f757b30f1dd51e91eab94c97a0a618345320d1d2c35687a30559351
    Namespace: default
    Policy: /etc/nri-supply-chain/policies/default.json
    Mode: enforce

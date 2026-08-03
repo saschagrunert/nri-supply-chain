@@ -93,6 +93,19 @@ jobs:
         with:
           image-ref: ghcr.io/${{ github.repository }}:${{ steps.release.outputs.version }}
           exit-code: "1"
+      - name: Generate container image SBOM
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+        run: syft "${IMAGE}:${{ steps.release.outputs.version }}" -o spdx-json=/tmp/sbom.spdx.json
+      - name: Attest container image SBOM
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+        run: |
+          DIGEST=$(./build/crane digest "${IMAGE}:${{ steps.release.outputs.version }}")
+          cosign attest --predicate /tmp/sbom.spdx.json \
+            --type https://spdx.dev/Document \
+            --yes \
+            "${IMAGE}@${DIGEST}"
       - name: Attest container image VEX
         env:
           IMAGE: ghcr.io/${{ github.repository }}
@@ -135,7 +148,8 @@ jobs:
               "sources": ["github.com/${{ github.repository_owner }}/*"]
             },
             "slsa": { "missingPolicy": "deny" },
-            "vex": { "missingPolicy": "deny" }
+            "vex": { "missingPolicy": "deny" },
+            "sbom": { "missingPolicy": "deny" }
           }
           EOF
           cat > /tmp/verify-config.toml <<EOF
