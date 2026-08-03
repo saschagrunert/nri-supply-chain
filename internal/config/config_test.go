@@ -299,6 +299,73 @@ func TestConfigValidateRuntime(t *testing.T) {
 			t.Errorf("expected error %v, got %v", config.ErrPolicyDirNotDirectory, err)
 		}
 	})
+
+	t.Run("symlink policy_dir rejected", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		realDir := filepath.Join(dir, "real")
+		testutil.AssertNoError(t, os.Mkdir(realDir, 0o750))
+
+		linkDir := filepath.Join(dir, "link")
+		testutil.AssertNoError(t, os.Symlink(realDir, linkDir))
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.PolicyDir = linkDir
+
+		err := cfg.ValidateRuntime()
+		if !errors.Is(err, config.ErrSymlinkNotAllowed) {
+			t.Errorf("expected ErrSymlinkNotAllowed, got %v", err)
+		}
+	})
+
+	t.Run("symlink tuf_root rejected", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		realFile := filepath.Join(dir, "root.json")
+		testutil.AssertNoError(t, os.WriteFile(realFile, []byte(`{}`), 0o600))
+
+		linkFile := filepath.Join(dir, "root-link.json")
+		testutil.AssertNoError(t, os.Symlink(realFile, linkFile))
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.PolicyDir = dir
+		cfg.Sigstore.TUFMirror = "https://tuf.example.com"
+		cfg.Sigstore.TUFRoot = linkFile
+
+		err := cfg.ValidateRuntime()
+		if !errors.Is(err, config.ErrSymlinkNotAllowed) {
+			t.Errorf("expected ErrSymlinkNotAllowed, got %v", err)
+		}
+	})
+
+	t.Run("symlink ca_cert rejected", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		realCert := filepath.Join(dir, "ca.crt")
+		testutil.AssertNoError(t, os.WriteFile(realCert, []byte("cert"), 0o600))
+
+		linkCert := filepath.Join(dir, "ca-link.crt")
+		testutil.AssertNoError(t, os.Symlink(realCert, linkCert))
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.PolicyDir = dir
+		cfg.Registries = []config.Registry{
+			{
+				Prefix: "ghcr.io", Mirror: "", CACert: linkCert, Insecure: false,
+			},
+		}
+
+		err := cfg.ValidateRuntime()
+		if !errors.Is(err, config.ErrSymlinkNotAllowed) {
+			t.Errorf("expected ErrSymlinkNotAllowed, got %v", err)
+		}
+	})
 }
 
 func TestLoadFromFile(t *testing.T) {
@@ -1041,6 +1108,25 @@ policy_dir = "relative/path"
 	}
 }
 
+func TestLoadFromFileRejectsOversizedConfig(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.toml")
+
+	oversized := make([]byte, 10<<20+1)
+	for i := range oversized {
+		oversized[i] = '#'
+	}
+
+	testutil.AssertNoError(t, os.WriteFile(cfgPath, oversized, 0o600))
+
+	_, err := config.LoadFromFile(cfgPath)
+	if !errors.Is(err, config.ErrConfigFileTooLarge) {
+		t.Errorf("expected ErrConfigFileTooLarge, got %v", err)
+	}
+}
+
 func TestConfigValidateCollectsMultipleErrors(t *testing.T) {
 	t.Parallel()
 
@@ -1703,11 +1789,11 @@ func TestStrictnessOrdering(t *testing.T) {
 	}
 }
 
-func TestWarnInsecureRegistriesEnforceMode(t *testing.T) {
+func TestWarnInsecureRegistriesDoesNotPanic(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.DefaultConfig()
-	cfg.Verification = config.ModeEnforce
+	cfg.Verification = config.ModeWarn
 	cfg.Registries = []config.Registry{
 		{
 			Prefix:   "insecure.example.com",
@@ -1717,7 +1803,6 @@ func TestWarnInsecureRegistriesEnforceMode(t *testing.T) {
 		},
 	}
 
-	// Should not panic; the warning is logged via slog.
 	cfg.WarnInsecureRegistries()
 }
 
@@ -1877,6 +1962,39 @@ func TestValidateRegistryMirrorSameAsPrefix(t *testing.T) {
 	if !errors.Is(err, config.ErrRegistryMirrorSameAsPrefix) {
 		t.Errorf("expected ErrRegistryMirrorSameAsPrefix, got %v", err)
 	}
+}
+
+func TestValidateInsecureRegistryInEnforceMode(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+	cfg.PolicyDir = t.TempDir()
+	cfg.Registries = []config.Registry{
+		{
+			Prefix: testPrefixGHCR, Mirror: "", CACert: "", Insecure: true,
+		},
+	}
+
+	err := cfg.Validate()
+	if !errors.Is(err, config.ErrInsecureRegistryInEnforceMode) {
+		t.Errorf("expected ErrInsecureRegistryInEnforceMode, got %v", err)
+	}
+}
+
+func TestValidateInsecureRegistryAllowedInWarnMode(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = t.TempDir()
+	cfg.Registries = []config.Registry{
+		{
+			Prefix: testPrefixGHCR, Mirror: "", CACert: "", Insecure: true,
+		},
+	}
+
+	testutil.AssertNoError(t, cfg.Validate())
 }
 
 func TestRegistriesChanged(t *testing.T) {

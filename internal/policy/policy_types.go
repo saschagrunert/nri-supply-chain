@@ -157,6 +157,12 @@ var (
 		"notation verification level must be \"strict\", \"permissive\", \"audit\", or \"skip\"",
 	)
 
+	// ErrNotationSkipInEnforceMode indicates that "skip" verification level
+	// cannot be used in enforce mode because it disables all signature checks.
+	ErrNotationSkipInEnforceMode = errors.New(
+		"notation verification level \"skip\" is not allowed in enforce mode",
+	)
+
 	// ErrDuplicateNotationTrustStoreName indicates a duplicate trust store name.
 	ErrDuplicateNotationTrustStoreName = errors.New(
 		"duplicate notation trust store name",

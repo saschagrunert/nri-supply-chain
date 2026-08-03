@@ -45,6 +45,7 @@ const (
 	testBaseBuilderID          = "base-builder"
 	testRuleBuilderID          = "rule-builder"
 	testMutatedValue           = "mutated"
+	testNotationLevelStrict    = "strict"
 	testNotationStoreName      = "myca"
 	testNotationStoreRef       = "ca:myca"
 	testNotationCertPath       = "/etc/certs/ca.pem"
@@ -2544,6 +2545,37 @@ func TestValidateEnforceWithRulesValid(t *testing.T) {
 	testutil.AssertNoError(t, pol.ValidateEnforce())
 }
 
+func TestValidateEnforceRejectsNotationSkip(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{
+		Sections: policy.Sections{
+			Notation: &policy.NotationPolicy{
+				VerificationLevel: "skip",
+			},
+		},
+	}
+
+	err := pol.ValidateEnforce()
+	if !errors.Is(err, policy.ErrNotationSkipInEnforceMode) {
+		t.Errorf("expected ErrNotationSkipInEnforceMode, got %v", err)
+	}
+}
+
+func TestValidateEnforceAllowsNotationStrict(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{
+		Sections: policy.Sections{
+			Notation: &policy.NotationPolicy{
+				VerificationLevel: testNotationLevelStrict,
+			},
+		},
+	}
+
+	testutil.AssertNoError(t, pol.ValidateEnforce())
+}
+
 func TestValidateRuntimeWithRules(t *testing.T) {
 	t.Parallel()
 
@@ -3728,7 +3760,7 @@ func TestApplyRuleNotation(t *testing.T) {
 		Sections: policy.Sections{
 			Notation: &policy.NotationPolicy{
 				MissingPolicy:     types.ActionDeny,
-				VerificationLevel: "strict",
+				VerificationLevel: testNotationLevelStrict,
 				TrustStores: []policy.NotationTrustStore{
 					{
 						Name:         testNotationStoreName,

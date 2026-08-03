@@ -175,7 +175,10 @@ func buildKeyMaterial(keyPaths []string) (*root.TrustedPublicKeyMaterial, error)
 			return nil, fmt.Errorf("creating verifier for %q: %w", keyPath, err)
 		}
 
-		hint := computeKeyHint(pubKey)
+		hint, hintErr := computeKeyHint(pubKey)
+		if hintErr != nil {
+			return nil, fmt.Errorf("computing key hint for %q: %w", keyPath, hintErr)
+		}
 
 		// Zero-value time.Time means no validity period bounds; the key
 		// is accepted regardless of signing time.
@@ -219,18 +222,15 @@ func loadPublicKeyFromPEM(path string) (crypto.PublicKey, error) {
 	return nil, fmt.Errorf("parsing public key: %w", pkixErr)
 }
 
-func computeKeyHint(pub crypto.PublicKey) string {
+func computeKeyHint(pub crypto.PublicKey) (string, error) {
 	der, err := x509.MarshalPKIXPublicKey(pub)
 	if err != nil {
-		// This should not happen for keys that were successfully parsed
-		// from PKIX format. If it does, return an empty hint that will
-		// never match any bundle key ID.
-		return ""
+		return "", fmt.Errorf("marshaling public key to PKIX: %w", err)
 	}
 
 	sum := sha256.Sum256(der)
 
-	return base64.StdEncoding.EncodeToString(sum[:])
+	return base64.StdEncoding.EncodeToString(sum[:]), nil
 }
 
 func buildKeylessConfig(
