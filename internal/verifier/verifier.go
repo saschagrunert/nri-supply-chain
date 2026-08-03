@@ -55,11 +55,6 @@ const (
 	maxConcurrentFetchesPerHost = 10
 	warmTimeout                 = 30 * time.Second
 	maxVerificationTimeout      = 5 * time.Minute
-
-	// DefaultPolicyLabel is the display label used for the default (namespace-less) policy.
-	//
-	// Deprecated: Use policy.DefaultPolicyLabel instead.
-	DefaultPolicyLabel = policy.DefaultPolicyLabel
 )
 
 type snapshot struct {
@@ -70,7 +65,7 @@ type snapshot struct {
 	fetcher         attestation.Fetcher
 	circuitBreakers *attestation.CircuitBreakerRegistry
 	fetchSem        *semaphore.Weighted
-	hostSem         *sync.Map
+	hostSem         *hostSemMap
 	auditLogger     *slog.Logger
 }
 
@@ -164,7 +159,7 @@ func newSnapshot(
 			cfg.CircuitBreakerCooldown.Duration,
 		),
 		fetchSem:    semaphore.NewWeighted(maxConcurrentFetches),
-		hostSem:     &sync.Map{},
+		hostSem:     &hostSemMap{m: sync.Map{}, count: atomic.Int64{}},
 		auditLogger: slog.Default(),
 	}
 }
@@ -532,7 +527,7 @@ func (v *Verifier) stopPoller() {
 	}
 }
 
-func resetCachesIfChanged(prevHostSem *sync.Map, policiesChanged bool) *sync.Map {
+func resetCachesIfChanged(prevHostSem *hostSemMap, policiesChanged bool) *hostSemMap {
 	if !policiesChanged {
 		return prevHostSem
 	}
@@ -541,7 +536,7 @@ func resetCachesIfChanged(prevHostSem *sync.Map, policiesChanged bool) *sync.Map
 	slsa.ResetWarnings()
 	glob.ResetCache()
 
-	return &sync.Map{}
+	return &hostSemMap{m: sync.Map{}, count: atomic.Int64{}}
 }
 
 func (v *Verifier) handleCacheHit(
@@ -807,7 +802,7 @@ func (v *Verifier) applyPolicyUpdate(
 		fetcher:         state.fetcher,
 		circuitBreakers: state.circuitBreakers,
 		fetchSem:        state.fetchSem,
-		hostSem:         &sync.Map{},
+		hostSem:         &hostSemMap{m: sync.Map{}, count: atomic.Int64{}},
 		auditLogger:     state.auditLogger,
 	})
 	v.policyHashes = newHashes
