@@ -140,7 +140,14 @@ func Verify(att []byte, pol *policy.Policy, imageDigest string) (*types.CheckRes
 		return failResult(err.Error()), nil
 	}
 
-	return passResult(), nil
+	result := passResult()
+	result.Metadata = map[string]any{
+		"builderID": stmt.Predicate.RunDetails.Builder.ID,
+		"buildType": stmt.Predicate.BuildDefinition.BuildType,
+		"source":    extractSource(stmt.Predicate.BuildDefinition.ExternalParameters),
+	}
+
+	return result, nil
 }
 
 // VerifyMultiple checks multiple provenance attestations, accepting if any valid one passes.
@@ -271,6 +278,14 @@ func verifySources(params map[string]any, pol *policy.Policy) error {
 	}
 
 	return fmt.Errorf("%w: %q", ErrUntrustedSource, source)
+}
+
+func extractSource(params map[string]any) string {
+	if s, ok := params["source"].(string); ok {
+		return s
+	}
+
+	return ""
 }
 
 // verifyParameters rejects provenance with unrecognized externalParameters

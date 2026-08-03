@@ -69,6 +69,7 @@ func TestOutputVerifyResultAllowed(t *testing.T) {
 		{
 			Type: internaltypes.CheckTypeSLSA, Passed: true,
 			Status: internaltypes.StatusPass, Detail: "verified", Err: nil,
+			Metadata: nil,
 		},
 	}
 
@@ -775,10 +776,12 @@ func TestOutputVerifyResultTableAllowed(t *testing.T) {
 		{
 			Type: internaltypes.CheckTypeSLSA, Passed: true,
 			Status: internaltypes.StatusPass, Detail: "SLSA level 3", Err: nil,
+			Metadata: nil,
 		},
 		{
 			Type: internaltypes.CheckTypeVEX, Passed: true,
 			Status: internaltypes.StatusWarn, Detail: "advisory found", Err: nil,
+			Metadata: nil,
 		},
 	}
 
@@ -828,6 +831,7 @@ func TestOutputVerifyResultTableDenied(t *testing.T) {
 		{
 			Type: internaltypes.CheckTypeSLSA, Passed: false,
 			Status: internaltypes.StatusFail, Detail: "no attestation", Err: nil,
+			Metadata: nil,
 		},
 	}
 

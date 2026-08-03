@@ -127,47 +127,49 @@ func Verify(
 		return nil, fmt.Errorf("%w: %w", ErrInvalidVSA, err)
 	}
 
+	meta := predicateMetadata(&stmt.Predicate)
+
 	err = verifyTrustedVerifier(stmt.Predicate.Verifier, pol)
 	if err != nil {
-		return untrustedResult(err.Error()), nil
+		return withMetadata(untrustedResult(err.Error()), meta), nil
 	}
 
 	if stmt.Predicate.VerificationResult == ResultFailed {
-		return hardRejectResult(), nil
+		return withMetadata(hardRejectResult(), meta), nil
 	}
 
 	if stmt.Predicate.VerificationResult != ResultPassed {
-		return untrustedResult(
+		return withMetadata(untrustedResult(
 			fmt.Sprintf("unexpected verification result: %q", stmt.Predicate.VerificationResult),
-		), nil
+		), meta), nil
 	}
 
 	err = verifyLevels(stmt.Predicate.VerifiedLevels, pol)
 	if err != nil {
-		return failResult(err.Error()), nil
+		return withMetadata(failResult(err.Error()), meta), nil
 	}
 
 	err = verifyResourceURI(stmt.Predicate.ResourceURI, imageRef, parsedImageRef)
 	if err != nil {
-		return failResult(err.Error()), nil
+		return withMetadata(failResult(err.Error()), meta), nil
 	}
 
 	err = verifySLSAVersion(stmt.Predicate.SLSAVersion)
 	if err != nil {
-		return failResult(err.Error()), nil
+		return withMetadata(failResult(err.Error()), meta), nil
 	}
 
 	err = verifyPolicyURI(stmt.Predicate.Policy, pol)
 	if err != nil {
-		return failResult(err.Error()), nil
+		return withMetadata(failResult(err.Error()), meta), nil
 	}
 
 	err = verifyFreshness(stmt.Predicate.TimeVerified, pol)
 	if err != nil {
-		return staleResult(err.Error()), nil
+		return withMetadata(staleResult(err.Error()), meta), nil
 	}
 
-	return passResult(), nil
+	return withMetadata(passResult(), meta), nil
 }
 
 func verifyTrustedVerifier(ver Verifier, pol *policy.Policy) error {
@@ -379,6 +381,32 @@ func verifyFreshness(timeVerified string, pol *policy.Policy) error {
 	}
 
 	return nil
+}
+
+func predicateMetadata(pred *Predicate) map[string]any {
+	return map[string]any{
+		"verifierID": pred.Verifier.ID,
+		"result":     pred.VerificationResult,
+		"level":      int64(maxVerifiedLevel(pred.VerifiedLevels)),
+	}
+}
+
+func maxVerifiedLevel(levels []string) int {
+	result := 0
+
+	for _, level := range levels {
+		if n := extractLevelNumber(level); n > result {
+			result = n
+		}
+	}
+
+	return result
+}
+
+func withMetadata(vr *VerifyResult, meta map[string]any) *VerifyResult {
+	vr.Check.Metadata = meta
+
+	return vr
 }
 
 func passResult() *VerifyResult {

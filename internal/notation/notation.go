@@ -22,8 +22,11 @@ import (
 	"log/slog"
 	"strings"
 
+	notationlib "github.com/notaryproject/notation-go"
 	"github.com/notaryproject/notation-go/verifier"
 	"github.com/notaryproject/notation-go/verifier/trustpolicy"
+	godigest "github.com/opencontainers/go-digest"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
@@ -63,7 +66,7 @@ var (
 // Verify checks a single Notation signature against the given policy.
 func Verify(
 	ctx context.Context,
-	signatureRef string,
+	sig *attestation.VerifiedAttestation,
 	imageRef, digest string,
 	pol *policy.Policy,
 ) (*types.CheckResult, error) {
@@ -77,18 +80,12 @@ func Verify(
 		return nil, err
 	}
 
-	err = validatePolicyForImage(notationPolicy, imageRef)
+	notationVerifier, err := buildVerifierForImage(notationPolicy, imageRef)
 	if err != nil {
 		return nil, err
 	}
 
-	slog.DebugContext(ctx, "Notation signature verified via trust policy",
-		"image", imageRef,
-		"digest", digest,
-		"signatureRef", signatureRef,
-	)
-
-	return passResult(), nil
+	return verifySignatureEntry(ctx, notationVerifier, sig, imageRef, digest), nil
 }
 
 // VerifyMultiple checks multiple Notation signatures, accepting if any valid one passes.
@@ -108,12 +105,12 @@ func VerifyMultiple(
 		return nil, err
 	}
 
-	err = validatePolicyForImage(notationPolicy, imageRef)
+	notationVerifier, err := buildVerifierForImage(notationPolicy, imageRef)
 	if err != nil {
 		return nil, err
 	}
 
-	return verifySignatures(ctx, signatures, imageRef, digest)
+	return verifySignatures(ctx, notationVerifier, signatures, imageRef, digest)
 }
 
 func checkPolicyRequirements(notationPolicy *policy.NotationPolicy) error {
@@ -130,15 +127,14 @@ func checkPolicyRequirements(notationPolicy *policy.NotationPolicy) error {
 
 func verifySignatures(
 	ctx context.Context,
+	notationVerifier notationlib.Verifier,
 	signatures []attestation.VerifiedAttestation,
 	imageRef, digest string,
 ) (*types.CheckResult, error) {
 	var failReasons []string
 
 	for idx := range signatures {
-		signatureRef := string(signatures[idx].Payload)
-
-		result := verifySignatureEntry(ctx, signatureRef, imageRef, digest)
+		result := verifySignatureEntry(ctx, notationVerifier, &signatures[idx], imageRef, digest)
 		if result.Passed {
 			return result, nil
 		}
@@ -157,34 +153,33 @@ func buildMultipleResult(failReasons []string) *types.CheckResult {
 	return failResult("no notation signatures found")
 }
 
-// validatePolicyForImage builds the trust policy document and verifier,
-// validates the policy, and checks that an applicable trust policy rule
-// exists for the given image reference.
-func validatePolicyForImage(notationPolicy *policy.NotationPolicy, imageRef string) error {
+//nolint:ireturn // notation.Verifier is the API type returned by notation-go.
+func buildVerifierForImage(
+	notationPolicy *policy.NotationPolicy, imageRef string,
+) (notationlib.Verifier, error) {
 	policyDoc := buildTrustPolicyDocument(notationPolicy)
 
 	err := policyDoc.Validate()
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrBuildTrustPolicy, err)
+		return nil, fmt.Errorf("%w: %w", ErrBuildTrustPolicy, err)
 	}
 
 	trustStore, err := newTrustStore(notationPolicy.TrustStores)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrBuildVerifier, err)
+		return nil, fmt.Errorf("%w: %w", ErrBuildVerifier, err)
 	}
 
-	_, err = verifier.New(policyDoc, trustStore, nil)
+	notationVerifier, err := verifier.New(policyDoc, trustStore, nil)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrBuildVerifier, err)
+		return nil, fmt.Errorf("%w: %w", ErrBuildVerifier, err)
 	}
 
-	// Verify that a trust policy rule applies to this image reference.
 	_, err = policyDoc.GetApplicableTrustPolicy(imageRef)
 	if err != nil {
-		return fmt.Errorf("%w for %q: %w", ErrNoApplicableTrustPolicy, imageRef, err)
+		return nil, fmt.Errorf("%w for %q: %w", ErrNoApplicableTrustPolicy, imageRef, err)
 	}
 
-	return nil
+	return notationVerifier, nil
 }
 
 func buildTrustPolicyDocument(notationPolicy *policy.NotationPolicy) *trustpolicy.Document {
@@ -213,31 +208,60 @@ func buildTrustPolicyDocument(notationPolicy *policy.NotationPolicy) *trustpolic
 	}
 }
 
-// verifySignatureEntry verifies a single Notation signature against the
-// trust policy. Verification currently passes based on trust policy
-// validation alone (performed by the caller). Full cryptographic signature
-// verification requires notation-go's repository interface to pull and
-// verify the signature envelope against the trust store certificate chain.
 func verifySignatureEntry(
 	ctx context.Context,
-	signatureRef, imageRef, digest string,
+	notationVerifier notationlib.Verifier,
+	sig *attestation.VerifiedAttestation,
+	imageRef, digest string,
 ) *types.CheckResult {
-	slog.DebugContext(ctx,
-		"Notation signature accepted via trust policy"+
-			" (cryptographic verification not yet implemented)",
+	desc := ocispec.Descriptor{
+		MediaType: sig.NotationSubjectMediaType,
+		Size:      sig.NotationSubjectSize,
+	}
+
+	if sig.NotationSubjectDigest != "" {
+		parsed, err := godigest.Parse(sig.NotationSubjectDigest)
+		if err != nil {
+			return failResult(fmt.Sprintf("invalid subject digest: %s", err))
+		}
+
+		desc.Digest = parsed
+	}
+
+	opts := notationlib.VerifierVerifyOptions{
+		ArtifactReference:  imageRef,
+		SignatureMediaType: sig.NotationMediaType,
+	}
+
+	outcome, err := notationVerifier.Verify(ctx, desc, sig.Payload, opts)
+	if err != nil {
+		slog.DebugContext(ctx, "Notation signature verification failed",
+			"image", imageRef,
+			"digest", digest,
+			"error", err,
+		)
+
+		return failResult(fmt.Sprintf("Notation signature verification failed: %s", err))
+	}
+
+	logAttrs := []any{
 		"image", imageRef,
 		"digest", digest,
-		"signatureRef", signatureRef,
-	)
+	}
+
+	if outcome.EnvelopeContent != nil {
+		logAttrs = append(logAttrs,
+			"signedAttributes", outcome.EnvelopeContent.SignerInfo.SignedAttributes,
+		)
+	}
+
+	slog.DebugContext(ctx, "Notation signature cryptographically verified", logAttrs...)
 
 	return passResult()
 }
 
 func passResult() *types.CheckResult {
-	return types.PassResult(
-		checkType,
-		"Notation trust policy matched (cryptographic verification not yet implemented)",
-	)
+	return types.PassResult(checkType, "Notation signature cryptographically verified")
 }
 
 func failResult(detail string) *types.CheckResult {

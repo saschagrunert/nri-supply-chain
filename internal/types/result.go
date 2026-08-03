@@ -15,6 +15,8 @@
 // Package types provides shared data types for supply chain verification results.
 package types
 
+import "maps"
+
 // CheckStatus represents the outcome status of a verification check.
 type CheckStatus string
 
@@ -80,38 +82,44 @@ type CheckResult struct {
 	// Err is the underlying error that caused a failure, if any.
 	// Excluded from JSON serialization because errors are not JSON-marshalable.
 	Err error `json:"-"`
+	// Metadata carries domain-specific data from the verifier (e.g., SLSA
+	// builderID, VEX status) for use in CEL policy expressions.
+	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
 // PassResult returns a passing CheckResult.
 func PassResult(checkType CheckType, detail string) *CheckResult {
 	return &CheckResult{
-		Type:   checkType,
-		Passed: true,
-		Status: StatusPass,
-		Detail: detail,
-		Err:    nil,
+		Type:     checkType,
+		Passed:   true,
+		Status:   StatusPass,
+		Detail:   detail,
+		Err:      nil,
+		Metadata: nil,
 	}
 }
 
 // WarnResult returns a warning CheckResult that allows with a warning.
 func WarnResult(checkType CheckType, detail string) *CheckResult {
 	return &CheckResult{
-		Type:   checkType,
-		Passed: true,
-		Status: StatusWarn,
-		Detail: detail,
-		Err:    nil,
+		Type:     checkType,
+		Passed:   true,
+		Status:   StatusWarn,
+		Detail:   detail,
+		Err:      nil,
+		Metadata: nil,
 	}
 }
 
 // FailResult returns a failing CheckResult with an optional underlying error.
 func FailResult(checkType CheckType, detail string, err error) *CheckResult {
 	return &CheckResult{
-		Type:   checkType,
-		Passed: false,
-		Status: StatusFail,
-		Detail: detail,
-		Err:    err,
+		Type:     checkType,
+		Passed:   false,
+		Status:   StatusFail,
+		Detail:   detail,
+		Err:      err,
+		Metadata: nil,
 	}
 }
 
@@ -121,6 +129,15 @@ func (r *Result) Clone() Result {
 	if len(r.CheckResults) > 0 {
 		clone.CheckResults = make([]CheckResult, len(r.CheckResults))
 		copy(clone.CheckResults, r.CheckResults)
+
+		for idx := range clone.CheckResults {
+			if clone.CheckResults[idx].Metadata != nil {
+				m := make(map[string]any, len(clone.CheckResults[idx].Metadata))
+				maps.Copy(m, clone.CheckResults[idx].Metadata)
+
+				clone.CheckResults[idx].Metadata = m
+			}
+		}
 	}
 
 	return clone
@@ -131,10 +148,11 @@ func (r *Result) Clone() Result {
 // that should not block container creation but are not counted as passing.
 func SoftFailResult(checkType CheckType, detail string, err error) *CheckResult {
 	return &CheckResult{
-		Type:   checkType,
-		Passed: false,
-		Status: StatusWarn,
-		Detail: detail,
-		Err:    err,
+		Type:     checkType,
+		Passed:   false,
+		Status:   StatusWarn,
+		Detail:   detail,
+		Err:      err,
+		Metadata: nil,
 	}
 }

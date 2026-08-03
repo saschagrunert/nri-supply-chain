@@ -22,6 +22,60 @@ import (
 
 var errTest = types.ErrInvalidAction
 
+const testDetail = "verified"
+
+func TestCloneDeepCopiesMetadata(t *testing.T) {
+	t.Parallel()
+
+	original := types.Result{
+		Allowed: true,
+		Reason:  "ok",
+		CheckResults: []types.CheckResult{
+			{
+				Type:     types.CheckTypeSLSA,
+				Passed:   true,
+				Status:   types.StatusPass,
+				Detail:   testDetail,
+				Err:      nil,
+				Metadata: map[string]any{"builderID": "original"},
+			},
+		},
+	}
+
+	cloned := original.Clone()
+
+	cloned.CheckResults[0].Metadata["builderID"] = "modified"
+
+	if original.CheckResults[0].Metadata["builderID"] != "original" {
+		t.Error("Clone did not deep copy Metadata: original was mutated")
+	}
+}
+
+func TestCloneNilMetadata(t *testing.T) {
+	t.Parallel()
+
+	original := types.Result{
+		Allowed: true,
+		Reason:  "",
+		CheckResults: []types.CheckResult{
+			{
+				Type:     types.CheckTypeSLSA,
+				Passed:   true,
+				Status:   types.StatusPass,
+				Detail:   testDetail,
+				Err:      nil,
+				Metadata: nil,
+			},
+		},
+	}
+
+	cloned := original.Clone()
+
+	if cloned.CheckResults[0].Metadata != nil {
+		t.Error("expected nil Metadata in clone")
+	}
+}
+
 func TestCheckResultConstructors(t *testing.T) {
 	t.Parallel()
 
@@ -36,11 +90,11 @@ func TestCheckResultConstructors(t *testing.T) {
 	}{
 		{
 			name:       "PassResult",
-			create:     func() *types.CheckResult { return types.PassResult(types.CheckTypeSLSA, "verified") },
+			create:     func() *types.CheckResult { return types.PassResult(types.CheckTypeSLSA, testDetail) },
 			wantType:   types.CheckTypeSLSA,
 			wantPassed: true,
 			wantStatus: types.StatusPass,
-			wantDetail: "verified",
+			wantDetail: testDetail,
 			wantErr:    false,
 		},
 		{

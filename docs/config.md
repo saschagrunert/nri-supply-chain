@@ -424,6 +424,9 @@ nri-supply-chain json-schema result
         },
         "detail": {
           "type": "string"
+        },
+        "metadata": {
+          "type": "object"
         }
       },
       "additionalProperties": false,

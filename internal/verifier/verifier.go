@@ -256,14 +256,6 @@ func warnPermissiveMissingPolicies(label string, pol *policy.Policy) {
 			"vsa_missing_policy", pol.VSAMissingPolicy(),
 		)
 	}
-
-	if pol.Notation != nil {
-		slog.Warn("Notation is configured but cryptographic signature verification "+
-			"is not yet implemented; signatures are accepted based on trust policy "+
-			"validation only",
-			"policy", label,
-		)
-	}
 }
 
 // Stop releases resources held by the verifier, including the cache's

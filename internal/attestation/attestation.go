@@ -88,6 +88,12 @@ type VerifiedAttestation struct {
 	Payload       []byte
 	Digest        string
 	SignatureType SignatureType
+
+	// Notation-specific fields (zero-valued for Sigstore attestations).
+	NotationMediaType        string
+	NotationSubjectDigest    string
+	NotationSubjectSize      int64
+	NotationSubjectMediaType string
 }
 
 // Fetcher discovers and verifies attestations for a container image.
