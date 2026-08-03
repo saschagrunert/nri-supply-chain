@@ -499,9 +499,8 @@ func runSBOMCheck(
 	}()
 
 	if len(sbomAtts) == 0 {
-		slog.WarnContext(ctx, "No SBOM attestation found",
-			"reason", "missing_attestation",
-			"image", imageRef,
+		logMissingAttestation(ctx, pol.SBOMMissingPolicy(),
+			"No SBOM attestation found", imageRef, "missing_attestation",
 		)
 
 		return handleMissingAttestation(
@@ -554,9 +553,8 @@ func runSLSACheck(
 	}()
 
 	if len(slsaAtts) == 0 {
-		slog.WarnContext(ctx, "No provenance attestation found",
-			"reason", "missing_attestation",
-			"image", imageRef,
+		logMissingAttestation(ctx, pol.SLSAMissingPolicy(),
+			"No provenance attestation found", imageRef, "missing_attestation",
 		)
 
 		return handleMissingAttestation(
@@ -601,9 +599,8 @@ func runVEXCheck(
 	}()
 
 	if len(vexAtts) == 0 {
-		slog.WarnContext(ctx, "No VEX attestation found",
-			"reason", "missing_attestation",
-			"image", imageRef,
+		logMissingAttestation(ctx, pol.VEXMissingPolicy(),
+			"No VEX attestation found", imageRef, "missing_attestation",
 		)
 
 		return handleMissingAttestation(
@@ -653,9 +650,8 @@ func runNotationCheck(
 	}()
 
 	if len(notationAtts) == 0 {
-		slog.WarnContext(ctx, "No Notation signature found",
-			"reason", "missing_signature",
-			"image", imageRef,
+		logMissingAttestation(ctx, pol.NotationMissingPolicy(),
+			"No Notation signature found", imageRef, "missing_signature",
 		)
 
 		return handleMissingAttestation(
@@ -847,6 +843,21 @@ func binAttestations(attestations []attestation.VerifiedAttestation) attestation
 	}
 
 	return bins
+}
+
+func logMissingAttestation(
+	ctx context.Context, pol types.Action, msg, imageRef, reason string,
+) {
+	attrs := []any{
+		"reason", reason,
+		"image", imageRef,
+	}
+
+	if pol == types.ActionAllow {
+		slog.DebugContext(ctx, msg, attrs...)
+	} else {
+		slog.WarnContext(ctx, msg, attrs...)
+	}
 }
 
 func handleMissingAttestation(
