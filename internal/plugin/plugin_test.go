@@ -1677,3 +1677,42 @@ func TestCreateContainerWarnAllowReturnsAdjustment(t *testing.T) {
 		t.Error("expected nil updates")
 	}
 }
+
+func TestFilterRelevantAnnotations(t *testing.T) {
+	t.Parallel()
+
+	annotations := map[string]string{
+		plugin.AnnotationImageName:       "docker.io/library/nginx",
+		plugin.AnnotationImage:           "docker.io/library/nginx@sha256:abc",
+		plugin.AnnotationContainerdImage: "docker.io/library/nginx:latest",
+		"unrelated-key":                  "should be filtered out",
+		"another-key":                    "also filtered",
+	}
+
+	filtered := plugin.ExportFilterRelevantAnnotations(annotations)
+
+	if len(filtered) != 3 {
+		t.Errorf("expected 3 filtered annotations, got %d", len(filtered))
+	}
+
+	if filtered[plugin.AnnotationImageName] != "docker.io/library/nginx" {
+		t.Errorf("expected ImageName annotation, got %q",
+			filtered[plugin.AnnotationImageName])
+	}
+
+	if _, ok := filtered["unrelated-key"]; ok {
+		t.Error("expected unrelated-key to be filtered out")
+	}
+}
+
+func TestFilterRelevantAnnotationsEmpty(t *testing.T) {
+	t.Parallel()
+
+	filtered := plugin.ExportFilterRelevantAnnotations(map[string]string{
+		"irrelevant": "value",
+	})
+
+	if len(filtered) != 0 {
+		t.Errorf("expected 0 filtered annotations, got %d", len(filtered))
+	}
+}

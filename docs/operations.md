@@ -95,7 +95,7 @@ changing the `oci_ref`, `poll_interval`, or switching between `local` and `oci`
 sources without restarting the plugin.
 
 The plugin also watches the config file and policy directory for changes using
-fsnotify. When a file is written, created, or removed, the plugin automatically
+fsnotify. When a file is written, created, removed, or renamed, the plugin automatically
 reloads after a 500ms debounce window. Rapid successive writes within that
 window are collapsed into a single reload, so editors that perform atomic saves
 (write-then-rename) do not trigger duplicate reloads.

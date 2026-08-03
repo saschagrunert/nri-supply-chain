@@ -142,65 +142,58 @@ jobs:
           fi
           sudo find /tmp "$RUNNER_TEMP" -maxdepth 8 -name '*.log' \( -path '*/kubernix/*' -o -path '*/plugin.log' \) -exec sh -c 'echo "=== {} ===" && tail -200 "$1"' _ {} \; 2>/dev/null || true
 
+  test-fuzz-prepare:
+    name: fuzz / prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.find.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: find
+        run: |
+          tmp=$(mktemp)
+          grep -rn '^func Fuzz' --include='*_test.go' . \
+            | grep -v '\.claude/' \
+            | sed 's|^\./||' \
+            | while IFS=: read -r file _ line; do
+                fn=$(echo "$line" | grep -oP 'Fuzz\w+')
+                dir=$(dirname "$file")
+                echo "$dir $fn"
+              done > "$tmp"
+          matrix=$(cat "$tmp" | while read -r dir fn; do
+            count=$(grep -c "^$dir " "$tmp")
+            pkg="./$dir/"
+            leaf=$(basename "$dir")
+            if [ "$count" -eq 1 ]; then
+              name="$leaf"
+            else
+              suffix=$(echo "$fn" | sed 's/^Fuzz//' \
+                | sed 's/\([a-z]\)\([A-Z]\)/\1-\2/g' \
+                | tr '[:upper:]' '[:lower:]' \
+                | sed "s/^${leaf}-//")
+              name="$leaf-$suffix"
+            fi
+            echo "{\"name\":\"$name\",\"package\":\"$pkg\",\"target\":\"$fn\"}"
+          done | jq -s -c '.')
+          rm -f "$tmp"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
   test-fuzz:
-    name: fuzz / ${{ matrix.name }}
+    name: fuzz / ${{ matrix.fuzz.name }}
+    needs: [test-fuzz-prepare]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: slsa
-            package: ./internal/slsa/
-            target: FuzzVerify
-          - name: vex
-            package: ./internal/vex/
-            target: FuzzVerify
-          - name: vex-cyclonedx
-            package: ./internal/vex/cyclonedxvex/
-            target: FuzzVerify
-          - name: vsa
-            package: ./internal/vsa/
-            target: FuzzVerify
-          - name: glob-to-regex
-            package: ./internal/glob/
-            target: FuzzGlobToRegex
-          - name: digest-parse
-            package: ./internal/types/
-            target: FuzzParseDigest
-          - name: policy-load
-            package: ./internal/policy/
-            target: FuzzLoad
-          - name: extract-predicate-type
-            package: ./internal/attestation/
-            target: FuzzExtractPredicateType
-          - name: artifact-policy
-            package: ./internal/attestation/
-            target: FuzzArtifactPolicy
-          - name: cel
-            package: ./internal/cel/
-            target: FuzzCompileAndEvaluate
-          - name: config-load
-            package: ./internal/config/
-            target: FuzzLoadFromString
-          - name: sbom
-            package: ./internal/sbom/
-            target: FuzzVerify
-          - name: notation
-            package: ./internal/notation/
-            target: FuzzVerify
-          - name: intoto-subject
-            package: ./internal/intoto/
-            target: FuzzVerifySubjectAndExtractPredicate
-          - name: intoto-digest
-            package: ./internal/intoto/
-            target: FuzzSubjectMatchesDigest
+        fuzz: ${{ fromJSON(needs.test-fuzz-prepare.outputs.matrix) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - run: go test -fuzz=${{ matrix.target }} -fuzztime=30s ${{ matrix.package }}
+      - run: go test -fuzz=${{ matrix.fuzz.target }} -fuzztime=30s ${{ matrix.fuzz.package }}
 
   govulncheck:
     runs-on: ubuntu-latest

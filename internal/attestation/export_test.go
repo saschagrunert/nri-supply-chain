@@ -336,6 +336,11 @@ const ExportMaxCircuitBreakers = maxCircuitBreakers
 // ExportMaxTotalAttestationSize exposes maxTotalAttestationSize for external tests.
 const ExportMaxTotalAttestationSize = maxTotalAttestationSize
 
+// ExportExceededTotalAttestationSize exposes exceededTotalAttestationSize for external tests.
+func ExportExceededTotalAttestationSize(ctx context.Context, totalSize int64) bool {
+	return exceededTotalAttestationSize(ctx, totalSize)
+}
+
 // ExportIsOpen exposes the open state for external tests.
 func (cb *CircuitBreaker) ExportIsOpen() bool {
 	cb.mu.RLock()

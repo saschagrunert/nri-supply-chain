@@ -12,6 +12,7 @@ by the nri-supply-chain plugin.
   - [VEX (Vulnerability Exploitability eXchange)](#vex-vulnerability-exploitability-exchange)
   - [VSA (Verification Summary Attestation)](#vsa-verification-summary-attestation)
   - [Signature Verification](#signature-verification)
+  - [Notation (Notary v2)](#notation-notary-v2)
   - [SBOM (Software Bill of Materials)](#sbom-software-bill-of-materials)
 - [Other Standards](#other-standards)
 
@@ -40,7 +41,8 @@ When a container is created, the plugin performs verification in this order:
    present but the digest is missing (common with containerd, which does not
    always provide `io.kubernetes.cri.image-ref`), the plugin resolves the
    digest by performing a `HEAD` request against the registry using the
-   configured [`fetch_timeout`](config.md). If resolution fails, the container
+   configured [`digest_resolve_timeout`](config.md) (NRI plugin) or
+   [`fetch_timeout`](config.md) (CLI). If resolution fails, the container
    is handled according to the current verification mode (rejected in
    `enforce`, skipped with a warning in `warn`).
 
@@ -60,7 +62,7 @@ When a container is created, the plugin performs verification in this order:
 5. **Per-image rule resolution**: If the policy has `rules`, the image is
    matched against each rule's `images` patterns in order (first match
    wins). When a rule matches, its non-nil sections (trust, slsa, vex,
-   vsa, signatures, notation, sbom) override the base policy for that verification.
+   vsa, signatures, notation, sbom, cel) override the base policy for that verification.
 
 6. **Cache check**: If a cached result exists for this image digest and is
    within the configured TTL, returns it immediately.
@@ -84,15 +86,19 @@ When a container is created, the plugin performs verification in this order:
    short-circuit, SLSA provenance, VEX, Notation signature, and SBOM checks
    run concurrently.
 
-10. **Enforcement**: In `enforce` mode, failed verification rejects the
+10. **CEL policy evaluation**: If the policy defines CEL rules, they are
+    evaluated against the combined check results. CEL rules can enforce
+    cross-check constraints (e.g., require both SLSA and VEX to pass).
+
+11. **Enforcement**: In `enforce` mode, failed verification rejects the
     container. In `warn` mode, failures are logged but allowed.
 
-11. **Caching**: The result is cached for future lookups.
+12. **Caching**: The result is cached for future lookups.
 
 Latency model:
 
 - With trusted VSA: `fetch + VSA verify`
-- Without VSA: `fetch + max(SLSA verify, VEX verify, Notation verify, SBOM verify)`
+- Without VSA: `fetch + max(SLSA verify, VEX verify, Notation verify, SBOM verify) + CEL eval`
 
 ## Container Annotations
 
@@ -162,6 +168,15 @@ check list and field reference.
 All attestations must be valid Sigstore bundles. The plugin supports keyless
 (Fulcio/OIDC) and key-based (PEM public key) modes. See
 [policy.md](policy.md#signature-verification) for configuration details.
+
+### Notation (Notary v2)
+
+Verifies container image signatures using
+[Notation](https://notaryproject.dev), the CNCF Notary Project's signing
+tool. The plugin validates signatures against configured trust stores and
+trust policies, supporting both CA-based and signing-authority trust models.
+See [policy.md](policy.md#notation-notary-v2-signature-verification) for
+the trust store setup, verification levels, and field reference.
 
 ### SBOM (Software Bill of Materials)
 

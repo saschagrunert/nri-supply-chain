@@ -883,3 +883,56 @@ func TestEvaluateNoMatchSkipsRequire(t *testing.T) {
 			result.Detail)
 	}
 }
+
+var (
+	errUnrelated          = errors.New("something else")
+	errCostLimitSubstring = errors.New(
+		"actual cost limit exceeded for expression",
+	)
+)
+
+func TestIsCostError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "nil error",
+			err:  nil,
+			want: false,
+		},
+		{
+			name: "unrelated error",
+			err:  errUnrelated,
+			want: false,
+		},
+		{
+			name: "cost limit exceeded sentinel",
+			err:  celengine.ErrCostLimitExceeded,
+			want: true,
+		},
+		{
+			name: "wrapped cost limit exceeded",
+			err:  errors.Join(celengine.ErrCostLimitExceeded, errUnrelated),
+			want: true,
+		},
+		{
+			name: "actual cost limit exceeded string",
+			err:  errCostLimitSubstring,
+			want: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := celengine.ExportIsCostError(tc.err); got != tc.want {
+				t.Errorf("isCostError(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}

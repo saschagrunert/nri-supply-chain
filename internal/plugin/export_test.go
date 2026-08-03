@@ -83,6 +83,11 @@ func (p *Plugin) ExportSetPrewarmDone(fn func()) {
 	p.prewarmDone = fn
 }
 
+// ExportFilterRelevantAnnotations exposes filterRelevantAnnotations for testing.
+func ExportFilterRelevantAnnotations(annotations map[string]string) map[string]string {
+	return filterRelevantAnnotations(annotations)
+}
+
 // ExportBuildVerificationAdjustment exposes buildVerificationAdjustment for testing.
 func ExportBuildVerificationAdjustment(
 	result *types.Result, mode config.VerificationMode,

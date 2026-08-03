@@ -117,7 +117,7 @@ func isExcluded(ctx context.Context, excludedImages []string, imageRef string) b
 	for _, pattern := range excludedImages {
 		matched, err := glob.Match(pattern, imageRef)
 		if err != nil {
-			slog.DebugContext(ctx, "Malformed exclude pattern",
+			slog.WarnContext(ctx, "Malformed exclude pattern",
 				"pattern", pattern,
 				"image", imageRef,
 				"error", err,
@@ -145,7 +145,7 @@ func isIncluded(ctx context.Context, includedImages []string, imageRef string) b
 	for _, pattern := range includedImages {
 		matched, err := glob.Match(pattern, imageRef)
 		if err != nil {
-			slog.DebugContext(ctx, "Malformed include pattern",
+			slog.WarnContext(ctx, "Malformed include pattern",
 				"pattern", pattern,
 				"image", imageRef,
 				"error", err,
@@ -187,7 +187,7 @@ func matchesImageRule(ctx context.Context, patterns []string, imageRef string) b
 	for _, pattern := range patterns {
 		matched, err := glob.Match(pattern, imageRef)
 		if err != nil {
-			slog.DebugContext(ctx, "Malformed rule image pattern",
+			slog.WarnContext(ctx, "Malformed rule image pattern",
 				"pattern", pattern,
 				"image", imageRef,
 				"error", err,
