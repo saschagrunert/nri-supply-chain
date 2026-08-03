@@ -186,6 +186,15 @@ jobs:
           - name: sbom
             package: ./internal/sbom/
             target: FuzzVerify
+          - name: notation
+            package: ./internal/notation/
+            target: FuzzVerify
+          - name: intoto-subject
+            package: ./internal/intoto/
+            target: FuzzVerifySubjectAndExtractPredicate
+          - name: intoto-digest
+            package: ./internal/intoto/
+            target: FuzzSubjectMatchesDigest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0

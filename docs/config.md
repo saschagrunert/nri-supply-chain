@@ -157,9 +157,10 @@ runtime validation).
 
 Setting `insecure = true` disables TLS certificate verification for the matched
 registry. A warning is logged at startup. This should only be used for
-development and testing. When running in `enforce` mode, an additional warning
-is emitted because insecure connections undermine the integrity guarantees that
-enforcement provides.
+development and testing. In `enforce` mode, `insecure = true` is rejected
+during config validation because insecure connections undermine the integrity
+guarantees that enforcement provides. Use `ca_cert` instead for registries with
+custom certificate authorities.
 
 **Trust considerations for mirrors:** When configuring a mirror, be aware that
 the mirror serves both images and their supply chain attestations. A compromised

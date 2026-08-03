@@ -30,6 +30,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/google/go-containerregistry/pkg/name"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/fileutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
@@ -191,6 +192,18 @@ var (
 
 	// ErrVerificationTimeoutTooHigh indicates the verification timeout exceeds the maximum.
 	ErrVerificationTimeoutTooHigh = errors.New("verification_timeout exceeds maximum")
+
+	// ErrInsecureRegistryInEnforceMode indicates that insecure TLS cannot be
+	// used with enforce mode because it allows MITM on attestation transport.
+	ErrInsecureRegistryInEnforceMode = errors.New(
+		"insecure registry is not allowed in enforce mode; use ca_cert for custom CAs",
+	)
+
+	// ErrSymlinkNotAllowed indicates a path is a symbolic link.
+	ErrSymlinkNotAllowed = errors.New("symbolic links are not allowed")
+
+	// ErrConfigFileTooLarge indicates the config file exceeds the size limit.
+	ErrConfigFileTooLarge = errors.New("config file exceeds maximum size")
 )
 
 // Duration wraps time.Duration to support TOML unmarshalling from strings.
@@ -413,14 +426,7 @@ func (c *Config) ValidateRuntime() error {
 
 	if c.Enabled() {
 		if c.Policy.Source != PolicySourceOCI {
-			info, err := os.Stat(c.PolicyDir)
-			if err != nil {
-				errs = append(errs, fmt.Errorf("invalid policy_dir %q: %w", c.PolicyDir, err))
-			} else if !info.IsDir() {
-				errs = append(errs, fmt.Errorf(
-					"%w: %q; see docs/config.md", ErrPolicyDirNotDirectory, c.PolicyDir,
-				))
-			}
+			errs = append(errs, c.validatePolicyDirRuntime()...)
 		}
 
 		errs = append(errs, c.validateTUFRootRuntime()...)
@@ -429,11 +435,16 @@ func (c *Config) ValidateRuntime() error {
 	for idx := range c.Registries {
 		reg := &c.Registries[idx]
 		if reg.CACert != "" {
-			_, statErr := os.Stat(reg.CACert)
+			caInfo, statErr := os.Lstat(reg.CACert)
 			if statErr != nil {
 				errs = append(errs, fmt.Errorf(
 					"%w: registries[%d] ca_cert %q: %w",
 					ErrRegistryCACertNotFound, idx, reg.CACert, statErr,
+				))
+			} else if caInfo.Mode()&os.ModeSymlink != 0 {
+				errs = append(errs, fmt.Errorf(
+					"%w: registries[%d] ca_cert %q",
+					ErrSymlinkNotAllowed, idx, reg.CACert,
 				))
 			}
 		}
@@ -498,13 +509,6 @@ func (c *Config) WarnInsecureRegistries() {
 				"prefix", c.Registries[idx].Prefix,
 				"index", idx,
 			)
-
-			if c.Verification == ModeEnforce {
-				slog.Warn(
-					"Insecure registry in enforce mode undermines integrity guarantees",
-					"prefix", c.Registries[idx].Prefix,
-				)
-			}
 		}
 	}
 }
@@ -536,15 +540,41 @@ func (c *Config) validateModeAndLogLevel() []error {
 	return errs
 }
 
+func (c *Config) validatePolicyDirRuntime() []error {
+	info, err := os.Lstat(c.PolicyDir)
+	if err != nil {
+		return []error{fmt.Errorf("invalid policy_dir %q: %w", c.PolicyDir, err)}
+	}
+
+	switch {
+	case info.Mode()&os.ModeSymlink != 0:
+		return []error{fmt.Errorf(
+			"%w: policy_dir %q", ErrSymlinkNotAllowed, c.PolicyDir,
+		)}
+	case !info.IsDir():
+		return []error{fmt.Errorf(
+			"%w: %q; see docs/config.md", ErrPolicyDirNotDirectory, c.PolicyDir,
+		)}
+	}
+
+	return nil
+}
+
 func (c *Config) validateTUFRootRuntime() []error {
 	if c.Sigstore.TUFRoot == "" {
 		return nil
 	}
 
-	rootInfo, err := os.Stat(c.Sigstore.TUFRoot)
+	rootInfo, err := os.Lstat(c.Sigstore.TUFRoot)
 	if err != nil {
 		return []error{fmt.Errorf(
 			"%w: %q: %w", ErrTUFRootNotFound, c.Sigstore.TUFRoot, err,
+		)}
+	}
+
+	if rootInfo.Mode()&os.ModeSymlink != 0 {
+		return []error{fmt.Errorf(
+			"%w: sigstore.tuf_root %q", ErrSymlinkNotAllowed, c.Sigstore.TUFRoot,
 		)}
 	}
 
@@ -623,6 +653,13 @@ func (c *Config) validateRegistry(
 		errs = append(errs, fmt.Errorf(
 			"%w: registries[%d] ca_cert %q",
 			ErrRegistryCACertNotAbsolute, idx, reg.CACert,
+		))
+	}
+
+	if reg.Insecure && c.Verification == ModeEnforce {
+		errs = append(errs, fmt.Errorf(
+			"%w: registries[%d] %q",
+			ErrInsecureRegistryInEnforceMode, idx, reg.Prefix,
 		))
 	}
 
@@ -894,10 +931,20 @@ func (c *Config) validatePolicyConfig() error {
 	return errors.Join(errs...)
 }
 
-// LoadFromFile reads and parses a TOML config file.
+// LoadFromFile reads and parses a TOML config file. The file size is limited
+// to fileutil.MaxConfigFileSize (10 MiB) to prevent memory exhaustion.
 func LoadFromFile(path string) (*Config, error) {
+	data, err := fileutil.ReadLimited(path, fileutil.MaxConfigFileSize)
+	if err != nil {
+		if errors.Is(err, fileutil.ErrFileTooLarge) {
+			return nil, fmt.Errorf("%w: %q", ErrConfigFileTooLarge, path)
+		}
+
+		return nil, fmt.Errorf("config file %q: %w", path, err)
+	}
+
 	cfg, err := load(func(cfg *Config) (toml.MetaData, error) {
-		return toml.DecodeFile(path, cfg)
+		return toml.Decode(string(data), cfg)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("config file %q: %w", path, err)

@@ -87,6 +87,11 @@ func ExportParseDigestRef(imageRef, digest string) (name.Digest, error) {
 	return parseDigestRef(imageRef, digest, nil)
 }
 
+// ExportComputeKeyHint exposes computeKeyHint for external tests.
+func ExportComputeKeyHint(pub crypto.PublicKey) (string, error) {
+	return computeKeyHint(pub)
+}
+
 // ExportExtractVerifiedPayload exposes extractVerifiedPayload for external tests.
 func ExportExtractVerifiedPayload(bndl *bundle.Bundle) ([]byte, error) {
 	return extractVerifiedPayload(bndl)

@@ -683,12 +683,12 @@ Notation/Notary v2 signature verification settings. When configured, the plugin
 discovers Notation signatures via the OCI Referrers API and verifies them
 against the configured trust stores and trust policy.
 
-| Field               | Type   | Default  | Description                                                                                    |
-| ------------------- | ------ | -------- | ---------------------------------------------------------------------------------------------- |
-| `missingPolicy`     | string | `allow`  | Behavior when no Notation signature is found: `allow`, `warn`, `deny`                          |
-| `verificationLevel` | string | `strict` | How strict verification is: `strict`, `permissive`, `audit`, `skip`                            |
-| `trustStores`       | array  | (none)   | Named certificate trust stores for signature verification (see below)                          |
-| `trustPolicy`       | array  | (none)   | Trust policy rules that map registry scopes to trust stores and trusted identities (see below) |
+| Field               | Type   | Default  | Description                                                                                                |
+| ------------------- | ------ | -------- | ---------------------------------------------------------------------------------------------------------- |
+| `missingPolicy`     | string | `allow`  | Behavior when no Notation signature is found: `allow`, `warn`, `deny`                                      |
+| `verificationLevel` | string | `strict` | How strict verification is: `strict`, `permissive`, `audit`, `skip`. `skip` is rejected in `enforce` mode. |
+| `trustStores`       | array  | (none)   | Named certificate trust stores for signature verification (see below)                                      |
+| `trustPolicy`       | array  | (none)   | Trust policy rules that map registry scopes to trust stores and trusted identities (see below)             |
 
 Each `trustStores` entry:
 

@@ -76,6 +76,10 @@ func (p *Policy) Validate() error {
 // The mode parameter is the effective mode for this policy (per-namespace
 // mode if set, otherwise the global mode).
 func (p *Policy) ValidateEnforce() error {
+	if p.Notation != nil && p.Notation.VerificationLevel == "skip" {
+		return ErrNotationSkipInEnforceMode
+	}
+
 	if p.Trust != nil {
 		if len(p.Trust.Issuers) > 0 && len(p.Trust.SANPatterns) == 0 {
 			return ErrSANPatternsRequired

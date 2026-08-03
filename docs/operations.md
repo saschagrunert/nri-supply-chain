@@ -213,6 +213,8 @@ protect against resource exhaustion and unbounded processing.
 | OCI policy layer size       | 1 MiB per layer           | Individual OCI policy layers larger than 1 MiB are rejected during fetch. The layer is read through a size-limited reader and an error is returned if the limit is exceeded.    |
 | OCI policy layer count      | 1,000 layers              | At most 1,000 layers are processed from an OCI policy artifact. If the artifact contains more layers, policy loading fails with an error.                                       |
 | Credential file size        | 1 MiB per file            | PEM public key files, CA certificate bundles, and TUF root files are read through a size-limited reader. Files exceeding 1 MiB are rejected.                                    |
+| Config file size            | 10 MiB                    | The TOML config file is read through a size-limited reader. Files exceeding 10 MiB are rejected at load time.                                                                   |
+| Symlink restriction         | Not allowed               | The `policy_dir`, `sigstore.tuf_root`, and registry `ca_cert` paths must not be symbolic links. Symlinks are detected via `Lstat` and rejected during runtime validation.       |
 
 **Sigstore trusted root refresh.** For keyless (Fulcio) verification, the
 plugin fetches the Sigstore trusted root from the TUF mirror on startup and

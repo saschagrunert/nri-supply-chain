@@ -18,7 +18,17 @@ package verifier
 import (
 	"testing"
 
+	"github.com/google/go-containerregistry/pkg/name"
+
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
+	celengine "github.com/saschagrunert/nri-supply-chain/internal/cel"
+	"github.com/saschagrunert/nri-supply-chain/internal/policy"
+	"github.com/saschagrunert/nri-supply-chain/internal/types"
+)
+
+const (
+	celExprSLSAVerified = "slsa.verified == true"
+	celMsgSLSARequired  = "SLSA must pass"
 )
 
 func TestBinAttestationsUnknownType(t *testing.T) {
@@ -174,5 +184,192 @@ func TestBinAttestationsSPDX(t *testing.T) {
 
 	if len(bins.vex) != 0 {
 		t.Errorf("expected 0 VEX attestations, got %d", len(bins.vex))
+	}
+}
+
+func TestRunCELCheckNilCompiledCEL(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{}
+	result := &types.Result{
+		Allowed:      false,
+		Reason:       "",
+		CheckResults: nil,
+	}
+
+	check := runCELCheck(pol, "ghcr.io/org/img:latest", benchDigest, "default", nil, result)
+	if check != nil {
+		t.Errorf("expected nil for nil CompiledCEL, got %v", check)
+	}
+}
+
+func TestRunCELCheckNilParsedRef(t *testing.T) {
+	t.Parallel()
+
+	compiled, err := celengine.Compile([]celengine.Rule{
+		{Require: celExprSLSAVerified, Message: celMsgSLSARequired},
+	})
+	if err != nil {
+		t.Fatalf("compiling CEL rules: %v", err)
+	}
+
+	pol := &policy.Policy{}
+	pol.CompiledCEL = compiled
+
+	result := &types.Result{
+		Allowed: false,
+		Reason:  "",
+		CheckResults: []types.CheckResult{
+			*types.PassResult(types.CheckTypeSLSA, "verified"),
+		},
+	}
+
+	check := runCELCheck(pol, "ghcr.io/org/img:latest", benchDigest, "default", nil, result)
+	if check == nil {
+		t.Fatal("expected non-nil CEL check result with nil parsedRef")
+	}
+
+	if !check.Passed {
+		t.Errorf(
+			"expected CEL check to pass with nil parsedRef, got status=%s detail=%s",
+			check.Status, check.Detail,
+		)
+	}
+}
+
+func TestRunCELCheckRequirePass(t *testing.T) {
+	t.Parallel()
+
+	compiled, err := celengine.Compile([]celengine.Rule{
+		{Require: celExprSLSAVerified, Message: celMsgSLSARequired},
+	})
+	if err != nil {
+		t.Fatalf("compiling CEL rules: %v", err)
+	}
+
+	pol := &policy.Policy{}
+	pol.CompiledCEL = compiled
+
+	result := &types.Result{
+		Allowed: false,
+		Reason:  "",
+		CheckResults: []types.CheckResult{
+			*types.PassResult(types.CheckTypeSLSA, "verified"),
+		},
+	}
+
+	ref, _ := name.ParseReference("ghcr.io/org/img:latest")
+
+	check := runCELCheck(pol, "ghcr.io/org/img:latest", benchDigest, "default", ref, result)
+	if check == nil {
+		t.Fatal("expected non-nil CEL check result")
+	}
+
+	if !check.Passed {
+		t.Errorf("expected CEL check to pass, got status=%s detail=%s", check.Status, check.Detail)
+	}
+}
+
+func TestRunCELCheckRequireFail(t *testing.T) {
+	t.Parallel()
+
+	compiled, err := celengine.Compile([]celengine.Rule{
+		{Require: celExprSLSAVerified, Message: celMsgSLSARequired},
+	})
+	if err != nil {
+		t.Fatalf("compiling CEL rules: %v", err)
+	}
+
+	pol := &policy.Policy{}
+	pol.CompiledCEL = compiled
+
+	result := &types.Result{
+		Allowed: false,
+		Reason:  "",
+		CheckResults: []types.CheckResult{
+			*types.FailResult(types.CheckTypeSLSA, "no provenance found", nil),
+		},
+	}
+
+	ref, _ := name.ParseReference("ghcr.io/org/img:latest")
+
+	check := runCELCheck(pol, "ghcr.io/org/img:latest", benchDigest, "default", ref, result)
+	if check == nil {
+		t.Fatal("expected non-nil CEL check result")
+	}
+
+	if check.Passed {
+		t.Error("expected CEL check to fail when SLSA is not verified")
+	}
+}
+
+func TestRunCELCheckMatchFilter(t *testing.T) {
+	t.Parallel()
+
+	compiled, err := celengine.Compile([]celengine.Rule{
+		{
+			Match:   "image.registry == 'docker.io'",
+			Require: celExprSLSAVerified,
+			Message: "Docker Hub images require SLSA",
+		},
+	})
+	if err != nil {
+		t.Fatalf("compiling CEL rules: %v", err)
+	}
+
+	pol := &policy.Policy{}
+	pol.CompiledCEL = compiled
+
+	result := &types.Result{
+		Allowed: false,
+		Reason:  "",
+		CheckResults: []types.CheckResult{
+			*types.FailResult(types.CheckTypeSLSA, "no provenance", nil),
+		},
+	}
+
+	ref, _ := name.ParseReference("ghcr.io/org/img:latest")
+
+	check := runCELCheck(pol, "ghcr.io/org/img:latest", benchDigest, "default", ref, result)
+	if check == nil {
+		t.Fatal("expected non-nil CEL check result")
+	}
+
+	if !check.Passed {
+		t.Error("expected CEL check to pass when match filter excludes the image")
+	}
+}
+
+func TestRunCELCheckMultipleCheckTypes(t *testing.T) {
+	t.Parallel()
+
+	compiled, err := celengine.Compile([]celengine.Rule{
+		{Require: celExprSLSAVerified + " && vex.verified == true"},
+	})
+	if err != nil {
+		t.Fatalf("compiling CEL rules: %v", err)
+	}
+
+	pol := &policy.Policy{}
+	pol.CompiledCEL = compiled
+
+	result := &types.Result{
+		Allowed: false,
+		Reason:  "",
+		CheckResults: []types.CheckResult{
+			*types.PassResult(types.CheckTypeSLSA, "verified"),
+			*types.PassResult(types.CheckTypeVEX, "no vulnerabilities"),
+		},
+	}
+
+	ref, _ := name.ParseReference("ghcr.io/org/img:latest")
+
+	check := runCELCheck(pol, "ghcr.io/org/img:latest", benchDigest, "default", ref, result)
+	if check == nil {
+		t.Fatal("expected non-nil CEL check result")
+	}
+
+	if !check.Passed {
+		t.Errorf("expected CEL check to pass with both SLSA and VEX passing")
 	}
 }

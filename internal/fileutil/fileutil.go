@@ -22,8 +22,13 @@ import (
 	"os"
 )
 
-// MaxCredentialFileSize is the upper bound for credential and key files (1 MiB).
-const MaxCredentialFileSize = 1 << 20
+const (
+	// MaxCredentialFileSize is the upper bound for credential and key files (1 MiB).
+	MaxCredentialFileSize = 1 << 20
+
+	// MaxConfigFileSize is the upper bound for TOML config files (10 MiB).
+	MaxConfigFileSize = 10 << 20
+)
 
 // ErrFileTooLarge indicates a file exceeds the maximum allowed size.
 var ErrFileTooLarge = errors.New("file exceeds maximum allowed size")

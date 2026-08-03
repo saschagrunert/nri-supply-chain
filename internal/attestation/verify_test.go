@@ -35,6 +35,7 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/root"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
+	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 )
 
 const nonexistentKey = "/nonexistent/key.pub"
@@ -534,6 +535,20 @@ func TestResetPEMKeyCacheClearsEntries(t *testing.T) {
 
 	if !bytes.Equal(freshDER, newPubDER) {
 		t.Fatal("expected new key after cache reset, got stale cached key")
+	}
+}
+
+func TestComputeKeyHintValidKey(t *testing.T) {
+	t.Parallel()
+
+	privKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	testutil.AssertNoError(t, err)
+
+	hint, err := attestation.ExportComputeKeyHint(&privKey.PublicKey)
+	testutil.AssertNoError(t, err)
+
+	if hint == "" {
+		t.Fatal("expected non-empty key hint")
 	}
 }
 
