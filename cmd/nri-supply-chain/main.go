@@ -283,6 +283,7 @@ func logEffectiveConfig(configPath string, cfg *config.Config) {
 		"cache_ttl", cfg.CacheTTL.Duration,
 		"cache_failure_ttl", cfg.CacheFailureTTL.Duration,
 		"fetch_timeout", cfg.FetchTimeout.Duration,
+		"digest_resolve_timeout", cfg.DigestResolveTimeout.Duration,
 		"fetch_rate_limit", cfg.FetchRateLimit,
 		"fetch_failure_policy", cfg.FetchFailurePolicy,
 		"circuit_breaker_threshold", cfg.CircuitBreakerThreshold,
@@ -340,7 +341,11 @@ func startPlugin(
 	defer cancel()
 	defer verif.Stop()
 
-	plug := plugin.New(verif, met, configPath, cfg.FetchTimeout.Duration, transportCache)
+	plug := plugin.New(
+		verif, met, configPath,
+		cfg.FetchTimeout.Duration, cfg.DigestResolveTimeout.Duration,
+		transportCache,
+	)
 
 	cleanupSignals := setupSignals(ctx, cancel, configPath, verif, met, cfg, plug)
 	defer cleanupSignals()

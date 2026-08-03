@@ -59,8 +59,6 @@ type DigestResolveFunc func(ctx context.Context, imageRef string) (digest, index
 const (
 	prewarmConcurrency = 5
 	prewarmTimeout     = 5 * time.Minute
-	// Must stay well under containerd's ~2s ttrpc timeout for NRI callbacks.
-	digestResolveTimeout = time.Second
 )
 
 type prewarmImage struct {
@@ -90,35 +88,40 @@ const (
 // Plugin implements the NRI CreateContainer and Configure hooks
 // for supply chain attestation verification.
 type Plugin struct {
-	verifier       ImageVerifier
-	metrics        *metrics.Metrics
-	configPath     string
-	connected      atomic.Bool
-	digestResolver DigestResolveFunc
-	fetchTimeout   time.Duration
-	prewarmDone    func()
-	prewarmMu      sync.Mutex
-	prewarmCancel  context.CancelFunc
-	transportCache atomic.Pointer[registry.TransportCache]
+	verifier             ImageVerifier
+	metrics              *metrics.Metrics
+	configPath           string
+	connected            atomic.Bool
+	digestResolver       DigestResolveFunc
+	fetchTimeout         time.Duration // immutable after construction, no sync needed
+	digestResolveTimeout atomic.Int64  // updated via SetDigestResolveTimeout on reload
+	prewarmDone          func()
+	prewarmMu            sync.Mutex
+	prewarmCancel        context.CancelFunc
+	transportCache       atomic.Pointer[registry.TransportCache]
 }
 
 // New creates a new Plugin with the given verifier, metrics, and config file path.
 func New(
 	v ImageVerifier, met *metrics.Metrics, configPath string,
-	fetchTimeout time.Duration, cache *registry.TransportCache,
+	fetchTimeout, digestResolveTimeout time.Duration,
+	cache *registry.TransportCache,
 ) *Plugin {
 	plug := &Plugin{
-		verifier:       v,
-		metrics:        met,
-		configPath:     configPath,
-		connected:      atomic.Bool{},
-		digestResolver: nil,
-		fetchTimeout:   fetchTimeout,
-		prewarmDone:    nil,
-		prewarmMu:      sync.Mutex{},
-		prewarmCancel:  nil,
-		transportCache: atomic.Pointer[registry.TransportCache]{},
+		verifier:             v,
+		metrics:              met,
+		configPath:           configPath,
+		connected:            atomic.Bool{},
+		digestResolver:       nil,
+		fetchTimeout:         fetchTimeout,
+		digestResolveTimeout: atomic.Int64{},
+		prewarmDone:          nil,
+		prewarmMu:            sync.Mutex{},
+		prewarmCancel:        nil,
+		transportCache:       atomic.Pointer[registry.TransportCache]{},
 	}
+
+	plug.digestResolveTimeout.Store(int64(digestResolveTimeout))
 
 	if cache != nil {
 		plug.transportCache.Store(cache)
@@ -127,6 +130,12 @@ func New(
 	plug.digestResolver = plug.registryAwareResolver
 
 	return plug
+}
+
+// SetDigestResolveTimeout updates the timeout used when resolving an image
+// tag to its digest via the registry. Called during config reload.
+func (p *Plugin) SetDigestResolveTimeout(d time.Duration) {
+	p.digestResolveTimeout.Store(int64(d))
 }
 
 // SetTransportCache replaces the plugin's transport cache with a new one,
@@ -339,7 +348,9 @@ func (p *Plugin) resolveDigestIfMissing(
 		return digest, ""
 	}
 
-	resolveCtx, cancel := context.WithTimeout(ctx, digestResolveTimeout)
+	resolveCtx, cancel := context.WithTimeout(
+		ctx, time.Duration(p.digestResolveTimeout.Load()),
+	)
 	resolved, indexDigest, err := p.digestResolver(resolveCtx, imageRef)
 
 	cancel()

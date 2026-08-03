@@ -49,6 +49,7 @@ func TestDefaultConfig(t *testing.T) {
 
 	testutil.AssertEqual(t, config.ModeDisabled, cfg.Verification)
 	testutil.AssertEqual(t, 30*time.Second, cfg.FetchTimeout.Duration)
+	testutil.AssertEqual(t, 1*time.Second, cfg.DigestResolveTimeout.Duration)
 	testutil.AssertEqual(t, types.ActionWarn, cfg.FetchFailurePolicy)
 	testutil.AssertEqual(t, 24*time.Hour, cfg.CacheTTL.Duration)
 	testutil.AssertEqual(t, 5*time.Minute, cfg.CacheFailureTTL.Duration)
@@ -195,6 +196,72 @@ func TestConfigValidateEnabledPolicies(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestConfigValidateDigestResolveTimeout(t *testing.T) {
+	t.Parallel()
+
+	t.Run("zero rejected", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.DigestResolveTimeout = config.Duration{Duration: 0}
+
+		err := cfg.Validate()
+		if !errors.Is(err, config.ErrDigestResolveTimeoutNotPositive) {
+			t.Errorf("expected ErrDigestResolveTimeoutNotPositive, got %v", err)
+		}
+	})
+
+	t.Run("negative rejected", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.DigestResolveTimeout = config.Duration{Duration: -1 * time.Second}
+
+		err := cfg.Validate()
+		if !errors.Is(err, config.ErrDigestResolveTimeoutNotPositive) {
+			t.Errorf("expected ErrDigestResolveTimeoutNotPositive, got %v", err)
+		}
+	})
+
+	t.Run("exceeds max rejected", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.DigestResolveTimeout = config.Duration{Duration: 6 * time.Second}
+
+		err := cfg.Validate()
+		if !errors.Is(err, config.ErrDigestResolveTimeoutTooHigh) {
+			t.Errorf("expected ErrDigestResolveTimeoutTooHigh, got %v", err)
+		}
+	})
+
+	t.Run("at max is valid", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.DigestResolveTimeout = config.Duration{Duration: 5 * time.Second}
+
+		testutil.AssertNoError(t, cfg.Validate())
+	})
+
+	t.Run("positive within range is valid", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.DigestResolveTimeout = config.Duration{Duration: 3 * time.Second}
+
+		testutil.AssertNoError(t, cfg.Validate())
+	})
+}
+
+func TestLoadFromStringDigestResolveTimeout(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.LoadFromString(`digest_resolve_timeout = "3s"`)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqual(t, 3*time.Second, cfg.DigestResolveTimeout.Duration)
 }
 
 func TestConfigValidateEnabledPaths(t *testing.T) {
