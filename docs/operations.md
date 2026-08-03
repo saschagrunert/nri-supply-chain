@@ -108,10 +108,24 @@ detailed verification traces.
 ### Audit Logging
 
 Every verification decision emits a structured log entry with the message
-`"Supply chain audit"`. These entries include the fields `image`, `digest`,
-`namespace`, `allowed`, `check` (e.g. `slsa`, `vex`, `vsa`), `status`,
-`detail`, `decision`, and `reason`. Filter for this message to build an audit
-trail of all container verification outcomes.
+`"Supply chain audit"`. Filter for this message to build an audit trail of
+all container verification outcomes.
+
+| Field               | Description                                                      |
+| ------------------- | ---------------------------------------------------------------- |
+| `image`             | Full image reference                                             |
+| `digest`            | Image digest                                                     |
+| `namespace`         | Kubernetes namespace                                             |
+| `allowed`           | Whether the container was allowed                                |
+| `check`             | Check type (e.g. `slsa`, `vex`, `vsa`), present for check events |
+| `status`            | Check result status                                              |
+| `detail`            | Human-readable check detail                                      |
+| `decision`          | `allowed` or `denied`, present for decision events               |
+| `reason`            | Human-readable decision reason                                   |
+| `policyHash`        | SHA-256 hash of the policy file used for verification            |
+| `nodeName`          | Node where the container was scheduled                           |
+| `podServiceAccount` | Kubernetes service account of the pod                            |
+| `verificationMode`  | Effective verification mode (`warn`, `enforce`)                  |
 
 ## Troubleshooting
 

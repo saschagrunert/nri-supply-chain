@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -59,6 +60,7 @@ const (
 type snapshot struct {
 	config          *config.Config
 	policies        map[string]*policy.Policy
+	policyHashes    map[string]string // lock-free copy updated with v.policyHashes under v.mu
 	cache           *cache.Cache
 	metrics         *metrics.Metrics
 	fetcher         attestation.Fetcher
@@ -72,8 +74,9 @@ type snapshot struct {
 type Verifier struct {
 	state atomic.Pointer[snapshot]
 
-	mu           sync.Mutex // serializes Reload; policyHashes is only accessed under mu
+	mu           sync.Mutex // serializes Reload; v.policyHashes (not the snapshot copy) is only accessed under mu
 	policyHashes map[string]string
+	nodeName     string
 	inflight     singleflight.Group
 	inflightWg   sync.WaitGroup
 	poller       *policy.Poller
@@ -119,12 +122,13 @@ func New(
 		WarnEnforceDefaults(&cfgCopy, policies)
 	}
 
-	snap := newSnapshot(&cfgCopy, policies, met, fetcher)
+	snap := newSnapshot(&cfgCopy, policies, hashes, met, fetcher)
 
 	verif := &Verifier{
 		state:        atomic.Pointer[snapshot]{},
 		mu:           sync.Mutex{},
 		policyHashes: hashes,
+		nodeName:     resolveNodeName(),
 		inflight:     singleflight.Group{},
 		inflightWg:   sync.WaitGroup{},
 		poller:       nil,
@@ -141,12 +145,14 @@ func New(
 func newSnapshot(
 	cfg *config.Config,
 	policies map[string]*policy.Policy,
+	hashes map[string]string,
 	met *metrics.Metrics,
 	fetcher attestation.Fetcher,
 ) *snapshot {
 	return &snapshot{
-		config:   cfg,
-		policies: policies,
+		config:       cfg,
+		policies:     policies,
+		policyHashes: hashes,
 		cache: cache.NewWithGauge(
 			cfg.CacheTTL.Duration,
 			met.CacheEntriesTotal, met.CacheEvictionsTotal,
@@ -161,6 +167,27 @@ func newSnapshot(
 		hostSem:     &hostSemMap{m: sync.Map{}, count: atomic.Int64{}},
 		auditLogger: slog.Default(),
 	}
+}
+
+func resolveNodeName() string {
+	if name := os.Getenv("NODE_NAME"); name != "" {
+		return name
+	}
+
+	hostname, err := os.Hostname()
+	if err != nil {
+		return ""
+	}
+
+	return hostname
+}
+
+func policyHashForNamespace(hashes map[string]string, namespace string) string {
+	if h, ok := hashes[namespace]; ok {
+		return h
+	}
+
+	return hashes[""]
 }
 
 // WarnEnforceDefaults logs warnings when enforce mode is used with
@@ -357,15 +384,26 @@ func (v *Verifier) TransportCache() *registry.TransportCache {
 // was resolved from a manifest list, indexDigest should be the manifest list
 // digest so attestation lookup can find cosign-attached attestations. Pass ""
 // when the image is not a manifest list or the index digest is unknown.
-func (v *Verifier) Verify(
-	ctx context.Context, imageRef, digest, indexDigest, namespace string,
+// serviceAccount is the pod's Kubernetes service account name (from NRI pod
+// annotations); pass "" when unavailable.
+func (v *Verifier) Verify( //nolint:funlen // early-return branches inflate line count
+	ctx context.Context, imageRef, digest, indexDigest, namespace, serviceAccount string,
 ) (*types.Result, error) {
 	state := v.snap()
 
+	info := &auditInfo{
+		policyHash:        "",
+		nodeName:          v.nodeName,
+		podServiceAccount: serviceAccount,
+		verificationMode:  "",
+	}
+
 	if !state.config.Enabled() {
+		info.verificationMode = string(config.ModeDisabled)
+
 		return allowResult(
 			ctx, state.auditLogger, imageRef, digest,
-			namespace, "verification disabled",
+			namespace, "verification disabled", info,
 		), nil
 	}
 
@@ -374,21 +412,26 @@ func (v *Verifier) Verify(
 	pol := policyForNamespace(state.policies, namespace)
 
 	if pol == nil {
+		info.verificationMode = string(state.config.Verification)
+
 		result, err := handleMissingPolicy(ctx, state.config, imageRef, namespace)
 		if result != nil {
-			logResult(ctx, state.auditLogger, imageRef, digest, namespace, result)
+			logResult(ctx, state.auditLogger, imageRef, digest, namespace, result, info)
 			recordMetrics(state.metrics, result, namespace)
 		}
 
 		return result, err
 	}
 
+	info.policyHash = policyHashForNamespace(state.policyHashes, namespace)
+	info.verificationMode = string(state.config.Verification)
+
 	if !isIncluded(ctx, pol.Include, imageRef) {
 		state.metrics.VerificationSkippedTotal.WithLabelValues("not_included", namespace).Inc()
 
 		return allowResult(
 			ctx, state.auditLogger, imageRef, digest,
-			namespace, "image is not included",
+			namespace, "image is not included", info,
 		), nil
 	}
 
@@ -397,24 +440,29 @@ func (v *Verifier) Verify(
 
 		return allowResult(
 			ctx, state.auditLogger, imageRef, digest,
-			namespace, "image is excluded",
+			namespace, "image is excluded", info,
 		), nil
 	}
 
 	resolvedPol, ruleIdx := resolveImagePolicy(ctx, pol, imageRef)
-	cacheNS := cacheNamespaceKey(namespace, ruleIdx)
 	effectiveMode := resolvedPol.EffectiveMode(state.config.Verification)
 
-	result, err := v.handleCacheHit(ctx, state, effectiveMode, imageRef, digest, namespace, cacheNS)
+	info.verificationMode = string(effectiveMode)
+
+	cacheNS := cacheNamespaceKey(namespace, ruleIdx)
+
+	result, err := v.handleCacheHit(
+		ctx, state, effectiveMode, imageRef, digest, namespace, cacheNS, info,
+	)
 	if result != nil || err != nil {
 		return result, err
 	}
 
 	result, err = v.verifyOnce(
-		ctx, state, resolvedPol, imageRef, digest, indexDigest, namespace, cacheNS,
+		ctx, state, resolvedPol, imageRef, digest, indexDigest, namespace, cacheNS, info,
 	)
 	if err != nil {
-		return handleVerifyError(ctx, state, effectiveMode, imageRef, digest, namespace, err)
+		return handleVerifyError(ctx, state, effectiveMode, imageRef, digest, namespace, err, info)
 	}
 
 	return applyEnforcement(ctx, effectiveMode, result, imageRef)
@@ -432,6 +480,7 @@ func handleVerifyError(
 	ctx context.Context, state *snapshot,
 	mode config.VerificationMode,
 	imageRef, digest, namespace string, err error,
+	info *auditInfo,
 ) (*types.Result, error) {
 	if mode != config.ModeEnforce {
 		slog.WarnContext(ctx, "Verification error (non-enforce mode, allowing)",
@@ -442,7 +491,7 @@ func handleVerifyError(
 
 		return allowResult(
 			ctx, state.auditLogger, imageRef, digest,
-			namespace, fmt.Sprintf("verification error: %s", err),
+			namespace, fmt.Sprintf("verification error: %s", err), info,
 		), nil
 	}
 
@@ -519,6 +568,7 @@ func (v *Verifier) applyReload( //nolint:ireturn // returns attestation.Fetcher 
 	v.state.Store(&snapshot{
 		config:          cfgCopy,
 		policies:        policies,
+		policyHashes:    newHashes,
 		cache:           newCache,
 		metrics:         current.metrics,
 		fetcher:         fetcher,
@@ -565,6 +615,7 @@ func (v *Verifier) handleCacheHit(
 	ctx context.Context, state *snapshot,
 	mode config.VerificationMode,
 	imageRef, digest, namespace, cacheNS string,
+	info *auditInfo,
 ) (*types.Result, error) {
 	cached := state.cache.Get(digest, cacheNS)
 	if cached == nil {
@@ -581,7 +632,7 @@ func (v *Verifier) handleCacheHit(
 
 	result := cached.Clone()
 
-	logResult(ctx, state.auditLogger, imageRef, digest, namespace, &result)
+	logResult(ctx, state.auditLogger, imageRef, digest, namespace, &result, info)
 	recordMetrics(state.metrics, &result, namespace)
 
 	return applyEnforcement(ctx, mode, &result, imageRef)
@@ -814,8 +865,9 @@ func (v *Verifier) applyPolicyUpdate(
 	glob.ResetCache()
 
 	v.state.Store(&snapshot{
-		config:   state.config,
-		policies: policies,
+		config:       state.config,
+		policies:     policies,
+		policyHashes: newHashes,
 		cache: cache.NewWithGauge(
 			state.config.CacheTTL.Duration,
 			state.metrics.CacheEntriesTotal,
@@ -926,6 +978,7 @@ func policySourceChanged(prev, next *config.Config) bool {
 func (v *Verifier) verifyOnce(
 	ctx context.Context, state *snapshot, pol *policy.Policy,
 	imageRef, digest, indexDigest, namespace, cacheNS string,
+	info *auditInfo,
 ) (*types.Result, error) {
 	flightKey := digest + "\x00" + cacheNS
 
@@ -968,7 +1021,7 @@ func (v *Verifier) verifyOnce(
 
 		return nil, fmt.Errorf("verification interrupted: %w", ctx.Err())
 	case res := <-flightCh:
-		return handleFlightResult(ctx, state, res, imageRef, digest, namespace)
+		return handleFlightResult(ctx, state, res, imageRef, digest, namespace, info)
 	}
 }
 
@@ -976,6 +1029,7 @@ func handleFlightResult(
 	ctx context.Context, state *snapshot,
 	res singleflight.Result,
 	imageRef, digest, namespace string,
+	info *auditInfo,
 ) (*types.Result, error) {
 	if res.Shared {
 		state.metrics.InflightDedupTotal.Inc()
@@ -992,7 +1046,7 @@ func handleFlightResult(
 
 	result := shared.Clone()
 
-	logResult(ctx, state.auditLogger, imageRef, digest, namespace, &result)
+	logResult(ctx, state.auditLogger, imageRef, digest, namespace, &result, info)
 	recordMetrics(state.metrics, &result, namespace)
 
 	return &result, nil

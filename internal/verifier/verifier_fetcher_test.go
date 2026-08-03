@@ -711,7 +711,7 @@ func TestVerifyWithFetcher(t *testing.T) {
 			testutil.AssertNoError(t, err)
 
 			result, err := verif.Verify(
-				context.Background(), "nginx:latest", testFetchDigest, "", testDefaultNamespace,
+				context.Background(), "nginx:latest", testFetchDigest, "", testDefaultNamespace, "",
 			)
 
 			if test.wantErr != nil {
@@ -776,7 +776,7 @@ func TestVerifyCacheFailureTTL(t *testing.T) {
 		"nginx:latest",
 		"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
 		"",
-		"default",
+		"default", "",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -794,7 +794,7 @@ func TestVerifyCacheFailureTTL(t *testing.T) {
 		"nginx:latest",
 		"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
 		"",
-		"default",
+		"default", "",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -863,7 +863,7 @@ func TestVerifyConcurrentSameDigest(t *testing.T) {
 	for range goroutines {
 		waitGroup.Go(func() {
 			_, verifyErr := ver.Verify(
-				context.Background(), imageRef, digest, "", namespace,
+				context.Background(), imageRef, digest, "", namespace, "",
 			)
 			if verifyErr != nil {
 				t.Errorf("unexpected error: %v", verifyErr)
@@ -904,7 +904,7 @@ func TestVerifyCircuitBreakerIntegration(t *testing.T) {
 	// Trip the circuit breaker with 3 failures.
 	for call := range 3 {
 		result, verifyErr := ver.Verify(
-			context.Background(), imageRef, digest, "", namespace,
+			context.Background(), imageRef, digest, "", namespace, "",
 		)
 		testutil.AssertNoError(t, verifyErr)
 
@@ -919,7 +919,7 @@ func TestVerifyCircuitBreakerIntegration(t *testing.T) {
 
 	// 4th call: circuit breaker is open, fetch should be skipped.
 	result, err := ver.Verify(
-		context.Background(), imageRef, digest, "", namespace,
+		context.Background(), imageRef, digest, "", namespace, "",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -939,7 +939,7 @@ func TestVerifyCircuitBreakerIntegration(t *testing.T) {
 	time.Sleep(150 * time.Millisecond)
 
 	_, err = ver.Verify(
-		context.Background(), imageRef, digest, "", namespace,
+		context.Background(), imageRef, digest, "", namespace, "",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -975,7 +975,7 @@ func TestVerifyCircuitBreakerMetric(t *testing.T) {
 	for call := range 2 {
 		digest := "sha256:" + strings.Repeat(string("0123456789abcdef"[call%16]), 64)
 
-		_, err := ver.Verify(context.Background(), imageRef, digest, "", namespace)
+		_, err := ver.Verify(context.Background(), imageRef, digest, "", namespace, "")
 		testutil.AssertNoError(t, err)
 	}
 
@@ -988,7 +988,7 @@ func TestVerifyCircuitBreakerMetric(t *testing.T) {
 	// 3rd call: circuit breaker is open, fetch should be skipped.
 	digest := "sha256:" + strings.Repeat("c", 64)
 
-	result, err := ver.Verify(context.Background(), imageRef, digest, "", namespace)
+	result, err := ver.Verify(context.Background(), imageRef, digest, "", namespace, "")
 	testutil.AssertNoError(t, err)
 
 	if !result.Allowed {
@@ -1008,7 +1008,7 @@ func TestVerifyCircuitBreakerMetric(t *testing.T) {
 
 	digest = "sha256:" + strings.Repeat("d", 64)
 
-	_, err = ver.Verify(context.Background(), imageRef, digest, "", namespace)
+	_, err = ver.Verify(context.Background(), imageRef, digest, "", namespace, "")
 	testutil.AssertNoError(t, err)
 
 	if got := fetcher.calls.Load(); got != 3 {
@@ -1050,7 +1050,7 @@ func TestVerifyConcurrentWithReloadModeSwitch(t *testing.T) {
 			for range 10 {
 				_, verifyErr := ver.Verify(
 					context.Background(), testDockerNginx,
-					digest, "", testDefaultNamespace,
+					digest, "", testDefaultNamespace, "",
 				)
 				if verifyErr != nil && !errors.Is(verifyErr, verifier.ErrVerificationFailed) {
 					t.Errorf("unexpected verify error: %v", verifyErr)
@@ -1114,7 +1114,7 @@ func TestVerifyConcurrentWithReload(t *testing.T) {
 			for range 10 {
 				_, verifyErr := ver.Verify(
 					context.Background(), testDockerNginx,
-					digest, "", testDefaultNamespace,
+					digest, "", testDefaultNamespace, "",
 				)
 				if verifyErr != nil {
 					t.Errorf("unexpected verify error: %v", verifyErr)
@@ -1231,7 +1231,7 @@ func TestVerifySBOMThroughVerifier(t *testing.T) {
 		testutil.AssertNoError(t, err)
 
 		result, err := verif.Verify(
-			context.Background(), "nginx:latest", testFetchDigest, "", testDefaultNamespace,
+			context.Background(), "nginx:latest", testFetchDigest, "", testDefaultNamespace, "",
 		)
 		testutil.AssertNoError(t, err)
 
@@ -1261,7 +1261,7 @@ func TestVerifySBOMThroughVerifier(t *testing.T) {
 		testutil.AssertNoError(t, err)
 
 		_, err = verif.Verify(
-			context.Background(), "nginx:latest", testFetchDigest, "", testDefaultNamespace,
+			context.Background(), "nginx:latest", testFetchDigest, "", testDefaultNamespace, "",
 		)
 
 		if !errors.Is(err, verifier.ErrVerificationFailed) {
@@ -1301,7 +1301,7 @@ func TestVerifySBOMThroughVerifier(t *testing.T) {
 		testutil.AssertNoError(t, err)
 
 		_, err = verif.Verify(
-			context.Background(), "nginx:latest", testFetchDigest, "", testDefaultNamespace,
+			context.Background(), "nginx:latest", testFetchDigest, "", testDefaultNamespace, "",
 		)
 
 		if !errors.Is(err, verifier.ErrVerificationFailed) {
@@ -1381,7 +1381,12 @@ func TestVerifyIndexDigestFallback(t *testing.T) {
 		testutil.AssertNoError(t, err)
 
 		result, err := verif.Verify(
-			context.Background(), "nginx:latest", platformDigest, indexDigest, testDefaultNamespace,
+			context.Background(),
+			"nginx:latest",
+			platformDigest,
+			indexDigest,
+			testDefaultNamespace,
+			"",
 		)
 		testutil.AssertNoError(t, err)
 
@@ -1417,7 +1422,12 @@ func TestVerifyIndexDigestFallback(t *testing.T) {
 		testutil.AssertNoError(t, err)
 
 		result, err := verif.Verify(
-			context.Background(), "nginx:latest", platformDigest, indexDigest, testDefaultNamespace,
+			context.Background(),
+			"nginx:latest",
+			platformDigest,
+			indexDigest,
+			testDefaultNamespace,
+			"",
 		)
 		testutil.AssertNoError(t, err)
 
@@ -1457,7 +1467,7 @@ func TestVerifyIndexDigestFallback(t *testing.T) {
 		testutil.AssertNoError(t, err)
 
 		result, err := verif.Verify(
-			context.Background(), "nginx:latest", platformDigest, "", testDefaultNamespace,
+			context.Background(), "nginx:latest", platformDigest, "", testDefaultNamespace, "",
 		)
 		testutil.AssertNoError(t, err)
 

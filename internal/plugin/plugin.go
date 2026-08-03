@@ -43,7 +43,7 @@ var ErrMissingAnnotations = errors.New("missing image annotations")
 type ImageVerifier interface {
 	Verify(
 		ctx context.Context,
-		imageRef, digest, indexDigest, namespace string,
+		imageRef, digest, indexDigest, namespace, serviceAccount string,
 	) (*types.Result, error)
 	Ready() (ready bool, reason string)
 	Enforcing() bool
@@ -85,6 +85,11 @@ const (
 	AnnotationContainerdImage = "io.kubernetes.cri.image-name"
 	// AnnotationContainerdImageRef is the containerd annotation for the image digest.
 	AnnotationContainerdImageRef = "io.kubernetes.cri.image-ref"
+
+	// AnnotationServiceAccount is a CRI runtime annotation for the pod's service account
+	// name. This must be injected by the container runtime (e.g. CRI-O) or a webhook;
+	// it may be empty if the runtime does not provide it.
+	AnnotationServiceAccount = "io.kubernetes.pod.serviceAccount"
 )
 
 // Plugin implements the NRI CreateContainer and Configure hooks
@@ -240,6 +245,7 @@ func (p *Plugin) CreateContainer(
 	annotations := ctr.GetAnnotations()
 	imageRef, digest := resolveImage(annotations)
 	namespace := pod.GetNamespace()
+	serviceAccount := pod.GetAnnotations()[AnnotationServiceAccount]
 
 	if slog.Default().Enabled(ctx, slog.LevelDebug) {
 		slog.DebugContext(ctx, "NRI container info",
@@ -258,7 +264,7 @@ func (p *Plugin) CreateContainer(
 		)
 	}
 
-	result, err := p.verifier.Verify(ctx, imageRef, digest, indexDigest, namespace)
+	result, err := p.verifier.Verify(ctx, imageRef, digest, indexDigest, namespace, serviceAccount)
 	if err != nil {
 		slog.ErrorContext(ctx, "Container rejected",
 			"pod", namespace+"/"+pod.GetName(),
@@ -543,7 +549,7 @@ func (p *Plugin) runPrewarmVerifications(
 			defer sem.Release(1)
 
 			_, verifyErr := p.verifier.Verify(
-				ctx, img.imageRef, img.digest, img.indexDigest, img.namespace,
+				ctx, img.imageRef, img.digest, img.indexDigest, img.namespace, "",
 			)
 			if verifyErr != nil {
 				slog.DebugContext(ctx, "Pre-warm verification failed",

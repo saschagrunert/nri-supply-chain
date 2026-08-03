@@ -25,6 +25,21 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
+// ExportAuditInfo is an exported alias for auditInfo.
+type ExportAuditInfo = auditInfo
+
+// NewExportAuditInfo creates an auditInfo for external tests.
+func NewExportAuditInfo(
+	policyHash, nodeName, podServiceAccount, verificationMode string,
+) *ExportAuditInfo {
+	return &auditInfo{
+		policyHash:        policyHash,
+		nodeName:          nodeName,
+		podServiceAccount: podServiceAccount,
+		verificationMode:  verificationMode,
+	}
+}
+
 // ExportHandleMissingAttestation exposes handleMissingAttestation for external tests.
 func ExportHandleMissingAttestation(
 	pol types.Action, checkType types.CheckType, detail string,
@@ -63,11 +78,14 @@ func ExportAuditEventLogAttrs(event *auditEvent) []any {
 }
 
 // ExportNewAuditEvent creates an auditEvent for external tests.
+// Enrichment fields (policy hash, node name, service account, mode) are
+// passed via info; nil omits them.
 func ExportNewAuditEvent(
 	image, digest, namespace string, allowed bool,
 	check, status, detail, decision, reason string,
+	info *ExportAuditInfo,
 ) *auditEvent {
-	return &auditEvent{
+	event := &auditEvent{ //nolint:exhaustruct // enrichment fields set by applyAuditInfo
 		Image:     image,
 		Digest:    digest,
 		Namespace: namespace,
@@ -78,6 +96,9 @@ func ExportNewAuditEvent(
 		Decision:  decision,
 		Reason:    reason,
 	}
+	applyAuditInfo(event, info)
+
+	return event
 }
 
 // ExportLogResult exposes logResult for external tests.
@@ -85,24 +106,27 @@ func ExportLogResult(
 	ctx context.Context, logger *slog.Logger,
 	imageRef, digest, namespace string,
 	result *types.Result,
+	info *ExportAuditInfo,
 ) {
-	logResult(ctx, logger, imageRef, digest, namespace, result)
+	logResult(ctx, logger, imageRef, digest, namespace, result, info)
 }
 
 // ExportLogAuditDecision exposes logAuditDecision for external tests.
 func ExportLogAuditDecision(
 	ctx context.Context, logger *slog.Logger,
 	imageRef, digest, namespace, decision, reason string,
+	info *ExportAuditInfo,
 ) {
-	logAuditDecision(ctx, logger, imageRef, digest, namespace, decision, reason)
+	logAuditDecision(ctx, logger, imageRef, digest, namespace, decision, reason, info)
 }
 
 // ExportAllowResult exposes allowResult for external tests.
 func ExportAllowResult(
 	ctx context.Context, logger *slog.Logger,
 	imageRef, digest, namespace, reason string,
+	info *ExportAuditInfo,
 ) *types.Result {
-	return allowResult(ctx, logger, imageRef, digest, namespace, reason)
+	return allowResult(ctx, logger, imageRef, digest, namespace, reason, info)
 }
 
 // ExportWaitInflight waits for all in-flight singleflight verifications
@@ -131,4 +155,14 @@ func ExportExtractRegistryRepo(parsedRef name.Reference, imageRef string) (reg, 
 // ExportOnPolicyUpdate exposes onPolicyUpdate for external tests.
 func (v *Verifier) ExportOnPolicyUpdate(policies map[string]*policy.Policy) error {
 	return v.onPolicyUpdate(policies)
+}
+
+// ExportResolveNodeName exposes resolveNodeName for external tests.
+func ExportResolveNodeName() string {
+	return resolveNodeName()
+}
+
+// ExportPolicyHashForNamespace exposes policyHashForNamespace for external tests.
+func ExportPolicyHashForNamespace(hashes map[string]string, namespace string) string {
+	return policyHashForNamespace(hashes, namespace)
 }

@@ -112,7 +112,7 @@ func executeVerify(
 	}
 
 	result, err := verif.Verify(
-		ctx, imageRef, resolved.digest, resolved.indexDigest, namespace,
+		ctx, imageRef, resolved.digest, resolved.indexDigest, namespace, "",
 	)
 	out := newVerifyOutput(imageRef, resolved.digest, namespace, policyFile)
 	out.Mode = string(verif.EffectiveModeForNamespace(namespace))
@@ -242,7 +242,7 @@ func verifySingleImage(
 	}
 
 	result, err := verif.Verify(
-		ctx, imageRef, resolved.digest, resolved.indexDigest, namespace,
+		ctx, imageRef, resolved.digest, resolved.indexDigest, namespace, "",
 	)
 	out := newVerifyOutput(imageRef, resolved.digest, namespace, policyFile)
 	out.Mode = string(verif.EffectiveModeForNamespace(namespace))
