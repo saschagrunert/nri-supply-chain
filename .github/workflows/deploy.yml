@@ -140,6 +140,67 @@ jobs:
           subject-digest: ${{ steps.manifest.outputs.digest }}
           push-to-registry: true
 
+      - name: Attest container image provenance
+        run: |
+          cat > /tmp/slsa-provenance.json <<EOF
+          {
+            "buildDefinition": {
+              "buildType": "https://github.com/${{ github.repository }}/.github/workflows/deploy.yml",
+              "externalParameters": {
+                "source": "github.com/${{ github.repository }}"
+              },
+              "resolvedDependencies": [
+                {
+                  "uri": "git+https://github.com/${{ github.repository }}@refs/heads/main",
+                  "digest": { "sha1": "${{ github.event.workflow_run.head_sha }}" }
+                }
+              ]
+            },
+            "runDetails": {
+              "builder": {
+                "id": "https://github.com/${{ github.repository }}/.github/workflows/deploy.yml"
+              },
+              "metadata": {
+                "invocationId": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+              }
+            }
+          }
+          EOF
+          cosign attest --predicate /tmp/slsa-provenance.json \
+            --type slsaprovenance1 \
+            --yes \
+            "$IMAGE@${{ steps.manifest.outputs.digest }}"
+
+      - name: Scan container image for vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:latest
+          exit-code: "1"
+      - name: Attest container image VEX
+        run: |
+          PRODUCT="pkg:oci/nri-supply-chain@${{ steps.manifest.outputs.digest }}"
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          cat > /tmp/vex-predicate.json <<EOF
+          {
+            "@context": "https://openvex.dev/ns/v0.2.0",
+            "@id": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/vex",
+            "author": "https://github.com/${{ github.repository }}/.github/workflows/deploy.yml",
+            "timestamp": "${TIMESTAMP}",
+            "statements": [
+              {
+                "vulnerability": {"name": "trivy-scan-clean"},
+                "products": [{"@id": "${PRODUCT}"}],
+                "status": "not_affected",
+                "justification": "vulnerable_code_not_present"
+              }
+            ]
+          }
+          EOF
+          cosign attest --predicate /tmp/vex-predicate.json \
+            --type https://openvex.dev/ns \
+            --yes \
+            "$IMAGE@${{ steps.manifest.outputs.digest }}"
+
       - name: Generate container image SBOM
         run: syft "$IMAGE:latest" -o spdx-json=/tmp/sbom.spdx.json
       - name: Attest container image SBOM
