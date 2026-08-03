@@ -96,6 +96,7 @@ func ResolveIndexDigest(desc *remote.Descriptor) (string, error) {
 	platform := v1.Platform{
 		Architecture: runtime.GOARCH,
 		OS:           runtime.GOOS,
+		Variant:      PlatformVariant(runtime.GOARCH),
 	}
 
 	for i := range manifest.Manifests {
@@ -111,5 +112,28 @@ func ResolveIndexDigest(desc *remote.Descriptor) (string, error) {
 		}
 	}
 
+	variant := PlatformVariant(runtime.GOARCH)
+	if variant != "" {
+		return "", fmt.Errorf(
+			"%w for %s/%s/%s", ErrNoPlatformMatch,
+			runtime.GOOS, runtime.GOARCH, variant,
+		)
+	}
+
 	return "", fmt.Errorf("%w for %s/%s", ErrNoPlatformMatch, runtime.GOOS, runtime.GOARCH)
+}
+
+// PlatformVariant returns the platform variant for the given architecture.
+// For arm64, this is "v8". For arm, this defaults to "v7" (matching Go's
+// default GOARM=7; the actual GOARM value is not exposed at runtime).
+// All other architectures return an empty string.
+func PlatformVariant(arch string) string {
+	switch arch {
+	case "arm64":
+		return "v8"
+	case "arm":
+		return "v7"
+	default:
+		return ""
+	}
 }

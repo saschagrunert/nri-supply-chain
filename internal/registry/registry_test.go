@@ -104,6 +104,7 @@ func TestResolveIndexDigestMatchingPlatform(t *testing.T) {
 				Platform: &v1.Platform{
 					Architecture: runtime.GOARCH,
 					OS:           runtime.GOOS,
+					Variant:      registry.PlatformVariant(runtime.GOARCH),
 				},
 			},
 		},
@@ -140,7 +141,7 @@ func TestResolveIndexDigestMultiplePlatforms(t *testing.T) {
 		mutate.IndexAddendum{
 			Add: armImg,
 			Descriptor: v1.Descriptor{
-				Platform: &v1.Platform{Architecture: "arm64", OS: "linux"},
+				Platform: &v1.Platform{Architecture: "arm64", OS: "linux", Variant: "v8"},
 			},
 		},
 	)
@@ -269,6 +270,7 @@ func TestResolveDigestManifestList(t *testing.T) {
 				Platform: &v1.Platform{
 					Architecture: runtime.GOARCH,
 					OS:           runtime.GOOS,
+					Variant:      registry.PlatformVariant(runtime.GOARCH),
 				},
 			},
 		},
@@ -373,6 +375,33 @@ func TestHost(t *testing.T) {
 			got := registry.Host(test.ref)
 			if got != test.want {
 				t.Errorf("Host(%q) = %q, want %q", test.ref, got, test.want)
+			}
+		})
+	}
+}
+
+func TestPlatformVariant(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		arch string
+		want string
+	}{
+		{"arm64", "v8"},
+		{"arm", "v7"},
+		{"amd64", ""},
+		{"s390x", ""},
+		{"ppc64le", ""},
+		{"riscv64", ""},
+	}
+
+	for _, test := range tests {
+		t.Run(test.arch, func(t *testing.T) {
+			t.Parallel()
+
+			got := registry.PlatformVariant(test.arch)
+			if got != test.want {
+				t.Errorf("PlatformVariant(%q) = %q, want %q", test.arch, got, test.want)
 			}
 		})
 	}
