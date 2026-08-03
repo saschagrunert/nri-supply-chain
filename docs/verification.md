@@ -6,6 +6,7 @@ by the nri-supply-chain plugin.
 <!-- toc -->
 
 - [Verification Flow](#verification-flow)
+- [Container Annotations](#container-annotations)
 - [Verification Types](#verification-types)
   - [SLSA Provenance](#slsa-provenance)
   - [VEX (Vulnerability Exploitability eXchange)](#vex-vulnerability-exploitability-exchange)
@@ -92,6 +93,23 @@ Latency model:
 
 - With trusted VSA: `fetch + VSA verify`
 - Without VSA: `fetch + max(SLSA verify, VEX verify, Notation verify, SBOM verify)`
+
+## Container Annotations
+
+In `warn` and `enforce` modes, the plugin injects annotations on each
+container via the NRI `ContainerAdjustment` response. These annotations
+provide per-container verification metadata that can be consumed by admission
+webhooks, audit pipelines, or `kubectl describe`.
+
+| Annotation                  | Example value        | Description                                                                                                |
+| --------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `supply-chain.nri/verified` | `true` or `false`    | Whether all checks passed. In warn mode, reflects the actual outcome even though the container is allowed. |
+| `supply-chain.nri/mode`     | `warn` or `enforce`  | The effective verification mode applied to this container.                                                 |
+| `supply-chain.nri/checks`   | `slsa:pass,vex:warn` | Comma-separated `type:status` pairs for each check result. Only present when checks were run.              |
+
+In `disabled` mode, no annotations are injected. When a container is skipped
+(excluded, not included, or missing annotations), no verification annotations
+are added.
 
 ## Verification Types
 

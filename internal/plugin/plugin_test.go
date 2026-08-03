@@ -38,7 +38,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/plugin"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
-	nritypes "github.com/saschagrunert/nri-supply-chain/internal/types"
+	scTypes "github.com/saschagrunert/nri-supply-chain/internal/types"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
@@ -56,6 +56,10 @@ const (
 	testArchS390x = "s390x"
 	testOSLinux   = "linux"
 	testOSZos     = "zos"
+
+	testValTrue  = "true"
+	testValFalse = "false"
+	testValWarn  = "warn"
 )
 
 func TestCreateContainerDisabled(t *testing.T) {
@@ -127,8 +131,18 @@ func TestCreateContainerMissingAnnotationsWarn(t *testing.T) {
 	adj, updates, err := plug.CreateContainer(context.Background(), pod, ctr)
 	testutil.AssertNoError(t, err)
 
-	if adj != nil {
-		t.Error("expected nil adjustment")
+	if adj == nil {
+		t.Fatal("expected non-nil adjustment for warn mode with missing annotations")
+	}
+
+	annotations := adj.GetAnnotations()
+
+	if v := annotations[plugin.AnnotationVerified]; v != testValFalse {
+		t.Errorf("verified = %q, want %q", v, testValFalse)
+	}
+
+	if v := annotations[plugin.AnnotationMode]; v != testValWarn {
+		t.Errorf("mode = %q, want %q", v, testValWarn)
 	}
 
 	if updates != nil {
@@ -218,8 +232,31 @@ func TestCreateContainerWarnAllow(t *testing.T) {
 		},
 	}
 
-	_, _, err := plug.CreateContainer(context.Background(), pod, ctr)
+	adj, updates, err := plug.CreateContainer(context.Background(), pod, ctr)
 	testutil.AssertNoError(t, err)
+
+	if adj == nil {
+		t.Fatal("expected non-nil adjustment for warn mode")
+	}
+
+	annotations := adj.GetAnnotations()
+
+	if v := annotations[plugin.AnnotationVerified]; v != testValFalse {
+		t.Errorf("verified = %q, want %q", v, testValFalse)
+	}
+
+	if v := annotations[plugin.AnnotationMode]; v != testValWarn {
+		t.Errorf("mode = %q, want %q", v, testValWarn)
+	}
+
+	wantChecks := "slsa:fail,vex:pass,notation:pass,sbom:pass"
+	if v := annotations[plugin.AnnotationChecks]; v != wantChecks {
+		t.Errorf("checks = %q, want %q", v, wantChecks)
+	}
+
+	if updates != nil {
+		t.Error("expected nil updates")
+	}
 }
 
 func TestConfigureWithEmptyConfig(t *testing.T) {
@@ -1314,12 +1351,12 @@ type capturingVerifier struct {
 func (v *capturingVerifier) Verify(
 	_ context.Context,
 	_, _, _, _, serviceAccount string,
-) (*nritypes.Result, error) {
+) (*scTypes.Result, error) {
 	v.mu.Lock()
 	v.serviceAccount = serviceAccount
 	v.mu.Unlock()
 
-	return &nritypes.Result{Allowed: true, Reason: "", CheckResults: nil}, nil
+	return &scTypes.Result{Allowed: true, Reason: "", CheckResults: nil}, nil
 }
 
 func (v *capturingVerifier) Ready() (ready bool, reason string) { return true, "" }
@@ -1338,7 +1375,7 @@ func TestCreateContainerPassesServiceAccount(t *testing.T) {
 	cv := &capturingVerifier{serviceAccount: "", mu: sync.Mutex{}}
 	met := metrics.New()
 
-	plug := plugin.New(cv, met, "", 30*time.Second, nil)
+	plug := plugin.New(cv, met, "", 30*time.Second, 1*time.Second, nil)
 
 	const testSA = "my-service-account"
 
@@ -1375,7 +1412,7 @@ func TestCreateContainerEmptyServiceAccount(t *testing.T) {
 	cv := &capturingVerifier{serviceAccount: "", mu: sync.Mutex{}}
 	met := metrics.New()
 
-	plug := plugin.New(cv, met, "", 30*time.Second, nil)
+	plug := plugin.New(cv, met, "", 30*time.Second, 1*time.Second, nil)
 
 	pod := &api.PodSandbox{
 		Namespace: testNamespace,
@@ -1427,5 +1464,216 @@ func TestConcurrentSynchronizeReplacesPreviousPrewarm(t *testing.T) {
 
 		_, err := plug.Synchronize(context.Background(), pods, containers)
 		testutil.AssertNoError(t, err)
+	}
+}
+
+func TestBuildVerificationAdjustmentNilResult(t *testing.T) {
+	t.Parallel()
+
+	adj := plugin.ExportBuildVerificationAdjustment(nil, config.ModeWarn)
+	if adj != nil {
+		t.Error("expected nil adjustment for nil result")
+	}
+}
+
+func TestBuildVerificationAdjustmentDisabledMode(t *testing.T) {
+	t.Parallel()
+
+	result := &scTypes.Result{Allowed: true, Reason: "", CheckResults: nil}
+
+	adj := plugin.ExportBuildVerificationAdjustment(result, config.ModeDisabled)
+	if adj != nil {
+		t.Error("expected nil adjustment for disabled mode")
+	}
+}
+
+func TestBuildVerificationAdjustmentWarnAllowed(t *testing.T) {
+	t.Parallel()
+
+	result := &scTypes.Result{
+		Allowed: true,
+		Reason:  "",
+		CheckResults: []scTypes.CheckResult{
+			*scTypes.PassResult(scTypes.CheckTypeSLSA, "ok"),
+			*scTypes.WarnResult(scTypes.CheckTypeSBOM, "partial"),
+		},
+	}
+
+	adj := plugin.ExportBuildVerificationAdjustment(result, config.ModeWarn)
+	if adj == nil {
+		t.Fatal("expected non-nil adjustment")
+	}
+
+	annotations := adj.GetAnnotations()
+
+	if v := annotations[plugin.AnnotationVerified]; v != testValTrue {
+		t.Errorf("verified = %q, want %q", v, testValTrue)
+	}
+
+	if v := annotations[plugin.AnnotationMode]; v != testValWarn {
+		t.Errorf("mode = %q, want %q", v, testValWarn)
+	}
+
+	if v := annotations[plugin.AnnotationChecks]; v != "slsa:pass,sbom:warn" {
+		t.Errorf("checks = %q, want %q", v, "slsa:pass,sbom:warn")
+	}
+}
+
+func TestBuildVerificationAdjustmentEnforceDenied(t *testing.T) {
+	t.Parallel()
+
+	result := &scTypes.Result{
+		Allowed: false,
+		Reason:  "",
+		CheckResults: []scTypes.CheckResult{
+			*scTypes.PassResult(scTypes.CheckTypeVEX, "ok"),
+			*scTypes.FailResult(scTypes.CheckTypeNotation, "invalid signature", nil),
+		},
+	}
+
+	adj := plugin.ExportBuildVerificationAdjustment(result, config.ModeEnforce)
+	if adj == nil {
+		t.Fatal("expected non-nil adjustment")
+	}
+
+	annotations := adj.GetAnnotations()
+
+	if v := annotations[plugin.AnnotationVerified]; v != testValFalse {
+		t.Errorf("verified = %q, want %q", v, testValFalse)
+	}
+
+	if v := annotations[plugin.AnnotationMode]; v != "enforce" {
+		t.Errorf("mode = %q, want %q", v, "enforce")
+	}
+
+	if v := annotations[plugin.AnnotationChecks]; v != "vex:pass,notation:fail" {
+		t.Errorf("checks = %q, want %q", v, "vex:pass,notation:fail")
+	}
+}
+
+func TestBuildVerificationAdjustmentEnforceAllowed(t *testing.T) {
+	t.Parallel()
+
+	result := &scTypes.Result{
+		Allowed: true,
+		Reason:  "",
+		CheckResults: []scTypes.CheckResult{
+			*scTypes.PassResult(scTypes.CheckTypeSLSA, "ok"),
+			*scTypes.PassResult(scTypes.CheckTypeVEX, "ok"),
+		},
+	}
+
+	adj := plugin.ExportBuildVerificationAdjustment(result, config.ModeEnforce)
+	if adj == nil {
+		t.Fatal("expected non-nil adjustment")
+	}
+
+	annotations := adj.GetAnnotations()
+
+	if v := annotations[plugin.AnnotationVerified]; v != testValTrue {
+		t.Errorf("verified = %q, want %q", v, testValTrue)
+	}
+
+	if v := annotations[plugin.AnnotationMode]; v != "enforce" {
+		t.Errorf("mode = %q, want %q", v, "enforce")
+	}
+
+	if v := annotations[plugin.AnnotationChecks]; v != "slsa:pass,vex:pass" {
+		t.Errorf("checks = %q, want %q", v, "slsa:pass,vex:pass")
+	}
+}
+
+func TestBuildVerificationAdjustmentNoCheckResults(t *testing.T) {
+	t.Parallel()
+
+	result := &scTypes.Result{Allowed: true, Reason: "", CheckResults: nil}
+
+	adj := plugin.ExportBuildVerificationAdjustment(result, config.ModeWarn)
+	if adj == nil {
+		t.Fatal("expected non-nil adjustment")
+	}
+
+	annotations := adj.GetAnnotations()
+
+	if v := annotations[plugin.AnnotationVerified]; v != testValTrue {
+		t.Errorf("verified = %q, want %q", v, testValTrue)
+	}
+
+	if v := annotations[plugin.AnnotationMode]; v != testValWarn {
+		t.Errorf("mode = %q, want %q", v, testValWarn)
+	}
+
+	if _, ok := annotations[plugin.AnnotationChecks]; ok {
+		t.Error("expected no checks annotation when check results are empty")
+	}
+}
+
+func TestBuildVerificationAdjustmentAllCheckTypes(t *testing.T) {
+	t.Parallel()
+
+	result := &scTypes.Result{
+		Allowed: true,
+		Reason:  "",
+		CheckResults: []scTypes.CheckResult{
+			*scTypes.PassResult(scTypes.CheckTypeSLSA, ""),
+			*scTypes.PassResult(scTypes.CheckTypeVEX, ""),
+			*scTypes.PassResult(scTypes.CheckTypeNotation, ""),
+			*scTypes.WarnResult(scTypes.CheckTypeSBOM, ""),
+		},
+	}
+
+	adj := plugin.ExportBuildVerificationAdjustment(result, config.ModeEnforce)
+	if adj == nil {
+		t.Fatal("expected non-nil adjustment")
+	}
+
+	want := "slsa:pass,vex:pass,notation:pass,sbom:warn"
+	if v := adj.GetAnnotations()[plugin.AnnotationChecks]; v != want {
+		t.Errorf("checks = %q, want %q", v, want)
+	}
+}
+
+func TestCreateContainerWarnAllowReturnsAdjustment(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{
+		"slsa": {"missingPolicy": "allow"},
+		"vex": {"missingPolicy": "allow"}
+	}`)
+
+	plug := newTestPlugin(t, config.ModeWarn, dir)
+
+	pod := &api.PodSandbox{
+		Namespace: testNamespace,
+		Name:      testPodName,
+	}
+	ctr := &api.Container{
+		Name: testCtrName,
+		Annotations: map[string]string{
+			plugin.AnnotationImage:    testImage,
+			plugin.AnnotationImageRef: testDigest,
+		},
+	}
+
+	adj, updates, err := plug.CreateContainer(context.Background(), pod, ctr)
+	testutil.AssertNoError(t, err)
+
+	if adj == nil {
+		t.Fatal("expected non-nil adjustment for warn mode")
+	}
+
+	annotations := adj.GetAnnotations()
+
+	if _, ok := annotations[plugin.AnnotationVerified]; !ok {
+		t.Error("expected verified annotation")
+	}
+
+	if v := annotations[plugin.AnnotationMode]; v != testValWarn {
+		t.Errorf("mode = %q, want %q", v, testValWarn)
+	}
+
+	if updates != nil {
+		t.Error("expected nil updates")
 	}
 }
