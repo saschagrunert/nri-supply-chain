@@ -58,16 +58,17 @@ func ExportDefaultDigestResolver(
 	ctx context.Context, imageRef string,
 ) (digest, indexDigest string, err error) {
 	plug := &Plugin{
-		verifier:       nil,
-		metrics:        nil,
-		configPath:     "",
-		connected:      atomic.Bool{},
-		digestResolver: nil,
-		fetchTimeout:   0,
-		prewarmDone:    nil,
-		prewarmMu:      sync.Mutex{},
-		prewarmCancel:  nil,
-		transportCache: atomic.Pointer[registry.TransportCache]{},
+		verifier:             nil,
+		metrics:              nil,
+		configPath:           "",
+		connected:            atomic.Bool{},
+		digestResolver:       nil,
+		fetchTimeout:         0,
+		digestResolveTimeout: atomic.Int64{},
+		prewarmDone:          nil,
+		prewarmMu:            sync.Mutex{},
+		prewarmCancel:        nil,
+		transportCache:       atomic.Pointer[registry.TransportCache]{},
 	}
 
 	return plug.registryAwareResolver(ctx, imageRef)

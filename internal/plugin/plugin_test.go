@@ -230,7 +230,7 @@ func TestConfigureWithEmptyConfig(t *testing.T) {
 	v, err := verifier.New(t.Context(), cfg, met, nil)
 	testutil.AssertNoError(t, err)
 
-	plug := plugin.New(v, met, "", 30*time.Second, nil)
+	plug := plugin.New(v, met, "", 30*time.Second, 1*time.Second, nil)
 
 	_, err = plug.Configure(context.Background(), "", "cri-o", "1.32")
 	testutil.AssertNoError(t, err)
@@ -248,7 +248,7 @@ func TestConfigureWithNRIConfig(t *testing.T) {
 	v, err := verifier.New(t.Context(), cfg, met, nil)
 	testutil.AssertNoError(t, err)
 
-	plug := plugin.New(v, met, "", 30*time.Second, nil)
+	plug := plugin.New(v, met, "", 30*time.Second, 1*time.Second, nil)
 
 	tomlConfig := `verification = "warn"` + "\n" +
 		`policy_dir = "` + dir + `"` + "\n"
@@ -266,7 +266,7 @@ func TestConfigureWithInvalidNRIConfig(t *testing.T) {
 	v, err := verifier.New(t.Context(), cfg, met, nil)
 	testutil.AssertNoError(t, err)
 
-	plug := plugin.New(v, met, "", 30*time.Second, nil)
+	plug := plugin.New(v, met, "", 30*time.Second, 1*time.Second, nil)
 
 	_, err = plug.Configure(context.Background(), `[[[invalid`, "cri-o", "1.32")
 	if err == nil {
@@ -283,7 +283,7 @@ func TestConfigureWithInvalidPolicyDir(t *testing.T) {
 	v, err := verifier.New(t.Context(), cfg, met, nil)
 	testutil.AssertNoError(t, err)
 
-	plug := plugin.New(v, met, "", 30*time.Second, nil)
+	plug := plugin.New(v, met, "", 30*time.Second, 1*time.Second, nil)
 
 	tomlConfig := "verification = \"warn\"\n" +
 		"policy_dir = \"/nonexistent/policies\"\n"
@@ -303,7 +303,7 @@ func TestConfigureSkipsWhenConfigPathSet(t *testing.T) {
 	v, err := verifier.New(t.Context(), cfg, met, nil)
 	testutil.AssertNoError(t, err)
 
-	plug := plugin.New(v, met, "/some/config.toml", 30*time.Second, nil)
+	plug := plugin.New(v, met, "/some/config.toml", 30*time.Second, 1*time.Second, nil)
 
 	_, err = plug.Configure(context.Background(), `verification = "enforce"`, "cri-o", "1.32")
 	testutil.AssertNoError(t, err)
@@ -606,7 +606,7 @@ func newTestPlugin(t *testing.T, mode config.VerificationMode, policyDir string)
 	v, err := verifier.New(t.Context(), cfg, met, nil)
 	testutil.AssertNoError(t, err)
 
-	return plugin.New(v, met, "", 30*time.Second, nil)
+	return plugin.New(v, met, "", 30*time.Second, 1*time.Second, nil)
 }
 
 func newTestPluginWithPrewarmSignal(

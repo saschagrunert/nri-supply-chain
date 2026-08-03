@@ -27,6 +27,7 @@ start. Remove or comment out any unrecognized keys before upgrading.
 verification = "warn"
 log_level = "info"
 fetch_timeout = "30s"
+# digest_resolve_timeout = "1s"
 # fetch_failure_policy = "warn"
 cache_ttl = "24h"
 cache_failure_ttl = "5m"
@@ -51,6 +52,7 @@ circuit_breaker_cooldown = "30s"
 | `verification`              | `disabled`                       | Global mode: `disabled`, `warn` (log-only), `enforce` (reject on failure). Per-namespace overrides are set in policy files via the `mode` field (see [policy.md](policy.md)). |
 | `log_level`                 | (CLI flag)                       | Log verbosity override: `debug`, `info`, `warn`, `error`                                                                                                                      |
 | `fetch_timeout`             | `30s`                            | Per-request timeout for attestation fetches and digest resolution                                                                                                             |
+| `digest_resolve_timeout`    | `1s`                             | Timeout for resolving an image tag to its digest when the runtime does not provide one. Max 5s. Keep below containerd's ~2s ttrpc deadline.                                   |
 | `fetch_failure_policy`      | `warn` (`deny` in enforce mode)  | Behavior when attestation fetch fails: `allow`, `warn`, `deny`. In enforce mode, defaults to `deny` unless explicitly set.                                                    |
 | `cache_ttl`                 | `24h`                            | TTL for cached verification results (`0s` disables caching)                                                                                                                   |
 | `cache_failure_ttl`         | `5m`                             | TTL for cached failure results, so transient errors retry sooner                                                                                                              |

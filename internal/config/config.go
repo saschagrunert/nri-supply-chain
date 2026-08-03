@@ -57,7 +57,15 @@ const (
 	// StrictnessEnforce is the strictness level for "enforce" mode.
 	StrictnessEnforce Strictness = 2
 
-	defaultFetchTimeout            = 30 * time.Second
+	defaultFetchTimeout         = 30 * time.Second
+	defaultDigestResolveTimeout = 1 * time.Second
+	// maxDigestResolveTimeout caps the configurable digest resolution timeout.
+	// Keep this low: digest resolution runs inside the NRI CreateContainer
+	// callback, which containerd caps at ~2s via its ttrpc deadline. Values
+	// above this cause containerd to abort the callback before resolution
+	// completes. The 5s ceiling allows headroom for runtimes with higher
+	// limits while preventing obviously broken configs.
+	maxDigestResolveTimeout        = 5 * time.Second
 	defaultCacheTTL                = 24 * time.Hour
 	defaultCacheFailureTTL         = 5 * time.Minute
 	defaultCircuitBreakerThreshold = 5
@@ -79,6 +87,12 @@ var (
 
 	// ErrFetchTimeoutNotPositive indicates a non-positive fetch timeout.
 	ErrFetchTimeoutNotPositive = errors.New("fetch_timeout must be positive")
+
+	// ErrDigestResolveTimeoutNotPositive indicates a non-positive digest resolve timeout.
+	ErrDigestResolveTimeoutNotPositive = errors.New("digest_resolve_timeout must be positive")
+
+	// ErrDigestResolveTimeoutTooHigh indicates the digest resolve timeout exceeds the maximum.
+	ErrDigestResolveTimeoutTooHigh = errors.New("digest_resolve_timeout exceeds maximum")
 
 	// ErrCacheTTLNegative indicates a negative cache TTL.
 	ErrCacheTTLNegative = errors.New("cache_ttl must be non-negative")
@@ -248,6 +262,12 @@ type Config struct {
 	Verification VerificationMode `toml:"verification"`
 	// FetchTimeout is the per-fetch timeout for retrieving attestations.
 	FetchTimeout Duration `toml:"fetch_timeout"`
+	// DigestResolveTimeout is the timeout for resolving an image tag to its
+	// digest via the registry when containerd does not provide a pre-resolved
+	// digest. Default 1s, max 5s. Keep this well under containerd's ~2s ttrpc
+	// deadline for NRI callbacks; higher values risk containerd aborting the
+	// callback before resolution completes.
+	DigestResolveTimeout Duration `toml:"digest_resolve_timeout"`
 	// FetchFailurePolicy controls behavior when attestation fetch fails due to
 	// network errors. Valid values: "allow", "warn" (default), "deny".
 	// In enforce mode the effective default changes to "deny".
@@ -290,6 +310,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		Verification:            ModeDisabled,
 		FetchTimeout:            Duration{Duration: defaultFetchTimeout},
+		DigestResolveTimeout:    Duration{Duration: defaultDigestResolveTimeout},
 		FetchFailurePolicy:      types.ActionWarn,
 		CacheTTL:                Duration{Duration: defaultCacheTTL},
 		CacheFailureTTL:         Duration{Duration: defaultCacheFailureTTL},
@@ -682,6 +703,21 @@ func (c *Config) validateFetchAndCache() error {
 	if c.FetchTimeout.Duration <= 0 {
 		errs = append(errs, fmt.Errorf(
 			"%w: got %s", ErrFetchTimeoutNotPositive, c.FetchTimeout.Duration,
+		))
+	}
+
+	if c.DigestResolveTimeout.Duration <= 0 {
+		errs = append(errs, fmt.Errorf(
+			"%w: got %s", ErrDigestResolveTimeoutNotPositive, c.DigestResolveTimeout.Duration,
+		))
+	}
+
+	if c.DigestResolveTimeout.Duration > maxDigestResolveTimeout {
+		errs = append(errs, fmt.Errorf(
+			"%w: got %s, max %s",
+			ErrDigestResolveTimeoutTooHigh,
+			c.DigestResolveTimeout.Duration,
+			maxDigestResolveTimeout,
 		))
 	}
 

@@ -67,6 +67,7 @@ func setupSignals(
 
 type pluginReloader interface {
 	CancelPrewarm()
+	SetDigestResolveTimeout(d time.Duration)
 	SetTransportCache(tc *registry.TransportCache)
 	TransportCache() *registry.TransportCache
 }
@@ -141,6 +142,7 @@ func handleReload(
 		updatePolicyDirWatch(watcher, configPath, newCfg.PolicyDir)
 
 		if plug != nil {
+			plug.SetDigestResolveTimeout(newCfg.DigestResolveTimeout.Duration)
 			updatePluginRegistries(plug, newCfg.Registries, verif.TransportCache())
 		}
 	}
