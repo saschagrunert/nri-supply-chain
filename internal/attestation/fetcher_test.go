@@ -1979,3 +1979,27 @@ func TestCollectNotationSignatures(t *testing.T) {
 		})
 	}
 }
+
+func TestExceededTotalAttestationSize(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+
+	if attestation.ExportExceededTotalAttestationSize(ctx, 0) {
+		t.Error("expected false for zero size")
+	}
+
+	exceeded := attestation.ExportExceededTotalAttestationSize(
+		ctx, attestation.ExportMaxTotalAttestationSize,
+	)
+	if exceeded {
+		t.Error("expected false for exactly max size")
+	}
+
+	exceeded = attestation.ExportExceededTotalAttestationSize(
+		ctx, attestation.ExportMaxTotalAttestationSize+1,
+	)
+	if !exceeded {
+		t.Error("expected true for size exceeding max")
+	}
+}

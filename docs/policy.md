@@ -24,6 +24,8 @@ patterns for the nri-supply-chain plugin.
   - [<code>signatures</code> (object)](#signatures-object)
   - [<code>notation</code> (object)](#notation-object)
   - [<code>sbom</code> (object)](#sbom-object)
+    - [<code>sbom.license</code> (object)](#sbomlicense-object)
+    - [<code>sbom.component</code> (object)](#sbomcomponent-object)
   - [<code>rules</code> (array of objects)](#rules-array-of-objects)
   - [<code>cel</code> (object)](#cel-object)
 - [Verification Types](#verification-types)
@@ -1184,7 +1186,7 @@ A file named `<namespace>.json` in the policy directory overrides
 
 By default, the override is a full replacement. If a namespace policy sets
 `"inherits": true`, unset top-level fields (`trust`, `include`, `exclude`,
-`slsa`, `vex`, `vsa`, `signatures`, `notation`, `sbom`, `rules`) are inherited from the default
+`slsa`, `vex`, `vsa`, `signatures`, `notation`, `sbom`, `cel`, `rules`) are inherited from the default
 policy. Each top-level section that is set in the namespace policy replaces
 the default's section entirely. The default policy itself cannot set `inherits`.
 
@@ -1241,9 +1243,9 @@ Example: `default.json` requires provenance, but `dev.json` allows everything:
 }
 ```
 
-In this example, `staging.json` inherits `trust`, `include`, `exclude`,
-`slsa`, `vsa`, and `signatures` from `default.json` but replaces the `vex`
-section.
+In this example, `staging.json` inherits all remaining sections (`trust`,
+`include`, `exclude`, `slsa`, `vsa`, `signatures`, `notation`, `sbom`, `cel`,
+`rules`) from `default.json` but replaces the `vex` section.
 
 ## Deployment Patterns
 

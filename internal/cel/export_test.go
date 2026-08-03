@@ -16,3 +16,6 @@ package cel
 
 // ResetEnvironmentForTest resets the singleton CEL environment.
 func ResetEnvironmentForTest() { resetEnvironment() }
+
+// ExportIsCostError exposes isCostError for testing.
+func ExportIsCostError(err error) bool { return isCostError(err) }

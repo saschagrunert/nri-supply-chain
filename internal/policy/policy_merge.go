@@ -23,7 +23,7 @@ import (
 // MergeWithDefault creates a new policy by starting from a copy of the default
 // policy and overriding fields that are set in the namespace policy. Each
 // top-level section (Trust, Include, Exclude, SLSA, VEX, VSA, Signatures,
-// Rules) is replaced entirely if set in the namespace policy. The Inherits
+// Notation, SBOM, CEL, Rules) is replaced entirely if set in the namespace policy. The Inherits
 // field is cleared on the result. Inherited structs are shallow-copied to
 // prevent mutations from affecting the default.
 func MergeWithDefault(namespace, defaultPol *Policy) *Policy {

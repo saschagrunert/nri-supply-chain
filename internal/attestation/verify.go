@@ -190,9 +190,12 @@ func buildKeyMaterial(keyPaths []string) (*root.TrustedPublicKeyMaterial, error)
 
 func loadPublicKeyFromPEM(path string) (crypto.PublicKey, error) {
 	if cached, ok := pemKeyCache.Load(path); ok {
-		key, _ := cached.(crypto.PublicKey)
-
-		return key, nil
+		key, castOK := cached.(crypto.PublicKey)
+		if !castOK {
+			pemKeyCache.Delete(path)
+		} else {
+			return key, nil
+		}
 	}
 
 	data, err := fileutil.ReadLimited(path, fileutil.MaxCredentialFileSize)

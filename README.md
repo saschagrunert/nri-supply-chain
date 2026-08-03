@@ -9,8 +9,8 @@
 An [NRI](https://github.com/containerd/nri) plugin for supply chain attestation
 verification at the container runtime level. It intercepts container creation
 events on [CRI-O](https://cri-o.io) or [containerd](https://containerd.io) and
-verifies SLSA provenance, VEX, and VSA attestations before a container is
-allowed to run.
+verifies SLSA provenance, VEX, VSA, Notation signatures, SBOM attestations,
+and CEL policy expressions before a container is allowed to run.
 
 Runtime-level enforcement cannot be bypassed by misconfigured admission
 webhooks, disabled policy controllers, or direct kubelet API calls. The plugin
@@ -74,7 +74,7 @@ must pass verification.
    Digest: sha256:1a8b39eeff74b8bb3e20c7f9fa773d4a9935241f7cc4e1217067c8186c2cee3c
    Namespace: default
    Policy: /etc/nri-supply-chain/policies/default.json
-   Mode: warn
+   Mode: enforce
    Result: ALLOWED
 
    TYPE   STATUS   DETAIL
@@ -138,7 +138,7 @@ must pass verification.
    Digest: sha256:1a8b39eeff74b8bb3e20c7f9fa773d4a9935241f7cc4e1217067c8186c2cee3c
    Namespace: default
    Policy: /etc/nri-supply-chain/policies/default.json
-   Mode: warn
+   Mode: enforce
    Result: ALLOWED
    Reason: VSA verification passed, skipping direct verification
 
@@ -190,7 +190,8 @@ flowchart TD
     Cache{"Cache hit?"}
     Fetch["Fetch attestations\n(OCI Referrers API +\ncosign tag fallback)"]
     VSA{"Trusted VSA?"}
-    Parallel["SLSA + VEX\n(parallel)"]
+    Parallel["SLSA + VEX + Notation + SBOM\n(parallel)"]
+    CEL["CEL policy evaluation"]
     Enforce{"Enforce / Warn"}
     Allow["Allow container"]
     Reject["Reject container"]
@@ -206,7 +207,7 @@ flowchart TD
     VSA -- "PASSED" --> Enforce
     VSA -- "FAILED" --> Enforce
     VSA -- "untrusted / stale / missing" --> Parallel
-    Parallel --> Enforce
+    Parallel --> CEL --> Enforce
     Enforce -- pass --> Allow
     Enforce -- "fail (enforce mode)" --> Reject
     Enforce -- "fail (warn mode)" --> Allow
@@ -229,7 +230,8 @@ restarted, avoiding a cold-cache fetch penalty.
 
 ## Verification
 
-The plugin verifies SLSA provenance, VEX, and VSA attestations. It extracts
+The plugin verifies SLSA provenance, VEX, VSA, Notation, and SBOM attestations
+with optional CEL policy expressions. It extracts
 image references and digests from CRI-O or containerd NRI annotations,
 resolves missing digests via registry HEAD requests, and applies per-namespace
 policies. VSA from a trusted verifier can short-circuit all other checks.
