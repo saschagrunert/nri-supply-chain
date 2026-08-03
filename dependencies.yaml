@@ -40,6 +40,8 @@ dependencies:
     refPaths:
       - path: .github/workflows/ci.yml
         match: syft-version
+      - path: .github/workflows/deploy.yml
+        match: syft-version
       - path: .github/workflows/release.yml
         match: syft-version
 
