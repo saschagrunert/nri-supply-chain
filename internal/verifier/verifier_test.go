@@ -320,7 +320,7 @@ func TestVerify(t *testing.T) {
 			testutil.AssertNoError(t, err)
 
 			result, err := verif.Verify(
-				context.Background(), imageRef, testDigest, "", "default",
+				context.Background(), imageRef, testDigest, "", "default", "",
 			)
 
 			if test.wantErr != nil {
@@ -356,12 +356,12 @@ func TestVerifyCache(t *testing.T) {
 	testutil.AssertNoError(t, err)
 
 	result1, err := verif.Verify(
-		context.Background(), "nginx:latest", testDigest, "", "default",
+		context.Background(), "nginx:latest", testDigest, "", "default", "",
 	)
 	testutil.AssertNoError(t, err)
 
 	result2, err := verif.Verify(
-		context.Background(), "nginx:latest", testDigest, "", "default",
+		context.Background(), "nginx:latest", testDigest, "", "default", "",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -396,7 +396,7 @@ func TestVerifyCacheWarnMode(t *testing.T) {
 
 	result1, err := verif.Verify(
 		context.Background(), "nginx:latest",
-		cacheDigest, "", "default",
+		cacheDigest, "", "default", "",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -407,7 +407,7 @@ func TestVerifyCacheWarnMode(t *testing.T) {
 
 	result2, err := verif.Verify(
 		context.Background(), "nginx:latest",
-		cacheDigest, "", "default",
+		cacheDigest, "", "default", "",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -446,7 +446,7 @@ func TestVerifyCacheEnforceMode(t *testing.T) {
 
 	_, err = verif.Verify(
 		context.Background(), "nginx:latest",
-		enforceDigest, "", "default",
+		enforceDigest, "", "default", "",
 	)
 
 	if !errors.Is(err, verifier.ErrVerificationFailed) {
@@ -455,7 +455,7 @@ func TestVerifyCacheEnforceMode(t *testing.T) {
 
 	_, err = verif.Verify(
 		context.Background(), "nginx:latest",
-		enforceDigest, "", "default",
+		enforceDigest, "", "default", "",
 	)
 
 	if !errors.Is(err, verifier.ErrVerificationFailed) {
@@ -485,7 +485,7 @@ func TestVerifyNamespacePolicy(t *testing.T) {
 	testutil.AssertNoError(t, err)
 
 	_, err = verif.Verify(
-		context.Background(), "nginx:latest", testDigest, "", "default",
+		context.Background(), "nginx:latest", testDigest, "", "default", "",
 	)
 	if err == nil {
 		t.Error("expected error for default namespace")
@@ -496,7 +496,7 @@ func TestVerifyNamespacePolicy(t *testing.T) {
 
 	result, err := verif.Verify(
 		context.Background(), "nginx:latest",
-		stagingDigest, "", "staging",
+		stagingDigest, "", "staging", "",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -677,7 +677,7 @@ func TestReloadPreservesCacheWhenConfigUnchanged(t *testing.T) {
 
 	result1, err := verif.Verify(
 		context.Background(), "nginx:latest",
-		reloadDigest, "", "default",
+		reloadDigest, "", "default", "",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -690,7 +690,7 @@ func TestReloadPreservesCacheWhenConfigUnchanged(t *testing.T) {
 	testutil.AssertNoError(t, err)
 
 	result2, err := verif.Verify(
-		context.Background(), "nginx:latest", reloadDigest, "", "default",
+		context.Background(), "nginx:latest", reloadDigest, "", "default", "",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -931,7 +931,7 @@ func TestReloadClearsCacheWhenPolicyChanges(t *testing.T) {
 
 	result1, err := verif.Verify(
 		context.Background(), "nginx:latest",
-		policyDigest, "", "default",
+		policyDigest, "", "default", "",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -947,7 +947,7 @@ func TestReloadClearsCacheWhenPolicyChanges(t *testing.T) {
 
 	result2, err := verif.Verify(
 		context.Background(), "nginx:latest",
-		policyDigest, "", "default",
+		policyDigest, "", "default", "",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -1462,7 +1462,7 @@ func TestVerifyExcludeDoubleStarPattern(t *testing.T) {
 	result, err := verif.Verify(
 		context.Background(),
 		"registry.k8s.io/coredns/coredns:v1.12.0",
-		testDigest, "", "default",
+		testDigest, "", "default", "",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -1492,7 +1492,7 @@ func TestVerifyWarnModeAllowsOnContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	result, err := verif.Verify(ctx, "nginx:latest", testDigest, "", "default")
+	result, err := verif.Verify(ctx, "nginx:latest", testDigest, "", "default", "")
 	testutil.AssertNoError(t, err)
 
 	if !result.Allowed {
@@ -1520,7 +1520,7 @@ func TestVerifyEnforceModeRejectsOnContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err = verif.Verify(ctx, "nginx:latest", testDigest, "", "default")
+	_, err = verif.Verify(ctx, "nginx:latest", testDigest, "", "default", "")
 	if err == nil {
 		t.Error("expected error in enforce mode on context cancel")
 	}
@@ -1546,7 +1546,7 @@ func TestVerifyIncludeAllowsMatchingImage(t *testing.T) {
 	result, err := verif.Verify(
 		context.Background(),
 		"docker.io/myorg/app:latest",
-		testDigest, "", "default",
+		testDigest, "", "default", "",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -1576,7 +1576,7 @@ func TestVerifyIncludeSkipsNonMatchingImage(t *testing.T) {
 	result, err := verif.Verify(
 		context.Background(),
 		"gcr.io/other/app:latest",
-		testDigest, "", "default",
+		testDigest, "", "default", "",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -1604,7 +1604,7 @@ func TestVerifyEmptyIncludeVerifiesEverything(t *testing.T) {
 	_, err = verif.Verify(
 		context.Background(),
 		"nginx:latest",
-		testDigest, "", "default",
+		testDigest, "", "default", "",
 	)
 
 	if !errors.Is(err, verifier.ErrVerificationFailed) {
@@ -1633,7 +1633,7 @@ func TestVerifyExcludeTakesPrecedenceOverInclude(t *testing.T) {
 	result, err := verif.Verify(
 		context.Background(),
 		"docker.io/myorg/internal/tool",
-		testDigest, "", "default",
+		testDigest, "", "default", "",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -1668,7 +1668,7 @@ func TestVerifyPerNamespaceEnforceMode(t *testing.T) {
 
 	// Default namespace uses global warn mode, so verification failure is allowed.
 	result, err := verif.Verify(
-		context.Background(), "nginx:latest", testDigest, "", "default",
+		context.Background(), "nginx:latest", testDigest, "", "default", "",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -1682,7 +1682,7 @@ func TestVerifyPerNamespaceEnforceMode(t *testing.T) {
 
 	// Production namespace uses per-namespace enforce mode, so verification failure is rejected.
 	_, err = verif.Verify(
-		context.Background(), "nginx:latest", prodDigest, "", "production",
+		context.Background(), "nginx:latest", prodDigest, "", "production", "",
 	)
 
 	if !errors.Is(err, verifier.ErrVerificationFailed) {
@@ -1715,7 +1715,7 @@ func TestVerifyPerNamespaceWarnModeAllows(t *testing.T) {
 		"66666666666666666666666666666666"
 
 	result, err := verif.Verify(
-		context.Background(), "nginx:latest", stagingDigest, "", "staging",
+		context.Background(), "nginx:latest", stagingDigest, "", "staging", "",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -1840,7 +1840,7 @@ func TestVerifyPerNamespaceEnforceCacheHit(t *testing.T) {
 
 	// First call: enforce mode rejects.
 	_, err = verif.Verify(
-		context.Background(), "nginx:latest", cacheDigest, "", "production",
+		context.Background(), "nginx:latest", cacheDigest, "", "production", "",
 	)
 	if !errors.Is(err, verifier.ErrVerificationFailed) {
 		t.Fatalf("first call: expected ErrVerificationFailed, got %v", err)
@@ -1848,7 +1848,7 @@ func TestVerifyPerNamespaceEnforceCacheHit(t *testing.T) {
 
 	// Second call (cache hit): enforce mode still rejects.
 	_, err = verif.Verify(
-		context.Background(), "nginx:latest", cacheDigest, "", "production",
+		context.Background(), "nginx:latest", cacheDigest, "", "production", "",
 	)
 	if !errors.Is(err, verifier.ErrVerificationFailed) {
 		t.Fatalf("second call (cache hit): expected ErrVerificationFailed, got %v", err)
@@ -1930,7 +1930,7 @@ func TestVerifyIncludeDoubleStarPattern(t *testing.T) {
 	result, err := verif.Verify(
 		context.Background(),
 		"docker.io/myorg/team/app:v1",
-		testDigest, "", "default",
+		testDigest, "", "default", "",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -1974,7 +1974,7 @@ func TestVerifyDetachedVerificationPopulatesCache(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	result, err := verif.Verify(ctx, "nginx:latest", detachedDigest, "", "default")
+	result, err := verif.Verify(ctx, "nginx:latest", detachedDigest, "", "default", "")
 	testutil.AssertNoError(t, err)
 
 	if !result.Allowed {
@@ -1995,7 +1995,7 @@ func TestVerifyDetachedVerificationPopulatesCache(t *testing.T) {
 	hitsBefore := promtestutil.ToFloat64(met.CacheHitsTotal)
 
 	result2, err := verif.Verify(
-		context.Background(), "nginx:latest", detachedDigest, "", "default",
+		context.Background(), "nginx:latest", detachedDigest, "", "default", "",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -2040,7 +2040,7 @@ func TestVerifyDetachedVerificationEnforceRetryHitsCache(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	_, err = verif.Verify(ctx, "nginx:latest", enforceDigest, "", "default")
+	_, err = verif.Verify(ctx, "nginx:latest", enforceDigest, "", "default", "")
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected context.DeadlineExceeded, got: %v", err)
 	}
@@ -2059,7 +2059,7 @@ func TestVerifyDetachedVerificationEnforceRetryHitsCache(t *testing.T) {
 	hitsBefore := promtestutil.ToFloat64(met.CacheHitsTotal)
 
 	result, err := verif.Verify(
-		context.Background(), "nginx:latest", enforceDigest, "", "default",
+		context.Background(), "nginx:latest", enforceDigest, "", "default", "",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -2098,7 +2098,7 @@ func TestVerifyImageRuleMatchOverrides(t *testing.T) {
 	result, err := verif.Verify(
 		context.Background(),
 		"docker.io/trusted/app:latest",
-		testDigest, "", "default",
+		testDigest, "", "default", "",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -2134,7 +2134,7 @@ func TestVerifyImageRuleNoMatchUsesBase(t *testing.T) {
 	_, err = verif.Verify(
 		context.Background(),
 		"docker.io/other/app:latest",
-		testDigest, "", "default",
+		testDigest, "", "default", "",
 	)
 
 	if !errors.Is(err, verifier.ErrVerificationFailed) {
@@ -2172,7 +2172,7 @@ func TestVerifyImageRuleFirstMatchWins(t *testing.T) {
 	result, err := verif.Verify(
 		context.Background(),
 		"docker.io/myorg/app:latest",
-		testDigest, "", "default",
+		testDigest, "", "default", "",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -2324,7 +2324,7 @@ func TestOnPolicyUpdateAppliesNewPolicies(t *testing.T) {
 
 	// Before update: deny policy produces a failure reason.
 	result1, err := verif.Verify(
-		context.Background(), "nginx:latest", updateDigest, "", "default",
+		context.Background(), "nginx:latest", updateDigest, "", "default", "",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -2348,7 +2348,7 @@ func TestOnPolicyUpdateAppliesNewPolicies(t *testing.T) {
 		"dddddddddddddddddddddddddddddd"
 
 	result2, err := verif.Verify(
-		context.Background(), "nginx:latest", postUpdateDigest, "", "default",
+		context.Background(), "nginx:latest", postUpdateDigest, "", "default", "",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -2386,7 +2386,7 @@ func TestVerifyImageRuleInheritance(t *testing.T) {
 	result, err := verif.Verify(
 		context.Background(),
 		"docker.io/trusted/app:latest",
-		testDigest, "", "staging",
+		testDigest, "", "staging", "",
 	)
 	testutil.AssertNoError(t, err)
 
@@ -2427,7 +2427,7 @@ func TestConcurrentVerifyAndReload(t *testing.T) {
 			digest := fmt.Sprintf("sha256:%064x", i)
 
 			for ctx.Err() == nil {
-				_, _ = verif.Verify(ctx, "nginx:latest", digest, "", "default")
+				_, _ = verif.Verify(ctx, "nginx:latest", digest, "", "default", "")
 			}
 		})
 	}
@@ -2444,4 +2444,75 @@ func TestConcurrentVerifyAndReload(t *testing.T) {
 	})
 
 	wg.Wait()
+}
+
+func TestResolveNodeName(t *testing.T) {
+	t.Run("returns NODE_NAME env var when set", func(t *testing.T) {
+		t.Setenv("NODE_NAME", "test-node-42")
+
+		got := verifier.ExportResolveNodeName()
+		if got != "test-node-42" {
+			t.Errorf("expected %q, got %q", "test-node-42", got)
+		}
+	})
+
+	t.Run("falls back to hostname when NODE_NAME is unset", func(t *testing.T) {
+		t.Setenv("NODE_NAME", "")
+
+		got := verifier.ExportResolveNodeName()
+
+		hostname, err := os.Hostname()
+		testutil.AssertNoError(t, err)
+
+		if got != hostname {
+			t.Errorf("expected hostname %q, got %q", hostname, got)
+		}
+	})
+}
+
+func TestPolicyHashForNamespace(t *testing.T) {
+	t.Parallel()
+
+	const (
+		defaultHash = "default-hash"
+		prodHash    = "prod-hash"
+	)
+
+	t.Run("returns namespace-specific hash when present", func(t *testing.T) {
+		t.Parallel()
+
+		hashes := map[string]string{
+			"":           defaultHash,
+			"production": prodHash,
+		}
+
+		got := verifier.ExportPolicyHashForNamespace(hashes, "production")
+		if got != prodHash {
+			t.Errorf("expected %q, got %q", prodHash, got)
+		}
+	})
+
+	t.Run("falls back to default hash", func(t *testing.T) {
+		t.Parallel()
+
+		hashes := map[string]string{
+			"": defaultHash,
+		}
+
+		got := verifier.ExportPolicyHashForNamespace(hashes, "staging")
+		if got != defaultHash {
+			t.Errorf("expected %q, got %q", defaultHash, got)
+		}
+	})
+
+	t.Run("returns empty string when no keys exist", func(t *testing.T) {
+		t.Parallel()
+
+		hashes := map[string]string{}
+
+		got := verifier.ExportPolicyHashForNamespace(hashes, "any")
+		if got != "" {
+			t.Errorf("expected empty string, got %q", got)
+		}
+	})
 }

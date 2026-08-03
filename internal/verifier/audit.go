@@ -24,17 +24,29 @@ import (
 
 const auditMessage = "Supply chain audit"
 
+// auditInfo bundles security-context fields that enrich audit log entries.
+type auditInfo struct {
+	policyHash        string
+	nodeName          string
+	podServiceAccount string
+	verificationMode  string
+}
+
 // auditEvent defines the structured schema for supply chain audit log entries.
 type auditEvent struct {
-	Image     string `json:"image"`
-	Digest    string `json:"digest"`
-	Namespace string `json:"namespace"`
-	Allowed   bool   `json:"allowed,omitempty"`
-	Check     string `json:"check,omitempty"`
-	Status    string `json:"status,omitempty"`
-	Detail    string `json:"detail,omitempty"`
-	Decision  string `json:"decision,omitempty"`
-	Reason    string `json:"reason,omitempty"`
+	Image             string `json:"image"`
+	Digest            string `json:"digest"`
+	Namespace         string `json:"namespace"`
+	Allowed           bool   `json:"allowed,omitempty"`
+	Check             string `json:"check,omitempty"`
+	Status            string `json:"status,omitempty"`
+	Detail            string `json:"detail,omitempty"`
+	Decision          string `json:"decision,omitempty"`
+	Reason            string `json:"reason,omitempty"`
+	PolicyHash        string `json:"policyHash,omitempty"`
+	NodeName          string `json:"nodeName,omitempty"`
+	PodServiceAccount string `json:"podServiceAccount,omitempty"`
+	VerificationMode  string `json:"verificationMode,omitempty"`
 }
 
 func (e *auditEvent) logAttrs() []any {
@@ -61,13 +73,41 @@ func (e *auditEvent) logAttrs() []any {
 		)
 	}
 
+	if e.PolicyHash != "" {
+		attrs = append(attrs, "policyHash", e.PolicyHash)
+	}
+
+	if e.NodeName != "" {
+		attrs = append(attrs, "nodeName", e.NodeName)
+	}
+
+	if e.PodServiceAccount != "" {
+		attrs = append(attrs, "podServiceAccount", e.PodServiceAccount)
+	}
+
+	if e.VerificationMode != "" {
+		attrs = append(attrs, "verificationMode", e.VerificationMode)
+	}
+
 	return attrs
+}
+
+func applyAuditInfo(event *auditEvent, info *auditInfo) {
+	if info == nil {
+		return
+	}
+
+	event.PolicyHash = info.policyHash
+	event.NodeName = info.nodeName
+	event.PodServiceAccount = info.podServiceAccount
+	event.VerificationMode = info.verificationMode
 }
 
 func logResult(
 	ctx context.Context, logger *slog.Logger,
 	imageRef, digest, namespace string,
 	result *types.Result,
+	info *auditInfo,
 ) {
 	if len(result.CheckResults) == 0 {
 		decision := "denied"
@@ -75,13 +115,13 @@ func logResult(
 			decision = "allowed"
 		}
 
-		logAuditDecision(ctx, logger, imageRef, digest, namespace, decision, result.Reason)
+		logAuditDecision(ctx, logger, imageRef, digest, namespace, decision, result.Reason, info)
 
 		return
 	}
 
 	for _, checkResult := range result.CheckResults {
-		event := &auditEvent{
+		event := &auditEvent{ //nolint:exhaustruct // remaining fields set by applyAuditInfo
 			Image:     imageRef,
 			Digest:    digest,
 			Namespace: namespace,
@@ -89,9 +129,8 @@ func logResult(
 			Check:     string(checkResult.Type),
 			Status:    string(checkResult.Status),
 			Detail:    checkResult.Detail,
-			Decision:  "",
-			Reason:    "",
 		}
+		applyAuditInfo(event, info)
 		logger.InfoContext(ctx, auditMessage, event.logAttrs()...)
 	}
 }
@@ -99,26 +138,26 @@ func logResult(
 func logAuditDecision(
 	ctx context.Context, logger *slog.Logger,
 	imageRef, digest, namespace, decision, reason string,
+	info *auditInfo,
 ) {
-	event := &auditEvent{
+	event := &auditEvent{ //nolint:exhaustruct // remaining fields set by applyAuditInfo
 		Image:     imageRef,
 		Digest:    digest,
 		Namespace: namespace,
 		Allowed:   decision == "allowed",
-		Check:     "",
-		Status:    "",
-		Detail:    "",
 		Decision:  decision,
 		Reason:    reason,
 	}
+	applyAuditInfo(event, info)
 	logger.InfoContext(ctx, auditMessage, event.logAttrs()...)
 }
 
 func allowResult(
 	ctx context.Context, logger *slog.Logger,
 	imageRef, digest, namespace, reason string,
+	info *auditInfo,
 ) *types.Result {
-	logAuditDecision(ctx, logger, imageRef, digest, namespace, "allowed", reason)
+	logAuditDecision(ctx, logger, imageRef, digest, namespace, "allowed", reason, info)
 
 	return &types.Result{
 		Allowed:      true,

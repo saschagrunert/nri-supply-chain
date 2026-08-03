@@ -67,7 +67,7 @@ func BenchmarkVerifyCacheHit(b *testing.B) {
 
 	ctx := context.Background()
 
-	_, err = verif.Verify(ctx, "nginx:latest", benchmarkDigest, "", "default")
+	_, err = verif.Verify(ctx, "nginx:latest", benchmarkDigest, "", "default", "")
 	if err != nil {
 		b.Fatalf("initial verify: %v", err)
 	}
@@ -76,7 +76,7 @@ func BenchmarkVerifyCacheHit(b *testing.B) {
 
 	for range b.N {
 		_, err = verif.Verify(
-			ctx, "nginx:latest", benchmarkDigest, "", "default",
+			ctx, "nginx:latest", benchmarkDigest, "", "default", "",
 		)
 		if err != nil {
 			b.Fatalf("verify: %v", err)
@@ -100,7 +100,7 @@ func BenchmarkVerifyCacheHitParallel(b *testing.B) {
 
 	ctx := context.Background()
 
-	_, err = verif.Verify(ctx, "nginx:latest", benchmarkDigest, "", "default")
+	_, err = verif.Verify(ctx, "nginx:latest", benchmarkDigest, "", "default", "")
 	if err != nil {
 		b.Fatalf("initial verify: %v", err)
 	}
@@ -109,7 +109,7 @@ func BenchmarkVerifyCacheHitParallel(b *testing.B) {
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_, verifyErr := verif.Verify(ctx, "nginx:latest", benchmarkDigest, "", "default")
+			_, verifyErr := verif.Verify(ctx, "nginx:latest", benchmarkDigest, "", "default", "")
 			if verifyErr != nil {
 				b.Errorf("verify: %v", verifyErr)
 
@@ -153,7 +153,7 @@ func BenchmarkVerifyE2EWithMockFetcher(b *testing.B) {
 	b.ResetTimer()
 
 	for range b.N {
-		_, err = verif.Verify(ctx, "nginx:latest", benchmarkDigest, "", "default")
+		_, err = verif.Verify(ctx, "nginx:latest", benchmarkDigest, "", "default", "")
 		if err != nil {
 			b.Fatalf("verify: %v", err)
 		}
@@ -195,7 +195,7 @@ func BenchmarkVerifyE2EParallel(b *testing.B) {
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_, verifyErr := verif.Verify(ctx, "nginx:latest", benchmarkDigest, "", "default")
+			_, verifyErr := verif.Verify(ctx, "nginx:latest", benchmarkDigest, "", "default", "")
 			if verifyErr != nil {
 				b.Errorf("verify: %v", verifyErr)
 
@@ -241,7 +241,7 @@ func BenchmarkVerifyE2EMultipleImages(b *testing.B) {
 	for i := range b.N {
 		image := fmt.Sprintf("nginx-%d:latest", i%100)
 
-		_, err = verif.Verify(ctx, image, benchmarkDigest, "", "default")
+		_, err = verif.Verify(ctx, image, benchmarkDigest, "", "default", "")
 		if err != nil {
 			b.Fatalf("verify: %v", err)
 		}
@@ -262,7 +262,7 @@ func BenchmarkVerifyDisabled(b *testing.B) {
 
 	for range b.N {
 		_, err = verif.Verify(
-			ctx, "nginx:latest", benchmarkDigest, "", "default",
+			ctx, "nginx:latest", benchmarkDigest, "", "default", "",
 		)
 		if err != nil {
 			b.Fatalf("verify: %v", err)

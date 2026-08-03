@@ -38,6 +38,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/plugin"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
+	nritypes "github.com/saschagrunert/nri-supply-chain/internal/types"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
@@ -1303,6 +1304,101 @@ func TestConcurrentSynchronizeAndCancelPrewarm(t *testing.T) {
 	}
 
 	wg.Wait()
+}
+
+type capturingVerifier struct {
+	serviceAccount string
+	mu             sync.Mutex
+}
+
+func (v *capturingVerifier) Verify(
+	_ context.Context,
+	_, _, _, _, serviceAccount string,
+) (*nritypes.Result, error) {
+	v.mu.Lock()
+	v.serviceAccount = serviceAccount
+	v.mu.Unlock()
+
+	return &nritypes.Result{Allowed: true, Reason: "", CheckResults: nil}, nil
+}
+
+func (v *capturingVerifier) Ready() (ready bool, reason string) { return true, "" }
+
+func (v *capturingVerifier) Enforcing() bool { return false }
+
+func (v *capturingVerifier) EffectiveModeForNamespace(_ string) config.VerificationMode {
+	return config.ModeWarn
+}
+
+func (v *capturingVerifier) Reload(_ context.Context, _ *config.Config) error { return nil }
+
+func TestCreateContainerPassesServiceAccount(t *testing.T) {
+	t.Parallel()
+
+	cv := &capturingVerifier{serviceAccount: "", mu: sync.Mutex{}}
+	met := metrics.New()
+
+	plug := plugin.New(cv, met, "", 30*time.Second, nil)
+
+	const testSA = "my-service-account"
+
+	pod := &api.PodSandbox{
+		Namespace: testNamespace,
+		Name:      testPodName,
+		Annotations: map[string]string{
+			plugin.AnnotationServiceAccount: testSA,
+		},
+	}
+	ctr := &api.Container{
+		Name: testCtrName,
+		Annotations: map[string]string{
+			plugin.AnnotationImage:    testImage,
+			plugin.AnnotationImageRef: testDigest,
+		},
+	}
+
+	_, _, err := plug.CreateContainer(context.Background(), pod, ctr)
+	testutil.AssertNoError(t, err)
+
+	cv.mu.Lock()
+	got := cv.serviceAccount
+	cv.mu.Unlock()
+
+	if got != testSA {
+		t.Errorf("expected service account %q, got %q", testSA, got)
+	}
+}
+
+func TestCreateContainerEmptyServiceAccount(t *testing.T) {
+	t.Parallel()
+
+	cv := &capturingVerifier{serviceAccount: "", mu: sync.Mutex{}}
+	met := metrics.New()
+
+	plug := plugin.New(cv, met, "", 30*time.Second, nil)
+
+	pod := &api.PodSandbox{
+		Namespace: testNamespace,
+		Name:      testPodName,
+	}
+	ctr := &api.Container{
+		Name: testCtrName,
+		Annotations: map[string]string{
+			plugin.AnnotationImage:    testImage,
+			plugin.AnnotationImageRef: testDigest,
+		},
+	}
+
+	_, _, err := plug.CreateContainer(context.Background(), pod, ctr)
+	testutil.AssertNoError(t, err)
+
+	cv.mu.Lock()
+	got := cv.serviceAccount
+	cv.mu.Unlock()
+
+	if got != "" {
+		t.Errorf("expected empty service account, got %q", got)
+	}
 }
 
 func TestConcurrentSynchronizeReplacesPreviousPrewarm(t *testing.T) {

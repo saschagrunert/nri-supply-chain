@@ -47,6 +47,7 @@ func TestAuditEventLogAttrs(t *testing.T) {
 		event := verifier.ExportNewAuditEvent(
 			"docker.io/library/nginx:latest", "sha256:abc123", "default",
 			true, "slsa", "pass", "SLSA verification passed", "", "",
+			nil,
 		)
 
 		attrs := attrMap(verifier.ExportAuditEventLogAttrs(event))
@@ -63,6 +64,7 @@ func TestAuditEventLogAttrs(t *testing.T) {
 		event := verifier.ExportNewAuditEvent(
 			"docker.io/library/nginx:latest", "sha256:abc123", "default",
 			true, "", "", "", "allowed", "image is excluded",
+			nil,
 		)
 
 		attrs := attrMap(verifier.ExportAuditEventLogAttrs(event))
@@ -70,6 +72,76 @@ func TestAuditEventLogAttrs(t *testing.T) {
 		testutil.AssertEqual(t, "image is excluded", attrs["reason"])
 		testutil.AssertEqual(t, true, attrs["allowed"])
 	})
+}
+
+func TestAuditEventLogAttrsEnrichmentFields(t *testing.T) {
+	t.Parallel()
+
+	event := verifier.ExportNewAuditEvent(
+		"docker.io/library/nginx:latest", "sha256:abc123", "default",
+		true, "", "", "", "allowed", "test",
+		verifier.NewExportAuditInfo("sha256:policy1", "node-1", "my-service-account", "enforce"),
+	)
+
+	attrs := attrMap(verifier.ExportAuditEventLogAttrs(event))
+	testutil.AssertEqual(t, "sha256:policy1", attrs["policyHash"])
+	testutil.AssertEqual(t, "node-1", attrs["nodeName"])
+	testutil.AssertEqual(t, "my-service-account", attrs["podServiceAccount"])
+	testutil.AssertEqual(t, "enforce", attrs["verificationMode"])
+}
+
+func TestAuditEventLogAttrsOmitsEmptyEnrichmentFields(t *testing.T) {
+	t.Parallel()
+
+	event := verifier.ExportNewAuditEvent(
+		"docker.io/library/nginx:latest", "sha256:abc123", "default",
+		true, "", "", "", "allowed", "test",
+		nil,
+	)
+
+	attrs := attrMap(verifier.ExportAuditEventLogAttrs(event))
+
+	if _, ok := attrs["policyHash"]; ok {
+		t.Error("expected policyHash to be omitted when empty")
+	}
+
+	if _, ok := attrs["nodeName"]; ok {
+		t.Error("expected nodeName to be omitted when empty")
+	}
+
+	if _, ok := attrs["podServiceAccount"]; ok {
+		t.Error("expected podServiceAccount to be omitted when empty")
+	}
+
+	if _, ok := attrs["verificationMode"]; ok {
+		t.Error("expected verificationMode to be omitted when empty")
+	}
+}
+
+func TestLogAuditDecisionWithAuditInfo(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	info := verifier.NewExportAuditInfo("sha256:pol", "node-2", "sa-1", "warn")
+
+	verifier.ExportLogAuditDecision(
+		context.Background(), logger,
+		"docker.io/library/nginx:latest", "sha256:abc123",
+		"default", "allowed", "test reason", info,
+	)
+
+	output := buf.String()
+
+	var parsed map[string]any
+
+	testutil.AssertNoError(t, json.Unmarshal([]byte(output), &parsed))
+
+	testutil.AssertEqual(t, "sha256:pol", parsed["policyHash"])
+	testutil.AssertEqual(t, "node-2", parsed["nodeName"])
+	testutil.AssertEqual(t, "sa-1", parsed["podServiceAccount"])
+	testutil.AssertEqual(t, "warn", parsed["verificationMode"])
 }
 
 func TestLogResultSerializesControlCharacters(t *testing.T) {
@@ -97,7 +169,7 @@ func TestLogResultSerializesControlCharacters(t *testing.T) {
 	verifier.ExportLogResult(
 		context.Background(), logger,
 		"evil\nimage\r\nref", "sha256:abc", "ns\x00null",
-		result,
+		result, nil,
 	)
 
 	output := buf.String()
@@ -138,7 +210,7 @@ func TestLogAuditDecision(t *testing.T) {
 	verifier.ExportLogAuditDecision(
 		context.Background(), logger,
 		"docker.io/library/nginx:latest", "sha256:abc123",
-		"default", "allowed", "image is excluded",
+		"default", "allowed", "image is excluded", nil,
 	)
 
 	output := buf.String()
@@ -162,7 +234,7 @@ func TestAllowResultSetsAllowed(t *testing.T) {
 	result := verifier.ExportAllowResult(
 		context.Background(), logger,
 		"docker.io/library/nginx:latest", "sha256:abc123",
-		"default", "test reason",
+		"default", "test reason", nil,
 	)
 
 	testutil.AssertEqual(t, true, result.Allowed)
