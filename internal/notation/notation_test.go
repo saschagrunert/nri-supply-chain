@@ -18,6 +18,7 @@ package notation
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
@@ -26,16 +27,17 @@ import (
 )
 
 const (
-	testImageDigest     = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
-	testImageRef        = "example.com/img@sha256:" + testImageDigest
-	testDigest          = "sha256:" + testImageDigest
-	testRuleName        = "rule1"
-	testStoreName       = "mystore"
-	testStoreRef        = "ca:mystore"
-	testCertPlaceholder = "/tmp/cert.pem"
-	testDocVersion      = "1.0"
-	testLevelStrict     = "strict"
-	testStoreRefAlt     = "ca:store1"
+	testImageDigest       = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+	testImageRef          = "example.com/img@sha256:" + testImageDigest
+	testDigest            = "sha256:" + testImageDigest
+	testRuleName          = "rule1"
+	testStoreName         = "mystore"
+	testStoreRef          = "ca:mystore"
+	testNotationMediaType = "application/cose"
+	testCertPlaceholder   = "/tmp/cert.pem"
+	testDocVersion        = "1.0"
+	testLevelStrict       = "strict"
+	testStoreRefAlt       = "ca:store1"
 )
 
 func validNotationPolicy(t *testing.T) *policy.NotationPolicy {
@@ -248,7 +250,7 @@ func TestVerify(t *testing.T) {
 		Payload:           []byte("invalid-envelope"),
 		Digest:            testDigest,
 		SignatureType:     attestation.SignatureTypeNotation,
-		NotationMediaType: "application/cose",
+		NotationMediaType: testNotationMediaType,
 	}
 
 	tests := []struct {
@@ -473,7 +475,7 @@ func TestVerifyMultiple(t *testing.T) {
 					Payload:           []byte("invalid-envelope"),
 					Digest:            testDigest,
 					SignatureType:     attestation.SignatureTypeNotation,
-					NotationMediaType: "application/cose",
+					NotationMediaType: testNotationMediaType,
 				},
 			},
 			pol: func(t *testing.T) *policy.Policy {
@@ -526,6 +528,75 @@ func TestVerifyMultiple(t *testing.T) {
 				if tc.wantDetail != "" && result.Detail != tc.wantDetail {
 					t.Errorf("detail = %q, want %q", result.Detail, tc.wantDetail)
 				}
+			}
+		})
+	}
+}
+
+func TestVerifySubjectDigestCrossCheck(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		sig           *attestation.VerifiedAttestation
+		wantPass      bool
+		wantDetailSub string
+	}{
+		{
+			name: "empty subject digest returns no subject binding",
+			sig: &attestation.VerifiedAttestation{
+				PredicateType:         attestation.NotationSignatureMediaType,
+				Payload:               []byte("invalid-envelope"),
+				Digest:                testDigest,
+				SignatureType:         attestation.SignatureTypeNotation,
+				NotationMediaType:     testNotationMediaType,
+				NotationSubjectDigest: "",
+			},
+			wantPass:      false,
+			wantDetailSub: "signature has no subject binding",
+		},
+		{
+			name: "mismatched subject digest returns does not match",
+			sig: &attestation.VerifiedAttestation{
+				PredicateType:         attestation.NotationSignatureMediaType,
+				Payload:               []byte("invalid-envelope"),
+				Digest:                testDigest,
+				SignatureType:         attestation.SignatureTypeNotation,
+				NotationMediaType:     testNotationMediaType,
+				NotationSubjectDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+			},
+			wantPass:      false,
+			wantDetailSub: "does not match",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx := context.Background()
+			pol := &policy.Policy{
+				Sections: policy.Sections{
+					Notation: validNotationPolicy(t),
+				},
+			}
+
+			result, err := Verify(ctx, tc.sig, testImageRef, testDigest, pol)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result == nil {
+				t.Fatal("expected non-nil result, got nil")
+			}
+
+			if result.Passed != tc.wantPass {
+				t.Errorf("passed = %v, want %v (detail: %s)",
+					result.Passed, tc.wantPass, result.Detail)
+			}
+
+			if tc.wantDetailSub != "" && !strings.Contains(result.Detail, tc.wantDetailSub) {
+				t.Errorf("detail = %q, want substring %q", result.Detail, tc.wantDetailSub)
 			}
 		})
 	}

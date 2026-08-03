@@ -20,11 +20,11 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"os"
 	"sync"
 
 	"github.com/notaryproject/notation-go/verifier/truststore"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/fileutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 )
 
@@ -145,7 +145,7 @@ func loadCertificates(paths []string) ([]*x509.Certificate, error) {
 }
 
 func loadPEMCertificates(path string) ([]*x509.Certificate, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // path is validated by policy.ValidateRuntime
+	data, err := fileutil.ReadLimited(path, fileutil.MaxCredentialFileSize)
 	if err != nil {
 		return nil, fmt.Errorf("reading certificate file: %w", err)
 	}

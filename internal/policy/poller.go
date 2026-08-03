@@ -76,8 +76,14 @@ func (p *Poller) Start(ctx context.Context) {
 	pollCtx, cancel := context.WithCancel(ctx)
 
 	p.mu.Lock()
+	prev := p.cancel
 	p.cancel = cancel
 	p.mu.Unlock()
+
+	if prev != nil {
+		prev()
+		p.wg.Wait()
+	}
 
 	p.wg.Add(1)
 

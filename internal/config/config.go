@@ -64,6 +64,9 @@ const (
 	defaultCircuitBreakerCooldown  = 30 * time.Second
 	maxFetchRateLimit              = 10000.0
 
+	defaultVerificationTimeout = 5 * time.Minute
+	maxVerificationTimeout     = 30 * time.Minute
+
 	// PolicySourceLocal loads policies from the local filesystem (default).
 	PolicySourceLocal PolicySource = "local"
 	// PolicySourceOCI loads policies from an OCI registry artifact.
@@ -168,6 +171,12 @@ var (
 
 	// ErrPollIntervalTooShort indicates the poll interval is below the minimum.
 	ErrPollIntervalTooShort = errors.New("policy.poll_interval must be at least 30s")
+
+	// ErrVerificationTimeoutNotPositive indicates a non-positive verification timeout.
+	ErrVerificationTimeoutNotPositive = errors.New("verification_timeout must be positive")
+
+	// ErrVerificationTimeoutTooHigh indicates the verification timeout exceeds the maximum.
+	ErrVerificationTimeoutTooHigh = errors.New("verification_timeout exceeds maximum")
 )
 
 // Duration wraps time.Duration to support TOML unmarshalling from strings.
@@ -268,6 +277,9 @@ type Config struct {
 	// CircuitBreakerCooldown is how long the circuit breaker stays open
 	// before allowing a probe request.
 	CircuitBreakerCooldown Duration `toml:"circuit_breaker_cooldown"`
+	// VerificationTimeout is the maximum time allowed for a single image
+	// verification (all checks combined). Defaults to 5m, maximum 30m.
+	VerificationTimeout Duration `toml:"verification_timeout"`
 	// FetchRateLimit is the maximum number of registry fetch requests per
 	// second. 0 means unlimited.
 	FetchRateLimit float64 `toml:"fetch_rate_limit"`
@@ -297,6 +309,7 @@ func DefaultConfig() *Config {
 		MetricsAddr:             "127.0.0.1:9090",
 		CircuitBreakerThreshold: defaultCircuitBreakerThreshold,
 		CircuitBreakerCooldown:  Duration{Duration: defaultCircuitBreakerCooldown},
+		VerificationTimeout:     Duration{Duration: defaultVerificationTimeout},
 		FetchRateLimit:          0,
 		LogLevel:                "",
 		Sigstore:                SigstoreConfig{TUFMirror: "", TUFRoot: ""},
@@ -383,7 +396,9 @@ func (c *Config) ValidateRuntime() error {
 			if err != nil {
 				errs = append(errs, fmt.Errorf("invalid policy_dir %q: %w", c.PolicyDir, err))
 			} else if !info.IsDir() {
-				errs = append(errs, fmt.Errorf("%w: %q", ErrPolicyDirNotDirectory, c.PolicyDir))
+				errs = append(errs, fmt.Errorf(
+					"%w: %q; see docs/config.md", ErrPolicyDirNotDirectory, c.PolicyDir,
+				))
 			}
 		}
 
@@ -484,7 +499,9 @@ func (c *Config) validateModeAndLogLevel() []error {
 	switch c.Verification {
 	case ModeDisabled, ModeWarn, ModeEnforce:
 	default:
-		errs = append(errs, fmt.Errorf("%w: %q", ErrInvalidVerificationMode, c.Verification))
+		errs = append(errs, fmt.Errorf(
+			"%w: %q; see docs/config.md", ErrInvalidVerificationMode, c.Verification,
+		))
 	}
 
 	if c.LogLevel != "" {
@@ -692,9 +709,11 @@ func (c *Config) validateFetchAndCache() error {
 
 	if c.Enabled() && c.Policy.Source != PolicySourceOCI {
 		if c.PolicyDir == "" {
-			errs = append(errs, ErrPolicyDirEmpty)
+			errs = append(errs, fmt.Errorf("%w; see docs/config.md", ErrPolicyDirEmpty))
 		} else if !filepath.IsAbs(c.PolicyDir) {
-			errs = append(errs, fmt.Errorf("%w: %q", ErrPolicyDirNotAbsolute, c.PolicyDir))
+			errs = append(errs, fmt.Errorf(
+				"%w: %q; see docs/config.md", ErrPolicyDirNotAbsolute, c.PolicyDir,
+			))
 		}
 	}
 
@@ -731,6 +750,21 @@ func (c *Config) validateResilienceFields() error {
 	if c.CircuitBreakerCooldown.Duration <= 0 {
 		errs = append(errs, fmt.Errorf(
 			"%w: got %s", ErrCircuitBreakerCooldown, c.CircuitBreakerCooldown.Duration,
+		))
+	}
+
+	if c.VerificationTimeout.Duration <= 0 {
+		errs = append(errs, fmt.Errorf(
+			"%w: got %s", ErrVerificationTimeoutNotPositive, c.VerificationTimeout.Duration,
+		))
+	}
+
+	if c.VerificationTimeout.Duration > maxVerificationTimeout {
+		errs = append(errs, fmt.Errorf(
+			"%w: got %s, max %s",
+			ErrVerificationTimeoutTooHigh,
+			c.VerificationTimeout.Duration,
+			maxVerificationTimeout,
 		))
 	}
 
@@ -778,9 +812,9 @@ func validateTUFMirrorURL(mirror string) error {
 		return fmt.Errorf("%w: %q: %w", ErrInvalidTUFMirror, mirror, err)
 	}
 
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+	if parsed.Scheme != "https" {
 		return fmt.Errorf(
-			"%w: %q: scheme must be http or https", ErrInvalidTUFMirror, mirror,
+			"%w: %q: scheme must be https", ErrInvalidTUFMirror, mirror,
 		)
 	}
 

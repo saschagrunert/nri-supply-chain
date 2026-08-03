@@ -813,6 +813,80 @@ policy_dir = "/tmp/policies"
 	})
 }
 
+func TestConfigValidateVerificationTimeout(t *testing.T) {
+	t.Parallel()
+
+	t.Run("default is valid", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		testutil.AssertNoError(t, cfg.Validate())
+		testutil.AssertEqual(t, 5*time.Minute, cfg.VerificationTimeout.Duration)
+	})
+
+	t.Run("zero rejected", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.VerificationTimeout = config.Duration{Duration: 0}
+
+		err := cfg.Validate()
+		if !errors.Is(err, config.ErrVerificationTimeoutNotPositive) {
+			t.Errorf("expected ErrVerificationTimeoutNotPositive, got %v", err)
+		}
+	})
+
+	t.Run("negative rejected", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.VerificationTimeout = config.Duration{Duration: -1 * time.Second}
+
+		err := cfg.Validate()
+		if !errors.Is(err, config.ErrVerificationTimeoutNotPositive) {
+			t.Errorf("expected ErrVerificationTimeoutNotPositive, got %v", err)
+		}
+	})
+
+	t.Run("exceeds maximum rejected", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.VerificationTimeout = config.Duration{Duration: 31 * time.Minute}
+
+		err := cfg.Validate()
+		if !errors.Is(err, config.ErrVerificationTimeoutTooHigh) {
+			t.Errorf("expected ErrVerificationTimeoutTooHigh, got %v", err)
+		}
+	})
+
+	t.Run("at maximum is valid", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.VerificationTimeout = config.Duration{Duration: 30 * time.Minute}
+
+		testutil.AssertNoError(t, cfg.Validate())
+	})
+
+	t.Run("custom value is valid", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.VerificationTimeout = config.Duration{Duration: 10 * time.Minute}
+
+		testutil.AssertNoError(t, cfg.Validate())
+	})
+}
+
+func TestLoadFromStringVerificationTimeout(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.LoadFromString(`verification_timeout = "10m"`)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqual(t, 10*time.Minute, cfg.VerificationTimeout.Duration)
+}
+
 func TestConfigValidateFetchRateLimit(t *testing.T) {
 	t.Parallel()
 
@@ -1269,7 +1343,7 @@ func TestConfigValidateTUFMirror(t *testing.T) {
 	}{
 		{name: "empty is valid", mirror: "", wantErr: false},
 		{name: "valid https URL", mirror: testTUFMirrorURL, wantErr: false},
-		{name: "valid http URL", mirror: "http://tuf.local:8080", wantErr: false},
+		{name: "http URL rejected", mirror: "http://tuf.local:8080", wantErr: true},
 		{name: "valid URL with path", mirror: "https://tuf.example.com/repo", wantErr: false},
 		{name: "missing scheme", mirror: "tuf.example.com", wantErr: true},
 		{name: "invalid scheme", mirror: "ftp://tuf.example.com", wantErr: true},

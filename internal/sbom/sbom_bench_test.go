@@ -15,6 +15,7 @@
 package sbom_test
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -62,6 +63,6 @@ func BenchmarkVerify(b *testing.B) {
 	b.ResetTimer()
 
 	for range b.N {
-		_, _ = sbom.Verify(att, pol, testDigest)
+		_, _ = sbom.Verify(context.Background(), att, pol, testDigest)
 	}
 }

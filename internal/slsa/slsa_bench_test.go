@@ -15,6 +15,7 @@
 package slsa_test
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -43,6 +44,6 @@ func BenchmarkVerify(b *testing.B) {
 	b.ResetTimer()
 
 	for range b.N {
-		_, _ = slsa.Verify(data, pol, testDigest)
+		_, _ = slsa.Verify(context.Background(), data, pol, testDigest)
 	}
 }

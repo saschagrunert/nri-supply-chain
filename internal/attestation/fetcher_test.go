@@ -270,7 +270,7 @@ func TestCollectAttestations(t *testing.T) {
 				return nil, nil
 			},
 			wantCount:         0,
-			wantHadBundles:    false,
+			wantHadBundles:    true,
 			wantPredicateType: "",
 		},
 		{
@@ -487,11 +487,10 @@ func TestCollectAttestations(t *testing.T) {
 				bundleDescriptor(attestation.PredicateOpenVEX),
 			},
 			imageFetch: func() attestation.ImageFetchFunc {
-				callCount := 0
+				var callCount atomic.Int32
 
 				return func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
-					callCount++
-					if callCount == 1 {
+					if callCount.Add(1) == 1 {
 						return nil, errImageFetch
 					}
 
@@ -1588,5 +1587,395 @@ func TestFetchWithFallbackInvalidRef(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "parsing fallback reference") {
 		t.Errorf("expected 'parsing fallback reference' error, got: %v", err)
+	}
+}
+
+const (
+	testNotationLayerMediaType = "application/jose+json"
+	testSubjectDigestHex       = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+)
+
+func fakeNotationImage(
+	envelope []byte, layerMediaType types.MediaType, subject *ociV1.Descriptor,
+) ociV1.Image {
+	layer := static.NewLayer(envelope, layerMediaType)
+
+	img, err := mutate.AppendLayers(empty.Image, layer)
+	if err != nil {
+		panic("building notation test image: " + err.Error())
+	}
+
+	if subject != nil {
+		subjectImg, ok := mutate.Subject(img, *subject).(ociV1.Image)
+		if !ok {
+			panic("mutate.Subject did not return v1.Image")
+		}
+
+		img = subjectImg
+	}
+
+	return img
+}
+
+func TestReadNotationEnvelope(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		image       ociV1.Image
+		wantOK      bool
+		wantPayload string
+	}{
+		{
+			name:        "valid envelope",
+			image:       fakeImageWithPayload([]byte(`{"signature":"abc"}`)),
+			wantOK:      true,
+			wantPayload: `{"signature":"abc"}`,
+		},
+		{
+			name:        "no layers",
+			image:       empty.Image,
+			wantOK:      false,
+			wantPayload: "",
+		},
+		{
+			name:        "broken layers",
+			image:       &brokenLayersImage{Image: empty.Image},
+			wantOK:      false,
+			wantPayload: "",
+		},
+		{
+			name: "oversized envelope",
+			image: func() ociV1.Image {
+				oversized := make([]byte, attestation.ExportMaxAttestationSize+1)
+
+				return fakeImageWithPayload(oversized)
+			}(),
+			wantOK:      false,
+			wantPayload: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			envelope, ok := attestation.ExportReadNotationEnvelope(
+				context.Background(), tt.image, "sha256:test",
+			)
+
+			if ok != tt.wantOK {
+				t.Fatalf("expected ok=%v, got %v", tt.wantOK, ok)
+			}
+
+			if tt.wantPayload != "" && string(envelope) != tt.wantPayload {
+				t.Errorf("expected payload %q, got %q", tt.wantPayload, string(envelope))
+			}
+		})
+	}
+}
+
+type notationExpect struct {
+	payload           string
+	subjectDigest     string
+	subjectSize       int64
+	subjectMediaType  string
+	notationMediaType string
+}
+
+func assertNotationAttestation(
+	t *testing.T,
+	att *attestation.VerifiedAttestation,
+	exp notationExpect,
+) {
+	t.Helper()
+
+	if string(att.Payload) != exp.payload {
+		t.Errorf("payload = %q, want %q", string(att.Payload), exp.payload)
+	}
+
+	if att.PredicateType != attestation.NotationSignatureMediaType {
+		t.Errorf("predicate type = %q, want %q",
+			att.PredicateType, attestation.NotationSignatureMediaType)
+	}
+
+	if att.SignatureType != attestation.SignatureTypeNotation {
+		t.Errorf("signature type = %q, want %q",
+			att.SignatureType, attestation.SignatureTypeNotation)
+	}
+
+	if att.Digest != testFetchDigest {
+		t.Errorf("digest = %q, want %q", att.Digest, testFetchDigest)
+	}
+
+	if att.NotationSubjectDigest != exp.subjectDigest {
+		t.Errorf("subject digest = %q, want %q",
+			att.NotationSubjectDigest, exp.subjectDigest)
+	}
+
+	if att.NotationSubjectSize != exp.subjectSize {
+		t.Errorf("subject size = %d, want %d",
+			att.NotationSubjectSize, exp.subjectSize)
+	}
+
+	if att.NotationSubjectMediaType != exp.subjectMediaType {
+		t.Errorf("subject media type = %q, want %q",
+			att.NotationSubjectMediaType, exp.subjectMediaType)
+	}
+
+	if att.NotationMediaType != exp.notationMediaType {
+		t.Errorf("notation media type = %q, want %q",
+			att.NotationMediaType, exp.notationMediaType)
+	}
+}
+
+func TestFetchNotationSignature(t *testing.T) {
+	t.Parallel()
+
+	baseRef, err := name.NewDigest(
+		"docker.io/library/nginx@sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abcd",
+	)
+	if err != nil {
+		t.Fatalf("creating test digest ref: %v", err)
+	}
+
+	notationDesc := ociV1.Descriptor{
+		ArtifactType: attestation.NotationSignatureMediaType,
+		Digest: ociV1.Hash{
+			Algorithm: testHashAlgorithm,
+			Hex:       testHashHex,
+		},
+	}
+
+	tests := []struct {
+		name       string
+		imageFetch attestation.ImageFetchFunc
+		wantOK     bool
+		expect     notationExpect
+	}{
+		{
+			name: "valid signature with subject",
+			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+				return fakeNotationImage(
+					[]byte(`{"signature":"valid"}`),
+					types.MediaType(testNotationLayerMediaType),
+					&ociV1.Descriptor{
+						Digest: ociV1.Hash{
+							Algorithm: testHashAlgorithm,
+							Hex:       testSubjectDigestHex,
+						},
+						Size:      42,
+						MediaType: types.OCIManifestSchema1,
+					},
+				), nil
+			},
+			wantOK: true,
+			expect: notationExpect{
+				payload:           `{"signature":"valid"}`,
+				subjectDigest:     testHashAlgorithm + ":" + testSubjectDigestHex,
+				subjectSize:       42,
+				subjectMediaType:  string(types.OCIManifestSchema1),
+				notationMediaType: testNotationLayerMediaType,
+			},
+		},
+		{
+			name: "valid signature without subject",
+			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+				return fakeNotationImage(
+					[]byte(`{"signature":"no-subject"}`),
+					types.MediaType(testNotationLayerMediaType),
+					nil,
+				), nil
+			},
+			wantOK: true,
+			expect: notationExpect{
+				payload:           `{"signature":"no-subject"}`,
+				subjectDigest:     "",
+				subjectSize:       0,
+				subjectMediaType:  "",
+				notationMediaType: testNotationLayerMediaType,
+			},
+		},
+		{
+			name: "image fetch error",
+			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+				return nil, errImageFetch
+			},
+			wantOK: false,
+			expect: notationExpect{
+				payload:           "",
+				subjectDigest:     "",
+				subjectSize:       0,
+				subjectMediaType:  "",
+				notationMediaType: "",
+			},
+		},
+		{
+			name: "no layers returns false",
+			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+				return empty.Image, nil
+			},
+			wantOK: false,
+			expect: notationExpect{
+				payload:           "",
+				subjectDigest:     "",
+				subjectSize:       0,
+				subjectMediaType:  "",
+				notationMediaType: "",
+			},
+		},
+		{
+			name: "oversized envelope returns false",
+			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+				oversized := make([]byte, attestation.ExportMaxAttestationSize+1)
+
+				return fakeNotationImage(
+					oversized,
+					types.MediaType(testNotationLayerMediaType),
+					nil,
+				), nil
+			},
+			wantOK: false,
+			expect: notationExpect{
+				payload:           "",
+				subjectDigest:     "",
+				subjectSize:       0,
+				subjectMediaType:  "",
+				notationMediaType: "",
+			},
+		},
+		{
+			name: "broken layers returns false",
+			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+				return &brokenLayersImage{Image: empty.Image}, nil
+			},
+			wantOK: false,
+			expect: notationExpect{
+				payload:           "",
+				subjectDigest:     "",
+				subjectSize:       0,
+				subjectMediaType:  "",
+				notationMediaType: "",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			fetcher := attestation.NewTestOCIFetcher(nil, tt.imageFetch)
+
+			att, ok := fetcher.FetchNotationSignature(
+				context.Background(),
+				&notationDesc,
+				baseRef,
+				testFetchDigest,
+				nil,
+			)
+
+			if ok != tt.wantOK {
+				t.Fatalf("expected ok=%v, got %v", tt.wantOK, ok)
+			}
+
+			if !ok {
+				return
+			}
+
+			assertNotationAttestation(t, &att, tt.expect)
+		})
+	}
+}
+
+func TestCollectNotationSignatures(t *testing.T) {
+	t.Parallel()
+
+	baseRef, err := name.NewDigest(
+		"docker.io/library/nginx@sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abcd",
+	)
+	if err != nil {
+		t.Fatalf("creating test digest ref: %v", err)
+	}
+
+	notationDescriptor := func() ociV1.Descriptor {
+		return ociV1.Descriptor{
+			ArtifactType: attestation.NotationSignatureMediaType,
+			Digest: ociV1.Hash{
+				Algorithm: testHashAlgorithm,
+				Hex:       testHashHex,
+			},
+		}
+	}
+
+	tests := []struct {
+		name       string
+		manifests  []ociV1.Descriptor
+		imageFetch attestation.ImageFetchFunc
+		wantCount  int
+	}{
+		{
+			name: "no notation candidates",
+			manifests: []ociV1.Descriptor{
+				{ArtifactType: attestation.ExportBundleMediaType},
+				{ArtifactType: "application/vnd.other"},
+			},
+			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+				return nil, errImageFetch
+			},
+			wantCount: 0,
+		},
+		{
+			name:      "empty manifests",
+			manifests: nil,
+			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+				return nil, errImageFetch
+			},
+			wantCount: 0,
+		},
+		{
+			name:      "single notation signature",
+			manifests: []ociV1.Descriptor{notationDescriptor()},
+			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+				return fakeImageWithPayload([]byte(`{"sig":"ok"}`)), nil
+			},
+			wantCount: 1,
+		},
+		{
+			name: "mixed notation and non-notation",
+			manifests: []ociV1.Descriptor{
+				notationDescriptor(),
+				{ArtifactType: attestation.ExportBundleMediaType},
+				notationDescriptor(),
+			},
+			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+				return fakeImageWithPayload([]byte(`{"sig":"ok"}`)), nil
+			},
+			wantCount: 2,
+		},
+		{
+			name:      "fetch failure skipped",
+			manifests: []ociV1.Descriptor{notationDescriptor()},
+			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+				return nil, errImageFetch
+			},
+			wantCount: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			fetcher := attestation.NewTestOCIFetcher(nil, tt.imageFetch)
+
+			result := fetcher.CollectNotationSignatures(
+				context.Background(), tt.manifests, baseRef, testFetchDigest, nil,
+			)
+
+			if len(result) != tt.wantCount {
+				t.Errorf("expected %d notation signatures, got %d",
+					tt.wantCount, len(result))
+			}
+		})
 	}
 }

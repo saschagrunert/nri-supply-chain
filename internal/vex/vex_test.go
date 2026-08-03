@@ -24,6 +24,7 @@ import (
 	cdx "github.com/CycloneDX/cyclonedx-go"
 	openvex "github.com/openvex/go-vex/pkg/vex"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/intoto"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
@@ -347,7 +348,7 @@ func TestVerifyMalformedPayloads(t *testing.T) {
 			nil,
 		)
 
-		if !errors.Is(err, vex.ErrEmptySubjects) {
+		if !errors.Is(err, intoto.ErrEmptySubjects) {
 			t.Errorf("expected ErrEmptySubjects, got %v", err)
 		}
 	})
@@ -405,7 +406,7 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 			nil,
 		)
 
-		if !errors.Is(err, vex.ErrSubjectMismatch) {
+		if !errors.Is(err, intoto.ErrSubjectMismatch) {
 			t.Errorf("expected ErrSubjectMismatch for invalid digest format, got %v", err)
 		}
 	})
@@ -478,7 +479,7 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 			nil,
 		)
 
-		if !errors.Is(err, vex.ErrSubjectMismatch) {
+		if !errors.Is(err, intoto.ErrSubjectMismatch) {
 			t.Errorf("expected ErrSubjectMismatch, got %v", err)
 		}
 	})
@@ -978,7 +979,7 @@ func TestVerifyInTotoWrapped(t *testing.T) {
 			name:       "mismatching subject digest fails",
 			doc:        validVEXDoc(openvex.StatusNotAffected),
 			digest:     "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-			wantErr:    vex.ErrSubjectMismatch,
+			wantErr:    intoto.ErrSubjectMismatch,
 			wantPassed: false,
 		},
 	}
@@ -1034,7 +1035,7 @@ func TestVerifyInTotoEmptySubjectWithDigest(t *testing.T) {
 		&policy.Policy{}, testImageRef, testDigest,
 		nil,
 	)
-	if !errors.Is(err, vex.ErrEmptySubjects) {
+	if !errors.Is(err, intoto.ErrEmptySubjects) {
 		t.Errorf(
 			"expected ErrEmptySubjects when digest is available but subjects are empty, got: %v",
 			err,
@@ -1096,7 +1097,7 @@ func TestVerifyInTotoNilSubjectWithDigest(t *testing.T) {
 		&policy.Policy{}, testImageRef, testDigest,
 		nil,
 	)
-	if !errors.Is(err, vex.ErrEmptySubjects) {
+	if !errors.Is(err, intoto.ErrEmptySubjects) {
 		t.Errorf("expected ErrEmptySubjects for nil subjects with digest, got: %v", err)
 	}
 }
@@ -1126,9 +1127,9 @@ func TestVerifySubjectsWithoutDigestRejected(t *testing.T) {
 		&policy.Policy{}, testImageRef, "",
 		nil,
 	)
-	if !errors.Is(err, vex.ErrSubjectMismatch) {
+	if !errors.Is(err, intoto.ErrNoDigestBinding) {
 		t.Errorf(
-			"expected ErrSubjectMismatch when subjects present but no digest, got: %v",
+			"expected ErrNoDigestBinding when subjects present but no digest, got: %v",
 			err,
 		)
 	}

@@ -15,11 +15,13 @@
 package sbom_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/intoto"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/sbom"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
@@ -341,7 +343,7 @@ func TestVerify(t *testing.T) {
 
 			att := wrapInToto(t, test.doc, testDigest)
 
-			result, err := sbom.Verify(att, test.pol, testDigest)
+			result, err := sbom.Verify(context.Background(), att, test.pol, testDigest)
 
 			if test.wantPassed {
 				testutil.AssertNoError(t, err)
@@ -373,7 +375,7 @@ func TestVerifyMalformedPayloads(t *testing.T) {
 	t.Run("empty payload", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := sbom.Verify([]byte{}, &policy.Policy{}, testDigest)
+		_, err := sbom.Verify(context.Background(), []byte{}, &policy.Policy{}, testDigest)
 		if !errors.Is(err, sbom.ErrInvalidSBOM) {
 			t.Errorf("expected ErrInvalidSBOM, got %v", err)
 		}
@@ -382,7 +384,7 @@ func TestVerifyMalformedPayloads(t *testing.T) {
 	t.Run("nil payload", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := sbom.Verify(nil, &policy.Policy{}, testDigest)
+		_, err := sbom.Verify(context.Background(), nil, &policy.Policy{}, testDigest)
 		if !errors.Is(err, sbom.ErrInvalidSBOM) {
 			t.Errorf("expected ErrInvalidSBOM, got %v", err)
 		}
@@ -391,7 +393,9 @@ func TestVerifyMalformedPayloads(t *testing.T) {
 	t.Run("truncated JSON", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := sbom.Verify([]byte(`{"subject":[`), &policy.Policy{}, testDigest)
+		_, err := sbom.Verify(
+			context.Background(), []byte(`{"subject":[`), &policy.Policy{}, testDigest,
+		)
 		if !errors.Is(err, sbom.ErrInvalidSBOM) {
 			t.Errorf("expected ErrInvalidSBOM, got %v", err)
 		}
@@ -400,8 +404,8 @@ func TestVerifyMalformedPayloads(t *testing.T) {
 	t.Run("empty JSON object with digest triggers empty subjects", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := sbom.Verify([]byte("{}"), &policy.Policy{}, testDigest)
-		if !errors.Is(err, sbom.ErrEmptySubjects) {
+		_, err := sbom.Verify(context.Background(), []byte("{}"), &policy.Policy{}, testDigest)
+		if !errors.Is(err, intoto.ErrEmptySubjects) {
 			t.Errorf("expected ErrEmptySubjects, got %v", err)
 		}
 	})
@@ -411,7 +415,7 @@ func TestVerifyMalformedPayloads(t *testing.T) {
 
 		// Without a digest, subject binding is skipped. The bare {} is not
 		// a valid SPDX or CycloneDX document, so it fails to parse.
-		_, err := sbom.Verify([]byte("{}"), &policy.Policy{}, "")
+		_, err := sbom.Verify(context.Background(), []byte("{}"), &policy.Policy{}, "")
 		if err == nil {
 			t.Error("expected parse error for empty object, got nil")
 		}
@@ -427,11 +431,11 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 		doc := validSPDXDoc()
 		att := wrapInToto(t, doc, testDigest)
 
-		_, err := sbom.Verify(
+		_, err := sbom.Verify(context.Background(),
 			att, &policy.Policy{},
 			"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
 		)
-		if !errors.Is(err, sbom.ErrSubjectMismatch) {
+		if !errors.Is(err, intoto.ErrSubjectMismatch) {
 			t.Errorf("expected ErrSubjectMismatch, got %v", err)
 		}
 	})
@@ -442,23 +446,21 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 		doc := validSPDXDoc()
 		att := wrapInToto(t, doc, testDigest)
 
-		_, err := sbom.Verify(att, &policy.Policy{}, "nocolon")
-		if !errors.Is(err, sbom.ErrSubjectMismatch) {
+		_, err := sbom.Verify(context.Background(), att, &policy.Policy{}, "nocolon")
+		if !errors.Is(err, intoto.ErrSubjectMismatch) {
 			t.Errorf("expected ErrSubjectMismatch for invalid digest, got %v", err)
 		}
 	})
 
-	t.Run("empty digest skips subject binding", func(t *testing.T) {
+	t.Run("empty digest with subjects rejects for binding", func(t *testing.T) {
 		t.Parallel()
 
 		doc := validSPDXDoc()
 		att := wrapInToto(t, doc, testDigest)
 
-		result, err := sbom.Verify(att, &policy.Policy{}, "")
-		testutil.AssertNoError(t, err)
-
-		if !result.Passed {
-			t.Errorf("expected pass when digest is empty, got: %s", result.Detail)
+		_, err := sbom.Verify(context.Background(), att, &policy.Policy{}, "")
+		if !errors.Is(err, intoto.ErrNoDigestBinding) {
+			t.Errorf("expected ErrNoDigestBinding, got %v", err)
 		}
 	})
 
@@ -486,7 +488,7 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 
 		att := testutil.MustMarshal(t, wrapper)
 
-		result, err := sbom.Verify(att, &policy.Policy{}, testDigest)
+		result, err := sbom.Verify(context.Background(), att, &policy.Policy{}, testDigest)
 		testutil.AssertNoError(t, err)
 
 		if !result.Passed {
@@ -515,7 +517,7 @@ func TestVerifySPDXLicenseFields(t *testing.T) {
 
 		att := wrapInToto(t, doc, testDigest)
 
-		result, err := sbom.Verify(att, &policy.Policy{
+		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			Sections: policy.Sections{
 				SBOM: &policy.SBOMPolicy{
 					License: &policy.SBOMLicensePolicy{
@@ -548,7 +550,7 @@ func TestVerifySPDXLicenseFields(t *testing.T) {
 
 		att := wrapInToto(t, doc, testDigest)
 
-		result, err := sbom.Verify(att, &policy.Policy{
+		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			Sections: policy.Sections{
 				SBOM: &policy.SBOMPolicy{
 					License: &policy.SBOMLicensePolicy{
@@ -581,7 +583,7 @@ func TestVerifySPDXLicenseFields(t *testing.T) {
 
 		att := wrapInToto(t, doc, testDigest)
 
-		result, err := sbom.Verify(att, &policy.Policy{
+		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			Sections: policy.Sections{
 				SBOM: &policy.SBOMPolicy{
 					License: &policy.SBOMLicensePolicy{
@@ -614,7 +616,7 @@ func TestVerifySPDXLicenseFields(t *testing.T) {
 
 		att := wrapInToto(t, doc, testDigest)
 
-		result, err := sbom.Verify(att, &policy.Policy{
+		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			Sections: policy.Sections{
 				SBOM: &policy.SBOMPolicy{
 					License: &policy.SBOMLicensePolicy{
@@ -647,7 +649,7 @@ func TestVerifySPDXLicenseFields(t *testing.T) {
 
 		att := wrapInToto(t, doc, testDigest)
 
-		result, err := sbom.Verify(att, &policy.Policy{
+		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			Sections: policy.Sections{
 				SBOM: &policy.SBOMPolicy{
 					License: &policy.SBOMLicensePolicy{
@@ -680,7 +682,7 @@ func TestVerifySPDXLicenseFields(t *testing.T) {
 
 		att := wrapInToto(t, doc, testDigest)
 
-		result, err := sbom.Verify(att, &policy.Policy{
+		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			Sections: policy.Sections{
 				SBOM: &policy.SBOMPolicy{
 					License: &policy.SBOMLicensePolicy{
@@ -713,7 +715,7 @@ func TestVerifySPDXLicenseFields(t *testing.T) {
 
 		att := wrapInToto(t, doc, testDigest)
 
-		result, err := sbom.Verify(att, &policy.Policy{
+		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			Sections: policy.Sections{
 				SBOM: &policy.SBOMPolicy{
 					License: &policy.SBOMLicensePolicy{
@@ -748,7 +750,7 @@ func TestVerifyCycloneDXLicenseName(t *testing.T) {
 
 	att := wrapInToto(t, doc, testDigest)
 
-	result, err := sbom.Verify(att, &policy.Policy{
+	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 		Sections: policy.Sections{
 			SBOM: &policy.SBOMPolicy{
 				License: &policy.SBOMLicensePolicy{
@@ -769,7 +771,7 @@ func TestVerifyCheckType(t *testing.T) {
 
 	att := wrapInToto(t, validSPDXDoc(), testDigest)
 
-	result, err := sbom.Verify(att, &policy.Policy{}, testDigest)
+	result, err := sbom.Verify(context.Background(), att, &policy.Policy{}, testDigest)
 	testutil.AssertNoError(t, err)
 
 	testutil.AssertEqual(t, types.CheckType("sbom"), result.Type)
@@ -825,7 +827,12 @@ func TestVerifyMultiple(t *testing.T) {
 				attestations[idx] = wrapInToto(t, test.docs[idx], testDigest)
 			}
 
-			result, err := sbom.VerifyMultiple(attestations, test.pol, testDigest)
+			result, err := sbom.VerifyMultiple(
+				context.Background(),
+				attestations,
+				test.pol,
+				testDigest,
+			)
 			testutil.AssertNoError(t, err)
 
 			testutil.AssertEqual(t, test.wantPassed, result.Passed)
@@ -840,7 +847,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 	t.Run("nil attestation slice", func(t *testing.T) {
 		t.Parallel()
 
-		result, err := sbom.VerifyMultiple(nil, &policy.Policy{}, testDigest)
+		result, err := sbom.VerifyMultiple(context.Background(), nil, &policy.Policy{}, testDigest)
 		testutil.AssertNoError(t, err)
 
 		if !result.Passed {
@@ -856,7 +863,12 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 			[]byte("bad json 2"),
 		}
 
-		result, err := sbom.VerifyMultiple(attestations, &policy.Policy{}, testDigest)
+		result, err := sbom.VerifyMultiple(
+			context.Background(),
+			attestations,
+			&policy.Policy{},
+			testDigest,
+		)
 		testutil.AssertNoError(t, err)
 
 		if result.Passed {
@@ -874,7 +886,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 			wrapInToto(t, validSPDXDoc(), testDigest),
 		}
 
-		result, err := sbom.VerifyMultiple(attestations, &policy.Policy{
+		result, err := sbom.VerifyMultiple(context.Background(), attestations, &policy.Policy{
 			Sections: policy.Sections{
 				SBOM: &policy.SBOMPolicy{
 					Formats: []string{testFormatCycloneDX},
@@ -902,7 +914,12 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 			wrapInToto(t, validSPDXDoc(), testDigest),
 		}
 
-		result, err := sbom.VerifyMultiple(attestations, &policy.Policy{}, testDigest)
+		result, err := sbom.VerifyMultiple(
+			context.Background(),
+			attestations,
+			&policy.Policy{},
+			testDigest,
+		)
 		testutil.AssertNoError(t, err)
 
 		if !result.Passed {
@@ -927,7 +944,7 @@ func TestVerifyCycloneDXNilLicense(t *testing.T) {
 
 	att := wrapInToto(t, doc, testDigest)
 
-	result, err := sbom.Verify(att, &policy.Policy{}, testDigest)
+	result, err := sbom.Verify(context.Background(), att, &policy.Policy{}, testDigest)
 	testutil.AssertNoError(t, err)
 
 	if !result.Passed {
@@ -943,7 +960,7 @@ func TestVerifyLicenseAllowList(t *testing.T) {
 
 		att := wrapInToto(t, validSPDXDoc(), testDigest)
 
-		result, err := sbom.Verify(att, &policy.Policy{
+		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			Sections: policy.Sections{
 				SBOM: &policy.SBOMPolicy{
 					License: &policy.SBOMLicensePolicy{
@@ -964,7 +981,7 @@ func TestVerifyLicenseAllowList(t *testing.T) {
 
 		att := wrapInToto(t, validSPDXDoc(), testDigest)
 
-		result, err := sbom.Verify(att, &policy.Policy{
+		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			Sections: policy.Sections{
 				SBOM: &policy.SBOMPolicy{
 					License: &policy.SBOMLicensePolicy{
@@ -989,7 +1006,7 @@ func TestVerifyLicenseAllowList(t *testing.T) {
 
 		att := wrapInToto(t, validSPDXDoc(), testDigest)
 
-		result, err := sbom.Verify(att, &policy.Policy{
+		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			Sections: policy.Sections{
 				SBOM: &policy.SBOMPolicy{
 					License: &policy.SBOMLicensePolicy{
@@ -1015,7 +1032,7 @@ func TestVerifyLicenseAllowList(t *testing.T) {
 
 		att := wrapInToto(t, validSPDXDoc(), testDigest)
 
-		result, err := sbom.Verify(att, &policy.Policy{
+		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			Sections: policy.Sections{
 				SBOM: &policy.SBOMPolicy{
 					License: &policy.SBOMLicensePolicy{
@@ -1036,7 +1053,7 @@ func TestVerifyLicenseAllowList(t *testing.T) {
 
 		att := wrapInToto(t, validSPDXDoc(), testDigest)
 
-		result, err := sbom.Verify(att, &policy.Policy{
+		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			Sections: policy.Sections{
 				SBOM: &policy.SBOMPolicy{
 					License: &policy.SBOMLicensePolicy{
@@ -1061,7 +1078,7 @@ func TestVerifyComponentAllowList(t *testing.T) {
 
 		att := wrapInToto(t, validSPDXDoc(), testDigest)
 
-		result, err := sbom.Verify(att, &policy.Policy{
+		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			Sections: policy.Sections{
 				SBOM: &policy.SBOMPolicy{
 					Component: &policy.SBOMComponentPolicy{
@@ -1082,7 +1099,7 @@ func TestVerifyComponentAllowList(t *testing.T) {
 
 		att := wrapInToto(t, validSPDXDoc(), testDigest)
 
-		result, err := sbom.Verify(att, &policy.Policy{
+		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			Sections: policy.Sections{
 				SBOM: &policy.SBOMPolicy{
 					Component: &policy.SBOMComponentPolicy{
@@ -1107,7 +1124,7 @@ func TestVerifyComponentAllowList(t *testing.T) {
 
 		att := wrapInToto(t, validSPDXDoc(), testDigest)
 
-		result, err := sbom.Verify(att, &policy.Policy{
+		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			Sections: policy.Sections{
 				SBOM: &policy.SBOMPolicy{
 					Component: &policy.SBOMComponentPolicy{
@@ -1133,7 +1150,7 @@ func TestVerifyComponentAllowList(t *testing.T) {
 
 		att := wrapInToto(t, validSPDXDoc(), testDigest)
 
-		result, err := sbom.Verify(att, &policy.Policy{
+		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			Sections: policy.Sections{
 				SBOM: &policy.SBOMPolicy{
 					Component: &policy.SBOMComponentPolicy{
@@ -1154,7 +1171,7 @@ func TestVerifyComponentAllowList(t *testing.T) {
 
 		att := wrapInToto(t, validSPDXDoc(), testDigest)
 
-		result, err := sbom.Verify(att, &policy.Policy{
+		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			Sections: policy.Sections{
 				SBOM: &policy.SBOMPolicy{
 					Component: &policy.SBOMComponentPolicy{

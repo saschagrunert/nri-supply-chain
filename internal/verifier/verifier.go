@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -32,6 +31,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/cache"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
+	"github.com/saschagrunert/nri-supply-chain/internal/fileutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/glob"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
@@ -54,7 +54,6 @@ const (
 	maxConcurrentFetches        = 50
 	maxConcurrentFetchesPerHost = 10
 	warmTimeout                 = 30 * time.Second
-	maxVerificationTimeout      = 5 * time.Minute
 )
 
 type snapshot struct {
@@ -183,6 +182,7 @@ func WarnEnforceDefaults(cfg *config.Config, policies map[string]*policy.Policy)
 		}
 
 		warnPermissiveMissingPolicies(label, pol)
+		warnKeyOnlyWithoutTLog(label, pol)
 	}
 }
 
@@ -256,6 +256,35 @@ func warnPermissiveMissingPolicies(label string, pol *policy.Policy) {
 			"vsa_missing_policy", pol.VSAMissingPolicy(),
 		)
 	}
+}
+
+func warnKeyOnlyWithoutTLog(label string, pol *policy.Policy) {
+	if pol.Signatures != nil && pol.Signatures.RequireTransparencyLog {
+		return
+	}
+
+	if pol.Trust == nil || len(pol.Trust.Verifiers) == 0 {
+		return
+	}
+
+	hasKeyOnly := false
+
+	for _, v := range pol.Trust.Verifiers {
+		if len(v.Keys) > 0 && len(pol.Trust.Issuers) == 0 {
+			hasKeyOnly = true
+
+			break
+		}
+	}
+
+	if !hasKeyOnly {
+		return
+	}
+
+	slog.Warn("enforce mode with key-only verification and requireTransparencyLog=false; "+
+		"compromised keys cannot be time-bounded without transparency log entries",
+		"policy", label,
+	)
 }
 
 // Stop releases resources held by the verifier, including the cache's
@@ -858,7 +887,7 @@ func readTUFRootBytes(path string) ([]byte, error) {
 		return nil, nil
 	}
 
-	data, err := os.ReadFile(path) //nolint:gosec // path is validated by config.ValidateRuntime
+	data, err := fileutil.ReadLimited(path, fileutil.MaxCredentialFileSize)
 	if err != nil {
 		return nil, fmt.Errorf("reading custom TUF root %q: %w", path, err)
 	}
@@ -916,7 +945,7 @@ func (v *Verifier) verifyOnce(
 		// should not inherit this caller's cancellation. A hard timeout
 		// bounds resource usage when a registry is unresponsive.
 		checkCtx, checkCancel := context.WithTimeout(
-			context.WithoutCancel(ctx), maxVerificationTimeout,
+			context.WithoutCancel(ctx), state.config.VerificationTimeout.Duration,
 		)
 		defer checkCancel()
 

@@ -49,6 +49,11 @@ var (
 
 	// ErrTooManyOCIPolicyLayers indicates the artifact has too many layers.
 	ErrTooManyOCIPolicyLayers = errors.New("OCI policy artifact has too many layers")
+
+	// ErrNonJSONPolicyLayer indicates a policy-typed layer has a non-JSON filename.
+	ErrNonJSONPolicyLayer = errors.New("OCI policy layer has non-JSON filename")
+
+	errSkipLayer = errors.New("skip layer")
 )
 
 // OCIFetchResult holds the policies and manifest digest returned by FetchFromOCI.
@@ -143,6 +148,14 @@ func (f *OCIFetcher) FetchFromOCI(
 		return nil, fmt.Errorf("parsing OCI policy reference %q: %w", ociRef, err)
 	}
 
+	if _, isDigest := ref.(name.Digest); !isDigest {
+		slog.Warn(
+			"OCI policy fetched by mutable tag reference;"+
+				" consider using a digest reference for integrity",
+			"ref", ociRef,
+		)
+	}
+
 	remoteOpts, err := f.buildRemoteOptions(ctx, ociRef)
 	if err != nil {
 		return nil, err
@@ -229,7 +242,11 @@ func extractPoliciesFromImage( //nolint:cyclop // slightly above threshold due t
 			annotations = manifest.Layers[idx].Annotations
 		}
 
-		pol, namespace, ok := processOCIPolicyLayer(layer, idx, annotations)
+		pol, namespace, ok, err := processOCIPolicyLayer(layer, idx, annotations)
+		if err != nil {
+			return nil, err
+		}
+
 		if !ok {
 			continue
 		}
@@ -254,9 +271,9 @@ func extractPoliciesFromImage( //nolint:cyclop // slightly above threshold due t
 	return policies, nil
 }
 
-func processOCIPolicyLayer(
+func processOCIPolicyLayer( //nolint:nonamedreturns // named returns for clarity
 	layer ociV1.Layer, idx int, annotations map[string]string,
-) (*Policy, string, bool) {
+) (pol *Policy, namespace string, ok bool, err error) {
 	mediaType, err := layer.MediaType()
 	if err != nil {
 		slog.Warn("Failed to read OCI policy layer media type",
@@ -264,51 +281,89 @@ func processOCIPolicyLayer(
 			"error", err,
 		)
 
-		return nil, "", false
+		return nil, "", false, nil
 	}
 
 	if !isPolicyMediaType(string(mediaType)) {
-		return nil, "", false
+		return nil, "", false, nil
 	}
 
+	strict := string(mediaType) == PolicyMediaType
 	filename := layerFilename(annotations, idx)
+
 	if !strings.HasSuffix(filename, ".json") {
-		slog.Debug("Skipping non-JSON OCI policy layer",
-			"index", idx,
-			"filename", filename,
-		)
-
-		return nil, "", false
+		return handleNonJSONLayer(strict, idx, filename)
 	}
 
-	data, err := readLayer(layer, idx)
+	pol, err = readAndParseLayer(layer, idx, filename, strict)
+	if errors.Is(err, errSkipLayer) {
+		return nil, "", false, nil
+	}
+
 	if err != nil {
-		slog.Warn("Failed to read OCI policy layer",
-			"index", idx,
-			"filename", filename,
-			"error", err,
-		)
-
-		return nil, "", false
+		return nil, "", false, err
 	}
 
-	pol, err := parseAndValidatePolicy(data, filename)
-	if err != nil {
-		slog.Warn("Invalid OCI policy layer",
-			"index", idx,
-			"filename", filename,
-			"error", err,
-		)
-
-		return nil, "", false
-	}
-
-	namespace := strings.TrimSuffix(filename, ".json")
+	namespace = strings.TrimSuffix(filename, ".json")
 	if namespace == "default" {
 		namespace = ""
 	}
 
-	return pol, namespace, true
+	return pol, namespace, true, nil
+}
+
+func handleNonJSONLayer( //nolint:nonamedreturns // named returns for clarity
+	strict bool, idx int, filename string,
+) (pol *Policy, namespace string, ok bool, err error) {
+	if strict {
+		return nil, "", false, fmt.Errorf(
+			"%w: layer %d (%s) filename %q",
+			ErrNonJSONPolicyLayer, idx, PolicyMediaType, filename,
+		)
+	}
+
+	slog.Debug("Skipping non-JSON OCI policy layer",
+		"index", idx,
+		"filename", filename,
+	)
+
+	return nil, "", false, nil
+}
+
+func readAndParseLayer(
+	layer ociV1.Layer, idx int, filename string, strict bool,
+) (*Policy, error) {
+	data, err := readLayer(layer, idx)
+	if err != nil {
+		if strict {
+			return nil, fmt.Errorf(
+				"reading OCI policy layer %d %q: %w", idx, filename, err,
+			)
+		}
+
+		slog.Warn("Failed to read OCI policy layer",
+			"index", idx, "filename", filename, "error", err,
+		)
+
+		return nil, errSkipLayer
+	}
+
+	pol, err := parseAndValidatePolicy(data, filename)
+	if err != nil {
+		if strict {
+			return nil, fmt.Errorf(
+				"invalid OCI policy layer %d %q: %w", idx, filename, err,
+			)
+		}
+
+		slog.Warn("Invalid OCI policy layer",
+			"index", idx, "filename", filename, "error", err,
+		)
+
+		return nil, errSkipLayer
+	}
+
+	return pol, nil
 }
 
 func isPolicyMediaType(mediaType string) bool {

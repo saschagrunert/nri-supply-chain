@@ -15,10 +15,13 @@
 package vsa_test
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/go-containerregistry/pkg/name"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
@@ -426,7 +429,9 @@ func TestVerify(t *testing.T) {
 				test.modify(&stmt)
 			}
 
-			result, err := vsa.Verify(testutil.MustMarshal(t, stmt), test.pol, testImageRef, nil)
+			result, err := vsa.Verify(
+				context.Background(), testutil.MustMarshal(t, stmt), test.pol, testImageRef, nil,
+			)
 			if test.wantErr != nil {
 				if !errors.Is(err, test.wantErr) {
 					t.Fatalf("expected error %v, got %v", test.wantErr, err)
@@ -461,7 +466,7 @@ func TestVerifyMalformedPayloads(t *testing.T) {
 	t.Run("empty payload", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := vsa.Verify([]byte{}, trustedPolicy(), testImageRef, nil)
+		_, err := vsa.Verify(context.Background(), []byte{}, trustedPolicy(), testImageRef, nil)
 
 		if !errors.Is(err, vsa.ErrInvalidVSA) {
 			t.Errorf("expected ErrInvalidVSA, got %v", err)
@@ -471,7 +476,7 @@ func TestVerifyMalformedPayloads(t *testing.T) {
 	t.Run("nil payload", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := vsa.Verify(nil, trustedPolicy(), testImageRef, nil)
+		_, err := vsa.Verify(context.Background(), nil, trustedPolicy(), testImageRef, nil)
 
 		if !errors.Is(err, vsa.ErrInvalidVSA) {
 			t.Errorf("expected ErrInvalidVSA, got %v", err)
@@ -481,7 +486,13 @@ func TestVerifyMalformedPayloads(t *testing.T) {
 	t.Run("empty JSON object", func(t *testing.T) {
 		t.Parallel()
 
-		result, err := vsa.Verify([]byte("{}"), trustedPolicy(), testImageRef, nil)
+		result, err := vsa.Verify(
+			context.Background(),
+			[]byte("{}"),
+			trustedPolicy(),
+			testImageRef,
+			nil,
+		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -494,7 +505,13 @@ func TestVerifyMalformedPayloads(t *testing.T) {
 	t.Run("truncated JSON", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := vsa.Verify([]byte(`{"predicate":{`), trustedPolicy(), testImageRef, nil)
+		_, err := vsa.Verify(
+			context.Background(),
+			[]byte(`{"predicate":{`),
+			trustedPolicy(),
+			testImageRef,
+			nil,
+		)
 
 		if !errors.Is(err, vsa.ErrInvalidVSA) {
 			t.Errorf("expected ErrInvalidVSA, got %v", err)
@@ -511,7 +528,13 @@ func TestVerifyVerifierEdgeCases(t *testing.T) {
 		stmt := validVSAStatement()
 		stmt.Predicate.Verifier.ID = ""
 
-		result, err := vsa.Verify(testutil.MustMarshal(t, stmt), trustedPolicy(), testImageRef, nil)
+		result, err := vsa.Verify(
+			context.Background(),
+			testutil.MustMarshal(t, stmt),
+			trustedPolicy(),
+			testImageRef,
+			nil,
+		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -541,7 +564,13 @@ func TestVerifyVerifierEdgeCases(t *testing.T) {
 			},
 		}
 
-		result, err := vsa.Verify(testutil.MustMarshal(t, stmt), pol, testImageRef, nil)
+		result, err := vsa.Verify(
+			context.Background(),
+			testutil.MustMarshal(t, stmt),
+			pol,
+			testImageRef,
+			nil,
+		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -557,7 +586,13 @@ func TestVerifyVerifierEdgeCases(t *testing.T) {
 		stmt := validVSAStatement()
 		stmt.Predicate.VerificationResult = ""
 
-		result, err := vsa.Verify(testutil.MustMarshal(t, stmt), trustedPolicy(), testImageRef, nil)
+		result, err := vsa.Verify(
+			context.Background(),
+			testutil.MustMarshal(t, stmt),
+			trustedPolicy(),
+			testImageRef,
+			nil,
+		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -573,7 +608,13 @@ func TestVerifyVerifierEdgeCases(t *testing.T) {
 		stmt := validVSAStatement()
 		stmt.Predicate.VerificationResult = "passed"
 
-		result, err := vsa.Verify(testutil.MustMarshal(t, stmt), trustedPolicy(), testImageRef, nil)
+		result, err := vsa.Verify(
+			context.Background(),
+			testutil.MustMarshal(t, stmt),
+			trustedPolicy(),
+			testImageRef,
+			nil,
+		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -589,7 +630,13 @@ func TestVerifyVerifierEdgeCases(t *testing.T) {
 		stmt := validVSAStatement()
 		stmt.Predicate.VerificationResult = vsa.ResultFailed
 
-		result, err := vsa.Verify(testutil.MustMarshal(t, stmt), trustedPolicy(), testImageRef, nil)
+		result, err := vsa.Verify(
+			context.Background(),
+			testutil.MustMarshal(t, stmt),
+			trustedPolicy(),
+			testImageRef,
+			nil,
+		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -617,7 +664,13 @@ func TestVerifyLevelEdgeCases(t *testing.T) {
 		stmt := validVSAStatement()
 		stmt.Predicate.VerifiedLevels = []string{}
 
-		result, err := vsa.Verify(testutil.MustMarshal(t, stmt), trustedPolicy(), testImageRef, nil)
+		result, err := vsa.Verify(
+			context.Background(),
+			testutil.MustMarshal(t, stmt),
+			trustedPolicy(),
+			testImageRef,
+			nil,
+		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -633,7 +686,13 @@ func TestVerifyLevelEdgeCases(t *testing.T) {
 		stmt := validVSAStatement()
 		stmt.Predicate.VerifiedLevels = nil
 
-		result, err := vsa.Verify(testutil.MustMarshal(t, stmt), trustedPolicy(), testImageRef, nil)
+		result, err := vsa.Verify(
+			context.Background(),
+			testutil.MustMarshal(t, stmt),
+			trustedPolicy(),
+			testImageRef,
+			nil,
+		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -649,7 +708,13 @@ func TestVerifyLevelEdgeCases(t *testing.T) {
 		stmt := validVSAStatement()
 		stmt.Predicate.VerifiedLevels = []string{"NOT_A_LEVEL"}
 
-		result, err := vsa.Verify(testutil.MustMarshal(t, stmt), trustedPolicy(), testImageRef, nil)
+		result, err := vsa.Verify(
+			context.Background(),
+			testutil.MustMarshal(t, stmt),
+			trustedPolicy(),
+			testImageRef,
+			nil,
+		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -665,7 +730,13 @@ func TestVerifyLevelEdgeCases(t *testing.T) {
 		stmt := validVSAStatement()
 		stmt.Predicate.VerifiedLevels = []string{testBuildLevelPfx + "abc"}
 
-		result, err := vsa.Verify(testutil.MustMarshal(t, stmt), trustedPolicy(), testImageRef, nil)
+		result, err := vsa.Verify(
+			context.Background(),
+			testutil.MustMarshal(t, stmt),
+			trustedPolicy(),
+			testImageRef,
+			nil,
+		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -684,7 +755,13 @@ func TestVerifyLevelEdgeCases(t *testing.T) {
 			testBuildLevel3,
 		}
 
-		result, err := vsa.Verify(testutil.MustMarshal(t, stmt), trustedPolicy(), testImageRef, nil)
+		result, err := vsa.Verify(
+			context.Background(),
+			testutil.MustMarshal(t, stmt),
+			trustedPolicy(),
+			testImageRef,
+			nil,
+		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -704,7 +781,13 @@ func TestVerifyVersionEdgeCases(t *testing.T) {
 		stmt := validVSAStatement()
 		stmt.Predicate.SLSAVersion = "v1.0"
 
-		result, err := vsa.Verify(testutil.MustMarshal(t, stmt), trustedPolicy(), testImageRef, nil)
+		result, err := vsa.Verify(
+			context.Background(),
+			testutil.MustMarshal(t, stmt),
+			trustedPolicy(),
+			testImageRef,
+			nil,
+		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -720,7 +803,13 @@ func TestVerifyVersionEdgeCases(t *testing.T) {
 		stmt := validVSAStatement()
 		stmt.Predicate.SLSAVersion = "abc"
 
-		result, err := vsa.Verify(testutil.MustMarshal(t, stmt), trustedPolicy(), testImageRef, nil)
+		result, err := vsa.Verify(
+			context.Background(),
+			testutil.MustMarshal(t, stmt),
+			trustedPolicy(),
+			testImageRef,
+			nil,
+		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -747,7 +836,13 @@ func TestVerifyVersionEdgeCases(t *testing.T) {
 			},
 		}
 
-		result, err := vsa.Verify(testutil.MustMarshal(t, stmt), pol, testImageRef, nil)
+		result, err := vsa.Verify(
+			context.Background(),
+			testutil.MustMarshal(t, stmt),
+			pol,
+			testImageRef,
+			nil,
+		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -763,7 +858,13 @@ func TestVerifyVersionEdgeCases(t *testing.T) {
 		stmt := validVSAStatement()
 		stmt.Predicate.ResourceURI = ":::not-a-valid-ref:::"
 
-		result, err := vsa.Verify(testutil.MustMarshal(t, stmt), trustedPolicy(), testImageRef, nil)
+		result, err := vsa.Verify(
+			context.Background(),
+			testutil.MustMarshal(t, stmt),
+			trustedPolicy(),
+			testImageRef,
+			nil,
+		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -786,7 +887,13 @@ func TestVerifyFreshnessEdgeCases(t *testing.T) {
 			UTC().
 			Format(time.RFC3339)
 
-		result, err := vsa.Verify(testutil.MustMarshal(t, stmt), trustedPolicy(), testImageRef, nil)
+		result, err := vsa.Verify(
+			context.Background(),
+			testutil.MustMarshal(t, stmt),
+			trustedPolicy(),
+			testImageRef,
+			nil,
+		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -805,7 +912,13 @@ func TestVerifyFreshnessEdgeCases(t *testing.T) {
 			UTC().
 			Format(time.RFC3339)
 
-		result, err := vsa.Verify(testutil.MustMarshal(t, stmt), trustedPolicy(), testImageRef, nil)
+		result, err := vsa.Verify(
+			context.Background(),
+			testutil.MustMarshal(t, stmt),
+			trustedPolicy(),
+			testImageRef,
+			nil,
+		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -824,7 +937,13 @@ func TestVerifyFreshnessEdgeCases(t *testing.T) {
 			UTC().
 			Format(time.RFC3339)
 
-		result, err := vsa.Verify(testutil.MustMarshal(t, stmt), trustedPolicy(), testImageRef, nil)
+		result, err := vsa.Verify(
+			context.Background(),
+			testutil.MustMarshal(t, stmt),
+			trustedPolicy(),
+			testImageRef,
+			nil,
+		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -847,7 +966,13 @@ func TestVerifyFreshnessEdgeCases(t *testing.T) {
 			UTC().
 			Format(time.RFC3339)
 
-		result, err := vsa.Verify(testutil.MustMarshal(t, stmt), trustedPolicy(), testImageRef, nil)
+		result, err := vsa.Verify(
+			context.Background(),
+			testutil.MustMarshal(t, stmt),
+			trustedPolicy(),
+			testImageRef,
+			nil,
+		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -861,7 +986,13 @@ func TestVerifyFreshnessEdgeCases(t *testing.T) {
 func TestVerifyInvalidJSON(t *testing.T) {
 	t.Parallel()
 
-	_, err := vsa.Verify([]byte("not json"), trustedPolicy(), testImageRef, nil)
+	_, err := vsa.Verify(
+		context.Background(),
+		[]byte("not json"),
+		trustedPolicy(),
+		testImageRef,
+		nil,
+	)
 	if !errors.Is(err, vsa.ErrInvalidVSA) {
 		t.Errorf("expected ErrInvalidVSA, got %v", err)
 	}
@@ -873,7 +1004,7 @@ func TestVerifyResourceURIExactMatch(t *testing.T) {
 	stmt := validVSAStatement()
 	stmt.Predicate.ResourceURI = testImageRef
 
-	result, err := vsa.Verify(
+	result, err := vsa.Verify(context.Background(),
 		testutil.MustMarshal(t, stmt), trustedPolicy(), testImageRef, nil,
 	)
 	if err != nil {
@@ -904,7 +1035,13 @@ func TestVerifyResourceURINormalized(t *testing.T) {
 		stmt := validVSAStatement()
 		stmt.Predicate.ResourceURI = "docker.io/library/nginx:latest"
 
-		result, err := vsa.Verify(testutil.MustMarshal(t, stmt), pol, "nginx:latest", nil)
+		result, err := vsa.Verify(
+			context.Background(),
+			testutil.MustMarshal(t, stmt),
+			pol,
+			"nginx:latest",
+			nil,
+		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -924,7 +1061,13 @@ func TestVerifyResourceURINormalized(t *testing.T) {
 		stmt := validVSAStatement()
 		stmt.Predicate.ResourceURI = testImageRef
 
-		result, err := vsa.Verify(testutil.MustMarshal(t, stmt), pol, testImageRef, nil)
+		result, err := vsa.Verify(
+			context.Background(),
+			testutil.MustMarshal(t, stmt),
+			pol,
+			testImageRef,
+			nil,
+		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -941,7 +1084,13 @@ func TestVerifyResourceURINormalized(t *testing.T) {
 		otherDigest := "sha256:" + strings.Repeat("0", 64)
 		stmt.Predicate.ResourceURI = "docker.io/library/nginx@" + otherDigest
 
-		result, err := vsa.Verify(testutil.MustMarshal(t, stmt), pol, testImageRef, nil)
+		result, err := vsa.Verify(
+			context.Background(),
+			testutil.MustMarshal(t, stmt),
+			pol,
+			testImageRef,
+			nil,
+		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -957,7 +1106,13 @@ func TestVerifyCheckType(t *testing.T) {
 
 	stmt := validVSAStatement()
 
-	result, err := vsa.Verify(testutil.MustMarshal(t, stmt), trustedPolicy(), testImageRef, nil)
+	result, err := vsa.Verify(
+		context.Background(),
+		testutil.MustMarshal(t, stmt),
+		trustedPolicy(),
+		testImageRef,
+		nil,
+	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -965,4 +1120,80 @@ func TestVerifyCheckType(t *testing.T) {
 	if result.Check.Type != "vsa" {
 		t.Errorf("expected type vsa, got %q", result.Check.Type)
 	}
+}
+
+func TestVerifyWithParsedRef(t *testing.T) {
+	t.Parallel()
+
+	t.Run("digest reference with parsedImageRef", func(t *testing.T) {
+		t.Parallel()
+
+		// Use a short-form imageRef that differs from the VSA's resourceURI
+		// so the exact-match short circuit is skipped and normalizeImageRef
+		// is called with the pre-parsed digest reference.
+		shortDigest := "nginx@sha256:" +
+			"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4" +
+			"e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+		parsedRef := name.MustParseReference(testImageRef)
+
+		stmt := validVSAStatement()
+		stmt.Predicate.ResourceURI = testImageRef
+
+		result, err := vsa.Verify(
+			context.Background(),
+			testutil.MustMarshal(t, stmt),
+			trustedPolicy(),
+			shortDigest,
+			parsedRef,
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if !result.Check.Passed {
+			t.Errorf("expected pass with digest parsedImageRef, got: %s",
+				result.Check.Detail)
+		}
+
+		if result.Check.Status != types.StatusPass {
+			t.Errorf("expected pass status, got %q", result.Check.Status)
+		}
+	})
+
+	t.Run("tag reference with parsedImageRef causes mismatch", func(t *testing.T) {
+		t.Parallel()
+
+		// When parsedImageRef is a tag reference, normalizeImageRef returns
+		// Context().String() (the repository without tag). This will not
+		// match a digest-pinned resourceURI, producing a resource mismatch.
+		tagRef := name.MustParseReference("docker.io/library/nginx:latest")
+		imageRef := "nginx:latest"
+
+		stmt := validVSAStatement()
+		stmt.Predicate.ResourceURI = testImageRef
+
+		result, err := vsa.Verify(
+			context.Background(),
+			testutil.MustMarshal(t, stmt),
+			trustedPolicy(),
+			imageRef,
+			tagRef,
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.Check.Passed {
+			t.Error("expected fail: tag context string does not match digest-pinned resource URI")
+		}
+
+		if result.Check.Status != types.StatusFail {
+			t.Errorf("expected fail status, got %q", result.Check.Status)
+		}
+
+		if !strings.Contains(result.Check.Detail, "mismatch") {
+			t.Errorf("expected detail to mention mismatch, got: %s",
+				result.Check.Detail)
+		}
+	})
 }

@@ -228,6 +228,17 @@ func verifySignatureEntry(
 		desc.Digest = parsed
 	}
 
+	if sig.NotationSubjectDigest == "" {
+		return failResult("signature has no subject binding")
+	}
+
+	if sig.NotationSubjectDigest != digest {
+		return failResult(fmt.Sprintf(
+			"subject digest %s does not match image digest %s",
+			sig.NotationSubjectDigest, digest,
+		))
+	}
+
 	opts := notationlib.VerifierVerifyOptions{
 		ArtifactReference:  imageRef,
 		SignatureMediaType: sig.NotationMediaType,

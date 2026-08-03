@@ -198,6 +198,7 @@ protect against resource exhaustion and unbounded processing.
 | Glob pattern cache          | 10,000 patterns           | Compiled glob patterns are cached for reuse. Once the cache holds 10,000 entries, new patterns still compile and match but are not cached.                                      |
 | OCI policy layer size       | 1 MiB per layer           | Individual OCI policy layers larger than 1 MiB are rejected during fetch. The layer is read through a size-limited reader and an error is returned if the limit is exceeded.    |
 | OCI policy layer count      | 1,000 layers              | At most 1,000 layers are processed from an OCI policy artifact. If the artifact contains more layers, policy loading fails with an error.                                       |
+| Credential file size        | 1 MiB per file            | PEM public key files, CA certificate bundles, and TUF root files are read through a size-limited reader. Files exceeding 1 MiB are rejected.                                    |
 
 **Sigstore trusted root refresh.** For keyless (Fulcio) verification, the
 plugin fetches the Sigstore trusted root from the TUF mirror on startup and
@@ -232,8 +233,11 @@ rules to pre-aggregate if the series count grows large.
 logs warnings at startup if permissive settings are in place. It warns
 when `fetch_failure_policy` is explicitly set to `warn` or `allow` (since
 fetch failures would let containers through), and when any policy has
-`slsa.missingPolicy` or `vex.missingPolicy` set to `allow`. Review these
-warnings and tighten the settings before relying on enforce mode in production.
+`slsa.missingPolicy` or `vex.missingPolicy` set to `allow`. It also warns when
+a policy uses key-only verification (verifiers with keys and no OIDC issuers)
+while `signatures.requireTransparencyLog` is false, because compromised keys
+cannot be time-bounded without transparency log entries. Review these warnings
+and tighten the settings before relying on enforce mode in production.
 
 **SAN patterns for keyless verification.** In `enforce` mode, `trust.sanPatterns`
 is required when `trust.issuers` is configured. The plugin rejects the policy at

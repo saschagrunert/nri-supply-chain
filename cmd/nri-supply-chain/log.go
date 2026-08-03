@@ -69,10 +69,14 @@ func (h *cliHandler) Handle(
 	return err //nolint:wrapcheck // WriteString error is self-explanatory
 }
 
+// WithAttrs returns the handler unchanged; the CLI output format only renders
+// per-record attributes, so pre-applied attrs are intentionally discarded.
 func (h *cliHandler) WithAttrs(_ []slog.Attr) slog.Handler {
 	return h
 }
 
+// WithGroup returns the handler unchanged; the CLI output format does not
+// support attribute groups.
 func (h *cliHandler) WithGroup(_ string) slog.Handler {
 	return h
 }

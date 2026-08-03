@@ -15,6 +15,7 @@
 package vsa_test
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -34,6 +35,6 @@ func BenchmarkVerify(b *testing.B) {
 	b.ResetTimer()
 
 	for range b.N {
-		_, _ = vsa.Verify(data, pol, testImageRef, nil)
+		_, _ = vsa.Verify(context.Background(), data, pol, testImageRef, nil)
 	}
 }

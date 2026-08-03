@@ -17,8 +17,26 @@ package intoto
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
+)
+
+var (
+	// ErrInvalidStatement indicates the in-toto statement could not be parsed.
+	ErrInvalidStatement = errors.New("invalid in-toto statement")
+
+	// ErrEmptySubjects indicates a statement has no subjects when a digest
+	// is available for binding.
+	ErrEmptySubjects = errors.New("statement has no subjects for digest binding")
+
+	// ErrSubjectMismatch indicates the in-toto subject does not match the image.
+	ErrSubjectMismatch = errors.New("subject digest mismatch")
+
+	// ErrNoDigestBinding indicates subjects exist but no digest was provided
+	// for binding.
+	ErrNoDigestBinding = errors.New("statement has subjects but no digest for binding")
 )
 
 // Statement is a minimal in-toto statement containing subjects and a raw
@@ -43,4 +61,42 @@ func SubjectMatchesDigest(subjects []Subject, imageDigest string) bool {
 	}
 
 	return false
+}
+
+// VerifySubjectAndExtractPredicate unmarshals an in-toto statement, verifies
+// subject digest binding, and returns the raw predicate payload.
+func VerifySubjectAndExtractPredicate(att []byte, imageDigest string) (json.RawMessage, error) {
+	var stmt Statement
+
+	err := json.Unmarshal(att, &stmt)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidStatement, err)
+	}
+
+	if imageDigest != "" && len(stmt.Subject) == 0 {
+		return nil, fmt.Errorf(
+			"%w: digest %q available but statement has no subjects",
+			ErrEmptySubjects, imageDigest,
+		)
+	}
+
+	if len(stmt.Subject) > 0 && imageDigest != "" {
+		if !SubjectMatchesDigest(stmt.Subject, imageDigest) {
+			return nil, fmt.Errorf(
+				"%w: none of the subjects match %q",
+				ErrSubjectMismatch, imageDigest,
+			)
+		}
+	} else if imageDigest == "" && len(stmt.Subject) > 0 {
+		return nil, fmt.Errorf(
+			"%w: statement has %d subjects but no digest for binding",
+			ErrNoDigestBinding, len(stmt.Subject),
+		)
+	}
+
+	if len(stmt.Predicate) > 0 {
+		return stmt.Predicate, nil
+	}
+
+	return att, nil
 }

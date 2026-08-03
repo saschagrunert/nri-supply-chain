@@ -15,6 +15,7 @@
 package slsa_test
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -55,7 +56,58 @@ func FuzzVerify(f *testing.F) {
 	f.Add([]byte(`{}`))
 	f.Add([]byte(`{"_type":"bad"}`))
 
+	// Seed: valid statement with a subject digest that does NOT match testDigest,
+	// exercising the subject digest mismatch path.
+	f.Add([]byte(`{` +
+		`"_type":"https://in-toto.io/Statement/v1",` +
+		`"subject":[{"name":"nginx","digest":{"sha256":"` +
+		`ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}}],` +
+		`"predicateType":"https://slsa.dev/provenance/v1",` +
+		`"predicate":{"buildDefinition":{"buildType":"https://actions.github.io/buildtypes/workflow/v1",` +
+		`"externalParameters":{"source":"github.com/example/repo"},` +
+		`"internalParameters":{}},"runDetails":{"builder":{"id":"https://github.com/actions/runner"},` +
+		`"metadata":{"invocationId":"run-1"}}}` +
+		`}`))
+
+	// Seed: valid statement with empty subjects list, exercising that path.
+	f.Add([]byte(`{` +
+		`"_type":"https://in-toto.io/Statement/v1",` +
+		`"subject":[],` +
+		`"predicateType":"https://slsa.dev/provenance/v1",` +
+		`"predicate":{"buildDefinition":{"buildType":"https://example.com/build/v1",` +
+		`"externalParameters":{},"internalParameters":{}},"runDetails":{"builder":{"id":""},` +
+		`"metadata":{"invocationId":""}}}` +
+		`}`))
+
+	// Seed: valid statement with multiple subjects, one matching and one not,
+	// exercising the multi-subject iteration path.
+	f.Add([]byte(`{` +
+		`"_type":"https://in-toto.io/Statement/v1",` +
+		`"subject":[` +
+		`{"name":"other","digest":{"sha256":"0000000000000000000000000000000000000000000000000000000000000000"}},` +
+		`{"name":"nginx","digest":{"sha256":"` +
+		testDigestHash + `"}}],` +
+		`"predicateType":"https://slsa.dev/provenance/v1",` +
+		`"predicate":{"buildDefinition":{"buildType":"https://actions.github.io/buildtypes/workflow/v1",` +
+		`"externalParameters":{"source":"github.com/example/repo","workflow":".github/workflows/ci.yml"},` +
+		`"internalParameters":{}},"runDetails":{"builder":{"id":"https://github.com/actions/runner"},` +
+		`"metadata":{"invocationId":"run-42"}}}` +
+		`}`))
+
+	// Seed: valid statement with extra/unknown external parameters to exercise
+	// the parameter extraction paths.
+	f.Add([]byte(`{` +
+		`"_type":"https://in-toto.io/Statement/v1",` +
+		`"subject":[{"name":"nginx","digest":{"sha256":"` +
+		testDigestHash + `"}}],` +
+		`"predicateType":"https://slsa.dev/provenance/v1",` +
+		`"predicate":{"buildDefinition":{"buildType":"https://custom.example.com/build/v2",` +
+		`"externalParameters":{"source":"github.com/other-org/other-repo","custom-key":"custom-value","extra":"data"},` +
+		`"internalParameters":{"internal":"param"}},"runDetails":{"builder":{"id":"https://custom-builder.example.com"},` +
+		`"metadata":{"invocationId":"run-999"}}}` +
+		`}`))
+
 	f.Fuzz(func(_ *testing.T, data []byte) {
-		slsa.Verify(data, &policy.Policy{}, testDigest)
+		slsa.Verify(context.Background(), data, &policy.Policy{}, testDigest)
 	})
 }

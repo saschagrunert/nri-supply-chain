@@ -15,6 +15,7 @@
 package attestation
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -36,6 +37,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/tuf"
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/singleflight"
 	"golang.org/x/time/rate"
 
@@ -48,14 +50,15 @@ var (
 )
 
 const (
-	maxAttestationSize      = 10 << 20 // 10 MiB
-	maxTotalAttestationSize = 50 << 20 // 50 MiB aggregate limit per image
-	maxReferrers            = 50
-	trustedRootCacheTTL     = 1 * time.Hour
-	trustedRootMaxStaleness = 24 * time.Hour
-	fetchMaxRetries         = 2
-	fetchRetryBaseDelay     = 500 * time.Millisecond
-	fetchRetryJitterDivisor = 2
+	maxAttestationSize        = 10 << 20 // 10 MiB
+	maxTotalAttestationSize   = 50 << 20 // 50 MiB aggregate limit per image
+	maxReferrers              = 50
+	maxConcurrentCollectFetch = 5
+	trustedRootCacheTTL       = 1 * time.Hour
+	trustedRootMaxStaleness   = 24 * time.Hour
+	fetchMaxRetries           = 2
+	fetchRetryBaseDelay       = 500 * time.Millisecond
+	fetchRetryJitterDivisor   = 2
 )
 
 type trustedRootFetchFunc func() (*root.TrustedRoot, error)
@@ -333,8 +336,9 @@ func (f *OCIFetcher) Warm(ctx context.Context) error {
 // Fetch discovers and returns verified attestations for the given image.
 // The digest used for reference parsing and attestation discovery is taken
 // from opts.Digest, which must be set by the caller.
-func (f *OCIFetcher) Fetch(
-	ctx context.Context, imageRef string,
+func (f *OCIFetcher) Fetch( //nolint:cyclop // slightly above threshold due to parsedRef optimization
+	ctx context.Context,
+	imageRef string,
 	opts *FetchOptions,
 ) ([]VerifiedAttestation, error) {
 	if opts == nil {
@@ -357,7 +361,12 @@ func (f *OCIFetcher) Fetch(
 		return nil, err
 	}
 
-	ref, err := parseDigestRef(effectiveRef, opts.Digest)
+	var parsedRef name.Reference
+	if effectiveRef == imageRef {
+		parsedRef = opts.ParsedRef
+	}
+
+	ref, err := parseDigestRef(effectiveRef, opts.Digest, parsedRef)
 	if err != nil {
 		return nil, fmt.Errorf("parsing image reference: %w", err)
 	}
@@ -433,7 +442,7 @@ func (f *OCIFetcher) fetchWithFallback(
 		fallbackOpts = append(fallbackOpts, fallback.TransportOpt)
 	}
 
-	fallbackRef, err := parseDigestRef(fallback.OriginalRef, opts.Digest)
+	fallbackRef, err := parseDigestRef(fallback.OriginalRef, opts.Digest, opts.ParsedRef)
 	if err != nil {
 		return nil, fmt.Errorf("parsing fallback reference: %w", err)
 	}
@@ -569,18 +578,34 @@ func (f *OCIFetcher) collectNotationSignatures(
 	manifests []ociV1.Descriptor, ref name.Digest, digest string,
 	remoteOpts []remote.Option,
 ) []VerifiedAttestation {
-	var sigs []VerifiedAttestation
+	var (
+		sigsMu sync.Mutex
+		sigs   []VerifiedAttestation
+	)
+
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(maxConcurrentCollectFetch)
 
 	for idx := range manifests {
 		if !isNotationCandidate(manifests[idx].ArtifactType) {
 			continue
 		}
 
-		att, ok := f.fetchNotationSignature(ctx, &manifests[idx], ref, digest, remoteOpts)
-		if ok {
-			sigs = append(sigs, att)
-		}
+		desc := &manifests[idx]
+
+		group.Go(func() error {
+			att, ok := f.fetchNotationSignature(groupCtx, desc, ref, digest, remoteOpts)
+			if !ok {
+				return nil
+			}
+
+			appendAttestation(&sigsMu, &sigs, &att)
+
+			return nil
+		})
 	}
+
+	_ = group.Wait()
 
 	return sigs
 }
@@ -885,16 +910,39 @@ func (f *OCIFetcher) processCosignLayer(
 }
 
 func extractPredicateType(payload []byte) string {
-	var stmt struct {
-		PredicateType string `json:"predicateType"`
-	}
+	dec := json.NewDecoder(bytes.NewReader(payload))
 
-	unmarshalErr := json.Unmarshal(payload, &stmt)
-	if unmarshalErr != nil {
+	tok, err := dec.Token()
+	if err != nil || tok != json.Delim('{') {
 		return ""
 	}
 
-	return stmt.PredicateType
+	for dec.More() {
+		key, keyErr := dec.Token()
+		if keyErr != nil {
+			return ""
+		}
+
+		if key == "predicateType" {
+			var val string
+
+			valErr := dec.Decode(&val)
+			if valErr != nil {
+				return ""
+			}
+
+			return val
+		}
+
+		var skip json.RawMessage
+
+		skipErr := dec.Decode(&skip)
+		if skipErr != nil {
+			return ""
+		}
+	}
+
+	return ""
 }
 
 func (f *OCIFetcher) collectAttestations(
@@ -902,51 +950,86 @@ func (f *OCIFetcher) collectAttestations(
 	ref name.Digest, digest string, remoteOpts []remote.Option,
 	fetchOpts *FetchOptions,
 ) ([]VerifiedAttestation, bool) {
+	candidates := filterBundleCandidates(ctx, manifests)
+	if len(candidates) == 0 {
+		return nil, false
+	}
+
 	var (
+		attsMu       sync.Mutex
 		attestations []VerifiedAttestation
-		hadBundles   bool
-		processed    int
-		totalSize    int64
+		totalSize    atomic.Int64
 	)
 
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(maxConcurrentCollectFetch)
+
+	for _, desc := range candidates {
+		group.Go(func() error {
+			if groupCtx.Err() != nil {
+				return nil //nolint:nilerr // context cancelled, skip remaining
+			}
+
+			predicateType := desc.Annotations[annotationPredicateType]
+
+			att, valid := f.processDescriptor(
+				groupCtx,
+				desc,
+				ref,
+				digest,
+				predicateType,
+				remoteOpts,
+				fetchOpts,
+			)
+			if !valid {
+				return nil
+			}
+
+			newTotal := totalSize.Add(int64(len(att.Payload)))
+			if newTotal > maxTotalAttestationSize {
+				slog.WarnContext(groupCtx,
+					"Aggregate attestation size exceeds limit, skipping remaining",
+					"totalSize", newTotal,
+					"limit", maxTotalAttestationSize,
+				)
+
+				return nil
+			}
+
+			appendAttestation(&attsMu, &attestations, &att)
+
+			return nil
+		})
+	}
+
+	_ = group.Wait()
+
+	return attestations, true
+}
+
+func filterBundleCandidates(
+	ctx context.Context, manifests []ociV1.Descriptor,
+) []*ociV1.Descriptor {
+	var candidates []*ociV1.Descriptor
+
 	for idx := range manifests {
-		if ctx.Err() != nil {
-			break
-		}
-
-		desc := &manifests[idx]
-
-		if !isBundleCandidate(desc.ArtifactType) {
+		if !isBundleCandidate(manifests[idx].ArtifactType) {
 			continue
 		}
 
-		hadBundles = true
-		processed++
-
-		if processed > maxReferrers {
+		if len(candidates) >= maxReferrers {
 			slog.WarnContext(ctx, "Referrer count exceeds limit, skipping remaining",
 				"limit", maxReferrers,
-				"bundleReferrers", processed,
 				"totalManifests", len(manifests),
 			)
 
 			break
 		}
 
-		predicateType := desc.Annotations[annotationPredicateType]
-
-		att, ok := f.processDescriptor(ctx, desc, ref, digest, predicateType, remoteOpts, fetchOpts)
-		if ok {
-			totalSize += int64(len(att.Payload))
-			if exceededTotalAttestationSize(ctx, totalSize) {
-				break
-			}
-
-			attestations = append(attestations, att)
-		}
+		candidates = append(candidates, &manifests[idx])
 	}
 
-	return attestations, hadBundles
+	return candidates
 }
 
 func isBundleCandidate(artifactType string) bool {
@@ -956,6 +1039,13 @@ func isBundleCandidate(artifactType string) bool {
 	default:
 		return false
 	}
+}
+
+func appendAttestation(mu *sync.Mutex, dst *[]VerifiedAttestation, att *VerifiedAttestation) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	*dst = append(*dst, *att)
 }
 
 func exceededTotalAttestationSize(ctx context.Context, totalSize int64) bool {
@@ -1056,15 +1146,17 @@ func resolvePredicateFromManifest(ctx context.Context, img ociV1.Image, descDige
 	return manifest.Annotations[annotationPredicateType]
 }
 
-func parseDigestRef(imageRef, digest string) (name.Digest, error) {
+func parseDigestRef(imageRef, digest string, parsed name.Reference) (name.Digest, error) {
+	if parsed != nil {
+		return parsed.Context().Digest(digest), nil
+	}
+
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
 		return name.Digest{}, fmt.Errorf("parsing reference %q: %w", imageRef, err)
 	}
 
-	digestRef := ref.Context().Digest(digest)
-
-	return digestRef, nil
+	return ref.Context().Digest(digest), nil
 }
 
 func (f *OCIFetcher) extractPayloadFromImage(

@@ -23,6 +23,7 @@ import (
 	"io"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/google/go-containerregistry/pkg/name"
@@ -153,11 +154,9 @@ func TestFetchFromOCIInvalidJSON(t *testing.T) {
 	ref := pushImage(t, srv, img, "test/policies:bad")
 	fetcher := policy.NewOCIFetcher(nil)
 
-	result, err := fetcher.FetchFromOCI(context.Background(), ref)
-	testutil.AssertNoError(t, err)
-
-	// The valid policy should still be loaded; the invalid one is skipped with a warning.
-	testutil.AssertEqual(t, 1, len(result.Policies))
+	_, err := fetcher.FetchFromOCI(context.Background(), ref)
+	testutil.AssertError(t, err)
+	testutil.AssertContains(t, err.Error(), "invalid OCI policy layer")
 }
 
 func TestFetchFromOCIInvalidReference(t *testing.T) {
@@ -361,19 +360,13 @@ func TestFetchFromOCILayerSizeLimit(t *testing.T) {
 	ref := pushImage(t, srv, img, "test/policies:big")
 	fetcher := policy.NewOCIFetcher(nil)
 
-	result, err := fetcher.FetchFromOCI(context.Background(), ref)
-	testutil.AssertNoError(t, err)
-
-	// The oversized layer should be silently skipped; only the valid default
-	// policy should be present.
-	testutil.AssertEqual(t, 1, len(result.Policies))
-
-	if _, ok := result.Policies[""]; !ok {
-		t.Fatal("expected default policy")
+	_, err := fetcher.FetchFromOCI(context.Background(), ref)
+	if err == nil {
+		t.Fatal("expected error for oversized layer with PolicyMediaType")
 	}
 
-	if _, ok := result.Policies["big"]; ok {
-		t.Error("oversized layer should have been skipped")
+	if !strings.Contains(err.Error(), "OCI policy layer exceeds size limit") {
+		t.Errorf("unexpected error: %v", err)
 	}
 }
 
@@ -442,20 +435,9 @@ func TestFetchFromOCITrailingJSONContent(t *testing.T) {
 	ref := pushImage(t, srv, img, "test/policies:trailing")
 	fetcher := policy.NewOCIFetcher(nil)
 
-	result, err := fetcher.FetchFromOCI(context.Background(), ref)
-	testutil.AssertNoError(t, err)
-
-	// The trailing-content layer should be skipped; only the valid default
-	// policy should be present.
-	testutil.AssertEqual(t, 1, len(result.Policies))
-
-	if _, ok := result.Policies[""]; !ok {
-		t.Fatal("expected default policy")
-	}
-
-	if _, ok := result.Policies["trailing"]; ok {
-		t.Error("layer with trailing JSON content should have been skipped")
-	}
+	_, err := fetcher.FetchFromOCI(context.Background(), ref)
+	testutil.AssertError(t, err)
+	testutil.AssertContains(t, err.Error(), "invalid OCI policy layer")
 }
 
 func TestFetchFromOCIDuplicateLayerFilenames(t *testing.T) {

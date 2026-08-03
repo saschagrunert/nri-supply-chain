@@ -24,7 +24,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -36,6 +35,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
+	"github.com/saschagrunert/nri-supply-chain/internal/fileutil"
 )
 
 var (
@@ -199,7 +199,7 @@ func newHTTPTransport(tlsCfg *tls.Config) *http.Transport {
 }
 
 func loadCACertPool(path string) (*x509.CertPool, error) {
-	pemData, err := os.ReadFile(path) //nolint:gosec // path is validated by config
+	pemData, err := fileutil.ReadLimited(path, fileutil.MaxCredentialFileSize)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s: %w", ErrCACertRead, path, err)
 	}
