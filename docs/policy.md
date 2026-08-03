@@ -827,24 +827,24 @@ Each rule is an object with:
 
 **Available variables:**
 
-| Variable           | Type   | Description                                        |
-| ------------------ | ------ | -------------------------------------------------- |
-| `image.ref`        | string | Full image reference                               |
-| `image.registry`   | string | Registry host                                      |
-| `image.repository` | string | Repository path                                    |
-| `image.digest`     | string | Image digest                                       |
-| `image.namespace`  | string | Kubernetes namespace                               |
-| `slsa.verified`    | bool   | Whether SLSA check passed                          |
-| `slsa.builderID`   | string | Builder ID from provenance (reserved, always `""`) |
-| `slsa.buildType`   | string | Build type (reserved, always `""`)                 |
-| `slsa.source`      | string | Source URI (reserved, always `""`)                 |
-| `vex.verified`     | bool   | Whether VEX check passed                           |
-| `vex.status`       | string | VEX status (reserved, always `""`)                 |
-| `vsa.verified`     | bool   | Whether VSA check passed                           |
-| `vsa.verifierID`   | string | VSA verifier ID (reserved, always `""`)            |
-| `vsa.result`       | string | PASSED/FAILED (reserved, always `""`)              |
-| `vsa.level`        | int    | SLSA build level (reserved, always `0`)            |
-| `sbom.verified`    | bool   | Whether SBOM check passed                          |
+| Variable           | Type   | Description                                       |
+| ------------------ | ------ | ------------------------------------------------- |
+| `image.ref`        | string | Full image reference                              |
+| `image.registry`   | string | Registry host                                     |
+| `image.repository` | string | Repository path                                   |
+| `image.digest`     | string | Image digest                                      |
+| `image.namespace`  | string | Kubernetes namespace                              |
+| `slsa.verified`    | bool   | Whether SLSA check passed                         |
+| `slsa.builderID`   | string | Builder ID from SLSA provenance                   |
+| `slsa.buildType`   | string | Build type from SLSA provenance                   |
+| `slsa.source`      | string | Source URI from SLSA provenance                   |
+| `vex.verified`     | bool   | Whether VEX check passed                          |
+| `vex.status`       | string | VEX status (e.g. `not_affected`, `affected`)      |
+| `vsa.verified`     | bool   | Whether VSA check passed                          |
+| `vsa.verifierID`   | string | VSA verifier ID                                   |
+| `vsa.result`       | string | VSA verification result (e.g. `PASSED`, `FAILED`) |
+| `vsa.level`        | int    | SLSA build level from VSA                         |
+| `sbom.verified`    | bool   | Whether SBOM check passed                         |
 
 Standard string functions are available via `ext.Strings()`: `startsWith`,
 `endsWith`, `contains`, `matches`.

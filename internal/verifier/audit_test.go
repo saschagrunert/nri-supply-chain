@@ -84,11 +84,12 @@ func TestLogResultSerializesControlCharacters(t *testing.T) {
 		Reason:  "",
 		CheckResults: []types.CheckResult{
 			{
-				Type:   types.CheckTypeSLSA,
-				Status: types.StatusPass,
-				Passed: true,
-				Detail: "image with\nnewline\tand\ttabs",
-				Err:    nil,
+				Type:     types.CheckTypeSLSA,
+				Status:   types.StatusPass,
+				Passed:   true,
+				Detail:   "image with\nnewline\tand\ttabs",
+				Err:      nil,
+				Metadata: nil,
 			},
 		},
 	}

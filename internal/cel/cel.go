@@ -304,7 +304,7 @@ func isCostError(err error) bool {
 // BuildVars constructs the CEL variable map from check results and image context.
 func BuildVars(
 	imageRef, registry, repository, digest, namespace string,
-	slsaResult, vexResult, sbomResult *types.CheckResult,
+	slsaResult, vexResult, vsaResult, sbomResult *types.CheckResult,
 ) map[string]any {
 	imageVars := map[string]any{
 		"ref":        imageRef,
@@ -316,7 +316,7 @@ func BuildVars(
 
 	slsaVars := buildSLSAVars(slsaResult)
 	vexVars := buildVEXVars(vexResult)
-	vsaVars := buildDefaultVSAVars()
+	vsaVars := buildVSAVars(vsaResult)
 	sbomVars := buildSBOMVars(sbomResult)
 
 	return map[string]any{
@@ -338,6 +338,7 @@ func buildSLSAVars(result *types.CheckResult) map[string]any {
 
 	if result != nil {
 		vars[varVerified] = result.Passed
+		extractStringMeta(result.Metadata, vars, "builderID", "buildType", "source")
 	}
 
 	return vars
@@ -351,17 +352,43 @@ func buildVEXVars(result *types.CheckResult) map[string]any {
 
 	if result != nil {
 		vars[varVerified] = result.Passed
+		extractStringMeta(result.Metadata, vars, "status")
 	}
 
 	return vars
 }
 
-func buildDefaultVSAVars() map[string]any {
-	return map[string]any{
+func buildVSAVars(result *types.CheckResult) map[string]any {
+	vars := map[string]any{
 		"verifierID": "",
 		"result":     "",
 		"level":      int64(0),
 		varVerified:  false,
+	}
+
+	if result != nil {
+		vars[varVerified] = result.Passed
+		extractStringMeta(result.Metadata, vars, "verifierID", "result")
+
+		if result.Metadata != nil {
+			if v, ok := result.Metadata["level"].(int64); ok {
+				vars["level"] = v
+			}
+		}
+	}
+
+	return vars
+}
+
+func extractStringMeta(meta, vars map[string]any, keys ...string) {
+	if meta == nil {
+		return
+	}
+
+	for _, key := range keys {
+		if v, ok := meta[key].(string); ok {
+			vars[key] = v
+		}
 	}
 }
 

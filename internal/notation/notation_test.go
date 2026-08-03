@@ -29,8 +29,6 @@ const (
 	testImageDigest     = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
 	testImageRef        = "example.com/img@sha256:" + testImageDigest
 	testDigest          = "sha256:" + testImageDigest
-	testSigDigest       = "e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6"
-	testSignatureRef    = "example.com/img@sha256:" + testSigDigest
 	testRuleName        = "rule1"
 	testStoreName       = "mystore"
 	testStoreRef        = "ca:mystore"
@@ -245,11 +243,20 @@ func TestBuildTrustPolicyDocumentFieldMapping(t *testing.T) {
 func TestVerify(t *testing.T) {
 	t.Parallel()
 
+	testSig := &attestation.VerifiedAttestation{
+		PredicateType:     attestation.NotationSignatureMediaType,
+		Payload:           []byte("invalid-envelope"),
+		Digest:            testDigest,
+		SignatureType:     attestation.SignatureTypeNotation,
+		NotationMediaType: "application/cose",
+	}
+
 	tests := []struct {
-		name    string
-		pol     func(t *testing.T) *policy.Policy
-		wantErr error
-		wantNil bool
+		name     string
+		pol      func(t *testing.T) *policy.Policy
+		wantErr  error
+		wantNil  bool
+		wantPass bool
 	}{
 		{
 			name: "nil notation policy returns ErrNotationNotConfigured",
@@ -258,8 +265,9 @@ func TestVerify(t *testing.T) {
 
 				return &policy.Policy{}
 			},
-			wantErr: ErrNotationNotConfigured,
-			wantNil: true,
+			wantErr:  ErrNotationNotConfigured,
+			wantNil:  true,
+			wantPass: false,
 		},
 		{
 			name: "empty trust stores returns ErrNoTrustStores",
@@ -282,8 +290,9 @@ func TestVerify(t *testing.T) {
 					},
 				}
 			},
-			wantErr: ErrNoTrustStores,
-			wantNil: true,
+			wantErr:  ErrNoTrustStores,
+			wantNil:  true,
+			wantPass: false,
 		},
 		{
 			name: "empty trust policy returns ErrNoTrustPolicy",
@@ -305,11 +314,12 @@ func TestVerify(t *testing.T) {
 					},
 				}
 			},
-			wantErr: ErrNoTrustPolicy,
-			wantNil: true,
+			wantErr:  ErrNoTrustPolicy,
+			wantNil:  true,
+			wantPass: false,
 		},
 		{
-			name: "valid policy with matching trust policy rule passes",
+			name: "invalid envelope fails crypto verification",
 			pol: func(t *testing.T) *policy.Policy {
 				t.Helper()
 
@@ -319,8 +329,9 @@ func TestVerify(t *testing.T) {
 					},
 				}
 			},
-			wantErr: nil,
-			wantNil: false,
+			wantErr:  nil,
+			wantNil:  false,
+			wantPass: false,
 		},
 	}
 
@@ -331,7 +342,7 @@ func TestVerify(t *testing.T) {
 			ctx := context.Background()
 			pol := tc.pol(t)
 
-			result, err := Verify(ctx, testSignatureRef, testImageRef, testDigest, pol)
+			result, err := Verify(ctx, testSig, testImageRef, testDigest, pol)
 
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
@@ -345,12 +356,15 @@ func TestVerify(t *testing.T) {
 				t.Errorf("expected nil result, got %+v", result)
 			}
 
-			if !tc.wantNil && result == nil {
-				t.Fatal("expected non-nil result, got nil")
-			}
+			if !tc.wantNil {
+				if result == nil {
+					t.Fatal("expected non-nil result, got nil")
+				}
 
-			if result != nil && !result.Passed {
-				t.Errorf("expected result to pass, got detail: %s", result.Detail)
+				if result.Passed != tc.wantPass {
+					t.Errorf("passed = %v, want %v (detail: %s)",
+						result.Passed, tc.wantPass, result.Detail)
+				}
 			}
 		})
 	}
@@ -452,13 +466,14 @@ func TestVerifyMultiple(t *testing.T) {
 			wantDetail: "no notation signatures found",
 		},
 		{
-			name: "single valid signature passes",
+			name: "invalid signature envelope fails crypto verification",
 			signatures: []attestation.VerifiedAttestation{
 				{
-					PredicateType: attestation.NotationSignatureMediaType,
-					Payload:       []byte(testSignatureRef),
-					Digest:        testDigest,
-					SignatureType: attestation.SignatureTypeNotation,
+					PredicateType:     attestation.NotationSignatureMediaType,
+					Payload:           []byte("invalid-envelope"),
+					Digest:            testDigest,
+					SignatureType:     attestation.SignatureTypeNotation,
+					NotationMediaType: "application/cose",
 				},
 			},
 			pol: func(t *testing.T) *policy.Policy {
@@ -472,7 +487,7 @@ func TestVerifyMultiple(t *testing.T) {
 			},
 			wantErr:    nil,
 			wantNil:    false,
-			wantPass:   true,
+			wantPass:   false,
 			wantDetail: "",
 		},
 	}
@@ -533,8 +548,7 @@ func TestPassResult(t *testing.T) {
 		t.Errorf("status = %q, want %q", result.Status, types.StatusPass)
 	}
 
-	const wantDetail = "Notation trust policy matched" +
-		" (cryptographic verification not yet implemented)"
+	const wantDetail = "Notation signature cryptographically verified"
 
 	if result.Detail != wantDetail {
 		t.Errorf("detail = %q, want %q", result.Detail, wantDetail)

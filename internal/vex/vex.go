@@ -35,7 +35,10 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/vex/openvex"
 )
 
-const checkType = types.CheckTypeVEX
+const (
+	checkType     = types.CheckTypeVEX
+	metaKeyStatus = "status"
+)
 
 var (
 	// ErrInvalidVEX indicates the VEX document could not be parsed.
@@ -184,14 +187,23 @@ func buildResult(
 			strings.Join(affectedNames, ", "), "affected",
 		)
 
-		return failResult(detail)
+		result := failResult(detail)
+		result.Metadata = map[string]any{metaKeyStatus: "affected"}
+
+		return result
 	}
 
 	if hasUnderInvestigation {
-		return handleUnderInvestigation(pol)
+		result := handleUnderInvestigation(pol)
+		result.Metadata = map[string]any{metaKeyStatus: "under_investigation"}
+
+		return result
 	}
 
-	return passResult()
+	result := passResult()
+	result.Metadata = map[string]any{metaKeyStatus: "not_affected"}
+
+	return result
 }
 
 // VerifyMultiple checks multiple VEX documents. Most restrictive wins:
@@ -231,11 +243,17 @@ func VerifyMultiple(
 	}
 
 	if len(failDetails) > 0 {
-		return failResult(strings.Join(failDetails, "; ")), nil
+		result := failResult(strings.Join(failDetails, "; "))
+		result.Metadata = map[string]any{metaKeyStatus: "affected"}
+
+		return result, nil
 	}
 
 	if anyUnderInvestigation {
-		return handleUnderInvestigation(pol), nil
+		result := handleUnderInvestigation(pol)
+		result.Metadata = map[string]any{metaKeyStatus: "under_investigation"}
+
+		return result, nil
 	}
 
 	if len(attestations) > 0 && !anyValid {
@@ -244,7 +262,10 @@ func VerifyMultiple(
 		), nil
 	}
 
-	return passResult(), nil
+	result := passResult()
+	result.Metadata = map[string]any{metaKeyStatus: "not_affected"}
+
+	return result, nil
 }
 
 func isUnderInvestigation(result *types.CheckResult) bool {

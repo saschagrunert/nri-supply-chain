@@ -18,17 +18,17 @@ import (
 	"context"
 	"testing"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/notation"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 )
 
 func FuzzVerify(f *testing.F) {
-	f.Add("example.com/img@sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2")
-	f.Add("")
-	f.Add("not-a-valid-ref")
-	f.Add("ghcr.io/test/image:latest")
+	f.Add([]byte("envelope-data"), "application/cose")
+	f.Add([]byte{}, "application/jose+json")
+	f.Add([]byte("random"), "")
 
-	f.Fuzz(func(_ *testing.T, signatureRef string) {
+	f.Fuzz(func(_ *testing.T, envelope []byte, mediaType string) {
 		pol := &policy.Policy{
 			Sections: policy.Sections{
 				Notation: &policy.NotationPolicy{
@@ -51,9 +51,17 @@ func FuzzVerify(f *testing.F) {
 			},
 		}
 
+		sig := &attestation.VerifiedAttestation{
+			PredicateType:     attestation.NotationSignatureMediaType,
+			Payload:           envelope,
+			Digest:            "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+			SignatureType:     attestation.SignatureTypeNotation,
+			NotationMediaType: mediaType,
+		}
+
 		notation.Verify(
 			context.Background(),
-			signatureRef,
+			sig,
 			"example.com/img:latest",
 			"sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
 			pol,

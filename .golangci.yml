@@ -148,6 +148,8 @@ linters:
             - github.com/invopop/jsonschema
             - github.com/notaryproject/notation-core-go
             - github.com/notaryproject/notation-go
+            - github.com/opencontainers/go-digest
+            - github.com/opencontainers/image-spec
             - github.com/olekukonko/tablewriter
             - github.com/olekukonko/tablewriter/tw
             - github.com/openvex/go-vex
@@ -170,6 +172,8 @@ linters:
         - 'github\.com/google/go-containerregistry/.*'
         - 'github\.com/invopop/jsonschema\.Reflector'
         - 'github\.com/notaryproject/notation-go/verifier/trustpolicy\..*'
+        - 'github\.com/notaryproject/notation-go\.VerifierVerifyOptions'
+        - 'github\.com/opencontainers/image-spec/specs-go/v1\.Descriptor'
         - 'github\.com/openvex/go-vex/.*'
         - 'github\.com/prometheus/client_golang/prometheus\..*'
         - 'github\.com/olekukonko/tablewriter/tw\..*'

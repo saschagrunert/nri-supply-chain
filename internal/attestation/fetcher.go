@@ -539,7 +539,7 @@ func (f *OCIFetcher) fetchOnce(
 	)
 
 	// Collect Notation signatures from referrers.
-	notationSigs := collectNotationSignatures(manifest.Manifests, ref, digest)
+	notationSigs := f.collectNotationSignatures(ctx, manifest.Manifests, ref, digest, remoteOpts)
 	attestations = append(attestations, notationSigs...)
 
 	ctxErr := ctx.Err()
@@ -564,8 +564,10 @@ func isNotationCandidate(artifactType string) bool {
 	return artifactType == NotationSignatureMediaType
 }
 
-func collectNotationSignatures(
+func (f *OCIFetcher) collectNotationSignatures(
+	ctx context.Context,
 	manifests []ociV1.Descriptor, ref name.Digest, digest string,
+	remoteOpts []remote.Option,
 ) []VerifiedAttestation {
 	var sigs []VerifiedAttestation
 
@@ -574,17 +576,120 @@ func collectNotationSignatures(
 			continue
 		}
 
-		sigRef := ref.Context().Digest(manifests[idx].Digest.String())
-
-		sigs = append(sigs, VerifiedAttestation{
-			PredicateType: NotationSignatureMediaType,
-			Payload:       []byte(sigRef.String()),
-			Digest:        digest,
-			SignatureType: SignatureTypeNotation,
-		})
+		att, ok := f.fetchNotationSignature(ctx, &manifests[idx], ref, digest, remoteOpts)
+		if ok {
+			sigs = append(sigs, att)
+		}
 	}
 
 	return sigs
+}
+
+func (f *OCIFetcher) fetchNotationSignature(
+	ctx context.Context,
+	desc *ociV1.Descriptor,
+	ref name.Digest, digest string,
+	remoteOpts []remote.Option,
+) (VerifiedAttestation, bool) {
+	sigRef := ref.Context().Digest(desc.Digest.String())
+
+	img, err := f.fetchImage(sigRef, remoteOpts...)
+	if err != nil {
+		slog.WarnContext(ctx, "Failed to fetch Notation signature image",
+			"digest", desc.Digest.String(),
+			"error", err,
+		)
+
+		return VerifiedAttestation{}, false
+	}
+
+	manifest, err := img.Manifest()
+	if err != nil || manifest == nil {
+		slog.WarnContext(ctx, "Failed to read Notation signature manifest",
+			"digest", desc.Digest.String(),
+			"error", err,
+		)
+
+		return VerifiedAttestation{}, false
+	}
+
+	envelope, ok := readNotationEnvelope(ctx, img, desc.Digest.String())
+	if !ok {
+		return VerifiedAttestation{}, false
+	}
+
+	att := VerifiedAttestation{
+		PredicateType: NotationSignatureMediaType,
+		Payload:       envelope,
+		Digest:        digest,
+		SignatureType: SignatureTypeNotation,
+	}
+
+	if manifest.Subject != nil {
+		att.NotationSubjectDigest = manifest.Subject.Digest.String()
+		att.NotationSubjectSize = manifest.Subject.Size
+		att.NotationSubjectMediaType = string(manifest.Subject.MediaType)
+	}
+
+	if len(manifest.Layers) > 0 {
+		att.NotationMediaType = string(manifest.Layers[0].MediaType)
+	}
+
+	return att, true
+}
+
+func readNotationEnvelope(
+	ctx context.Context, img ociV1.Image, descDigest string,
+) ([]byte, bool) {
+	layers, err := img.Layers()
+	if err != nil || len(layers) == 0 {
+		slog.WarnContext(ctx, "Notation signature has no layers",
+			"digest", descDigest,
+			"error", err,
+		)
+
+		return nil, false
+	}
+
+	reader, err := layers[0].Uncompressed()
+	if err != nil {
+		slog.WarnContext(ctx, "Failed to read Notation signature layer",
+			"digest", descDigest,
+			"error", err,
+		)
+
+		return nil, false
+	}
+
+	defer func() {
+		closeErr := reader.Close()
+		if closeErr != nil {
+			slog.WarnContext(ctx, "Failed to close Notation signature layer reader",
+				"error", closeErr,
+			)
+		}
+	}()
+
+	envelope, err := io.ReadAll(io.LimitReader(reader, maxAttestationSize+1))
+	if err != nil {
+		slog.WarnContext(ctx, "Failed to read Notation signature envelope",
+			"digest", descDigest,
+			"error", err,
+		)
+
+		return nil, false
+	}
+
+	if int64(len(envelope)) > maxAttestationSize {
+		slog.WarnContext(ctx, "Notation signature envelope exceeds size limit",
+			"size", len(envelope),
+			"limit", maxAttestationSize,
+		)
+
+		return nil, false
+	}
+
+	return envelope, true
 }
 
 func logReferrers(

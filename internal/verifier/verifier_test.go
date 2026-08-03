@@ -1049,6 +1049,7 @@ func TestResultHasFailures(t *testing.T) {
 				CheckResults: []types.CheckResult{{
 					Type: types.CheckTypeSLSA, Passed: false,
 					Status: types.StatusFail, Detail: "err", Err: nil,
+					Metadata: nil,
 				}},
 			},
 			expected: true,
@@ -1061,6 +1062,7 @@ func TestResultHasFailures(t *testing.T) {
 				CheckResults: []types.CheckResult{{
 					Type: types.CheckTypeSLSA, Passed: true,
 					Status: types.StatusPass, Detail: "ok", Err: nil,
+					Metadata: nil,
 				}},
 			},
 			expected: false,
@@ -1104,6 +1106,7 @@ func TestResultShouldUseShorterTTL(t *testing.T) {
 				CheckResults: []types.CheckResult{{
 					Type: types.CheckTypeFetch, Passed: true,
 					Status: types.StatusWarn, Detail: "fetch failed", Err: nil,
+					Metadata: nil,
 				}},
 			},
 			expected: true,
@@ -1116,6 +1119,7 @@ func TestResultShouldUseShorterTTL(t *testing.T) {
 				CheckResults: []types.CheckResult{{
 					Type: types.CheckTypeSLSA, Passed: true,
 					Status: types.StatusPass, Detail: "ok", Err: nil,
+					Metadata: nil,
 				}},
 			},
 			expected: false,

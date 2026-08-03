@@ -46,6 +46,7 @@ func FuzzCompileAndEvaluate(f *testing.F) {
 			testImageRef, testRegistry, testRepository, testDigest, testNamespace,
 			types.PassResult(types.CheckTypeSLSA, "ok"),
 			types.PassResult(types.CheckTypeVEX, "ok"),
+			nil,
 			types.PassResult(types.CheckTypeSBOM, "ok"),
 		)
 

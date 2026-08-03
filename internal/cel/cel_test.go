@@ -30,6 +30,12 @@ const (
 	testDigest     = "sha256:abc123"
 	testNamespace  = "production"
 
+	metaBuilderID  = "builderID"
+	metaBuildType  = "buildType"
+	metaSource     = "source"
+	testSourceRepo = "https://github.com/myorg/myrepo"
+	testRunnerURL  = "https://github.com/actions/runner"
+
 	exprMatchGHCR        = "image.registry == 'ghcr.io'"
 	exprSLSAVerified     = "slsa.verified == true"
 	exprVEXVerified      = "vex.verified == true"
@@ -46,6 +52,7 @@ func defaultVars() map[string]any {
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
 		types.PassResult(types.CheckTypeSLSA, "ok"),
 		types.PassResult(types.CheckTypeVEX, "ok"),
+		nil,
 		types.PassResult(types.CheckTypeSBOM, "ok"),
 	)
 }
@@ -385,6 +392,7 @@ func TestEvaluateSLSAVariables(t *testing.T) {
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
 		types.FailResult(types.CheckTypeSLSA, "fail", nil),
 		types.PassResult(types.CheckTypeVEX, "ok"),
+		nil,
 		types.PassResult(types.CheckTypeSBOM, "ok"),
 	)
 
@@ -412,6 +420,7 @@ func TestEvaluateVEXVariables(t *testing.T) {
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
 		types.PassResult(types.CheckTypeSLSA, "ok"),
 		types.FailResult(types.CheckTypeVEX, "fail", nil),
+		nil,
 		types.PassResult(types.CheckTypeSBOM, "ok"),
 	)
 
@@ -466,6 +475,7 @@ func TestEvaluateSBOMVariables(t *testing.T) {
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
 		types.PassResult(types.CheckTypeSLSA, "ok"),
 		types.PassResult(types.CheckTypeVEX, "ok"),
+		nil,
 		types.FailResult(types.CheckTypeSBOM, "fail", nil),
 	)
 
@@ -490,7 +500,7 @@ func TestEvaluateNilResults(t *testing.T) {
 
 	vars := celengine.BuildVars(
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
-		nil, nil, nil,
+		nil, nil, nil, nil,
 	)
 
 	result := celengine.Evaluate(compiled, vars)
@@ -609,6 +619,128 @@ func TestBuildVarsTypes(t *testing.T) {
 
 	if _, ok := sbomMap["verified"].(bool); !ok {
 		t.Error("sbom.verified should be a bool")
+	}
+}
+
+func TestBuildVarsPopulatesMetadata(t *testing.T) {
+	t.Parallel()
+
+	slsa := types.PassResult(types.CheckTypeSLSA, "ok")
+	slsa.Metadata = map[string]any{
+		metaBuilderID: testRunnerURL,
+		metaBuildType: "https://actions.github.io/buildtypes/workflow/v1",
+		metaSource:    testSourceRepo,
+	}
+
+	vex := types.PassResult(types.CheckTypeVEX, "ok")
+	vex.Metadata = map[string]any{"status": "not_affected"}
+
+	vsa := types.PassResult(types.CheckTypeVSA, "ok")
+	vsa.Metadata = map[string]any{
+		"verifierID": "https://verifier.example.com",
+		"result":     "PASSED",
+		"level":      int64(3),
+	}
+
+	vars := celengine.BuildVars(
+		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
+		slsa, vex, vsa, types.PassResult(types.CheckTypeSBOM, "ok"),
+	)
+
+	slsaVars, ok := vars["slsa"].(map[string]any)
+	if !ok {
+		t.Fatal("slsa vars should be map[string]any")
+	}
+
+	if slsaVars[metaBuilderID] != testRunnerURL {
+		t.Errorf("slsa.builderID = %q, want runner URL", slsaVars[metaBuilderID])
+	}
+
+	if slsaVars[metaBuildType] != "https://actions.github.io/buildtypes/workflow/v1" {
+		t.Errorf("slsa.buildType = %q", slsaVars[metaBuildType])
+	}
+
+	if slsaVars[metaSource] != testSourceRepo {
+		t.Errorf("slsa.source = %q", slsaVars[metaSource])
+	}
+
+	vexVars, ok := vars["vex"].(map[string]any)
+	if !ok {
+		t.Fatal("vex vars should be map[string]any")
+	}
+
+	if vexVars["status"] != "not_affected" {
+		t.Errorf("vex.status = %q, want not_affected", vexVars["status"])
+	}
+
+	vsaVars, ok := vars["vsa"].(map[string]any)
+	if !ok {
+		t.Fatal("vsa vars should be map[string]any")
+	}
+
+	if vsaVars["verifierID"] != "https://verifier.example.com" {
+		t.Errorf("vsa.verifierID = %q", vsaVars["verifierID"])
+	}
+
+	if vsaVars["result"] != "PASSED" {
+		t.Errorf("vsa.result = %q", vsaVars["result"])
+	}
+
+	if vsaVars["level"] != int64(3) {
+		t.Errorf("vsa.level = %v", vsaVars["level"])
+	}
+
+	if vsaVars["verified"] != true {
+		t.Error("vsa.verified should be true")
+	}
+}
+
+func TestEvaluateMetadataInCELExpression(t *testing.T) {
+	t.Parallel()
+
+	rules := []celengine.Rule{
+		{Require: `slsa.builderID == "` + testRunnerURL + `"`},
+	}
+
+	compiled, err := celengine.Compile(rules)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	slsa := types.PassResult(types.CheckTypeSLSA, "ok")
+	slsa.Metadata = map[string]any{
+		metaBuilderID: testRunnerURL,
+		metaBuildType: "workflow",
+		metaSource:    testSourceRepo,
+	}
+
+	vars := celengine.BuildVars(
+		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
+		slsa, types.PassResult(types.CheckTypeVEX, "ok"),
+		nil, types.PassResult(types.CheckTypeSBOM, "ok"),
+	)
+
+	result := celengine.Evaluate(compiled, vars)
+	if !result.Passed {
+		t.Errorf("expected pass with matching builderID, got: %s", result.Detail)
+	}
+
+	slsaWrong := types.PassResult(types.CheckTypeSLSA, "ok")
+	slsaWrong.Metadata = map[string]any{
+		metaBuilderID: "https://other-builder.example.com",
+		metaBuildType: "workflow",
+		metaSource:    "",
+	}
+
+	varsWrong := celengine.BuildVars(
+		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
+		slsaWrong, types.PassResult(types.CheckTypeVEX, "ok"),
+		nil, types.PassResult(types.CheckTypeSBOM, "ok"),
+	)
+
+	result = celengine.Evaluate(compiled, varsWrong)
+	if result.Passed {
+		t.Error("expected fail with non-matching builderID")
 	}
 }
 
