@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -88,6 +89,13 @@ const (
 	// name. This must be injected by the container runtime (e.g. CRI-O) or a webhook;
 	// it may be empty if the runtime does not provide it.
 	AnnotationServiceAccount = "io.kubernetes.pod.serviceAccount"
+
+	// AnnotationVerified is the annotation key for the verification outcome.
+	AnnotationVerified = "supply-chain.nri/verified"
+	// AnnotationMode is the annotation key for the effective verification mode.
+	AnnotationMode = "supply-chain.nri/mode"
+	// AnnotationChecks is the annotation key for comma-separated check results.
+	AnnotationChecks = "supply-chain.nri/checks"
 )
 
 // Plugin implements the NRI CreateContainer and Configure hooks
@@ -285,6 +293,8 @@ func (p *Plugin) CreateContainer(
 		return nil, nil, fmt.Errorf("supply chain verification: %w", err)
 	}
 
+	mode := p.verifier.EffectiveModeForNamespace(namespace)
+
 	slog.InfoContext(ctx, "Container verified",
 		"pod", namespace+"/"+pod.GetName(),
 		"container", ctr.GetName(),
@@ -292,7 +302,56 @@ func (p *Plugin) CreateContainer(
 		"allowed", result.Allowed,
 	)
 
-	return nil, nil, nil
+	adj := buildVerificationAdjustment(result, mode)
+
+	return adj, nil, nil
+}
+
+func buildVerificationAdjustment(
+	result *types.Result, mode config.VerificationMode,
+) *api.ContainerAdjustment {
+	if result == nil || mode == config.ModeDisabled {
+		return nil
+	}
+
+	// In warn mode, the verifier returns Allowed=true after enforcement
+	// override. Derive the actual verification outcome from individual
+	// check results.
+	passed := result.Allowed
+
+	if mode == config.ModeWarn {
+		for i := range result.CheckResults {
+			if !result.CheckResults[i].Passed {
+				passed = false
+
+				break
+			}
+		}
+	}
+
+	adj := &api.ContainerAdjustment{}
+	adj.AddAnnotation(AnnotationVerified, strconv.FormatBool(passed))
+	adj.AddAnnotation(AnnotationMode, string(mode))
+
+	if len(result.CheckResults) > 0 {
+		// Format: comma-separated type:status pairs (e.g., "slsa:pass,vex:warn").
+		// Values are restricted to [a-z] so no escaping is needed.
+		var buf strings.Builder
+
+		for i, check := range result.CheckResults {
+			if i > 0 {
+				buf.WriteByte(',')
+			}
+
+			buf.WriteString(string(check.Type))
+			buf.WriteByte(':')
+			buf.WriteString(string(check.Status))
+		}
+
+		adj.AddAnnotation(AnnotationChecks, buf.String())
+	}
+
+	return adj
 }
 
 func (p *Plugin) registryAwareResolver(
@@ -317,7 +376,9 @@ func (p *Plugin) handleMissingAnnotations(
 	pod *api.PodSandbox, ctr *api.Container,
 	imageRef, digest string, annotationCount int,
 ) (*api.ContainerAdjustment, []*api.ContainerUpdate, error) {
-	if p.verifier.EffectiveModeForNamespace(namespace) == config.ModeEnforce {
+	mode := p.verifier.EffectiveModeForNamespace(namespace)
+
+	if mode == config.ModeEnforce {
 		slog.ErrorContext(ctx, "Missing image annotations in enforce mode",
 			"pod", namespace+"/"+pod.GetName(),
 			"container", ctr.GetName(),
@@ -340,6 +401,14 @@ func (p *Plugin) handleMissingAnnotations(
 	)
 
 	p.metrics.VerificationSkippedTotal.WithLabelValues("missing_annotations", namespace).Inc()
+
+	if mode == config.ModeWarn {
+		adj := &api.ContainerAdjustment{}
+		adj.AddAnnotation(AnnotationVerified, "false")
+		adj.AddAnnotation(AnnotationMode, string(mode))
+
+		return adj, nil, nil
+	}
 
 	return nil, nil, nil
 }

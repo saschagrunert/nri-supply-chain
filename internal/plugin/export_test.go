@@ -19,7 +19,11 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/containerd/nri/pkg/api"
+
+	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/registry"
+	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
 // ExportResolveImage exposes resolveImage for external tests.
@@ -77,4 +81,11 @@ func ExportDefaultDigestResolver(
 // ExportSetPrewarmDone sets a callback that fires when prewarmCache completes.
 func (p *Plugin) ExportSetPrewarmDone(fn func()) {
 	p.prewarmDone = fn
+}
+
+// ExportBuildVerificationAdjustment exposes buildVerificationAdjustment for testing.
+func ExportBuildVerificationAdjustment(
+	result *types.Result, mode config.VerificationMode,
+) *api.ContainerAdjustment {
+	return buildVerificationAdjustment(result, mode)
 }
