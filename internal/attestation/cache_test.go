@@ -196,3 +196,97 @@ func TestTrustedRootCacheCanceledContext(t *testing.T) {
 		t.Errorf("expected context.Canceled, got: %v", err)
 	}
 }
+
+func TestTrustedRootCacheStaleHitCallbackInvoked(t *testing.T) {
+	t.Parallel()
+
+	staleRoot := fakeTrustedRoot()
+
+	var staleHitCount atomic.Int32
+
+	cache := attestation.NewTestTrustedRootCacheWithRoot(
+		func() (*root.TrustedRoot, error) {
+			return nil, errRootFetchFailed
+		},
+		staleRoot,
+		time.Now().Add(-2*attestation.ExportTrustedRootCacheTTL()),
+	)
+	cache.SetOnStaleHit(func() {
+		staleHitCount.Add(1)
+	})
+
+	got, err := cache.GetTrustedRoot(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got != staleRoot {
+		t.Error("expected stale root as fallback")
+	}
+
+	if staleHitCount.Load() != 1 {
+		t.Errorf("expected onStaleHit to be called once, got %d", staleHitCount.Load())
+	}
+}
+
+func TestTrustedRootCacheStaleHitCallbackNotCalledOnSuccess(t *testing.T) {
+	t.Parallel()
+
+	staleRoot := fakeTrustedRoot()
+	freshRoot := fakeTrustedRoot()
+
+	var staleHitCount atomic.Int32
+
+	cache := attestation.NewTestTrustedRootCacheWithRoot(
+		func() (*root.TrustedRoot, error) {
+			return freshRoot, nil
+		},
+		staleRoot,
+		time.Now().Add(-2*attestation.ExportTrustedRootCacheTTL()),
+	)
+	cache.SetOnStaleHit(func() {
+		staleHitCount.Add(1)
+	})
+
+	got, err := cache.GetTrustedRoot(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got != freshRoot {
+		t.Error("expected fresh root after successful refresh")
+	}
+
+	if staleHitCount.Load() != 0 {
+		t.Errorf("expected onStaleHit not to be called on success, got %d", staleHitCount.Load())
+	}
+}
+
+func TestTrustedRootCacheStaleHitCallbackNotCalledWhenTooStale(t *testing.T) {
+	t.Parallel()
+
+	staleRoot := fakeTrustedRoot()
+
+	var staleHitCount atomic.Int32
+
+	cache := attestation.NewTestTrustedRootCacheWithRoot(
+		func() (*root.TrustedRoot, error) {
+			return nil, errRootFetchFailed
+		},
+		staleRoot,
+		time.Now().Add(-2*attestation.ExportTrustedRootMaxStaleness()),
+	)
+	cache.SetOnStaleHit(func() {
+		staleHitCount.Add(1)
+	})
+
+	_, err := cache.GetTrustedRoot(context.Background())
+	if err == nil {
+		t.Fatal("expected error for root beyond max staleness")
+	}
+
+	if staleHitCount.Load() != 0 {
+		t.Errorf("expected onStaleHit not to be called when root is too stale, got %d",
+			staleHitCount.Load())
+	}
+}

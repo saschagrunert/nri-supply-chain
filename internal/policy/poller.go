@@ -144,11 +144,28 @@ func (p *Poller) poll(ctx context.Context) {
 		return
 	}
 
+	p.fetchAndApply(ctx)
+}
+
+func (p *Poller) fetchAndApply(ctx context.Context) {
 	result, err := p.fetcher.FetchFromOCI(ctx, p.ociRef)
 	if err != nil {
 		slog.Warn("OCI policy fetch failed",
 			"oci_ref", p.ociRef,
 			"error", err,
+		)
+
+		return
+	}
+
+	p.mu.Lock()
+	alreadyApplied := result.Digest == p.cachedDigest
+	p.mu.Unlock()
+
+	if alreadyApplied {
+		slog.Debug("OCI policy digest unchanged after fetch, skipping reload",
+			"oci_ref", p.ociRef,
+			"digest", result.Digest,
 		)
 
 		return

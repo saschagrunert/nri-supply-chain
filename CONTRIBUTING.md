@@ -36,8 +36,8 @@ Run all checks before submitting:
 make verify-all
 ```
 
-This runs lint, shellcheck, shfmt, mdtoc, jsonschema, tidy,
-dependencies, and govulncheck.
+This runs lint, shfmt, shellcheck, mdtoc, jsonschema, tidy,
+dependencies, govulncheck, prettier, and typos.
 
 ## Testing
 

@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1327,6 +1328,82 @@ func TestSetRateLimit(t *testing.T) {
 	})
 }
 
+func TestSetRateLimitTogglesLimiter(t *testing.T) {
+	t.Parallel()
+
+	fetcher := attestation.NewOCIFetcherWithVerifier(
+		func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
+			return nil, nil
+		},
+	)
+
+	// Initially no limiter.
+	if fetcher.ExportHasLimiter() {
+		t.Error("expected no limiter initially")
+	}
+
+	// Setting a positive rate enables the limiter.
+	fetcher.SetRateLimit(10.0)
+
+	if !fetcher.ExportHasLimiter() {
+		t.Error("expected limiter to be active after SetRateLimit(10.0)")
+	}
+
+	// Disabling with zero removes the limiter.
+	fetcher.SetRateLimit(0)
+
+	if fetcher.ExportHasLimiter() {
+		t.Error("expected no limiter after SetRateLimit(0)")
+	}
+
+	// Re-enable, then disable with negative value.
+	fetcher.SetRateLimit(5.0)
+
+	if !fetcher.ExportHasLimiter() {
+		t.Error("expected limiter to be active after SetRateLimit(5.0)")
+	}
+
+	fetcher.SetRateLimit(-1.0)
+
+	if fetcher.ExportHasLimiter() {
+		t.Error("expected no limiter after SetRateLimit(-1.0)")
+	}
+}
+
+func TestSetRateLimitConcurrent(t *testing.T) {
+	t.Parallel()
+
+	fetcher := attestation.NewOCIFetcherWithVerifier(
+		func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
+			return nil, nil
+		},
+	)
+
+	var waitGroup sync.WaitGroup
+
+	const goroutines = 50
+
+	waitGroup.Add(goroutines)
+
+	for goroutine := range goroutines {
+		go func() {
+			defer waitGroup.Done()
+
+			for range 100 {
+				if goroutine%2 == 0 {
+					fetcher.SetRateLimit(float64(goroutine + 1))
+				} else {
+					fetcher.SetRateLimit(0)
+				}
+
+				_ = fetcher.ExportHasLimiter()
+			}
+		}()
+	}
+
+	waitGroup.Wait()
+}
+
 //nolint:paralleltest // clears a package-level sync.Map that other parallel tests use
 func TestResetSANPatternWarnings(t *testing.T) {
 	// Call buildCertificateIdentity with no SAN patterns to trigger
@@ -1977,6 +2054,71 @@ func TestCollectNotationSignatures(t *testing.T) {
 					tt.wantCount, len(result))
 			}
 		})
+	}
+}
+
+func fakeMultiLayerImage(layers int, layerPayload []byte) ociV1.Image {
+	img := empty.Image
+
+	for range layers {
+		layer := static.NewLayer(layerPayload, types.OCILayer)
+
+		var err error
+
+		img, err = mutate.AppendLayers(img, layer)
+		if err != nil {
+			panic("building multi-layer test image: " + err.Error())
+		}
+	}
+
+	return img
+}
+
+func TestFetchCosignTagAttestationsAggregateSizeLimit(t *testing.T) {
+	t.Parallel()
+
+	ref, err := name.NewDigest(
+		"docker.io/library/nginx@sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abcd",
+	)
+	if err != nil {
+		t.Fatalf("creating digest ref: %v", err)
+	}
+
+	// Each verified payload is ~15 MiB, so after 3 layers we hit ~45 MiB and
+	// the 4th should push us over the 50 MiB aggregate limit.
+	payloadSize := attestation.ExportMaxTotalAttestationSize / 4
+	largePayload := make([]byte, payloadSize)
+
+	const totalLayers = 8
+
+	fetcher := attestation.NewTestOCIFetcher(
+		func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
+			return largePayload, nil
+		},
+		func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+			return fakeMultiLayerImage(totalLayers, []byte(`{"bundle":"data"}`)), nil
+		},
+	)
+
+	result, err := fetcher.FetchCosignTagAttestations(
+		context.Background(), ref, testFetchDigest,
+		nil, &attestation.FetchOptions{},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result) >= totalLayers {
+		t.Errorf("expected aggregate size limit to truncate results, got %d of %d",
+			len(result), totalLayers)
+	}
+
+	if len(result) > 4 {
+		t.Errorf("expected at most 4 results within 50 MiB aggregate, got %d", len(result))
+	}
+
+	if len(result) == 0 {
+		t.Error("expected at least some attestations before hitting the limit")
 	}
 }
 

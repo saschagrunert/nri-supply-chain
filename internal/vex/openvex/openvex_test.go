@@ -128,3 +128,228 @@ func TestVerifyInvalidJSON(t *testing.T) {
 		t.Fatal("expected error for invalid JSON")
 	}
 }
+
+func TestVerifyEmptyStatements(t *testing.T) {
+	t.Parallel()
+
+	doc := openvexlib.VEX{
+		Metadata: openvexlib.Metadata{
+			Context: testVEXContext,
+			ID:      "https://openvex.dev/docs/example/vex-empty",
+		},
+		Statements: []openvexlib.Statement{},
+	}
+	data := testutil.MustMarshal(t, doc)
+
+	result, err := openvex.Verify(context.Background(), data, testDigest, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.AffectedNames) > 0 {
+		t.Errorf("expected no affected, got %v", result.AffectedNames)
+	}
+
+	if result.HasUnderInvestigation {
+		t.Error("expected HasUnderInvestigation to be false")
+	}
+}
+
+func TestVerifyStatementWithNoProducts(t *testing.T) {
+	t.Parallel()
+
+	doc := openvexlib.VEX{
+		Metadata: openvexlib.Metadata{
+			Context: testVEXContext,
+			ID:      "https://openvex.dev/docs/example/vex-no-products",
+		},
+		Statements: []openvexlib.Statement{
+			{
+				Vulnerability: openvexlib.Vulnerability{
+					Name: "CVE-2024-9999",
+				},
+				Products: nil,
+				Status:   openvexlib.StatusAffected,
+			},
+		},
+	}
+	data := testutil.MustMarshal(t, doc)
+
+	result, err := openvex.Verify(context.Background(), data, testDigest, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.AffectedNames) > 0 {
+		t.Errorf("expected no affected (statement skipped), got %v", result.AffectedNames)
+	}
+}
+
+func TestVerifyMultipleStatementsMixedStatuses(t *testing.T) {
+	t.Parallel()
+
+	doc := openvexlib.VEX{
+		Metadata: openvexlib.Metadata{
+			Context: testVEXContext,
+			ID:      "https://openvex.dev/docs/example/vex-mixed",
+		},
+		Statements: []openvexlib.Statement{
+			{
+				Vulnerability: openvexlib.Vulnerability{Name: "CVE-2024-0001"},
+				Products: []openvexlib.Product{
+					{Component: openvexlib.Component{ID: testDigest}},
+				},
+				Status: openvexlib.StatusAffected,
+			},
+			{
+				Vulnerability: openvexlib.Vulnerability{Name: "CVE-2024-0002"},
+				Products: []openvexlib.Product{
+					{Component: openvexlib.Component{ID: testDigest}},
+				},
+				Status: openvexlib.StatusNotAffected,
+			},
+			{
+				Vulnerability: openvexlib.Vulnerability{Name: "CVE-2024-0003"},
+				Products: []openvexlib.Product{
+					{Component: openvexlib.Component{ID: testDigest}},
+				},
+				Status: openvexlib.StatusUnderInvestigation,
+			},
+			{
+				Vulnerability: openvexlib.Vulnerability{Name: "CVE-2024-0004"},
+				Products: []openvexlib.Product{
+					{Component: openvexlib.Component{ID: testDigest}},
+				},
+				Status: openvexlib.StatusFixed,
+			},
+			{
+				Vulnerability: openvexlib.Vulnerability{Name: "CVE-2024-0005"},
+				Products: []openvexlib.Product{
+					{Component: openvexlib.Component{ID: testDigest}},
+				},
+				Status: openvexlib.StatusAffected,
+			},
+		},
+	}
+	data := testutil.MustMarshal(t, doc)
+
+	result, err := openvex.Verify(context.Background(), data, testDigest, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.AffectedNames) != 2 {
+		t.Fatalf("expected 2 affected, got %d: %v", len(result.AffectedNames), result.AffectedNames)
+	}
+
+	if result.AffectedNames[0] != "CVE-2024-0001" {
+		t.Errorf("expected first affected CVE-2024-0001, got %s", result.AffectedNames[0])
+	}
+
+	if result.AffectedNames[1] != "CVE-2024-0005" {
+		t.Errorf("expected second affected CVE-2024-0005, got %s", result.AffectedNames[1])
+	}
+
+	if !result.HasUnderInvestigation {
+		t.Error("expected HasUnderInvestigation to be true")
+	}
+}
+
+func TestVerifyMatchByPURL(t *testing.T) {
+	t.Parallel()
+
+	testPURL := "pkg:oci/myimage@sha256:abcdef1234567890"
+
+	doc := openvexlib.VEX{
+		Metadata: openvexlib.Metadata{
+			Context: testVEXContext,
+			ID:      "https://openvex.dev/docs/example/vex-purl",
+		},
+		Statements: []openvexlib.Statement{
+			{
+				Vulnerability: openvexlib.Vulnerability{Name: "CVE-2024-5678"},
+				Products: []openvexlib.Product{
+					{Component: openvexlib.Component{ID: testPURL}},
+				},
+				Status: openvexlib.StatusAffected,
+			},
+		},
+	}
+	data := testutil.MustMarshal(t, doc)
+
+	// Product ID does not match the image digest, but matches via purl.
+	result, err := openvex.Verify(context.Background(), data, testDigest, testPURL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.AffectedNames) != 1 || result.AffectedNames[0] != "CVE-2024-5678" {
+		t.Errorf("expected CVE-2024-5678 via PURL match, got %v", result.AffectedNames)
+	}
+}
+
+func TestVerifyProductDoesNotMatchDigest(t *testing.T) {
+	t.Parallel()
+
+	otherDigest := "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+	doc := openvexlib.VEX{
+		Metadata: openvexlib.Metadata{
+			Context: testVEXContext,
+			ID:      "https://openvex.dev/docs/example/vex-no-match",
+		},
+		Statements: []openvexlib.Statement{
+			{
+				Vulnerability: openvexlib.Vulnerability{Name: "CVE-2024-7777"},
+				Products: []openvexlib.Product{
+					{Component: openvexlib.Component{ID: otherDigest}},
+				},
+				Status: openvexlib.StatusAffected,
+			},
+		},
+	}
+	data := testutil.MustMarshal(t, doc)
+
+	result, err := openvex.Verify(context.Background(), data, testDigest, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.AffectedNames) > 0 {
+		t.Errorf("expected no affected (digest mismatch), got %v", result.AffectedNames)
+	}
+}
+
+func TestVerifyVulnerabilityWithNoName(t *testing.T) {
+	t.Parallel()
+
+	doc := openvexlib.VEX{
+		Metadata: openvexlib.Metadata{
+			Context: testVEXContext,
+			ID:      "https://openvex.dev/docs/example/vex-no-name",
+		},
+		Statements: []openvexlib.Statement{
+			{
+				Vulnerability: openvexlib.Vulnerability{Name: ""},
+				Products: []openvexlib.Product{
+					{Component: openvexlib.Component{ID: testDigest}},
+				},
+				Status: openvexlib.StatusAffected,
+			},
+		},
+	}
+	data := testutil.MustMarshal(t, doc)
+
+	result, err := openvex.Verify(context.Background(), data, testDigest, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.AffectedNames) != 1 {
+		t.Fatalf("expected 1 affected, got %d", len(result.AffectedNames))
+	}
+
+	if result.AffectedNames[0] != "unknown" {
+		t.Errorf("expected 'unknown' for nameless vulnerability, got %s", result.AffectedNames[0])
+	}
+}

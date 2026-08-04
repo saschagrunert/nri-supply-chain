@@ -30,6 +30,8 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
+const notationLevelSkip = "skip"
+
 // ValidateModeStrictness checks that the per-namespace mode is at least as
 // strict as the global verification mode. Returns nil if Mode is empty (no
 // per-namespace override).
@@ -76,7 +78,7 @@ func (p *Policy) Validate() error {
 // The mode parameter is the effective mode for this policy (per-namespace
 // mode if set, otherwise the global mode).
 func (p *Policy) ValidateEnforce() error {
-	if p.Notation != nil && p.Notation.VerificationLevel == "skip" {
+	if p.Notation != nil && p.Notation.VerificationLevel == notationLevelSkip {
 		return ErrNotationSkipInEnforceMode
 	}
 
@@ -86,7 +88,15 @@ func (p *Policy) ValidateEnforce() error {
 		}
 	}
 
+	return p.validateRulesEnforce()
+}
+
+func (p *Policy) validateRulesEnforce() error {
 	for idx, rule := range p.Rules {
+		if rule.Notation != nil && rule.Notation.VerificationLevel == notationLevelSkip {
+			return fmt.Errorf("rules[%d]: %w", idx, ErrNotationSkipInEnforceMode)
+		}
+
 		if rule.Trust == nil {
 			continue
 		}
@@ -550,7 +560,7 @@ func (p *Policy) validateNotation() error {
 
 	if p.Notation.VerificationLevel != "" {
 		switch p.Notation.VerificationLevel {
-		case "strict", "permissive", "audit", "skip":
+		case "strict", "permissive", "audit", notationLevelSkip:
 		default:
 			errs = append(errs, fmt.Errorf(
 				"%w: got %q",

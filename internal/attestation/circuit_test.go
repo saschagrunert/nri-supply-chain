@@ -268,6 +268,60 @@ func TestCircuitBreakerRegistryPreservesHalfOpenOnEviction(t *testing.T) {
 	}
 }
 
+func TestCircuitBreakerRegistryConcurrentStress(t *testing.T) {
+	t.Parallel()
+
+	registry := attestation.NewCircuitBreakerRegistry(5, 50*time.Millisecond)
+
+	const (
+		goroutines = 100
+		hosts      = 20
+		iterations = 100
+	)
+
+	var waitGroup sync.WaitGroup
+
+	for range goroutines {
+		waitGroup.Go(func() {
+			for iter := range iterations {
+				host := fmt.Sprintf("host-%d.example.com", iter%hosts)
+				breaker := registry.Get(host)
+
+				if breaker.Allow() {
+					n, err := rand.Int(rand.Reader, big.NewInt(3))
+					if err != nil || n.Int64() == 0 {
+						breaker.RecordSuccess()
+					} else {
+						breaker.RecordFailure()
+					}
+				}
+			}
+		})
+	}
+
+	waitGroup.Wait()
+
+	// Verify the registry returns non-nil breakers after concurrent access.
+	for i := range hosts {
+		host := fmt.Sprintf("host-%d.example.com", i)
+		breaker := registry.Get(host)
+
+		if breaker == nil {
+			t.Errorf("expected non-nil breaker for %s after concurrent stress", host)
+		}
+	}
+
+	// Verify a fresh breaker trips deterministically after threshold failures.
+	tripBreaker := registry.Get("trip-test.example.com")
+	for range 5 {
+		tripBreaker.RecordFailure()
+	}
+
+	if !tripBreaker.ExportIsOpen() {
+		t.Error("expected breaker to trip after threshold failures")
+	}
+}
+
 func TestCircuitBreakerRegistryThresholdAndCooldown(t *testing.T) {
 	t.Parallel()
 

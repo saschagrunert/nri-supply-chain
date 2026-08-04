@@ -16,6 +16,9 @@
 package verifier
 
 import (
+	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/go-containerregistry/pkg/name"
@@ -371,5 +374,111 @@ func TestRunCELCheckMultipleCheckTypes(t *testing.T) {
 
 	if !check.Passed {
 		t.Errorf("expected CEL check to pass with both SLSA and VEX passing")
+	}
+}
+
+func TestRunParallelCheckPanicRecovery(t *testing.T) {
+	t.Parallel()
+
+	var (
+		waitGroup sync.WaitGroup
+		result    *types.CheckResult
+	)
+
+	waitGroup.Add(1)
+
+	runParallelCheck(
+		&waitGroup,
+		&result,
+		types.CheckTypeSLSA,
+		func() *types.CheckResult {
+			panic("test panic in check function")
+		},
+	)
+
+	waitGroup.Wait()
+
+	if result == nil {
+		t.Fatal("expected non-nil result after panic recovery")
+	}
+
+	if result.Passed {
+		t.Error("expected result to not pass after panic")
+	}
+
+	if result.Status != types.StatusFail {
+		t.Errorf("expected status %q, got %q", types.StatusFail, result.Status)
+	}
+
+	if result.Type != types.CheckTypeSLSA {
+		t.Errorf("expected check type %q, got %q", types.CheckTypeSLSA, result.Type)
+	}
+
+	expectedDetail := "internal error during slsa check"
+	if result.Detail != expectedDetail {
+		t.Errorf("expected detail %q, got %q", expectedDetail, result.Detail)
+	}
+}
+
+func TestAcquireHostSemSameHost(t *testing.T) {
+	t.Parallel()
+
+	hsm := &hostSemMap{
+		m:     sync.Map{},
+		count: atomic.Int64{},
+	}
+
+	sem1 := acquireHostSem(hsm, "registry.example.com")
+	sem2 := acquireHostSem(hsm, "registry.example.com")
+
+	if sem1 != sem2 {
+		t.Error("expected same semaphore for the same host")
+	}
+
+	if hsm.count.Load() != 1 {
+		t.Errorf("expected count 1, got %d", hsm.count.Load())
+	}
+}
+
+func TestAcquireHostSemOverflow(t *testing.T) {
+	t.Parallel()
+
+	hsm := &hostSemMap{
+		m:     sync.Map{},
+		count: atomic.Int64{},
+	}
+
+	// Fill the map to maxHostSemEntries.
+	for i := range maxHostSemEntries {
+		host := fmt.Sprintf("host-%d.example.com", i)
+		acquireHostSem(hsm, host)
+	}
+
+	if hsm.count.Load() != maxHostSemEntries {
+		t.Fatalf("expected count %d after filling, got %d", maxHostSemEntries, hsm.count.Load())
+	}
+
+	// The next host should trigger the overflow path.
+	overflowHost := "overflow.example.com"
+	sem := acquireHostSem(hsm, overflowHost)
+
+	if sem == nil {
+		t.Fatal("expected non-nil semaphore from overflow path")
+	}
+
+	if hsm.count.Load() != maxHostSemEntries {
+		t.Errorf("expected count to remain %d after overflow, got %d",
+			maxHostSemEntries, hsm.count.Load())
+	}
+
+	// The overflow host should not be stored in the map.
+	if _, ok := hsm.m.Load(overflowHost); ok {
+		t.Error("expected overflow host to be deleted from the map")
+	}
+
+	// Previously stored hosts should still be accessible.
+	existing := acquireHostSem(hsm, "host-0.example.com")
+	if existing == nil {
+		t.Error("expected non-nil semaphore for previously stored host")
 	}
 }

@@ -46,6 +46,7 @@ patterns for the nri-supply-chain plugin.
   - [VSA-accelerated verification](#vsa-accelerated-verification)
   - [Key rotation](#key-rotation)
   - [Multi-verification mode](#multi-verification-mode)
+- [Example Policy Files](#example-policy-files)
 
 <!-- /toc -->
 
@@ -1426,3 +1427,15 @@ The plugin tries both modes; either can satisfy the policy:
   }
 }
 ```
+
+## Example Policy Files
+
+Ready-to-use policy files are available in
+[`deploy/examples/policies/`](../deploy/examples/policies/), including:
+
+- `keybased.json`: Key-based verification with PEM public keys
+- `cel-rules.json`: CEL policy expressions for custom verification logic
+- `sbom-deny-list.json`: SBOM component deny-list for license or package control
+- `vex-strict.json`: Strict VEX verification requiring all images to have VEX attestations
+- `vsa-accelerated.json`: VSA-first verification that short-circuits direct checks
+- `gradual-rollout.json`: Gradual rollout from warn to enforce mode

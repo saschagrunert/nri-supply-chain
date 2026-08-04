@@ -275,6 +275,72 @@ func buildTestPolicyImage(t *testing.T, policyJSON string) ociV1.Image {
 	return img
 }
 
+func TestPollerTOCTOURaceDoesNotReload(t *testing.T) {
+	t.Parallel()
+
+	// Simulate a TOCTOU race: CheckDigest returns "B" (changed), but
+	// FetchFromOCI returns the original digest "A" because the artifact
+	// reverted between HEAD and GET. The poller should detect this and
+	// skip the reload callback.
+	imgA := buildTestPolicyImage(t, `{"slsa":{"missingPolicy":"warn"}}`)
+	imgB := buildTestPolicyImage(t, `{"slsa":{"missingPolicy":"deny"}}`)
+
+	digestA, err := imgA.Digest()
+	testutil.AssertNoError(t, err)
+
+	// callCount tracks how many times the fetch function is called:
+	// 1 = initial FetchFromOCI
+	// 2 = CheckDigest during poll (return imgB so digest looks different)
+	// 3 = FetchFromOCI during poll (return imgA so digest matches cached)
+	var callCount atomic.Int32
+
+	fetchFunc := func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+		n := callCount.Add(1)
+		if n == 2 {
+			// CheckDigest sees a different image (digest "B").
+			return imgB, nil
+		}
+
+		// Initial fetch and the re-fetch both return imgA (digest "A").
+		return imgA, nil
+	}
+
+	fetcher := policy.NewOCIFetcherWithImageFunc(fetchFunc, nil)
+
+	// Do an initial fetch to get digest "A".
+	result, err := fetcher.FetchFromOCI(context.Background(), "example.com/test:v1")
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqual(t, digestA.String(), result.Digest)
+
+	var reloadCount atomic.Int32
+
+	poller := policy.NewPoller(
+		fetcher,
+		"example.com/test:v1",
+		50*time.Millisecond,
+		func(_ map[string]*policy.Policy) error {
+			reloadCount.Add(1)
+
+			return nil
+		},
+	)
+	poller.SetCachedDigest(result.Digest)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	poller.Start(ctx)
+
+	// Wait long enough for at least one poll cycle to run.
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	poller.Stop()
+
+	// The reload callback should never be called because the re-fetched
+	// digest matches the cached one (TOCTOU protection).
+	if reloadCount.Load() != 0 {
+		t.Errorf("expected 0 reload calls (TOCTOU protection), got %d", reloadCount.Load())
+	}
+}
+
 var (
 	errTestFetch  = testError("test fetch error")
 	errTestReload = testError("test reload error")
