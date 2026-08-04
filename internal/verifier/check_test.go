@@ -16,7 +16,11 @@
 package verifier
 
 import (
+	"bytes"
+	"context"
 	"fmt"
+	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -55,7 +59,7 @@ func TestBinAttestationsUnknownType(t *testing.T) {
 		},
 	}
 
-	bins := binAttestations(attestations)
+	bins := binAttestations(context.Background(), attestations, "")
 
 	if len(bins.slsa) != 1 {
 		t.Errorf("expected 1 SLSA attestation, got %d", len(bins.slsa))
@@ -71,6 +75,44 @@ func TestBinAttestationsUnknownType(t *testing.T) {
 
 	if len(bins.notation) != 0 {
 		t.Errorf("expected 0 Notation attestations, got %d", len(bins.notation))
+	}
+}
+
+//nolint:paralleltest // mutates slog.SetDefault
+func TestBinAttestationsUnknownTypeWarning(t *testing.T) {
+	var buf bytes.Buffer
+
+	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
+	prev := slog.Default()
+
+	slog.SetDefault(slog.New(handler))
+
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	const imageRef = "ghcr.io/org/img:latest"
+
+	attestations := []attestation.VerifiedAttestation{
+		{
+			PredicateType: "https://example.com/unknown",
+			Payload:       []byte("u1"),
+			Digest:        benchDigest,
+		},
+	}
+
+	_ = binAttestations(context.Background(), attestations, imageRef)
+
+	output := buf.String()
+
+	if !strings.Contains(output, "Skipping attestation with unrecognized predicate type") {
+		t.Errorf("expected warning about unrecognized predicate type, got: %s", output)
+	}
+
+	if !strings.Contains(output, "https://example.com/unknown") {
+		t.Errorf("expected predicate type in warning, got: %s", output)
+	}
+
+	if !strings.Contains(output, imageRef) {
+		t.Errorf("expected image reference in warning, got: %s", output)
 	}
 }
 
@@ -98,7 +140,7 @@ func TestBinAttestationsNotation(t *testing.T) {
 		},
 	}
 
-	bins := binAttestations(attestations)
+	bins := binAttestations(context.Background(), attestations, "")
 
 	if len(bins.slsa) != 1 {
 		t.Errorf("expected 1 SLSA attestation, got %d", len(bins.slsa))
@@ -146,7 +188,7 @@ func TestBinAttestationsCycloneDX(t *testing.T) {
 		},
 	}
 
-	bins := binAttestations(attestations)
+	bins := binAttestations(context.Background(), attestations, "")
 
 	if len(bins.vex) != 2 {
 		t.Errorf("expected 2 VEX attestations (OpenVEX + CycloneDX), got %d", len(bins.vex))
@@ -179,7 +221,7 @@ func TestBinAttestationsSPDX(t *testing.T) {
 		},
 	}
 
-	bins := binAttestations(attestations)
+	bins := binAttestations(context.Background(), attestations, "")
 
 	if len(bins.sbom) != 1 {
 		t.Errorf("expected 1 SBOM attestation, got %d", len(bins.sbom))
