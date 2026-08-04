@@ -116,6 +116,54 @@ func TestBinAttestationsUnknownTypeWarning(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // mutates slog.SetDefault
+func TestBinAttestationsCosignSignatureSilent(t *testing.T) {
+	var buf bytes.Buffer
+
+	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
+	prev := slog.Default()
+
+	slog.SetDefault(slog.New(handler))
+
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	attestations := []attestation.VerifiedAttestation{
+		{
+			PredicateType: attestation.PredicateCosignSignature,
+			Payload:       []byte("sig"),
+			Digest:        benchDigest,
+		},
+	}
+
+	bins := binAttestations(context.Background(), attestations, "ghcr.io/org/img:latest")
+
+	if len(bins.slsa) != 0 || len(bins.vex) != 0 || len(bins.vsa) != 0 || len(bins.sbom) != 0 {
+		t.Error("cosign signature should not be binned")
+	}
+
+	if buf.Len() != 0 {
+		t.Errorf("cosign signature should not produce warn-level output, got: %s", buf.String())
+	}
+}
+
+func TestBinAttestationsSLSAV02(t *testing.T) {
+	t.Parallel()
+
+	attestations := []attestation.VerifiedAttestation{
+		{
+			PredicateType: attestation.PredicateSLSAProvenanceV02,
+			Payload:       []byte("slsa02"),
+			Digest:        benchDigest,
+		},
+	}
+
+	bins := binAttestations(context.Background(), attestations, "")
+
+	if len(bins.slsa) != 1 {
+		t.Errorf("expected 1 SLSA attestation for v0.2, got %d", len(bins.slsa))
+	}
+}
+
 func TestBinAttestationsNotation(t *testing.T) {
 	t.Parallel()
 

@@ -43,7 +43,33 @@ const (
 	testCustomParamKey   = "custom-param"
 	testValue            = "value"
 	testSubjectName      = "nginx"
+	testSourceV02        = "git+https://github.com/example/repo@refs/heads/main"
 )
+
+func validStatementV02() slsa.StatementV02 {
+	return slsa.StatementV02{
+		Type: "https://in-toto.io/Statement/v0.1",
+		Subject: []slsa.Subject{
+			{
+				Name:   testSubjectName,
+				Digest: map[string]string{testDigestAlgo: testDigestHash},
+			},
+		},
+		PredicateType: attestation.PredicateSLSAProvenanceV02,
+		Predicate: slsa.ProvenancePredicateV02{
+			Builder:   slsa.Builder{ID: testBuilderID},
+			BuildType: testBuildType,
+			Invocation: slsa.InvocationV02{
+				ConfigSource: slsa.ConfigSourceV02{
+					URI: testSourceV02,
+				},
+			},
+			Materials: []slsa.MaterialV02{
+				{URI: testSourceV02},
+			},
+		},
+	}
+}
 
 func validStatement() slsa.Statement {
 	return slsa.Statement{
@@ -114,14 +140,11 @@ func TestVerify(t *testing.T) {
 			wantStatus: types.StatusPass,
 		},
 		{
-			name: "v0.2 predicate rejected",
+			name: "v0.2 predicate accepted",
 			data: func(t *testing.T) []byte {
 				t.Helper()
 
-				stmt := validStatement()
-				stmt.PredicateType = "https://slsa.dev/provenance/v0.2"
-
-				return testutil.MustMarshal(t, stmt)
+				return testutil.MustMarshal(t, validStatementV02())
 			},
 			policy: &policy.Policy{
 				Sections: policy.Sections{
@@ -133,10 +156,79 @@ func TestVerify(t *testing.T) {
 				},
 			},
 			digest:     testDigest,
-			wantErr:    slsa.ErrInvalidProvenance,
+			wantErr:    nil,
+			wantPass:   true,
+			wantType:   types.CheckTypeSLSA,
+			wantStatus: types.StatusPass,
+		},
+		{
+			name: "v0.2 trusted source with v1 pattern",
+			data: func(t *testing.T) []byte {
+				t.Helper()
+
+				return testutil.MustMarshal(t, validStatementV02())
+			},
+			policy: &policy.Policy{
+				Sections: policy.Sections{
+					Trust: &policy.TrustPolicy{
+						Builders: []policy.TrustedBuilder{
+							{ID: testBuilderID},
+						},
+						Sources: []string{testSourceGlob},
+					},
+				},
+			},
+			digest:     testDigest,
+			wantErr:    nil,
+			wantPass:   true,
+			wantType:   types.CheckTypeSLSA,
+			wantStatus: types.StatusPass,
+		},
+		{
+			name: "v0.2 source from materials fallback",
+			data: func(t *testing.T) []byte {
+				t.Helper()
+
+				stmt := validStatementV02()
+				stmt.Predicate.Invocation.ConfigSource.URI = ""
+
+				return testutil.MustMarshal(t, stmt)
+			},
+			policy: &policy.Policy{
+				Sections: policy.Sections{
+					Trust: &policy.TrustPolicy{
+						Builders: []policy.TrustedBuilder{
+							{ID: testBuilderID},
+						},
+						Sources: []string{testSourceGlob},
+					},
+				},
+			},
+			digest:     testDigest,
+			wantErr:    nil,
+			wantPass:   true,
+			wantType:   types.CheckTypeSLSA,
+			wantStatus: types.StatusPass,
+		},
+		{
+			name: "v0.2 untrusted source",
+			data: func(t *testing.T) []byte {
+				t.Helper()
+
+				return testutil.MustMarshal(t, validStatementV02())
+			},
+			policy: &policy.Policy{
+				Sections: policy.Sections{
+					Trust: &policy.TrustPolicy{
+						Sources: []string{"github.com/other-org/*"},
+					},
+				},
+			},
+			digest:     testDigest,
+			wantErr:    nil,
 			wantPass:   false,
-			wantType:   "",
-			wantStatus: "",
+			wantType:   types.CheckTypeSLSA,
+			wantStatus: types.StatusFail,
 		},
 		{
 			name: "invalid JSON",
@@ -970,6 +1062,60 @@ func TestVerifyEdgeCases(t *testing.T) {
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, false, result.Passed)
 	})
+}
+
+func TestVerifyV02SourceNormalization(t *testing.T) {
+	t.Parallel()
+
+	t.Cleanup(slsa.ResetWarnings)
+
+	sourcePattern := "github.com/example/*"
+	pol := &policy.Policy{
+		Sections: policy.Sections{
+			Trust: &policy.TrustPolicy{
+				Builders: []policy.TrustedBuilder{{ID: testBuilderID}},
+				Sources:  []string{sourcePattern},
+			},
+		},
+	}
+
+	tests := []struct {
+		name     string
+		uri      string
+		wantPass bool
+	}{
+		{"git+https with ref", "git+https://github.com/example/repo@refs/heads/main", true},
+		{"git+https without ref", "git+https://github.com/example/repo", true},
+		{"git+http with ref", "git+http://github.com/example/repo@refs/tags/v1.0", true},
+		{"plain https with ref", "https://github.com/example/repo@refs/heads/main", true},
+		{"plain https without ref", "https://github.com/example/repo", true},
+		{"bare path", "github.com/example/repo", true},
+		{"wrong org normalized", "git+https://github.com/other/repo@refs/heads/main", false},
+		{"empty URI", "", false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			stmt := validStatementV02()
+			stmt.Predicate.Invocation.ConfigSource.URI = test.uri
+			stmt.Predicate.Materials = nil
+
+			result, err := slsa.Verify(
+				context.Background(),
+				testutil.MustMarshal(t, stmt),
+				pol,
+				testDigest,
+			)
+			testutil.AssertNoError(t, err)
+
+			if result.Passed != test.wantPass {
+				t.Errorf("URI %q: expected Passed=%v, got Passed=%v (detail: %s)",
+					test.uri, test.wantPass, result.Passed, result.Detail)
+			}
+		})
+	}
 }
 
 func TestVerifyMultiple(t *testing.T) {

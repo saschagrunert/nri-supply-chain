@@ -51,6 +51,12 @@ const (
 	// PredicateCycloneDX is the in-toto predicate type for CycloneDX BOM documents.
 	PredicateCycloneDX = "https://cyclonedx.org/bom"
 
+	// PredicateSLSAProvenanceV02 is the in-toto predicate type for SLSA provenance v0.2.
+	PredicateSLSAProvenanceV02 = "https://slsa.dev/provenance/v0.2"
+
+	// PredicateCosignSignature is the predicate type for bare cosign signatures.
+	PredicateCosignSignature = "https://sigstore.dev/cosign/sign/v1"
+
 	// bundleMediaType is the OCI artifact type for Sigstore bundles.
 	bundleMediaType = "application/vnd.dev.sigstore.bundle.v0.3+json"
 
