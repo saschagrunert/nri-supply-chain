@@ -840,7 +840,7 @@ func binAttestations(
 		switch attestations[idx].PredicateType {
 		case attestation.PredicateVSA:
 			bins.vsa = append(bins.vsa, attestations[idx])
-		case attestation.PredicateSLSAProvenanceV1:
+		case attestation.PredicateSLSAProvenanceV1, attestation.PredicateSLSAProvenanceV02:
 			bins.slsa = append(bins.slsa, attestations[idx])
 		case attestation.PredicateOpenVEX:
 			bins.vex = append(bins.vex, attestations[idx])
@@ -849,6 +849,11 @@ func binAttestations(
 			bins.sbom = append(bins.sbom, attestations[idx])
 		case attestation.PredicateSPDX:
 			bins.sbom = append(bins.sbom, attestations[idx])
+		case attestation.PredicateCosignSignature:
+			slog.DebugContext(ctx,
+				"Skipping bare cosign signature attestation",
+				"image", imageRef,
+			)
 		default:
 			slog.WarnContext(ctx,
 				"Skipping attestation with unrecognized predicate type",

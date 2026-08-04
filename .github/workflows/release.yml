@@ -124,7 +124,8 @@ jobs:
           docker buildx imagetools create \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf '${{ env.IMAGE }}@sha256:%s ' *)
-          digest=$(docker buildx imagetools inspect "$IMAGE:latest" --format '{{.Manifest.Digest}}')
+          SHA_TAG=$(jq -cr '.tags[]' <<< "$DOCKER_METADATA_OUTPUT_JSON" | grep -E ':[0-9a-f]{7,}$' | head -1)
+          digest=$(docker buildx imagetools inspect "$SHA_TAG" --format '{{.Manifest.Digest}}')
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
   provenance:

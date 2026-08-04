@@ -31,7 +31,13 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
-const checkType = types.CheckTypeSLSA
+const (
+	checkType = types.CheckTypeSLSA
+
+	metaBuilderID = "builderID"
+	metaBuildType = "buildType"
+	metaSource    = "source"
+)
 
 var (
 	// ErrSubjectDigestMismatch indicates the provenance subject does not match the image digest.
@@ -103,6 +109,25 @@ type Metadata struct {
 func Verify(
 	ctx context.Context, att []byte, pol *policy.Policy, imageDigest string,
 ) (*types.CheckResult, error) {
+	var header struct {
+		PredicateType string `json:"predicateType"`
+	}
+
+	err := json.Unmarshal(att, &header)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidProvenance, err)
+	}
+
+	if header.PredicateType == attestation.PredicateSLSAProvenanceV02 {
+		return verifyV02(ctx, att, pol, imageDigest)
+	}
+
+	return verifyV1(ctx, att, pol, imageDigest)
+}
+
+func verifyV1(
+	ctx context.Context, att []byte, pol *policy.Policy, imageDigest string,
+) (*types.CheckResult, error) {
 	var stmt Statement
 
 	err := json.Unmarshal(att, &stmt)
@@ -110,7 +135,7 @@ func Verify(
 		return nil, fmt.Errorf("%w: %w", ErrInvalidProvenance, err)
 	}
 
-	if !isSLSAPredicate(stmt.PredicateType) {
+	if stmt.PredicateType != attestation.PredicateSLSAProvenanceV1 {
 		return nil, fmt.Errorf(
 			"%w: unexpected predicate type %q", ErrInvalidProvenance, stmt.PredicateType,
 		)
@@ -145,12 +170,145 @@ func Verify(
 
 	result := passResult()
 	result.Metadata = map[string]any{
-		"builderID": stmt.Predicate.RunDetails.Builder.ID,
-		"buildType": stmt.Predicate.BuildDefinition.BuildType,
-		"source":    extractSource(stmt.Predicate.BuildDefinition.ExternalParameters),
+		metaBuilderID: stmt.Predicate.RunDetails.Builder.ID,
+		metaBuildType: stmt.Predicate.BuildDefinition.BuildType,
+		metaSource:    extractSource(stmt.Predicate.BuildDefinition.ExternalParameters),
 	}
 
 	return result, nil
+}
+
+// StatementV02 represents an in-toto v0.1 statement wrapping a SLSA provenance v0.2 predicate.
+type StatementV02 struct {
+	Type          string                 `json:"_type"` //nolint:tagliatelle // In-toto spec field name.
+	Subject       []Subject              `json:"subject"`
+	PredicateType string                 `json:"predicateType"`
+	Predicate     ProvenancePredicateV02 `json:"predicate"`
+}
+
+// ProvenancePredicateV02 represents the SLSA provenance v0.2 predicate.
+type ProvenancePredicateV02 struct {
+	Builder    Builder       `json:"builder"`
+	BuildType  string        `json:"buildType"`
+	Invocation InvocationV02 `json:"invocation"`
+	Materials  []MaterialV02 `json:"materials"`
+}
+
+// InvocationV02 holds v0.2 invocation metadata.
+type InvocationV02 struct {
+	ConfigSource ConfigSourceV02 `json:"configSource"`
+}
+
+// ConfigSourceV02 identifies the source of a v0.2 build invocation.
+type ConfigSourceV02 struct {
+	URI string `json:"uri"`
+}
+
+// MaterialV02 represents a v0.2 build material.
+type MaterialV02 struct {
+	URI string `json:"uri"`
+}
+
+func verifyV02(
+	ctx context.Context, att []byte, pol *policy.Policy, imageDigest string,
+) (*types.CheckResult, error) {
+	var stmt StatementV02
+
+	err := json.Unmarshal(att, &stmt)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidProvenance, err)
+	}
+
+	warnEmptyTrust(ctx, pol)
+
+	err = verifySubjectDigest(stmt.Subject, imageDigest)
+	if err != nil {
+		return failResult(err.Error()), nil
+	}
+
+	err = verifyBuilder(ctx, stmt.Predicate.Builder, pol)
+	if err != nil {
+		return failResult(err.Error()), nil
+	}
+
+	err = verifyBuildType(stmt.Predicate.BuildType, pol)
+	if err != nil {
+		return failResult(err.Error()), nil
+	}
+
+	err = verifySourceV02(stmt.Predicate, pol)
+	if err != nil {
+		return failResult(err.Error()), nil
+	}
+
+	// v0.2 has no externalParameters, so rejectUnknownParameters does not
+	// apply. Parameter validation is only meaningful for v1 provenance.
+
+	result := passResult()
+	result.Metadata = map[string]any{
+		metaBuilderID: stmt.Predicate.Builder.ID,
+		metaBuildType: stmt.Predicate.BuildType,
+		metaSource:    normalizeSourceV02(sourceV02(stmt.Predicate)),
+	}
+
+	return result, nil
+}
+
+func verifySourceV02(pred ProvenancePredicateV02, pol *policy.Policy) error {
+	if pol.Trust == nil || len(pol.Trust.Sources) == 0 {
+		return nil
+	}
+
+	source := normalizeSourceV02(sourceV02(pred))
+	if source == "" {
+		return fmt.Errorf("%w: source not found in v0.2 provenance", ErrUntrustedSource)
+	}
+
+	for _, pattern := range pol.Trust.Sources {
+		matched, err := glob.Match(pattern, source)
+		if err != nil {
+			return fmt.Errorf("invalid source pattern %q: %w", pattern, err)
+		}
+
+		if matched {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("%w: %q", ErrUntrustedSource, source)
+}
+
+// sourceV02 returns the raw source URI from a v0.2 provenance predicate.
+// Falls back to the first material URI; this relies on the SLSA GitHub
+// generator always listing the source repo as the first material.
+func sourceV02(pred ProvenancePredicateV02) string {
+	if pred.Invocation.ConfigSource.URI != "" {
+		return pred.Invocation.ConfigSource.URI
+	}
+
+	if len(pred.Materials) > 0 {
+		return pred.Materials[0].URI
+	}
+
+	return ""
+}
+
+// normalizeSourceV02 converts v0.2 git URIs like
+// "git+https://github.com/org/repo@refs/heads/main" into bare paths
+// like "github.com/org/repo" so they match the same trust policy
+// source patterns used for v1 provenance.
+func normalizeSourceV02(uri string) string {
+	normalized := uri
+	normalized = strings.TrimPrefix(normalized, "git+https://")
+	normalized = strings.TrimPrefix(normalized, "git+http://")
+	normalized = strings.TrimPrefix(normalized, "https://")
+	normalized = strings.TrimPrefix(normalized, "http://")
+
+	if idx := strings.IndexByte(normalized, '@'); idx > 0 {
+		normalized = normalized[:idx]
+	}
+
+	return normalized
 }
 
 // VerifyMultiple checks multiple provenance attestations, accepting if any valid one passes.
@@ -194,10 +352,6 @@ func VerifyMultiple(
 	}
 
 	return failResult("no valid provenance attestation found"), nil
-}
-
-func isSLSAPredicate(predicateType string) bool {
-	return predicateType == attestation.PredicateSLSAProvenanceV1
 }
 
 func verifySubjectDigest(subjects []Subject, imageDigest string) error {
@@ -260,7 +414,7 @@ func verifySources(params map[string]any, pol *policy.Policy) error {
 		return nil
 	}
 
-	sourceVal, exists := params["source"]
+	sourceVal, exists := params[metaSource]
 	if !exists {
 		return fmt.Errorf("%w: source parameter missing", ErrUntrustedSource)
 	}
@@ -285,7 +439,7 @@ func verifySources(params map[string]any, pol *policy.Policy) error {
 }
 
 func extractSource(params map[string]any) string {
-	if s, ok := params["source"].(string); ok {
+	if s, ok := params[metaSource].(string); ok {
 		return s
 	}
 
@@ -315,7 +469,7 @@ func verifyParameters(params map[string]any, pol *policy.Policy) error {
 }
 
 func defaultKnownParameters() []string {
-	return []string{"source", "repository", "ref", "workflow", "buildType"}
+	return []string{metaSource, "repository", "ref", "workflow", metaBuildType}
 }
 
 func passResult() *types.CheckResult {

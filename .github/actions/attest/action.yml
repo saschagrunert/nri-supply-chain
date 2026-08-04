@@ -16,6 +16,28 @@ inputs:
 runs:
   using: composite
   steps:
+    # The SLSA generator (cosign v2.2.3) stores provenance via the
+    # cosign .att tag (old format). Re-attest as a Sigstore bundle
+    # referrer so the verifier discovers it alongside VEX and SBOM.
+    # No explicit verification of the downloaded envelope is needed:
+    # the .att tag was signed by the SLSA generator in this workflow
+    # run, and cosign attest re-signs with our own OIDC identity.
+    - name: Re-attest SLSA provenance
+      shell: bash
+      run: |
+        if ! cosign download attestation \
+          "${IMAGE}@${{ inputs.digest }}" > /tmp/slsa-dsse.json 2>/dev/null; then
+          echo "No .att tag attestations found, skipping"
+          exit 0
+        fi
+        head -1 /tmp/slsa-dsse.json \
+          | jq -r '.payload' | base64 -d | jq '.predicate' > /tmp/slsa-predicate.json
+        cosign attest \
+          --type https://slsa.dev/provenance/v0.2 \
+          --predicate /tmp/slsa-predicate.json \
+          --yes \
+          "${IMAGE}@${{ inputs.digest }}"
+
     - name: Scan container image for vulnerabilities
       uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
       with:
@@ -91,7 +113,10 @@ runs:
         {
           "trust": {
             "issuers": ["https://token.actions.githubusercontent.com"],
-            "sanPatterns": ["https://github.com/${{ github.repository }}/**"],
+            "sanPatterns": [
+              "https://github.com/${{ github.repository }}/**",
+              "https://github.com/slsa-framework/slsa-github-generator/**"
+            ],
             "sources": ["github.com/${{ github.repository_owner }}/*"]
           },
           "slsa": { "missingPolicy": "deny" },
