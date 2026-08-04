@@ -657,6 +657,12 @@ VEX verification settings. Applies to both OpenVEX and CycloneDX VEX formats.
 | `missingPolicy`            | string | `allow` | Behavior when no VEX attestation is found: `allow`, `warn`, `deny` |
 | `underInvestigationPolicy` | string | `allow` | Behavior for `under_investigation` status: `allow`, `warn`, `deny` |
 
+> **Production note:** `underInvestigationPolicy` defaults to `allow`, which
+> means vulnerabilities still under investigation are silently permitted. For
+> production or enforce-mode deployments, set this explicitly to `deny` (block
+> the container) or `warn` (allow but log a warning) so that unresolved
+> vulnerabilities do not go unnoticed.
+
 ### `vsa` (object)
 
 Verification Summary Attestation settings.
