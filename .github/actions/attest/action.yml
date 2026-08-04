@@ -16,27 +16,61 @@ inputs:
 runs:
   using: composite
   steps:
-    # The SLSA generator (cosign v2.2.3) stores provenance via the
-    # cosign .att tag (old format). Re-attest as a Sigstore bundle
-    # referrer so the verifier discovers it alongside VEX and SBOM.
-    # No explicit verification of the downloaded envelope is needed:
-    # the .att tag was signed by the SLSA generator in this workflow
-    # run, and cosign attest re-signs with our own OIDC identity.
+    # The SLSA generator stores provenance in the cosign .att tag
+    # (raw DSSE envelope). Newer cosign versions no longer read .att
+    # tags via `cosign download attestation`, so we fetch the tag
+    # manifest directly from the registry API instead. The provenance
+    # is re-attested as a Sigstore bundle referrer so the verifier
+    # discovers it alongside VEX and SBOM attestations.
     - name: Re-attest SLSA provenance
       shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
       run: |
-        if ! cosign download attestation \
-          "${IMAGE}@${{ inputs.digest }}" > /tmp/slsa-dsse.json 2>/dev/null; then
-          echo "No .att tag attestations found, skipping"
+        DIGEST="${{ inputs.digest }}"
+        ATT_TAG="sha256-${DIGEST#sha256:}.att"
+        REPO="${IMAGE#ghcr.io/}"
+        AUTH=$(echo -n "${{ github.actor }}:${GH_TOKEN}" | base64 -w0)
+
+        MANIFEST=$(curl -sf \
+          -H "Authorization: Basic ${AUTH}" \
+          -H "Accept: application/vnd.oci.image.manifest.v1+json" \
+          "https://ghcr.io/v2/${REPO}/manifests/${ATT_TAG}" 2>/dev/null) || true
+
+        if [ -z "$MANIFEST" ]; then
+          echo "No .att tag found, skipping SLSA re-attestation"
           exit 0
         fi
-        head -1 /tmp/slsa-dsse.json \
-          | jq -r '.payload' | base64 -d | jq '.predicate' > /tmp/slsa-predicate.json
-        cosign attest \
+
+        LAYER_DIGEST=$(echo "$MANIFEST" | jq -r '
+          [(.layers // [])[] | select(.annotations.predicateType == "https://slsa.dev/provenance/v0.2")]
+          | first | .digest // empty')
+
+        if [ -z "$LAYER_DIGEST" ]; then
+          echo "No SLSA v0.2 provenance in .att tag, skipping"
+          exit 0
+        fi
+
+        DSSE=$(curl -sfL \
+          -H "Authorization: Basic ${AUTH}" \
+          "https://ghcr.io/v2/${REPO}/blobs/${LAYER_DIGEST}" 2>/dev/null) || true
+
+        if [ -z "$DSSE" ]; then
+          echo "Failed to download SLSA provenance blob, skipping"
+          exit 0
+        fi
+
+        if ! echo "$DSSE" | jq -r '.payload' | base64 -d | jq '.predicate' > /tmp/slsa-predicate.json; then
+          echo "Failed to parse SLSA provenance from DSSE envelope, skipping"
+          exit 0
+        fi
+        if ! cosign attest \
           --type https://slsa.dev/provenance/v0.2 \
           --predicate /tmp/slsa-predicate.json \
           --yes \
-          "${IMAGE}@${{ inputs.digest }}"
+          "${IMAGE}@${DIGEST}"; then
+          echo "::warning::SLSA re-attestation failed, verification may fail"
+        fi
 
     - name: Scan container image for vulnerabilities
       uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
