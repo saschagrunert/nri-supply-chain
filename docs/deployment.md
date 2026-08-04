@@ -173,7 +173,8 @@ policy_dir = "/etc/nri-supply-chain/policies"
     "rejectUnknownParameters": true
   },
   "vex": {
-    "missingPolicy": "deny"
+    "missingPolicy": "deny",
+    "underInvestigationPolicy": "deny"
   },
   "vsa": {
     "minimumLevel": 2,
