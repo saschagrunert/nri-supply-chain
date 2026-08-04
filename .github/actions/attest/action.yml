@@ -30,10 +30,18 @@ runs:
         DIGEST="${{ inputs.digest }}"
         ATT_TAG="sha256-${DIGEST#sha256:}.att"
         REPO="${IMAGE#ghcr.io/}"
-        AUTH=$(echo -n "${{ github.actor }}:${GH_TOKEN}" | base64 -w0)
+
+        TOKEN=$(curl -sf \
+          -u "${{ github.actor }}:${GH_TOKEN}" \
+          "https://ghcr.io/token?scope=repository:${REPO}:pull" | jq -r '.token // empty') || true
+
+        if [ -z "$TOKEN" ]; then
+          echo "Failed to obtain registry token, skipping SLSA re-attestation"
+          exit 0
+        fi
 
         MANIFEST=$(curl -sf \
-          -H "Authorization: Basic ${AUTH}" \
+          -H "Authorization: Bearer ${TOKEN}" \
           -H "Accept: application/vnd.oci.image.manifest.v1+json" \
           "https://ghcr.io/v2/${REPO}/manifests/${ATT_TAG}" 2>/dev/null) || true
 
@@ -52,7 +60,7 @@ runs:
         fi
 
         DSSE=$(curl -sfL \
-          -H "Authorization: Basic ${AUTH}" \
+          -H "Authorization: Bearer ${TOKEN}" \
           "https://ghcr.io/v2/${REPO}/blobs/${LAYER_DIGEST}" 2>/dev/null) || true
 
         if [ -z "$DSSE" ]; then
