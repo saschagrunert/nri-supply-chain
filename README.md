@@ -54,7 +54,8 @@ must pass verification.
        "sources": ["github.com/saschagrunert/*"]
      },
      "slsa": { "missingPolicy": "deny" },
-     "vex": { "missingPolicy": "deny" }
+     "vex": { "missingPolicy": "deny" },
+     "sbom": { "missingPolicy": "deny" }
    }
    ```
 
@@ -64,14 +65,14 @@ must pass verification.
 
    ```console
    nri-supply-chain --config config.toml \
-     verify ghcr.io/saschagrunert/nri-supply-chain:0.2.0
+     verify ghcr.io/saschagrunert/nri-supply-chain:0.2.1
    ```
 
    The default output is a colored table:
 
    ```text
-   Image: ghcr.io/saschagrunert/nri-supply-chain:0.2.0
-   Digest: sha256:34a4a6da1f757b30f1dd51e91eab94c97a0a618345320d1d2c35687a30559351
+   Image: ghcr.io/saschagrunert/nri-supply-chain:0.2.1
+   Digest: sha256:abc123...
    Namespace: default
    Policy: /etc/nri-supply-chain/policies/default.json
    Mode: enforce
@@ -80,16 +81,16 @@ must pass verification.
    TYPE       STATUS   DETAIL
    SLSA       pass     SLSA provenance verified
    VEX        pass     VEX verification passed
-   NOTATION   pass     no Notation signature found for image ghcr.io/saschagrunert/nri-supply-chain:0.2.0
-   SBOM       pass     no SBOM attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.2.0
+   NOTATION   pass     no Notation signature found for image ghcr.io/saschagrunert/nri-supply-chain:0.2.1
+   SBOM       pass     SBOM verification passed
    ```
 
    Use `--output json` for machine-readable output:
 
    ```json
    {
-     "image": "ghcr.io/saschagrunert/nri-supply-chain:0.2.0",
-     "digest": "sha256:34a4a6da1f757b30f1dd51e91eab94c97a0a618345320d1d2c35687a30559351",
+     "image": "ghcr.io/saschagrunert/nri-supply-chain:0.2.1",
+     "digest": "sha256:abc123...",
      "namespace": "default",
      "allowed": true,
      "checkResults": [
@@ -109,13 +110,13 @@ must pass verification.
          "type": "notation",
          "passed": true,
          "status": "pass",
-         "detail": "no Notation signature found for image ghcr.io/saschagrunert/nri-supply-chain:0.2.0"
+         "detail": "no Notation signature found for image ghcr.io/saschagrunert/nri-supply-chain:0.2.1"
        },
        {
          "type": "sbom",
          "passed": true,
          "status": "pass",
-         "detail": "no SBOM attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.2.0"
+         "detail": "SBOM verification passed"
        }
      ]
    }
@@ -139,7 +140,8 @@ must pass verification.
        ]
      },
      "slsa": { "missingPolicy": "deny" },
-     "vex": { "missingPolicy": "deny" }
+     "vex": { "missingPolicy": "deny" },
+     "sbom": { "missingPolicy": "deny" }
    }
    ```
 
@@ -148,8 +150,8 @@ must pass verification.
    With this policy the default table output becomes:
 
    ```text
-   Image: ghcr.io/saschagrunert/nri-supply-chain:0.2.0
-   Digest: sha256:34a4a6da1f757b30f1dd51e91eab94c97a0a618345320d1d2c35687a30559351
+   Image: ghcr.io/saschagrunert/nri-supply-chain:0.2.1
+   Digest: sha256:abc123...
    Namespace: default
    Policy: /etc/nri-supply-chain/policies/default.json
    Mode: enforce
