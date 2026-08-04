@@ -28,6 +28,8 @@ import (
 
 const (
 	readHeaderTimeout   = 10 * time.Second
+	writeTimeout        = 30 * time.Second
+	idleTimeout         = 120 * time.Second
 	shutdownGracePeriod = 5 * time.Second
 )
 
@@ -50,6 +52,8 @@ func serveMetrics(
 		Addr:              addr,
 		Handler:           mux,
 		ReadHeaderTimeout: readHeaderTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
 	}
 
 	//nolint:gosec,contextcheck // parent ctx is already cancelled; fresh context is intentional

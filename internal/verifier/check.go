@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime/debug"
-	"strings"
 	"sync"
 	"time"
 
@@ -88,6 +87,8 @@ func runChecks(
 	if state.fetchSem != nil {
 		release, semErr := acquireFetchSlots(ctx, state, host)
 		if semErr != nil {
+			recordBreakerFailure(ctx, breaker, state.metrics, host, state.config.FetchFailurePolicy)
+
 			return handleFetchError(ctx, state.config, state.metrics, semErr, imageRef, host)
 		}
 
@@ -179,9 +180,19 @@ func runChecksWithoutFetcher(
 	}{
 		{types.CheckTypeSLSA, pol.SLSAMissingPolicy()},
 		{types.CheckTypeVEX, pol.VEXMissingPolicy()},
-		{types.CheckTypeNotation, pol.NotationMissingPolicy()},
-		{types.CheckTypeSBOM, pol.SBOMMissingPolicy()},
 	}
+
+	if pol.Notation != nil {
+		missingChecks = append(missingChecks, struct {
+			checkType     types.CheckType
+			missingPolicy types.Action
+		}{types.CheckTypeNotation, pol.NotationMissingPolicy()})
+	}
+
+	missingChecks = append(missingChecks, struct {
+		checkType     types.CheckType
+		missingPolicy types.Action
+	}{types.CheckTypeSBOM, pol.SBOMMissingPolicy()})
 
 	results := make([]*types.CheckResult, 0, len(missingChecks))
 
@@ -732,9 +743,6 @@ func extractRegistryRepo(
 	ctx := parsedRef.Context()
 	reg = ctx.RegistryStr()
 	repo = ctx.RepositoryStr()
-
-	// Remove registry prefix from full repository path if present.
-	repo = strings.TrimPrefix(repo, reg+"/")
 
 	return reg, repo
 }

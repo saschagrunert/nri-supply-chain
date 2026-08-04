@@ -993,7 +993,7 @@ func (f *OCIFetcher) collectAttestations(
 					"limit", maxTotalAttestationSize,
 				)
 
-				return nil
+				return errAggregateSizeExceeded
 			}
 
 			appendAttestation(&attsMu, &attestations, &att)

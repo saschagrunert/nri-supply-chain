@@ -273,9 +273,16 @@ func (p *Plugin) CreateContainer(
 		)
 	}
 
-	digest, indexDigest := p.resolveDigestIfMissing(ctx, imageRef, digest, namespace, pod, ctr)
+	digest, indexDigest, resolveErr := p.resolveDigestIfMissing(
+		ctx, imageRef, digest, namespace, pod, ctr,
+	)
 
 	if imageRef == "" || digest == "" {
+		mode := p.verifier.EffectiveModeForNamespace(namespace)
+		if resolveErr != nil && mode == config.ModeEnforce {
+			return nil, nil, fmt.Errorf("supply chain verification: %w", resolveErr)
+		}
+
 		return p.handleMissingAnnotations(
 			ctx, namespace, pod, ctr, imageRef, digest, len(annotations),
 		)
@@ -418,9 +425,9 @@ func (p *Plugin) resolveDigestIfMissing(
 	imageRef, digest, namespace string,
 	pod *api.PodSandbox,
 	ctr *api.Container,
-) (resolvedDigest, resolvedIndexDigest string) {
+) (resolvedDigest, resolvedIndexDigest string, resolveErr error) {
 	if imageRef == "" || digest != "" {
-		return digest, ""
+		return digest, "", nil
 	}
 
 	resolveCtx, cancel := context.WithTimeout(
@@ -438,10 +445,10 @@ func (p *Plugin) resolveDigestIfMissing(
 			"error", err,
 		)
 
-		return digest, ""
+		return digest, "", fmt.Errorf("resolving digest for %s: %w", imageRef, err)
 	}
 
-	return resolved, indexDigest
+	return resolved, indexDigest, nil
 }
 
 func (p *Plugin) collectPrewarmImages(

@@ -170,6 +170,22 @@ func readPolicyDir(policyDir string) ([]os.DirEntry, error) {
 			continue
 		}
 
+		fullPath := filepath.Join(policyDir, entry.Name())
+
+		info, lstatErr := os.Lstat(fullPath)
+		if lstatErr != nil {
+			slog.Warn("Skipping unreadable policy file",
+				"path", fullPath, "error", lstatErr)
+
+			continue
+		}
+
+		if info.Mode()&os.ModeSymlink != 0 {
+			slog.Warn("Skipping symlinked policy file", "path", fullPath)
+
+			continue
+		}
+
 		jsonEntries = append(jsonEntries, entry)
 	}
 

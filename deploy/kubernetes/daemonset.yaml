@@ -94,6 +94,11 @@ spec:
           args:
             - --config
             - /etc/nri-supply-chain/config.toml
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
           ports:
             - name: metrics
               containerPort: 9090
@@ -176,15 +181,26 @@ spec:
     - Ingress
     - Egress
   ingress:
-    - ports:
+    - from:
+        # Restrict metrics scraping to pods in the monitoring namespace.
+        # Adjust the label to match your Prometheus deployment.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
         - port: 9090
           protocol: TCP
   egress:
+    # DNS resolution.
     - ports:
         - port: 53
           protocol: UDP
         - port: 53
           protocol: TCP
+    # Registry access (HTTP and HTTPS). Destination is unrestricted because
+    # container images may be pulled from any registry.
     - ports:
+        - port: 80
+          protocol: TCP
         - port: 443
           protocol: TCP

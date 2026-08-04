@@ -336,6 +336,11 @@ const ExportMaxCircuitBreakers = maxCircuitBreakers
 // ExportMaxTotalAttestationSize exposes maxTotalAttestationSize for external tests.
 const ExportMaxTotalAttestationSize = maxTotalAttestationSize
 
+// SetOnStaleHit sets the onStaleHit callback on a test cache for testing.
+func (c *trustedRootCache) SetOnStaleHit(fn func()) {
+	c.onStaleHit = fn
+}
+
 // ExportExceededTotalAttestationSize exposes exceededTotalAttestationSize for external tests.
 func ExportExceededTotalAttestationSize(ctx context.Context, totalSize int64) bool {
 	return exceededTotalAttestationSize(ctx, totalSize)
@@ -367,6 +372,11 @@ func (r *CircuitBreakerRegistry) ExportThreshold() int {
 // ExportRegistryCooldown exposes cooldown for external tests.
 func (r *CircuitBreakerRegistry) ExportCooldown() time.Duration {
 	return r.cooldown
+}
+
+// ExportHasLimiter returns whether the fetcher has an active rate limiter.
+func (f *OCIFetcher) ExportHasLimiter() bool {
+	return f.limiter.Load() != nil
 }
 
 // ExportFetchWithFallback exposes fetchWithFallback for external tests.

@@ -52,11 +52,19 @@ const (
 	testNotationRuleName       = "rule1"
 	testDockerGlob             = "docker.io/**"
 	testCELExprTrue            = "true"
+	testCELExprFalse           = "false"
 	testCELExprSLSAVerified    = "slsa.verified == true"
+	testCELMsgBase             = "base"
 	testFormatCycloneDX        = "cyclonedx"
 	testFormatSPDX             = "spdx"
 	testLicenseAGPL            = "AGPL-3.0"
 	testLicenseMIT             = "MIT"
+	testDefaultBuilderID       = "default-builder"
+	testDefaultIssuer          = "default-issuer"
+	testNSBuilderID            = "ns-builder"
+	testDefaultLabel           = "default"
+	testDefaultIncludeGlob     = "default-include/**"
+	testDefaultExcludeGlob     = "default-exclude/**"
 )
 
 type validateTest struct {
@@ -1013,10 +1021,10 @@ func defaultTestPolicy() *policy.Policy {
 		Sections: policy.Sections{
 			Trust: &policy.TrustPolicy{
 				Builders: []policy.TrustedBuilder{
-					{ID: "default-builder", MaxLevel: 3},
+					{ID: testDefaultBuilderID, MaxLevel: 3},
 				},
 				Verifiers:   nil,
-				Issuers:     []string{"default-issuer"},
+				Issuers:     []string{testDefaultIssuer},
 				SANPatterns: nil,
 				Sources:     nil,
 				BuildTypes:  nil,
@@ -1068,7 +1076,7 @@ func TestMergeWithDefaultInheritsTrust(t *testing.T) {
 
 	merged := mergedEmptyNamespace()
 	if merged.Trust == nil ||
-		merged.Trust.Builders[0].ID != "default-builder" {
+		merged.Trust.Builders[0].ID != testDefaultBuilderID {
 		t.Error("expected default Trust to be inherited")
 	}
 }
@@ -1137,7 +1145,7 @@ func TestMergeWithDefaultTrustOverride(t *testing.T) {
 
 	nsTrust := &policy.TrustPolicy{
 		Builders: []policy.TrustedBuilder{
-			{ID: "ns-builder", MaxLevel: 1},
+			{ID: testNSBuilderID, MaxLevel: 1},
 		},
 		Verifiers:   nil,
 		Issuers:     nil,
@@ -1154,7 +1162,7 @@ func TestMergeWithDefaultTrustOverride(t *testing.T) {
 
 	merged := policy.MergeWithDefault(nsPol, defaultTestPolicy())
 
-	if merged.Trust.Builders[0].ID != "ns-builder" {
+	if merged.Trust.Builders[0].ID != testNSBuilderID {
 		t.Errorf("expected ns-builder, got %s",
 			merged.Trust.Builders[0].ID)
 	}
@@ -3402,7 +3410,7 @@ func validNotationPolicy() *policy.NotationPolicy {
 		},
 		TrustPolicy: []policy.NotationTrustPolicyRule{
 			{
-				Name:              "default",
+				Name:              testDefaultLabel,
 				RegistryScopes:    []string{"*"},
 				TrustStores:       []string{testNotationStoreRef},
 				TrustedIdentities: []string{"*"},
@@ -3893,7 +3901,7 @@ func TestApplySectionsCELOverride(t *testing.T) {
 		Sections: policy.Sections{
 			CEL: &celengine.Policy{
 				Rules: []celengine.Rule{
-					{Require: testCELExprTrue, Message: "base"},
+					{Require: testCELExprTrue, Message: testCELMsgBase},
 				},
 			},
 			SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionAllow},
@@ -3905,7 +3913,7 @@ func TestApplySectionsCELOverride(t *testing.T) {
 		Sections: policy.Sections{
 			CEL: &celengine.Policy{
 				Rules: []celengine.Rule{
-					{Require: "false", Message: "override"},
+					{Require: testCELExprFalse, Message: "override"},
 				},
 			},
 		},
@@ -4040,7 +4048,7 @@ func TestApplyRuleCELOverrideCompiledCEL(t *testing.T) {
 		Sections: policy.Sections{
 			CEL: &celengine.Policy{
 				Rules: []celengine.Rule{
-					{Require: testCELExprTrue, Message: "base"},
+					{Require: testCELExprTrue, Message: testCELMsgBase},
 				},
 			},
 		},
@@ -4056,7 +4064,7 @@ func TestApplyRuleCELOverrideCompiledCEL(t *testing.T) {
 				Sections: policy.Sections{
 					CEL: &celengine.Policy{
 						Rules: []celengine.Rule{
-							{Require: "false", Message: "rule override"},
+							{Require: testCELExprFalse, Message: "rule override"},
 						},
 					},
 				},
@@ -4232,5 +4240,457 @@ func TestInheritedRulesPreserveCompiledCEL(t *testing.T) {
 
 	if staging.Rules[0].CompiledCEL == nil {
 		t.Error("expected CompiledCEL to be preserved on inherited rule")
+	}
+}
+
+func TestMergeWithDefaultNamespaceOverridesAllSections(t *testing.T) {
+	t.Parallel()
+
+	defaultPol := &policy.Policy{
+		Include: []string{testDefaultIncludeGlob},
+		Exclude: []string{testDefaultExcludeGlob},
+		Sections: policy.Sections{
+			Trust: &policy.TrustPolicy{
+				Builders: []policy.TrustedBuilder{{ID: testDefaultBuilderID, MaxLevel: 2}},
+				Issuers:  []string{testDefaultIssuer},
+			},
+			SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionAllow},
+			VEX: &policy.VEXPolicy{
+				MissingPolicy:            types.ActionAllow,
+				UnderInvestigationPolicy: types.ActionAllow,
+			},
+			VSA: &policy.VSAPolicy{
+				MissingPolicy: types.ActionAllow,
+				MinimumLevel:  1,
+			},
+			Signatures: &policy.SignaturesPolicy{RequireTransparencyLog: false},
+			Notation: &policy.NotationPolicy{
+				MissingPolicy:     types.ActionAllow,
+				VerificationLevel: "permissive",
+			},
+			CEL: &celengine.Policy{
+				Rules: []celengine.Rule{{Require: testCELExprTrue, Message: testDefaultLabel}},
+			},
+			SBOM: &policy.SBOMPolicy{
+				MissingPolicy: types.ActionAllow,
+				Formats:       []string{testFormatSPDX},
+			},
+		},
+	}
+
+	nsPol := &policy.Policy{
+		Include: []string{"ns-include/**"},
+		Exclude: []string{"ns-exclude/**"},
+		Sections: policy.Sections{
+			Trust: &policy.TrustPolicy{
+				Builders: []policy.TrustedBuilder{{ID: testNSBuilderID, MaxLevel: 3}},
+				Issuers:  []string{"ns-issuer"},
+			},
+			SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
+			VEX: &policy.VEXPolicy{
+				MissingPolicy:            types.ActionDeny,
+				UnderInvestigationPolicy: types.ActionDeny,
+			},
+			VSA: &policy.VSAPolicy{
+				MissingPolicy: types.ActionDeny,
+				MinimumLevel:  3,
+			},
+			Signatures: &policy.SignaturesPolicy{RequireTransparencyLog: true},
+			Notation: &policy.NotationPolicy{
+				MissingPolicy:     types.ActionDeny,
+				VerificationLevel: testNotationLevelStrict,
+			},
+			CEL: &celengine.Policy{
+				Rules: []celengine.Rule{{Require: testCELExprFalse, Message: "namespace"}},
+			},
+			SBOM: &policy.SBOMPolicy{
+				MissingPolicy: types.ActionDeny,
+				Formats:       []string{testFormatCycloneDX},
+			},
+		},
+	}
+
+	merged := policy.MergeWithDefault(nsPol, defaultPol)
+
+	if len(merged.Include) != 1 || merged.Include[0] != "ns-include/**" {
+		t.Errorf("expected namespace Include, got %v", merged.Include)
+	}
+
+	if len(merged.Exclude) != 1 || merged.Exclude[0] != "ns-exclude/**" {
+		t.Errorf("expected namespace Exclude, got %v", merged.Exclude)
+	}
+
+	if merged.Trust.Builders[0].ID != testNSBuilderID {
+		t.Errorf("expected ns-builder, got %s", merged.Trust.Builders[0].ID)
+	}
+
+	if merged.Trust.Issuers[0] != "ns-issuer" {
+		t.Errorf("expected ns-issuer, got %s", merged.Trust.Issuers[0])
+	}
+
+	if merged.SLSA.MissingPolicy != types.ActionDeny {
+		t.Errorf("expected SLSA deny, got %s", merged.SLSA.MissingPolicy)
+	}
+
+	if merged.VEX.MissingPolicy != types.ActionDeny {
+		t.Errorf("expected VEX deny, got %s", merged.VEX.MissingPolicy)
+	}
+
+	if merged.VEX.UnderInvestigationPolicy != types.ActionDeny {
+		t.Errorf("expected VEX under-investigation deny, got %s",
+			merged.VEX.UnderInvestigationPolicy)
+	}
+
+	if merged.VSA.MissingPolicy != types.ActionDeny {
+		t.Errorf("expected VSA deny, got %s", merged.VSA.MissingPolicy)
+	}
+
+	if merged.VSA.MinimumLevel != 3 {
+		t.Errorf("expected VSA MinimumLevel 3, got %d", merged.VSA.MinimumLevel)
+	}
+
+	if !merged.Signatures.RequireTransparencyLog {
+		t.Error("expected Signatures RequireTransparencyLog true")
+	}
+
+	if merged.Notation.MissingPolicy != types.ActionDeny {
+		t.Errorf("expected Notation deny, got %s", merged.Notation.MissingPolicy)
+	}
+
+	if merged.Notation.VerificationLevel != testNotationLevelStrict {
+		t.Errorf("expected Notation strict, got %s", merged.Notation.VerificationLevel)
+	}
+
+	if merged.CEL.Rules[0].Message != "namespace" {
+		t.Errorf("expected namespace CEL rule, got %s", merged.CEL.Rules[0].Message)
+	}
+
+	if merged.SBOM.MissingPolicy != types.ActionDeny {
+		t.Errorf("expected SBOM deny, got %s", merged.SBOM.MissingPolicy)
+	}
+
+	if len(merged.SBOM.Formats) != 1 || merged.SBOM.Formats[0] != testFormatCycloneDX {
+		t.Errorf("expected SBOM cyclonedx format, got %v", merged.SBOM.Formats)
+	}
+}
+
+func TestApplyRuleTrustOverridePreservesOtherSections(t *testing.T) {
+	t.Parallel()
+
+	base := &policy.Policy{
+		Sections: policy.Sections{
+			Trust: &policy.TrustPolicy{
+				Builders: []policy.TrustedBuilder{{ID: testBaseBuilderID, MaxLevel: 2}},
+				Issuers:  []string{"base-issuer"},
+				Sources:  []string{"https://github.com/base/**"},
+			},
+			SLSA:       &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
+			VEX:        &policy.VEXPolicy{MissingPolicy: types.ActionWarn},
+			VSA:        &policy.VSAPolicy{MinimumLevel: 2},
+			Signatures: &policy.SignaturesPolicy{RequireTransparencyLog: true},
+			Notation: &policy.NotationPolicy{
+				MissingPolicy:     types.ActionDeny,
+				VerificationLevel: testNotationLevelStrict,
+			},
+			CEL: &celengine.Policy{
+				Rules: []celengine.Rule{{Require: testCELExprTrue, Message: testCELMsgBase}},
+			},
+			SBOM: &policy.SBOMPolicy{
+				MissingPolicy: types.ActionDeny,
+				Formats:       []string{testFormatSPDX},
+			},
+		},
+	}
+
+	rule := &policy.ImageRule{
+		Images: []string{testRuleImagesGlob},
+		Sections: policy.Sections{
+			Trust: &policy.TrustPolicy{
+				Builders: []policy.TrustedBuilder{{ID: testRuleBuilderID, MaxLevel: 3}},
+				Issuers:  []string{"rule-issuer"},
+				Sources:  []string{"https://github.com/rule/**"},
+			},
+		},
+	}
+
+	resolved := policy.ApplyRule(base, rule)
+
+	// Trust should come from the rule.
+	if resolved.Builders()[0].ID != testRuleBuilderID {
+		t.Errorf("expected rule builder, got %s", resolved.Builders()[0].ID)
+	}
+
+	if resolved.Trust.Issuers[0] != "rule-issuer" {
+		t.Errorf("expected rule issuer, got %s", resolved.Trust.Issuers[0])
+	}
+
+	if resolved.Trust.Sources[0] != "https://github.com/rule/**" {
+		t.Errorf("expected rule source, got %s", resolved.Trust.Sources[0])
+	}
+
+	// All other sections should come from the base.
+	if resolved.SLSA.MissingPolicy != types.ActionDeny {
+		t.Errorf("expected base SLSA deny, got %s", resolved.SLSA.MissingPolicy)
+	}
+
+	if resolved.VEX.MissingPolicy != types.ActionWarn {
+		t.Errorf("expected base VEX warn, got %s", resolved.VEX.MissingPolicy)
+	}
+
+	if resolved.VSA.MinimumLevel != 2 {
+		t.Errorf("expected base VSA level 2, got %d", resolved.VSA.MinimumLevel)
+	}
+
+	if !resolved.Signatures.RequireTransparencyLog {
+		t.Error("expected base Signatures RequireTransparencyLog true")
+	}
+
+	if resolved.Notation.VerificationLevel != testNotationLevelStrict {
+		t.Errorf("expected base Notation strict, got %s", resolved.Notation.VerificationLevel)
+	}
+
+	if resolved.CEL.Rules[0].Message != "base" {
+		t.Errorf("expected base CEL rule, got %s", resolved.CEL.Rules[0].Message)
+	}
+
+	if resolved.SBOM.MissingPolicy != types.ActionDeny {
+		t.Errorf("expected base SBOM deny, got %s", resolved.SBOM.MissingPolicy)
+	}
+}
+
+func TestMergeWithDefaultEmptyNamespacePreservesAll(t *testing.T) {
+	t.Parallel()
+
+	defaultPol := &policy.Policy{
+		Mode:    config.ModeEnforce,
+		Include: []string{testDefaultIncludeGlob},
+		Exclude: []string{testDefaultExcludeGlob},
+		Sections: policy.Sections{
+			Trust: &policy.TrustPolicy{
+				Builders: []policy.TrustedBuilder{{ID: testDefaultBuilderID, MaxLevel: 2}},
+				Verifiers: []policy.TrustedVerifier{
+					{ID: "default-verifier", Keys: []string{testKeyPath}},
+				},
+				Issuers: []string{testDefaultIssuer},
+				Sources: []string{"https://github.com/**"},
+			},
+			SLSA: &policy.SLSAPolicy{
+				MissingPolicy:           types.ActionDeny,
+				RejectUnknownParameters: true,
+			},
+			VEX: &policy.VEXPolicy{
+				MissingPolicy:            types.ActionDeny,
+				UnderInvestigationPolicy: types.ActionWarn,
+			},
+			VSA: &policy.VSAPolicy{
+				MissingPolicy: types.ActionDeny,
+				MinimumLevel:  3,
+				Policy:        "https://example.com/policy",
+			},
+			Signatures: &policy.SignaturesPolicy{RequireTransparencyLog: true},
+			Notation: &policy.NotationPolicy{
+				MissingPolicy:     types.ActionDeny,
+				VerificationLevel: testNotationLevelStrict,
+				TrustStores: []policy.NotationTrustStore{
+					{
+						Name:         testNotationStoreName,
+						Type:         "ca",
+						Certificates: []string{testNotationCertPath},
+					},
+				},
+			},
+			CEL: &celengine.Policy{
+				Rules: []celengine.Rule{{Require: testCELExprTrue, Message: testDefaultLabel}},
+			},
+			SBOM: &policy.SBOMPolicy{
+				MissingPolicy: types.ActionDeny,
+				Formats:       []string{testFormatSPDX, testFormatCycloneDX},
+				License: &policy.SBOMLicensePolicy{
+					Deny: []string{testLicenseAGPL},
+				},
+			},
+		},
+	}
+
+	emptyNs := &policy.Policy{}
+	merged := policy.MergeWithDefault(emptyNs, defaultPol)
+
+	if merged.Mode != config.ModeEnforce {
+		t.Errorf("expected mode enforce, got %s", merged.Mode)
+	}
+
+	if len(merged.Include) != 1 || merged.Include[0] != testDefaultIncludeGlob {
+		t.Errorf("expected default Include, got %v", merged.Include)
+	}
+
+	if len(merged.Exclude) != 1 || merged.Exclude[0] != testDefaultExcludeGlob {
+		t.Errorf("expected default Exclude, got %v", merged.Exclude)
+	}
+
+	if merged.Trust == nil || merged.Trust.Builders[0].ID != testDefaultBuilderID {
+		t.Error("expected default Trust to be preserved")
+	}
+
+	if merged.Trust.Verifiers[0].ID != "default-verifier" {
+		t.Errorf("expected default verifier, got %s", merged.Trust.Verifiers[0].ID)
+	}
+
+	if merged.SLSA.MissingPolicy != types.ActionDeny {
+		t.Errorf("expected default SLSA deny, got %s", merged.SLSA.MissingPolicy)
+	}
+
+	if !merged.SLSA.RejectUnknownParameters {
+		t.Error("expected default SLSA RejectUnknownParameters true")
+	}
+
+	if merged.VEX.MissingPolicy != types.ActionDeny {
+		t.Errorf("expected default VEX deny, got %s", merged.VEX.MissingPolicy)
+	}
+
+	if merged.VEX.UnderInvestigationPolicy != types.ActionWarn {
+		t.Errorf("expected default VEX under-investigation warn, got %s",
+			merged.VEX.UnderInvestigationPolicy)
+	}
+
+	if merged.VSA.MinimumLevel != 3 {
+		t.Errorf("expected default VSA level 3, got %d", merged.VSA.MinimumLevel)
+	}
+
+	if !merged.Signatures.RequireTransparencyLog {
+		t.Error("expected default Signatures RequireTransparencyLog true")
+	}
+
+	if merged.Notation == nil || merged.Notation.VerificationLevel != testNotationLevelStrict {
+		t.Error("expected default Notation strict to be preserved")
+	}
+
+	if len(merged.Notation.TrustStores) != 1 ||
+		merged.Notation.TrustStores[0].Name != testNotationStoreName {
+		t.Error("expected default Notation trust stores to be preserved")
+	}
+
+	if merged.CEL == nil || merged.CEL.Rules[0].Message != testDefaultLabel {
+		t.Error("expected default CEL to be preserved")
+	}
+
+	if merged.SBOM == nil || merged.SBOM.MissingPolicy != types.ActionDeny {
+		t.Error("expected default SBOM to be preserved")
+	}
+
+	if len(merged.SBOM.Formats) != 2 {
+		t.Errorf("expected 2 default SBOM formats, got %d", len(merged.SBOM.Formats))
+	}
+
+	if merged.SBOM.License == nil || len(merged.SBOM.License.Deny) != 1 {
+		t.Error("expected default SBOM license deny list to be preserved")
+	}
+}
+
+func TestMergeWithDefaultNilNotationAndSBOMPreservesDefaults(t *testing.T) {
+	t.Parallel()
+
+	defaultPol := &policy.Policy{
+		Sections: policy.Sections{
+			Notation: &policy.NotationPolicy{
+				MissingPolicy:     types.ActionDeny,
+				VerificationLevel: testNotationLevelStrict,
+				TrustStores: []policy.NotationTrustStore{
+					{
+						Name:         testNotationStoreName,
+						Type:         "ca",
+						Certificates: []string{testNotationCertPath},
+					},
+				},
+				TrustPolicy: []policy.NotationTrustPolicyRule{
+					{
+						Name:              "default-rule",
+						RegistryScopes:    []string{"*"},
+						TrustStores:       []string{testNotationStoreRef},
+						TrustedIdentities: []string{"*"},
+					},
+				},
+			},
+			SBOM: &policy.SBOMPolicy{
+				MissingPolicy: types.ActionDeny,
+				Formats:       []string{testFormatSPDX},
+				License: &policy.SBOMLicensePolicy{
+					Deny:  []string{testLicenseAGPL},
+					Allow: []string{testLicenseMIT},
+				},
+				Component: &policy.SBOMComponentPolicy{
+					Deny: []string{"pkg:npm/bad@1.0.0"},
+				},
+			},
+		},
+	}
+
+	// Namespace policy has nil Notation and nil SBOM.
+	nsPol := &policy.Policy{
+		Sections: policy.Sections{
+			SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionWarn},
+		},
+	}
+
+	merged := policy.MergeWithDefault(nsPol, defaultPol)
+
+	// Notation should be preserved from default.
+	if merged.Notation == nil {
+		t.Fatal("expected Notation to be preserved from default")
+	}
+
+	if merged.Notation.MissingPolicy != types.ActionDeny {
+		t.Errorf("expected Notation deny, got %s", merged.Notation.MissingPolicy)
+	}
+
+	if merged.Notation.VerificationLevel != testNotationLevelStrict {
+		t.Errorf("expected Notation strict, got %s", merged.Notation.VerificationLevel)
+	}
+
+	if len(merged.Notation.TrustStores) != 1 {
+		t.Fatalf("expected 1 trust store, got %d", len(merged.Notation.TrustStores))
+	}
+
+	if merged.Notation.TrustStores[0].Name != testNotationStoreName {
+		t.Errorf("expected trust store name %s, got %s",
+			testNotationStoreName, merged.Notation.TrustStores[0].Name)
+	}
+
+	if len(merged.Notation.TrustPolicy) != 1 ||
+		merged.Notation.TrustPolicy[0].Name != "default-rule" {
+		t.Error("expected Notation trust policy to be preserved from default")
+	}
+
+	// SBOM should be preserved from default.
+	if merged.SBOM == nil {
+		t.Fatal("expected SBOM to be preserved from default")
+	}
+
+	if merged.SBOM.MissingPolicy != types.ActionDeny {
+		t.Errorf("expected SBOM deny, got %s", merged.SBOM.MissingPolicy)
+	}
+
+	if len(merged.SBOM.Formats) != 1 || merged.SBOM.Formats[0] != testFormatSPDX {
+		t.Errorf("expected SBOM spdx format, got %v", merged.SBOM.Formats)
+	}
+
+	if merged.SBOM.License == nil {
+		t.Fatal("expected SBOM license to be preserved from default")
+	}
+
+	if len(merged.SBOM.License.Deny) != 1 || merged.SBOM.License.Deny[0] != testLicenseAGPL {
+		t.Errorf("expected SBOM license deny [AGPL-3.0], got %v", merged.SBOM.License.Deny)
+	}
+
+	if len(merged.SBOM.License.Allow) != 1 || merged.SBOM.License.Allow[0] != testLicenseMIT {
+		t.Errorf("expected SBOM license allow [MIT], got %v", merged.SBOM.License.Allow)
+	}
+
+	if merged.SBOM.Component == nil || len(merged.SBOM.Component.Deny) != 1 {
+		t.Error("expected SBOM component deny list to be preserved from default")
+	}
+
+	// The namespace SLSA override should take effect.
+	if merged.SLSA.MissingPolicy != types.ActionWarn {
+		t.Errorf("expected namespace SLSA warn, got %s", merged.SLSA.MissingPolicy)
 	}
 }

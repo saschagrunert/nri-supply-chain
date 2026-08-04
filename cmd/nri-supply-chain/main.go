@@ -316,23 +316,14 @@ func startPlugin(
 
 	transportCache := registry.NewTransportCacheOrNil(cfg.Registries)
 
-	var fetcher attestation.Fetcher
-
-	if cfg.Enabled() {
-		var err error
-
-		fetcher, err = verifier.NewFetcher(ctx, cfg, transportCache)
-		if err != nil {
-			slog.Error("Failed to create fetcher", "error", err)
-			cancel()
-
-			return exitError
-		}
-	}
-
-	verif, err := verifier.New(ctx, cfg, met, fetcher)
+	verif, err := createVerifier(ctx, cfg, met, transportCache)
 	if err != nil {
-		slog.Error("Failed to create verifier", "error", err)
+		slog.Error("Startup failed", "error", err)
+
+		if transportCache != nil {
+			transportCache.CloseIdleConnections()
+		}
+
 		cancel()
 
 		return exitError
@@ -358,6 +349,31 @@ func startPlugin(
 	}
 
 	return exitSuccess
+}
+
+func createVerifier(
+	ctx context.Context,
+	cfg *config.Config,
+	met *metrics.Metrics,
+	transportCache *registry.TransportCache,
+) (*verifier.Verifier, error) {
+	var fetcher attestation.Fetcher
+
+	if cfg.Enabled() {
+		var err error
+
+		fetcher, err = verifier.NewFetcher(ctx, cfg, transportCache)
+		if err != nil {
+			return nil, fmt.Errorf("creating fetcher: %w", err)
+		}
+	}
+
+	verif, err := verifier.New(ctx, cfg, met, fetcher)
+	if err != nil {
+		return nil, fmt.Errorf("creating verifier: %w", err)
+	}
+
+	return verif, nil
 }
 
 func setupConfig(configPath string) (*config.Config, error) {
@@ -474,8 +490,12 @@ func shouldUseConfigFile(path string) bool {
 func loadConfig(path string) (*config.Config, error) {
 	if path == defaultConfigPath {
 		_, statErr := os.Stat(path)
-		if os.IsNotExist(statErr) {
-			return config.DefaultConfig(), nil
+		if statErr != nil {
+			if os.IsNotExist(statErr) {
+				return config.DefaultConfig(), nil
+			}
+
+			return nil, fmt.Errorf("checking config file: %w", statErr)
 		}
 	}
 

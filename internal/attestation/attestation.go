@@ -25,13 +25,14 @@ import (
 )
 
 var (
-	errEmptyAttestation    = errors.New("empty attestation")
-	errAttestationTooLarge = errors.New("attestation exceeds maximum size")
-	errInvalidPayloadType  = errors.New("invalid DSSE payload type")
-	errNoTrustedMaterial   = errors.New("no trusted keys or issuers configured")
-	errAllBundlesFailed    = errors.New("all bundle verifications failed")
-	errNoIssuers           = errors.New("at least one issuer is required")
-	errNoPEMBlock          = errors.New("no PEM block found")
+	errEmptyAttestation      = errors.New("empty attestation")
+	errAttestationTooLarge   = errors.New("attestation exceeds maximum size")
+	errAggregateSizeExceeded = errors.New("aggregate attestation size exceeded")
+	errInvalidPayloadType    = errors.New("invalid DSSE payload type")
+	errNoTrustedMaterial     = errors.New("no trusted keys or issuers configured")
+	errAllBundlesFailed      = errors.New("all bundle verifications failed")
+	errNoIssuers             = errors.New("at least one issuer is required")
+	errNoPEMBlock            = errors.New("no PEM block found")
 )
 
 const (

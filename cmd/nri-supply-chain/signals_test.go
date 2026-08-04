@@ -19,11 +19,13 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
@@ -839,4 +841,136 @@ func TestUpdatePluginRegistries(t *testing.T) {
 			t.Error("expected transport cache to remain unchanged")
 		}
 	})
+}
+
+func TestUpdatePolicyDirWatchNilWatcher(t *testing.T) {
+	t.Parallel()
+
+	updatePolicyDirWatch(nil, "/some/config.toml", "/some/policies")
+}
+
+func TestUpdatePolicyDirWatchSwapsDirectory(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	oldPolicyDir := filepath.Join(dir, "old-policies")
+	newPolicyDir := filepath.Join(dir, "new-policies")
+
+	err := os.Mkdir(oldPolicyDir, 0o750)
+	if err != nil {
+		t.Fatalf("creating dir: %v", err)
+	}
+
+	err = os.Mkdir(newPolicyDir, 0o750)
+	if err != nil {
+		t.Fatalf("creating dir: %v", err)
+	}
+
+	err = os.WriteFile(configPath, []byte("verification = \"disabled\"\n"), 0o600)
+	if err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatalf("creating watcher: %v", err)
+	}
+
+	defer func() { _ = watcher.Close() }()
+
+	err = watcher.Add(configPath)
+	if err != nil {
+		t.Fatalf("adding config watch: %v", err)
+	}
+
+	err = watcher.Add(oldPolicyDir)
+	if err != nil {
+		t.Fatalf("adding old policy dir watch: %v", err)
+	}
+
+	updatePolicyDirWatch(watcher, configPath, newPolicyDir)
+
+	watchList := watcher.WatchList()
+	absNew, _ := filepath.Abs(newPolicyDir)
+
+	if slices.Contains(watchList, oldPolicyDir) {
+		t.Error("old policy directory should have been removed from watch list")
+	}
+
+	if !slices.Contains(watchList, absNew) {
+		t.Errorf("new policy directory %s not found in watch list %v", absNew, watchList)
+	}
+
+	if !slices.Contains(watchList, configPath) {
+		t.Error("config file should still be in watch list")
+	}
+}
+
+func TestUpdatePolicyDirWatchEmptyNewDir(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	oldPolicyDir := filepath.Join(dir, "old-policies")
+
+	err := os.Mkdir(oldPolicyDir, 0o750)
+	if err != nil {
+		t.Fatalf("creating dir: %v", err)
+	}
+
+	err = os.WriteFile(configPath, []byte("verification = \"disabled\"\n"), 0o600)
+	if err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatalf("creating watcher: %v", err)
+	}
+
+	defer func() { _ = watcher.Close() }()
+
+	err = watcher.Add(configPath)
+	if err != nil {
+		t.Fatalf("adding config watch: %v", err)
+	}
+
+	err = watcher.Add(oldPolicyDir)
+	if err != nil {
+		t.Fatalf("adding old policy dir watch: %v", err)
+	}
+
+	updatePolicyDirWatch(watcher, configPath, "")
+
+	if slices.Contains(watcher.WatchList(), oldPolicyDir) {
+		t.Error("old policy directory should have been removed even with empty new policy dir")
+	}
+}
+
+//nolint:paralleltest // modifies package-level logLevelVar
+func TestHandleReloadPanicRecovery(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+
+	// Write a valid config that passes LoadFromFile and ValidateRuntime.
+	err := os.WriteFile(configPath, []byte("verification = \"disabled\"\n"), 0o600)
+	if err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	met := metrics.New()
+
+	errorsBefore := testutil.ToFloat64(met.ConfigReloadErrorsTotal)
+
+	// Pass a nil verifier so that verif.Reload panics with a nil pointer dereference.
+	// The deferred recover in handleReload should catch this.
+	handleReload(context.Background(), configPath, nil, met, nil, nil)
+
+	errorsAfter := testutil.ToFloat64(met.ConfigReloadErrorsTotal)
+
+	if errorsAfter != errorsBefore+1 {
+		t.Errorf("expected config reload error counter to increment by 1, got delta %v",
+			errorsAfter-errorsBefore)
+	}
 }

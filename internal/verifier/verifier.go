@@ -598,15 +598,19 @@ func (v *Verifier) stopPoller() {
 	}
 }
 
+func resetVerificationCaches() {
+	attestation.ResetPEMKeyCache()
+	attestation.ResetSANPatternWarnings()
+	slsa.ResetWarnings()
+	glob.ResetCache()
+}
+
 func resetCachesIfChanged(prevHostSem *hostSemMap, policiesChanged bool) *hostSemMap {
 	if !policiesChanged {
 		return prevHostSem
 	}
 
-	attestation.ResetPEMKeyCache()
-	attestation.ResetSANPatternWarnings()
-	slsa.ResetWarnings()
-	glob.ResetCache()
+	resetVerificationCaches()
 
 	return &hostSemMap{m: sync.Map{}, count: atomic.Int64{}}
 }
@@ -859,10 +863,7 @@ func (v *Verifier) applyPolicyUpdate(
 ) {
 	state.cache.Stop()
 
-	attestation.ResetPEMKeyCache()
-	attestation.ResetSANPatternWarnings()
-	slsa.ResetWarnings()
-	glob.ResetCache()
+	resetVerificationCaches()
 
 	v.state.Store(&snapshot{
 		config:       state.config,

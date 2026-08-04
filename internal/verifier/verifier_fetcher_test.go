@@ -466,7 +466,7 @@ func TestVerifyWithFetcher(t *testing.T) {
 			setupPayloads:      nil,
 			wantAllowed:        true,
 			wantErr:            nil,
-			wantCheckLen:       5,
+			wantCheckLen:       4,
 		},
 		{
 			name:       "parallel SLSA and VEX",

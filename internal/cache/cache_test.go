@@ -497,6 +497,61 @@ func TestCacheSetWithTTLZeroDoesNotCache(t *testing.T) {
 	}
 }
 
+func TestCacheConcurrentStress(t *testing.T) {
+	t.Parallel()
+
+	testCache := cache.New(20 * time.Millisecond)
+	t.Cleanup(testCache.Stop)
+
+	const (
+		goroutines = 100
+		iterations = 200
+	)
+
+	var waitGroup sync.WaitGroup
+
+	waitGroup.Add(goroutines)
+
+	for goroutine := range goroutines {
+		go func() {
+			defer waitGroup.Done()
+
+			for iter := range iterations {
+				digest := fmt.Sprintf("sha256:%064d", goroutine*iterations+iter)
+
+				testCache.Set(digest, "default", &types.Result{
+					Allowed: true, Reason: digest, CheckResults: nil,
+				})
+
+				testCache.Get(digest, "default")
+
+				// Also exercise SetWithTTL with varying TTLs.
+				shortDigest := fmt.Sprintf(
+					"sha256:%064d", goroutine*iterations+iter+goroutines*iterations,
+				)
+
+				testCache.SetWithTTL(shortDigest, "default", &types.Result{
+					Allowed: false, Reason: "short-ttl", CheckResults: nil,
+				}, time.Millisecond)
+
+				testCache.Len()
+
+				if iter%100 == 0 {
+					testCache.Clear()
+				}
+			}
+		}()
+	}
+
+	waitGroup.Wait()
+
+	// Verify cache is in a consistent state.
+	length := testCache.Len()
+	if length < 0 {
+		t.Errorf("expected non-negative cache length, got %d", length)
+	}
+}
+
 func TestCacheClear(t *testing.T) {
 	t.Parallel()
 
