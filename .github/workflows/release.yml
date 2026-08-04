@@ -179,7 +179,6 @@ jobs:
       - uses: ./.github/actions/attest
         with:
           digest: ${{ needs.merge.outputs.digest }}
-          tag: latest
           policy-ref: main
 
       - name: Create deployment
@@ -325,6 +324,5 @@ jobs:
       - uses: ./.github/actions/attest
         with:
           digest: ${{ needs.release.outputs.digest }}
-          tag: ${{ needs.release.outputs.version }}
           policy-ref: ${{ github.ref_name }}
           verify-binary: /tmp/verify-binary/nri-supply-chain

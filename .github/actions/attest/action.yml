@@ -5,9 +5,6 @@ inputs:
   digest:
     description: "Image manifest digest (sha256:...)"
     required: true
-  tag:
-    description: "Image tag to scan and verify"
-    required: true
   policy-ref:
     description: "Git ref for VSA policy URI (e.g., main or v1.0.0)"
     required: true
@@ -22,7 +19,7 @@ runs:
     - name: Scan container image for vulnerabilities
       uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
       with:
-        image-ref: ${{ env.IMAGE }}:${{ inputs.tag }}
+        image-ref: ${{ env.IMAGE }}@${{ inputs.digest }}
         exit-code: "1"
         trivyignores: .trivyignore
 
@@ -76,7 +73,7 @@ runs:
 
     - name: Generate container image SBOM
       shell: bash
-      run: syft "${IMAGE}:${{ inputs.tag }}" -o spdx-json=/tmp/sbom.spdx.json
+      run: syft "${IMAGE}@${{ inputs.digest }}" -o spdx-json=/tmp/sbom.spdx.json
 
     - name: Attest container image SBOM
       shell: bash
@@ -109,14 +106,14 @@ runs:
         if [ -n "${{ inputs.verify-binary }}" ]; then
           ${{ inputs.verify-binary }} \
             --config /tmp/verify-config.toml \
-            verify "${IMAGE}:${{ inputs.tag }}"
+            verify "${IMAGE}@${{ inputs.digest }}"
         else
           docker run --rm \
             -v /tmp/verify-policies:/tmp/verify-policies:ro \
             -v /tmp/verify-config.toml:/tmp/verify-config.toml:ro \
             "${IMAGE}@${{ inputs.digest }}" \
             --config /tmp/verify-config.toml \
-            verify "${IMAGE}:${{ inputs.tag }}"
+            verify "${IMAGE}@${{ inputs.digest }}"
         fi
 
     # This self-attestation VSA is for bootstrapping only. Because the same
