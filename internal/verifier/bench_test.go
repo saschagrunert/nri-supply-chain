@@ -16,6 +16,7 @@
 package verifier
 
 import (
+	"context"
 	"testing"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
@@ -43,7 +44,7 @@ func BenchmarkBinAttestations(b *testing.B) {
 	b.ResetTimer()
 
 	for range b.N {
-		binAttestations(attestations)
+		binAttestations(context.Background(), attestations, "")
 	}
 }
 
@@ -69,6 +70,6 @@ func BenchmarkBinAttestationsLarge(b *testing.B) {
 	b.ResetTimer()
 
 	for range b.N {
-		binAttestations(attestations)
+		binAttestations(context.Background(), attestations, "")
 	}
 }

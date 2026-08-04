@@ -108,7 +108,7 @@ func runChecks(
 		breaker.RecordSuccess()
 	}
 
-	bins := binAttestations(attestations)
+	bins := binAttestations(ctx, attestations, imageRef)
 
 	return runVSAAndParallelChecks(
 		ctx, &bins, pol, state.metrics, imageRef, attestDigest, namespace, parsedRef,
@@ -823,7 +823,9 @@ type attestationBins struct {
 	sbom     []attestation.VerifiedAttestation
 }
 
-func binAttestations(attestations []attestation.VerifiedAttestation) attestationBins {
+func binAttestations(
+	ctx context.Context, attestations []attestation.VerifiedAttestation, imageRef string,
+) attestationBins {
 	var bins attestationBins
 
 	for idx := range attestations {
@@ -847,6 +849,12 @@ func binAttestations(attestations []attestation.VerifiedAttestation) attestation
 			bins.sbom = append(bins.sbom, attestations[idx])
 		case attestation.PredicateSPDX:
 			bins.sbom = append(bins.sbom, attestations[idx])
+		default:
+			slog.WarnContext(ctx,
+				"Skipping attestation with unrecognized predicate type",
+				"predicateType", attestations[idx].PredicateType,
+				"image", imageRef,
+			)
 		}
 	}
 
