@@ -1,5 +1,5 @@
 name: Attest container image
-description: Attest provenance, scan, attest VEX/SBOM, verify, and issue VSA
+description: Scan, attest VEX/SBOM, verify, and issue VSA
 
 inputs:
   digest:
@@ -7,12 +7,6 @@ inputs:
     required: true
   tag:
     description: "Image tag to scan and verify"
-    required: true
-  source-ref:
-    description: "Git ref for SLSA provenance (e.g., refs/heads/main)"
-    required: true
-  source-sha:
-    description: "Git commit SHA for SLSA provenance"
     required: true
   policy-ref:
     description: "Git ref for VSA policy URI (e.g., main or v1.0.0)"
@@ -25,38 +19,6 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Attest container image provenance
-      shell: bash
-      run: |
-        cat > /tmp/slsa-provenance.json <<EOF
-        {
-          "buildDefinition": {
-            "buildType": "https://github.com/${{ github.repository }}/.github/workflows/release.yml",
-            "externalParameters": {
-              "source": "github.com/${{ github.repository }}"
-            },
-            "resolvedDependencies": [
-              {
-                "uri": "git+https://github.com/${{ github.repository }}@${{ inputs.source-ref }}",
-                "digest": { "sha1": "${{ inputs.source-sha }}" }
-              }
-            ]
-          },
-          "runDetails": {
-            "builder": {
-              "id": "https://github.com/${{ github.repository }}/.github/workflows/release.yml"
-            },
-            "metadata": {
-              "invocationId": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-            }
-          }
-        }
-        EOF
-        cosign attest --predicate /tmp/slsa-provenance.json \
-          --type slsaprovenance1 \
-          --yes \
-          "${IMAGE}@${{ inputs.digest }}"
-
     - name: Scan container image for vulnerabilities
       uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
       with:
@@ -69,6 +31,28 @@ runs:
       run: |
         PRODUCT="pkg:oci/nri-supply-chain@${{ inputs.digest }}"
         TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+        # Parse .trivyignore for suppressed vulnerability IDs (CVE-* or GO-*)
+        SUPPRESSED_IDS=()
+        while IFS= read -r line; do
+          id=$(echo "$line" | sed 's/#.*//' | xargs)
+          if [[ "$id" =~ ^(CVE-[0-9-]+|GO-[0-9-]+)$ ]]; then
+            SUPPRESSED_IDS+=("$id")
+          fi
+        done < .trivyignore
+
+        # Build per-CVE VEX statements for suppressed vulnerabilities
+        PER_CVE_STATEMENTS=""
+        for id in "${SUPPRESSED_IDS[@]}"; do
+          PER_CVE_STATEMENTS+=",
+            {
+              \"vulnerability\": {\"name\": \"${id}\"},
+              \"products\": [{\"@id\": \"${PRODUCT}\"}],
+              \"status\": \"not_affected\",
+              \"justification\": \"vulnerable_code_not_present\"
+            }"
+        done
+
         cat > /tmp/vex-predicate.json <<EOF
         {
           "@context": "https://openvex.dev/ns/v0.2.0",
@@ -81,7 +65,7 @@ runs:
               "products": [{"@id": "${PRODUCT}"}],
               "status": "not_affected",
               "justification": "vulnerable_code_not_present"
-            }
+            }${PER_CVE_STATEMENTS}
           ]
         }
         EOF

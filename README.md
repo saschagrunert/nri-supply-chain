@@ -288,8 +288,11 @@ rules, troubleshooting guide, internal limits, and security considerations.
 Release binaries are published with a SHA-256 checksum file that is signed
 using [cosign](https://github.com/sigstore/cosign). An SBOM (Software Bill of
 Materials) is generated with [syft](https://github.com/anchore/syft) for each
-release. Both versioned releases and the `latest` tag include full attestation
-coverage: SLSA provenance, VEX, SBOM, self-verification, and a
+release. SLSA provenance for binary artifacts is generated using the
+[slsa-github-generator](https://github.com/slsa-framework/slsa-github-generator)
+and uploaded as a release asset. Both versioned releases and the `latest` tag
+include full attestation coverage: SLSA provenance, VEX, SBOM,
+self-verification, and a
 [VSA](https://slsa.dev/spec/v1.0/verification_summary) recording the
 verification result from the release pipeline.
 
@@ -307,7 +310,26 @@ To verify a release:
    sha256sum --check checksums.txt
    ```
 
-3. Verify the container image signature:
+3. Verify binary SLSA provenance using
+   [slsa-verifier](https://github.com/slsa-framework/slsa-verifier):
+
+   ```console
+   slsa-verifier verify-artifact nri-supply-chain_<version>_linux_amd64 \
+     --provenance-path multiple.intoto.jsonl \
+     --source-uri github.com/saschagrunert/nri-supply-chain \
+     --source-tag v<version>
+   ```
+
+4. Verify container image SLSA provenance using
+   [slsa-verifier](https://github.com/slsa-framework/slsa-verifier):
+
+   ```console
+   slsa-verifier verify-image ghcr.io/saschagrunert/nri-supply-chain:<version> \
+     --source-uri github.com/saschagrunert/nri-supply-chain \
+     --source-tag v<version>
+   ```
+
+5. Verify the container image signature:
 
    ```console
    cosign verify ghcr.io/saschagrunert/nri-supply-chain:latest \
@@ -315,7 +337,7 @@ To verify a release:
      --certificate-identity-regexp 'https://github.com/saschagrunert/nri-supply-chain/'
    ```
 
-4. Verify the VSA (Verification Summary Attestation) on the container image:
+6. Verify the VSA (Verification Summary Attestation) on the container image:
 
    ```console
    cosign verify-attestation ghcr.io/saschagrunert/nri-supply-chain:latest \
@@ -324,7 +346,7 @@ To verify a release:
      --certificate-identity-regexp 'https://github.com/saschagrunert/nri-supply-chain/'
    ```
 
-5. Inspect the SBOM (generated with syft, integrity covered by the signed
+7. Inspect the SBOM (generated with syft, integrity covered by the signed
    checksum file from step 1):
 
    ```console
