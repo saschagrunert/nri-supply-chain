@@ -847,7 +847,7 @@ func TestVerifyConcurrentSameDigest(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = dir
-	cfg.CacheTTL = config.Duration{Duration: 0}
+	cfg.CacheTTL = config.Duration{Duration: time.Second}
 
 	ver, err := verifier.New(t.Context(), cfg, metrics.New(), fetcher)
 	testutil.AssertNoError(t, err)
@@ -858,10 +858,14 @@ func TestVerifyConcurrentSameDigest(t *testing.T) {
 	imageRef := testDockerNginx
 	namespace := testDefaultNamespace
 
+	start := make(chan struct{})
+
 	var waitGroup sync.WaitGroup
 
 	for range goroutines {
 		waitGroup.Go(func() {
+			<-start
+
 			_, verifyErr := ver.Verify(
 				context.Background(), imageRef, digest, "", namespace, "",
 			)
@@ -871,10 +875,11 @@ func TestVerifyConcurrentSameDigest(t *testing.T) {
 		})
 	}
 
+	close(start)
 	waitGroup.Wait()
 
 	if got := fetcher.calls.Load(); got != 1 {
-		t.Errorf("expected 1 fetch call (singleflight dedup), got %d", got)
+		t.Errorf("expected 1 fetch call (singleflight + cache dedup), got %d", got)
 	}
 }
 
