@@ -1,0 +1,162 @@
+name: Attest container image
+description: Attest provenance, scan, attest VEX/SBOM, verify, and issue VSA
+
+inputs:
+  digest:
+    description: "Image manifest digest (sha256:...)"
+    required: true
+  tag:
+    description: "Image tag to scan and verify"
+    required: true
+  source-ref:
+    description: "Git ref for SLSA provenance (e.g., refs/heads/main)"
+    required: true
+  source-sha:
+    description: "Git commit SHA for SLSA provenance"
+    required: true
+  policy-ref:
+    description: "Git ref for VSA policy URI (e.g., main or v1.0.0)"
+    required: true
+  verify-binary:
+    description: "Path to nri-supply-chain binary. If empty, uses docker run."
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Attest container image provenance
+      shell: bash
+      run: |
+        cat > /tmp/slsa-provenance.json <<EOF
+        {
+          "buildDefinition": {
+            "buildType": "https://github.com/${{ github.repository }}/.github/workflows/release.yml",
+            "externalParameters": {
+              "source": "github.com/${{ github.repository }}"
+            },
+            "resolvedDependencies": [
+              {
+                "uri": "git+https://github.com/${{ github.repository }}@${{ inputs.source-ref }}",
+                "digest": { "sha1": "${{ inputs.source-sha }}" }
+              }
+            ]
+          },
+          "runDetails": {
+            "builder": {
+              "id": "https://github.com/${{ github.repository }}/.github/workflows/release.yml"
+            },
+            "metadata": {
+              "invocationId": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }
+          }
+        }
+        EOF
+        cosign attest --predicate /tmp/slsa-provenance.json \
+          --type slsaprovenance1 \
+          --yes \
+          "${IMAGE}@${{ inputs.digest }}"
+
+    - name: Scan container image for vulnerabilities
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      with:
+        image-ref: ${{ env.IMAGE }}:${{ inputs.tag }}
+        exit-code: "1"
+        trivyignores: .trivyignore
+
+    - name: Attest container image VEX
+      shell: bash
+      run: |
+        PRODUCT="pkg:oci/nri-supply-chain@${{ inputs.digest }}"
+        TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        cat > /tmp/vex-predicate.json <<EOF
+        {
+          "@context": "https://openvex.dev/ns/v0.2.0",
+          "@id": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/vex",
+          "author": "https://github.com/${{ github.repository }}/.github/workflows/release.yml",
+          "timestamp": "${TIMESTAMP}",
+          "statements": [
+            {
+              "vulnerability": {"name": "trivy-scan-clean"},
+              "products": [{"@id": "${PRODUCT}"}],
+              "status": "not_affected",
+              "justification": "vulnerable_code_not_present"
+            }
+          ]
+        }
+        EOF
+        cosign attest --predicate /tmp/vex-predicate.json \
+          --type https://openvex.dev/ns \
+          --yes \
+          "${IMAGE}@${{ inputs.digest }}"
+
+    - name: Generate container image SBOM
+      shell: bash
+      run: syft "${IMAGE}:${{ inputs.tag }}" -o spdx-json=/tmp/sbom.spdx.json
+
+    - name: Attest container image SBOM
+      shell: bash
+      run: |
+        cosign attest --predicate /tmp/sbom.spdx.json \
+          --type https://spdx.dev/Document \
+          --yes \
+          "${IMAGE}@${{ inputs.digest }}"
+
+    - name: Verify container image
+      shell: bash
+      run: |
+        mkdir -p /tmp/verify-policies
+        cat > /tmp/verify-policies/default.json <<EOF
+        {
+          "trust": {
+            "issuers": ["https://token.actions.githubusercontent.com"],
+            "sanPatterns": ["https://github.com/${{ github.repository }}/**"],
+            "sources": ["github.com/${{ github.repository_owner }}/*"]
+          },
+          "slsa": { "missingPolicy": "deny" },
+          "vex": { "missingPolicy": "deny" },
+          "sbom": { "missingPolicy": "deny" }
+        }
+        EOF
+        cat > /tmp/verify-config.toml <<EOF
+        verification = "enforce"
+        policy_dir = "/tmp/verify-policies"
+        EOF
+        if [ -n "${{ inputs.verify-binary }}" ]; then
+          ${{ inputs.verify-binary }} \
+            --config /tmp/verify-config.toml \
+            verify "${IMAGE}:${{ inputs.tag }}"
+        else
+          docker run --rm \
+            -v /tmp/verify-policies:/tmp/verify-policies:ro \
+            -v /tmp/verify-config.toml:/tmp/verify-config.toml:ro \
+            "${IMAGE}@${{ inputs.digest }}" \
+            --config /tmp/verify-config.toml \
+            verify "${IMAGE}:${{ inputs.tag }}"
+        fi
+
+    # This self-attestation VSA is for bootstrapping only. Because the same
+    # workflow that builds the image also attests it, the VSA is not
+    # independently verifiable per SLSA requirements.
+    - name: Attest container image VSA
+      shell: bash
+      run: |
+        cat > /tmp/vsa-predicate.json <<EOF
+        {
+          "verifier": {
+            "id": "https://github.com/${{ github.repository }}/.github/workflows/release.yml"
+          },
+          "timeVerified": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+          "resourceUri": "${IMAGE}@${{ inputs.digest }}",
+          "policy": {
+            "uri": "https://github.com/${{ github.repository }}/blob/${{ inputs.policy-ref }}/deploy/examples/policies/default.json"
+          },
+          "verificationResult": "PASSED",
+          "verifiedLevels": ["SLSA_BUILD_LEVEL_3"],
+          "slsaVersion": "1.0"
+        }
+        EOF
+        cosign attest --predicate /tmp/vsa-predicate.json \
+          --type https://slsa.dev/verification_summary/v1 \
+          --yes \
+          "${IMAGE}@${{ inputs.digest }}"

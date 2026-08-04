@@ -1,7 +1,7 @@
 # Supply Chain NRI Plugin
 
 [![ci](https://github.com/saschagrunert/nri-supply-chain/actions/workflows/ci.yml/badge.svg)](https://github.com/saschagrunert/nri-supply-chain/actions/workflows/ci.yml)
-[![deploy](https://github.com/saschagrunert/nri-supply-chain/actions/workflows/deploy.yml/badge.svg)](https://github.com/saschagrunert/nri-supply-chain/actions/workflows/deploy.yml)
+[![build and release](https://github.com/saschagrunert/nri-supply-chain/actions/workflows/release.yml/badge.svg)](https://github.com/saschagrunert/nri-supply-chain/actions/workflows/release.yml)
 [![GitHub release](https://img.shields.io/github/v/release/saschagrunert/nri-supply-chain)](https://github.com/saschagrunert/nri-supply-chain/releases/latest)
 [![codecov](https://codecov.io/gh/saschagrunert/nri-supply-chain/graph/badge.svg?token=xIALlTOulw)](https://codecov.io/gh/saschagrunert/nri-supply-chain)
 [![Go Reference](https://pkg.go.dev/badge/github.com/saschagrunert/nri-supply-chain.svg)](https://pkg.go.dev/github.com/saschagrunert/nri-supply-chain)
@@ -286,10 +286,10 @@ rules, troubleshooting guide, internal limits, and security considerations.
 Release binaries are published with a SHA-256 checksum file that is signed
 using [cosign](https://github.com/sigstore/cosign). An SBOM (Software Bill of
 Materials) is generated with [syft](https://github.com/anchore/syft) for each
-release. Build provenance attestations are generated via GitHub's
-`actions/attest-build-provenance` action. Container images also include a
-[VSA](https://slsa.dev/spec/v1.0/verification_summary) attestation that
-records the verification result from the release pipeline.
+release. Both versioned releases and the `latest` tag include full attestation
+coverage: SLSA provenance, VEX, SBOM, self-verification, and a
+[VSA](https://slsa.dev/spec/v1.0/verification_summary) recording the
+verification result from the release pipeline.
 
 To verify a release:
 
@@ -313,14 +313,7 @@ To verify a release:
      --certificate-identity-regexp 'https://github.com/saschagrunert/nri-supply-chain/'
    ```
 
-4. Verify build provenance attestation:
-
-   ```console
-   gh attestation verify nri-supply-chain_<version>_linux_amd64 \
-     --repo saschagrunert/nri-supply-chain
-   ```
-
-5. Verify the VSA (Verification Summary Attestation) on the container image:
+4. Verify the VSA (Verification Summary Attestation) on the container image:
 
    ```console
    cosign verify-attestation ghcr.io/saschagrunert/nri-supply-chain:latest \
@@ -329,7 +322,7 @@ To verify a release:
      --certificate-identity-regexp 'https://github.com/saschagrunert/nri-supply-chain/'
    ```
 
-6. Inspect the SBOM (generated with syft, integrity covered by the signed
+5. Inspect the SBOM (generated with syft, integrity covered by the signed
    checksum file from step 1):
 
    ```console
