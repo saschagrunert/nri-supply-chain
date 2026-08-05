@@ -355,19 +355,77 @@ func (v *Verifier) EffectiveModeForNamespace(namespace string) config.Verificati
 func (v *Verifier) Ready() (ready bool, reason string) {
 	state := v.state.Load()
 
+	if stateReady(state) {
+		return true, ""
+	}
+
 	if state.config == nil {
 		return false, "no config loaded"
 	}
 
+	return false, "no policies loaded"
+}
+
+// Status returns the current operational status of the verifier, including
+// policy count, namespaces, cache size, and circuit breaker states.
+func (v *Verifier) Status() types.StatusResponse {
+	state := v.state.Load()
+
+	if state.config == nil {
+		return types.StatusResponse{
+			Ready:           false,
+			Mode:            "",
+			Policies:        types.PolicyStatus{Count: 0, Namespaces: []string{}, Source: ""},
+			Cache:           types.CacheStatus{Size: 0, MaxSize: 0},
+			CircuitBreakers: map[string]string{},
+			NRI:             types.NRIStatus{Connected: false},
+		}
+	}
+
+	ready := stateReady(state)
+	namespaces := policyNamespaces(state.policies)
+
+	return types.StatusResponse{
+		Ready: ready,
+		Mode:  string(state.config.Verification),
+		Policies: types.PolicyStatus{
+			Count:      len(state.policies),
+			Namespaces: namespaces,
+			Source:     string(state.config.Policy.Source),
+		},
+		Cache: types.CacheStatus{
+			Size:    state.cache.Len(),
+			MaxSize: state.cache.MaxSize(),
+		},
+		CircuitBreakers: state.circuitBreakers.States(),
+		NRI:             types.NRIStatus{Connected: false},
+	}
+}
+
+func stateReady(state *snapshot) bool {
+	if state.config == nil {
+		return false
+	}
+
 	if !state.config.Enabled() {
-		return true, ""
+		return true
 	}
 
-	if len(state.policies) == 0 {
-		return false, "no policies loaded"
+	return len(state.policies) > 0
+}
+
+func policyNamespaces(policies map[string]*policy.Policy) []string {
+	namespaces := make([]string, 0, len(policies))
+
+	for ns := range policies {
+		if ns != "" {
+			namespaces = append(namespaces, ns)
+		}
 	}
 
-	return true, ""
+	slices.Sort(namespaces)
+
+	return namespaces
 }
 
 // TransportCache returns the transport cache from the current fetcher, or nil

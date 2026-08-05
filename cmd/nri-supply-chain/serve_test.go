@@ -16,6 +16,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"testing"
@@ -24,6 +26,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/plugin"
+	"github.com/saschagrunert/nri-supply-chain/internal/types"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
@@ -145,6 +148,178 @@ func startMetricsServer(t *testing.T, plug *plugin.Plugin) string {
 	go shutdownOnCancel(ctx.Done(), srv)
 
 	return addr
+}
+
+func TestServeMetricsStatusEndpoint(t *testing.T) {
+	t.Parallel()
+
+	testPlug := newDisabledPlugin(t)
+	addr := startMetricsServer(t, testPlug)
+
+	statusURL := "http://" + addr + "/status"
+
+	var (
+		resp *http.Response
+		err  error
+	)
+
+	for range 50 {
+		req, reqErr := http.NewRequestWithContext(
+			context.Background(), http.MethodGet, statusURL, http.NoBody,
+		)
+		if reqErr != nil {
+			t.Fatalf("creating request: %v", reqErr)
+		}
+
+		resp, err = http.DefaultClient.Do(req)
+		if err == nil {
+			break
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if err != nil {
+		t.Fatalf("server did not start: %v", err)
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected status 200, got %d", resp.StatusCode)
+	}
+
+	contentType := resp.Header.Get("Content-Type")
+	if contentType != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", contentType)
+	}
+
+	body, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		t.Fatalf("reading body: %v", readErr)
+	}
+
+	var status types.StatusResponse
+
+	jsonErr := json.Unmarshal(body, &status)
+	if jsonErr != nil {
+		t.Fatalf("decoding JSON: %v", jsonErr)
+	}
+
+	if status.Mode != string(config.ModeDisabled) {
+		t.Errorf("mode = %q, want %q", status.Mode, config.ModeDisabled)
+	}
+
+	if status.Ready {
+		t.Error("expected Ready = false before Configure")
+	}
+
+	if status.NRI.Connected {
+		t.Error("expected NRI.Connected = false before Configure")
+	}
+}
+
+func TestServeMetricsStatusEndpointConnected(t *testing.T) {
+	t.Parallel()
+
+	policyDir := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = policyDir
+
+	met := metrics.New()
+
+	v, err := verifier.New(t.Context(), cfg, met, nil)
+	if err != nil {
+		t.Fatalf("creating verifier: %v", err)
+	}
+
+	testPlug := plugin.New(v, met, "", 30*time.Second, 5*time.Second, nil)
+
+	_, configErr := testPlug.Configure(
+		context.Background(), "", "cri-o", "1.32",
+	)
+	if configErr != nil {
+		t.Fatalf("configuring plugin: %v", configErr)
+	}
+
+	addr := startMetricsServer(t, testPlug)
+
+	statusURL := "http://" + addr + "/status"
+
+	var (
+		resp   *http.Response
+		reqErr error
+	)
+
+	for range 50 {
+		req, newReqErr := http.NewRequestWithContext(
+			context.Background(), http.MethodGet, statusURL, http.NoBody,
+		)
+		if newReqErr != nil {
+			t.Fatalf("creating request: %v", newReqErr)
+		}
+
+		resp, reqErr = http.DefaultClient.Do(req)
+		if reqErr == nil {
+			break
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if reqErr != nil {
+		t.Fatalf("server did not start: %v", reqErr)
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	body, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		t.Fatalf("reading body: %v", readErr)
+	}
+
+	var status types.StatusResponse
+
+	jsonErr := json.Unmarshal(body, &status)
+	if jsonErr != nil {
+		t.Fatalf("decoding JSON: %v", jsonErr)
+	}
+
+	if status.Mode != string(config.ModeWarn) {
+		t.Errorf("mode = %q, want %q", status.Mode, config.ModeWarn)
+	}
+
+	if status.Ready {
+		t.Error("expected Ready = false with no policies loaded")
+	}
+
+	if !status.NRI.Connected {
+		t.Error("expected NRI.Connected = true after Configure")
+	}
+
+	if status.Policies.Source != string(config.PolicySourceLocal) {
+		t.Errorf(
+			"source = %q, want %q",
+			status.Policies.Source, config.PolicySourceLocal,
+		)
+	}
+
+	if status.Cache.MaxSize <= 0 {
+		t.Errorf("expected positive cache max size, got %d", status.Cache.MaxSize)
+	}
+
+	if status.Cache.Size != 0 {
+		t.Errorf("expected cache size 0, got %d", status.Cache.Size)
+	}
+
+	if len(status.CircuitBreakers) != 0 {
+		t.Errorf(
+			"expected empty circuit breakers, got %v",
+			status.CircuitBreakers,
+		)
+	}
 }
 
 func assertProbeStatus(t *testing.T, addr, path string, wantStatus int) {

@@ -50,6 +50,7 @@ type ImageVerifier interface {
 	Enforcing() bool
 	EffectiveModeForNamespace(namespace string) config.VerificationMode
 	Reload(ctx context.Context, cfg *config.Config) error
+	Status() types.StatusResponse
 }
 
 // DigestResolveFunc resolves an image reference to its platform-specific digest

@@ -249,6 +249,11 @@ func (c *Cache) Len() int {
 	return len(c.entries)
 }
 
+// MaxSize returns the maximum number of entries the cache can hold.
+func (c *Cache) MaxSize() int {
+	return c.maxSize
+}
+
 // Stop terminates the background eviction goroutine. Safe to call multiple
 // times; only the first call has an effect. After Stop returns, no further
 // background eviction will occur.

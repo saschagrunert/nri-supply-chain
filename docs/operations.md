@@ -7,6 +7,7 @@ internal limits, and security considerations.
 
 - [Metrics](#metrics)
 - [Health and Readiness Probes](#health-and-readiness-probes)
+- [Status Endpoint](#status-endpoint)
 - [Config Reload](#config-reload)
 - [Logging](#logging)
   - [Audit Logging](#audit-logging)
@@ -63,6 +64,48 @@ liveness and readiness probes.
   verification mode, since the plugin must receive container events to
   function. Before the NRI runtime connects, or if no policies are loaded in
   `warn` or `enforce` mode, the readiness probe fails.
+
+## Status Endpoint
+
+The metrics server exposes a `GET /status` endpoint that returns a JSON object
+with operational details about the running plugin.
+
+Example response:
+
+```json
+{
+  "ready": true,
+  "mode": "warn",
+  "policies": {
+    "count": 2,
+    "namespaces": ["kube-system", "production"],
+    "source": "local"
+  },
+  "cache": {
+    "size": 42,
+    "maxSize": 10000
+  },
+  "circuitBreakers": {
+    "ghcr.io": "closed",
+    "docker.io": "open"
+  },
+  "nri": {
+    "connected": true
+  }
+}
+```
+
+| Field                 | Type              | Description                                                              |
+| --------------------- | ----------------- | ------------------------------------------------------------------------ |
+| `ready`               | bool              | Whether the plugin is ready (NRI connected and verifier ready)           |
+| `mode`                | string            | Current verification mode (`warn`, `enforce`, or `disabled`)             |
+| `policies.count`      | int               | Number of loaded policy files (includes the default cluster-wide policy) |
+| `policies.namespaces` | string[]          | Namespaces with namespace-specific policies                              |
+| `policies.source`     | string            | Policy source (`local` or `oci`)                                         |
+| `cache.size`          | int               | Current number of cached verification results                            |
+| `cache.maxSize`       | int               | Maximum cache capacity                                                   |
+| `circuitBreakers`     | map[string]string | Per-registry circuit breaker state (`closed`, `open`, `half-open`)       |
+| `nri.connected`       | bool              | Whether the plugin is connected to the NRI runtime                       |
 
 ## Config Reload
 
