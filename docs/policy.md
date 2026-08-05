@@ -459,6 +459,9 @@ nri-supply-chain json-schema policy
             "type": "string"
           },
           "type": "array"
+        },
+        "maxAge": {
+          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -647,6 +650,7 @@ SLSA provenance verification settings.
 | `missingPolicy`           | string | `allow`     | Behavior when no provenance is found: `allow`, `warn`, `deny`                                                                                                                                                           |
 | `rejectUnknownParameters` | bool   | `false`     | Reject provenance with unrecognized `externalParameters` fields                                                                                                                                                         |
 | `knownParameters`         | array  | (see below) | Recognized `externalParameters` keys when `rejectUnknownParameters` is true. Defaults to the GitHub Actions set: `source`, `repository`, `ref`, `workflow`, `buildType`. Set this for non-GitHub Actions build systems. |
+| `maxAge`                  | string | (none)      | Maximum age of provenance build timestamp (Go duration, e.g. `720h`). Must be positive when set. Defends against tag rollback attacks by rejecting stale provenance attestations.                                       |
 
 ### `vex` (object)
 
@@ -907,6 +911,14 @@ performed:
   unrecognized `externalParameters` fields cause rejection. The recognized set
   defaults to GitHub Actions parameters (`source`, `repository`, `ref`,
   `workflow`, `buildType`) but can be overridden with `slsa.knownParameters`.
+- **Timestamp sanity**: Regardless of `slsa.maxAge`, provenance build timestamps
+  (`startedOn` for v1, `buildStartedOn` for v0.2) are checked for basic sanity.
+  Future timestamps beyond a 60-second clock skew tolerance are rejected, as are
+  timestamps more than 200 years old (which indicate crafted or corrupt data).
+- **Freshness**: If `slsa.maxAge` is configured, the build timestamp must be
+  present and within the configured maximum age. This defends against tag
+  rollback attacks by rejecting stale provenance attestations. When `slsa.maxAge`
+  is not configured, a missing timestamp is allowed.
 
 Note: `trust.builders[].maxLevel` is not checked during provenance
 verification. SLSA provenance does not declare a build level; levels are a

@@ -166,7 +166,14 @@ func (p *Policy) validateSections() []error {
 	appendErr(p.validateTrust())
 	appendErr(p.validateInclude())
 	appendErr(p.validateExclude())
-	appendErr(p.validateSLSA())
+
+	slsaErr := p.validateSLSA()
+	if slsaErr != nil {
+		errs = append(errs, slsaErr)
+	} else {
+		p.resolveSLSADuration()
+	}
+
 	appendErr(p.validateVEX())
 
 	err := p.validateVSA()
@@ -472,6 +479,15 @@ func (p *Policy) validateSLSA() error {
 	)
 	if err != nil {
 		errs = append(errs, err)
+	}
+
+	if p.SLSA.MaxAge != "" {
+		maxAge, parseErr := time.ParseDuration(p.SLSA.MaxAge)
+		if parseErr != nil {
+			errs = append(errs, fmt.Errorf("invalid slsa.maxAge %q: %w", p.SLSA.MaxAge, parseErr))
+		} else if maxAge <= 0 {
+			errs = append(errs, fmt.Errorf("%w, got %q", ErrSLSAMaxAgeNotPositive, p.SLSA.MaxAge))
+		}
 	}
 
 	return errors.Join(errs...)
@@ -877,7 +893,6 @@ func validateRuleSections(rulePol *Policy, idx int) []error {
 		fn   func() error
 	}{
 		{"trust", rulePol.validateTrust},
-		{"slsa", rulePol.validateSLSA},
 		{"vex", rulePol.validateVEX},
 		{"notation", rulePol.validateNotation},
 		{"sbom", rulePol.validateSBOM},
@@ -886,6 +901,15 @@ func validateRuleSections(rulePol *Policy, idx int) []error {
 		if err != nil {
 			errs = append(errs, fmt.Errorf("rules[%d]: %w", idx, err))
 		}
+	}
+
+	slsaErr := rulePol.validateSLSA()
+	if slsaErr != nil {
+		errs = append(errs, fmt.Errorf("rules[%d]: %w", idx, slsaErr))
+	} else {
+		// resolveSLSADuration mutates rulePol.SLSA.MaxAgeDuration, which
+		// is the same pointer as the rule's SLSA, so no copy-back needed.
+		rulePol.resolveSLSADuration()
 	}
 
 	err := rulePol.validateVSA()
@@ -898,6 +922,21 @@ func validateRuleSections(rulePol *Policy, idx int) []error {
 	}
 
 	return errs
+}
+
+// resolveSLSADuration parses MaxAge into MaxAgeDuration. Safe to call only
+// after validateSLSA, which guarantees the duration string is valid.
+func (p *Policy) resolveSLSADuration() {
+	if p.SLSA == nil || p.SLSA.MaxAge == "" {
+		return
+	}
+
+	maxAge, err := time.ParseDuration(p.SLSA.MaxAge)
+	if err != nil {
+		return
+	}
+
+	p.SLSA.MaxAgeDuration = maxAge
 }
 
 // resolveVSADuration parses MaxAge into MaxAgeDuration. Safe to call only
