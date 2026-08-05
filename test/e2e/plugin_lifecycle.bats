@@ -124,6 +124,30 @@ teardown_file() {
 	[[ "$status" -eq 0 ]]
 }
 
+@test "status endpoint returns 200 with valid JSON" {
+	run curl -sf --max-time "$CURL_TIMEOUT" http://localhost:9090/status
+	[[ "$status" -eq 0 ]]
+	echo "$output" | python3 -c "import sys, json; json.load(sys.stdin)"
+}
+
+@test "status endpoint contains expected fields" {
+	run curl -sf --max-time "$CURL_TIMEOUT" http://localhost:9090/status
+	[[ "$status" -eq 0 ]]
+	echo "$output" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+assert 'mode' in data, 'missing mode field'
+assert data['mode'] == 'warn', f'expected mode=warn, got {data[\"mode\"]}'
+assert 'nri' in data, 'missing nri field'
+assert data['nri']['connected'] == True, 'expected nri.connected=true'
+assert 'policies' in data, 'missing policies field'
+assert data['policies']['count'] >= 1, 'expected at least 1 policy'
+assert 'cache' in data, 'missing cache field'
+assert 'size' in data['cache'], 'missing cache.size field'
+assert 'maxSize' in data['cache'], 'missing cache.maxSize field'
+"
+}
+
 @test "log output is structured JSON" {
 	stop_plugin
 	write_plugin_config "warn"

@@ -39,14 +39,18 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
-const testDigest = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4" +
-	"e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+const (
+	testDigest = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4" +
+		"e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
 
-const testTUFMirrorURL = "https://tuf.example.com"
+	testTUFMirrorURL = "https://tuf.example.com"
 
-const testRootNameGitHub = "github"
+	testRootNameGitHub = "github"
 
-const testGitHubTUFMirror = "https://tuf-repo.github.com"
+	testGitHubTUFMirror = "https://tuf-repo.github.com"
+
+	testNsProduction = "production"
+)
 
 type delayFetcher struct {
 	delay   time.Duration
@@ -1686,7 +1690,7 @@ func TestVerifyPerNamespaceEnforceMode(t *testing.T) {
 
 	// Production namespace uses per-namespace enforce mode, so verification failure is rejected.
 	_, err = verif.Verify(
-		context.Background(), "nginx:latest", prodDigest, "", "production", "",
+		context.Background(), "nginx:latest", prodDigest, "", testNsProduction, "",
 	)
 
 	if !errors.Is(err, verifier.ErrVerificationFailed) {
@@ -1790,7 +1794,7 @@ func TestEffectiveModeForNamespace(t *testing.T) {
 		t.Errorf("expected default namespace mode %q, got %q", config.ModeWarn, mode)
 	}
 
-	mode = verif.EffectiveModeForNamespace("production")
+	mode = verif.EffectiveModeForNamespace(testNsProduction)
 	if mode != config.ModeEnforce {
 		t.Errorf("expected production namespace mode %q, got %q", config.ModeEnforce, mode)
 	}
@@ -1809,8 +1813,8 @@ func TestWarnEnforceDefaultsPerNamespaceMode(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 
 	policies := map[string]*policy.Policy{
-		"":           {},
-		"production": {Mode: config.ModeEnforce},
+		"":               {},
+		testNsProduction: {Mode: config.ModeEnforce},
 	}
 
 	// Should not panic; warnings for production enforce mode should be emitted.
@@ -1844,7 +1848,7 @@ func TestVerifyPerNamespaceEnforceCacheHit(t *testing.T) {
 
 	// First call: enforce mode rejects.
 	_, err = verif.Verify(
-		context.Background(), "nginx:latest", cacheDigest, "", "production", "",
+		context.Background(), "nginx:latest", cacheDigest, "", testNsProduction, "",
 	)
 	if !errors.Is(err, verifier.ErrVerificationFailed) {
 		t.Fatalf("first call: expected ErrVerificationFailed, got %v", err)
@@ -1852,7 +1856,7 @@ func TestVerifyPerNamespaceEnforceCacheHit(t *testing.T) {
 
 	// Second call (cache hit): enforce mode still rejects.
 	_, err = verif.Verify(
-		context.Background(), "nginx:latest", cacheDigest, "", "production", "",
+		context.Background(), "nginx:latest", cacheDigest, "", testNsProduction, "",
 	)
 	if !errors.Is(err, verifier.ErrVerificationFailed) {
 		t.Fatalf("second call (cache hit): expected ErrVerificationFailed, got %v", err)
@@ -2486,11 +2490,11 @@ func TestPolicyHashForNamespace(t *testing.T) {
 		t.Parallel()
 
 		hashes := map[string]string{
-			"":           defaultHash,
-			"production": prodHash,
+			"":               defaultHash,
+			testNsProduction: prodHash,
 		}
 
-		got := verifier.ExportPolicyHashForNamespace(hashes, "production")
+		got := verifier.ExportPolicyHashForNamespace(hashes, testNsProduction)
 		if got != prodHash {
 			t.Errorf("expected %q, got %q", prodHash, got)
 		}
@@ -2675,4 +2679,99 @@ func TestReloadCreatesFetcherWhenRootsChange(t *testing.T) {
 
 	err = verif.Reload(context.Background(), cfg2)
 	testutil.AssertNoError(t, err)
+}
+
+func TestStatusDisabledMode(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	status := verif.Status()
+
+	if !status.Ready {
+		t.Error("expected ready=true for disabled mode")
+	}
+
+	if status.Mode != "disabled" {
+		t.Errorf("mode = %q, want %q", status.Mode, "disabled")
+	}
+
+	if status.Policies.Source != "local" {
+		t.Errorf("source = %q, want %q", status.Policies.Source, "local")
+	}
+
+	if status.Policies.Count != 0 {
+		t.Errorf("policies count = %d, want 0", status.Policies.Count)
+	}
+
+	if len(status.Policies.Namespaces) != 0 {
+		t.Errorf("namespaces = %v, want empty", status.Policies.Namespaces)
+	}
+}
+
+func TestStatusEnabledWithPolicies(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{}`)
+	testutil.WritePolicy(t, dir, "production.json", `{}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	status := verif.Status()
+
+	if !status.Ready {
+		t.Error("expected ready=true with policies loaded")
+	}
+
+	if status.Mode != "warn" {
+		t.Errorf("mode = %q, want %q", status.Mode, "warn")
+	}
+
+	if status.Policies.Count != 2 {
+		t.Errorf("policies count = %d, want 2", status.Policies.Count)
+	}
+
+	if len(status.Policies.Namespaces) != 1 {
+		t.Fatalf("namespaces = %v, want [production]", status.Policies.Namespaces)
+	}
+
+	if status.Policies.Namespaces[0] != testNsProduction {
+		t.Errorf("namespace = %q, want %q", status.Policies.Namespaces[0], testNsProduction)
+	}
+}
+
+func TestStatusEnabledNoPolicies(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	status := verif.Status()
+
+	if status.Ready {
+		t.Error("expected ready=false when enabled with no policies")
+	}
+
+	if status.Policies.Count != 0 {
+		t.Errorf("policies count = %d, want 0", status.Policies.Count)
+	}
+
+	if len(status.CircuitBreakers) != 0 {
+		t.Errorf("circuit breakers = %v, want empty", status.CircuitBreakers)
+	}
 }

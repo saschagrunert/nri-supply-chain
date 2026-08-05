@@ -199,6 +199,43 @@ func (r *CircuitBreakerRegistry) Get(host string) *CircuitBreaker {
 	return breaker
 }
 
+// States returns a map of registry host to circuit breaker state string.
+// Possible values are "closed", "open", and "half-open".
+// The shared overflow breaker (if active) is reported under the key "(overflow)".
+// Lock ordering: acquires r.mu (read), then each breaker.mu (read).
+func (r *CircuitBreakerRegistry) States() map[string]string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	states := make(map[string]string, len(r.breakers)+1)
+
+	for host, breaker := range r.breakers {
+		states[host] = breakerStateName(breaker)
+	}
+
+	if r.overflow != nil {
+		states["(overflow)"] = breakerStateName(r.overflow)
+	}
+
+	return states
+}
+
+func breakerStateName(breaker *CircuitBreaker) string {
+	breaker.mu.RLock()
+	defer breaker.mu.RUnlock()
+
+	switch breaker.state {
+	case circuitClosed:
+		return "closed"
+	case circuitOpen:
+		return "open"
+	case circuitHalfOpen:
+		return "half-open"
+	default:
+		return "unknown"
+	}
+}
+
 // evictNonOpenLocked removes breakers in the closed state. Half-open
 // breakers are preserved because they are awaiting a probe result.
 // Lock ordering: r.mu must be held; acquires breaker.mu via isClosed.

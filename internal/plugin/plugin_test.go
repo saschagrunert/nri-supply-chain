@@ -1388,6 +1388,35 @@ func (v *failingVerifier) EffectiveModeForNamespace(_ string) config.Verificatio
 	return config.ModeEnforce
 }
 
+func (v *failingVerifier) Status() scTypes.StatusResponse {
+	return scTypes.StatusResponse{
+		Ready:           false,
+		Mode:            string(config.ModeEnforce),
+		Policies:        scTypes.PolicyStatus{Count: 0, Namespaces: []string{}, Source: ""},
+		Cache:           scTypes.CacheStatus{Size: 0, MaxSize: 0},
+		CircuitBreakers: map[string]string{},
+		NRI:             scTypes.NRIStatus{Connected: false},
+	}
+}
+
+func (v *capturingVerifier) Status() scTypes.StatusResponse {
+	return scTypes.StatusResponse{
+		Ready: true,
+		Mode:  "warn",
+		Policies: scTypes.PolicyStatus{
+			Count:      0,
+			Namespaces: []string{},
+			Source:     "local",
+		},
+		Cache: scTypes.CacheStatus{
+			Size:    0,
+			MaxSize: 0,
+		},
+		CircuitBreakers: map[string]string{},
+		NRI:             scTypes.NRIStatus{Connected: false},
+	}
+}
+
 func TestCreateContainerPassesServiceAccount(t *testing.T) {
 	t.Parallel()
 
@@ -2038,5 +2067,45 @@ func TestRemoveContainerConcurrentSameID(t *testing.T) {
 	count := promtestutil.CollectAndCount(met.ContainerLifetime)
 	if count == 0 {
 		t.Error("expected at least one lifetime metric observation")
+	}
+}
+
+func TestPluginStatusReadyRequiresNRIConnection(t *testing.T) {
+	t.Parallel()
+
+	cv := &capturingVerifier{serviceAccount: "", mu: sync.Mutex{}}
+	met := metrics.New()
+	plug := plugin.New(cv, met, "", 30*time.Second, 1*time.Second, nil)
+
+	status := plug.Status()
+	if status.Ready {
+		t.Error("expected ready=false before NRI connection")
+	}
+
+	if status.NRI.Connected {
+		t.Error("expected nri.connected=false before Configure")
+	}
+
+	_, err := plug.Configure(context.Background(), "", "cri-o", "1.32")
+	testutil.AssertNoError(t, err)
+
+	status = plug.Status()
+	if !status.Ready {
+		t.Error("expected ready=true after NRI connection")
+	}
+
+	if !status.NRI.Connected {
+		t.Error("expected nri.connected=true after Configure")
+	}
+
+	plug.SetDisconnected()
+
+	status = plug.Status()
+	if status.Ready {
+		t.Error("expected ready=false after NRI disconnect")
+	}
+
+	if status.NRI.Connected {
+		t.Error("expected nri.connected=false after SetDisconnected")
 	}
 }

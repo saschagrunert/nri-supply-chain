@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -106,5 +107,20 @@ func registerHealthProbes(mux *http.ServeMux, plug *plugin.Plugin) {
 
 		writer.WriteHeader(http.StatusOK)
 		_, _ = writer.Write([]byte("ok"))
+	})
+
+	mux.HandleFunc("GET /status", func(writer http.ResponseWriter, _ *http.Request) {
+		status := plug.Status()
+
+		data, marshalErr := json.Marshal(status)
+		if marshalErr != nil {
+			http.Error(writer, "internal server error", http.StatusInternalServerError)
+			slog.Error("Failed to encode status response", "error", marshalErr)
+
+			return
+		}
+
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write(data)
 	})
 }

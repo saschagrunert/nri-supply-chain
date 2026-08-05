@@ -322,6 +322,95 @@ func TestCircuitBreakerRegistryConcurrentStress(t *testing.T) {
 	}
 }
 
+func TestCircuitBreakerRegistryStates(t *testing.T) {
+	t.Parallel()
+
+	registry := attestation.NewCircuitBreakerRegistry(2, time.Minute)
+
+	closedBreaker := registry.Get("closed.example.com")
+	_ = closedBreaker // keep breaker in closed state
+
+	openBreaker := registry.Get("open.example.com")
+	openBreaker.RecordFailure()
+	openBreaker.RecordFailure()
+
+	states := registry.States()
+
+	if states["closed.example.com"] != "closed" {
+		t.Errorf(
+			"closed.example.com = %q, want closed",
+			states["closed.example.com"],
+		)
+	}
+
+	if states["open.example.com"] != "open" {
+		t.Errorf(
+			"open.example.com = %q, want open",
+			states["open.example.com"],
+		)
+	}
+}
+
+func TestCircuitBreakerRegistryStatesHalfOpen(t *testing.T) {
+	t.Parallel()
+
+	registry := attestation.NewCircuitBreakerRegistry(1, 10*time.Millisecond)
+
+	breaker := registry.Get("half-open.example.com")
+	breaker.RecordFailure()
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Transition to half-open by calling Allow after cooldown.
+	if !breaker.Allow() {
+		t.Fatal("expected Allow() = true after cooldown (half-open)")
+	}
+
+	states := registry.States()
+
+	if states["half-open.example.com"] != "half-open" {
+		t.Errorf(
+			"half-open.example.com = %q, want half-open",
+			states["half-open.example.com"],
+		)
+	}
+}
+
+func TestCircuitBreakerRegistryStatesOverflow(t *testing.T) {
+	t.Parallel()
+
+	registry := attestation.NewCircuitBreakerRegistry(1, time.Minute)
+
+	for idx := range attestation.ExportMaxCircuitBreakers {
+		breaker := registry.Get(fmt.Sprintf("host-%d.example.com", idx))
+		breaker.RecordFailure()
+	}
+
+	registry.Get("overflow.example.com")
+
+	states := registry.States()
+
+	overflowState, ok := states["(overflow)"]
+	if !ok {
+		t.Fatal("expected (overflow) key in States()")
+	}
+
+	if overflowState != "closed" {
+		t.Errorf("(overflow) = %q, want closed", overflowState)
+	}
+}
+
+func TestCircuitBreakerRegistryStatesEmpty(t *testing.T) {
+	t.Parallel()
+
+	registry := attestation.NewCircuitBreakerRegistry(2, time.Minute)
+
+	states := registry.States()
+	if len(states) != 0 {
+		t.Errorf("expected empty states map, got %d entries", len(states))
+	}
+}
+
 func TestCircuitBreakerRegistryThresholdAndCooldown(t *testing.T) {
 	t.Parallel()
 

@@ -577,6 +577,20 @@ func TestCacheCustomMaxSizeEviction(t *testing.T) {
 	}
 }
 
+func TestCacheMaxSize(t *testing.T) {
+	t.Parallel()
+
+	testCache := cache.New(time.Hour)
+	t.Cleanup(testCache.Stop)
+
+	if testCache.MaxSize() != cache.DefaultMaxSize {
+		t.Errorf(
+			"expected default max size %d, got %d",
+			cache.DefaultMaxSize, testCache.MaxSize(),
+		)
+	}
+}
+
 func TestCacheClear(t *testing.T) {
 	t.Parallel()
 
