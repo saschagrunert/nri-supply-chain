@@ -138,6 +138,18 @@ poller and starts a new one with the updated configuration. This allows
 changing the `oci_ref`, `poll_interval`, or switching between `local` and `oci`
 sources without restarting the plugin.
 
+When the OCI policy registry is unreachable at startup (connection refused, DNS
+failure, timeout, TLS handshake error, or server error), the plugin starts in a
+pending state instead of crashing. Non-transient errors such as invalid OCI
+references, signature verification failures, or malformed policy content still
+cause a hard failure.
+In pending state the plugin reports not-ready via `/readyz` and begins polling
+for policies in the background. Containers are handled according to the
+configured verification mode: in `warn` mode they are allowed through
+(unverified), in `enforce` mode they are rejected. Once the registry becomes
+reachable and policies are loaded, the plugin transitions to ready and begins
+normal verification.
+
 The plugin also watches the config file and policy directory for changes using
 fsnotify. When a file is written, created, removed, or renamed, the plugin automatically
 reloads after a 500ms debounce window. Rapid successive writes within that

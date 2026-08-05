@@ -111,10 +111,17 @@ func New(
 
 	policies, hashes, policyFetcher, ociDigest, err := loadAndHashPolicies(ctx, &cfgCopy, fetcher)
 	if err != nil {
-		return nil, err
+		policies, hashes, policyFetcher, err = handleOCIStartupFailure(
+			&cfgCopy, policyFetcher, err,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		ociDigest = ""
 	}
 
-	if cfgCopy.Enabled() {
+	if cfgCopy.Enabled() && len(policies) > 0 {
 		err = validatePoliciesModes(cfgCopy.Verification, policies)
 		if err != nil {
 			return nil, err
@@ -817,6 +824,28 @@ func (v *Verifier) reloadFetcher( //nolint:ireturn // returns prev.fetcher which
 	return prev.fetcher
 }
 
+func handleOCIStartupFailure(
+	cfg *config.Config,
+	existingFetcher *policy.OCIFetcher,
+	loadErr error,
+) (
+	policies map[string]*policy.Policy,
+	hashes map[string]string,
+	policyFetcher *policy.OCIFetcher,
+	err error,
+) {
+	if cfg.Policy.Source != config.PolicySourceOCI || !registry.IsConnectionError(loadErr) {
+		return nil, nil, nil, loadErr
+	}
+
+	slog.Warn("OCI policy fetch failed at startup, starting in pending state",
+		"oci_ref", cfg.Policy.OCIRef,
+		"error", loadErr,
+	)
+
+	return map[string]*policy.Policy{}, map[string]string{}, existingFetcher, nil
+}
+
 func loadAndHashPolicies(
 	ctx context.Context,
 	cfg *config.Config,
@@ -831,7 +860,7 @@ func loadAndHashPolicies(
 	if cfg.Enabled() {
 		policies, policyFetcher, ociDigest, err = loadPoliciesFromSource(ctx, cfg, fetcher)
 		if err != nil {
-			return nil, nil, nil, "", err
+			return nil, nil, policyFetcher, "", err
 		}
 
 		err = validatePoliciesRuntime(policies)
@@ -872,7 +901,7 @@ func loadPoliciesFromSource(
 
 	result, err := policyFetcher.FetchFromOCI(ctx, cfg.Policy.OCIRef)
 	if err != nil {
-		return nil, nil, "", fmt.Errorf("loading OCI policies: %w", err)
+		return nil, policyFetcher, "", fmt.Errorf("loading OCI policies: %w", err)
 	}
 
 	slog.Info("Loaded policies from OCI artifact",

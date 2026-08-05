@@ -107,6 +107,14 @@ func (p *Poller) Stop() {
 func (p *Poller) run(ctx context.Context) {
 	defer p.wg.Done()
 
+	p.mu.Lock()
+	pending := p.cachedDigest == ""
+	p.mu.Unlock()
+
+	if pending {
+		p.poll(ctx)
+	}
+
 	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
 

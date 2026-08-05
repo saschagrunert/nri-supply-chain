@@ -50,6 +50,8 @@ const (
 	testGitHubTUFMirror = "https://tuf-repo.github.com"
 
 	testNsProduction = "production"
+
+	testUnreachableOCIRef = "localhost:1/nonexistent:v1"
 )
 
 type delayFetcher struct {
@@ -2773,5 +2775,103 @@ func TestStatusEnabledNoPolicies(t *testing.T) {
 
 	if len(status.CircuitBreakers) != 0 {
 		t.Errorf("circuit breakers = %v, want empty", status.CircuitBreakers)
+	}
+}
+
+func TestNewOCIUnreachableStartsPending(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = t.TempDir()
+	cfg.Policy.Source = config.PolicySourceOCI
+	cfg.Policy.OCIRef = testUnreachableOCIRef
+	cfg.Policy.PollInterval = config.Duration{Duration: 30 * time.Second}
+
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	defer verif.Stop()
+
+	ready, reason := verif.Ready()
+	if ready {
+		t.Error("expected ready=false in pending state")
+	}
+
+	if reason != "no policies loaded" {
+		t.Errorf("reason = %q, want %q", reason, "no policies loaded")
+	}
+
+	status := verif.Status()
+	if status.Ready {
+		t.Error("expected status.Ready=false in pending state")
+	}
+
+	if status.Policies.Count != 0 {
+		t.Errorf("policies count = %d, want 0", status.Policies.Count)
+	}
+}
+
+func TestNewOCIUnreachableRejectsInEnforceMode(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+	cfg.PolicyDir = t.TempDir()
+	cfg.Policy.Source = config.PolicySourceOCI
+	cfg.Policy.OCIRef = testUnreachableOCIRef
+	cfg.Policy.PollInterval = config.Duration{Duration: 30 * time.Second}
+
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	defer verif.Stop()
+
+	_, verifyErr := verif.Verify(
+		t.Context(), "nginx:latest", testDigest, "", "default", "",
+	)
+	if !errors.Is(verifyErr, verifier.ErrVerificationFailed) {
+		t.Errorf("expected ErrVerificationFailed, got %v", verifyErr)
+	}
+}
+
+func TestNewOCIUnreachableAllowsInWarnMode(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = t.TempDir()
+	cfg.Policy.Source = config.PolicySourceOCI
+	cfg.Policy.OCIRef = testUnreachableOCIRef
+	cfg.Policy.PollInterval = config.Duration{Duration: 30 * time.Second}
+
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	defer verif.Stop()
+
+	result, verifyErr := verif.Verify(
+		t.Context(), "nginx:latest", testDigest, "", "default", "",
+	)
+	testutil.AssertNoError(t, verifyErr)
+
+	if !result.Allowed {
+		t.Errorf("expected allowed=true in warn mode, got reason: %s", result.Reason)
+	}
+}
+
+func TestNewLocalPolicyFailureStillFails(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "bad.json", `{invalid json}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+
+	_, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
+	if err == nil {
+		t.Error("expected error for local policy load failure")
 	}
 }
