@@ -163,7 +163,7 @@ verify-shellcheck: $(SHELLCHECK) ## Run shellcheck on shell scripts
 
 .PHONY: verify-mdtoc
 verify-mdtoc: $(MDTOC) ## Verify table of contents in docs
-	for f in README.md docs/*.md; do $(MDTOC) --inplace --dryrun "$$f"; done
+	@fail=0; for f in README.md docs/*.md; do $(MDTOC) --inplace --dryrun "$$f" || fail=1; done; exit $$fail
 
 .PHONY: verify-jsonschema
 verify-jsonschema: build ## Verify JSON Schemas in docs match CLI output
