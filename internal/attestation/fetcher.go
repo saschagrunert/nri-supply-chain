@@ -168,6 +168,15 @@ type ImageFetchFunc func(ref name.Reference, options ...remote.Option) (ociV1.Im
 // ReferrersFunc lists OCI referrers for a digest.
 type ReferrersFunc func(d name.Digest, options ...remote.Option) (ociV1.ImageIndex, error)
 
+// RootSourceConfig describes a single Sigstore trusted root source for
+// multi-root verification. When TUFMirror is empty, the public Sigstore
+// trusted root is used.
+type RootSourceConfig struct {
+	Name         string
+	TUFMirror    string // empty = public Sigstore
+	TUFRootBytes []byte // nil = use default root.json
+}
+
 // OCIFetcher discovers attestations via the OCI Referrers API.
 type OCIFetcher struct {
 	verifyBundle BundleVerifyFunc
@@ -175,6 +184,7 @@ type OCIFetcher struct {
 	referrers    ReferrersFunc
 	// rootCache is captured by the verifyBundle closure; stored for exhaustruct compliance.
 	rootCache          *trustedRootCache
+	rootCaches         []*trustedRootCache
 	limiter            atomic.Pointer[rate.Limiter]
 	transportCache     atomic.Pointer[registry.TransportCache]
 	onMirrorFallback   func(registryHost string)
@@ -201,6 +211,7 @@ func NewOCIFetcher() *OCIFetcher {
 		fetchImage:         remote.Image,
 		referrers:          remote.Referrers,
 		rootCache:          cachedRoot,
+		rootCaches:         nil,
 		limiter:            atomic.Pointer[rate.Limiter]{},
 		transportCache:     atomic.Pointer[registry.TransportCache]{},
 		onMirrorFallback:   nil,
@@ -215,6 +226,7 @@ func NewOCIFetcherWithVerifier(verifier BundleVerifyFunc) *OCIFetcher {
 		fetchImage:         remote.Image,
 		referrers:          remote.Referrers,
 		rootCache:          nil,
+		rootCaches:         nil,
 		limiter:            atomic.Pointer[rate.Limiter]{},
 		transportCache:     atomic.Pointer[registry.TransportCache]{},
 		onMirrorFallback:   nil,
@@ -262,6 +274,7 @@ func NewOCIFetcherWithTUFMirror(tufMirror string, tufRootBytes []byte) *OCIFetch
 		fetchImage:         remote.Image,
 		referrers:          remote.Referrers,
 		rootCache:          cachedRoot,
+		rootCaches:         nil,
 		limiter:            atomic.Pointer[rate.Limiter]{},
 		transportCache:     atomic.Pointer[registry.TransportCache]{},
 		onMirrorFallback:   nil,
@@ -269,12 +282,73 @@ func NewOCIFetcherWithTUFMirror(tufMirror string, tufRootBytes []byte) *OCIFetch
 	}
 }
 
+// NewOCIFetcherWithMultipleRoots creates an OCI-based attestation fetcher that
+// verifies bundles against multiple Sigstore trusted roots. Each source entry
+// gets its own trustedRootCache that independently refreshes from its TUF
+// mirror. When a source has an empty TUFMirror, the public Sigstore trusted
+// root is used.
+//
+// Verification succeeds if any single trusted root validates the bundle.
+func NewOCIFetcherWithMultipleRoots(sources []RootSourceConfig) *OCIFetcher {
+	caches := make([]*trustedRootCache, len(sources))
+
+	for i, src := range sources {
+		fetchFn := buildFetchFunc(src)
+		caches[i] = &trustedRootCache{
+			mu:         sync.RWMutex{},
+			root:       nil,
+			fetchedAt:  time.Time{},
+			fetchRoot:  fetchFn,
+			inflight:   singleflight.Group{},
+			onStaleHit: nil,
+		}
+	}
+
+	return &OCIFetcher{
+		verifyBundle: func(
+			ctx context.Context, bundleBytes []byte, opts *FetchOptions,
+		) ([]byte, error) {
+			return verifyBundleWithMultipleRoots(ctx, bundleBytes, opts, caches)
+		},
+		fetchImage:         remote.Image,
+		referrers:          remote.Referrers,
+		rootCache:          nil,
+		rootCaches:         caches,
+		limiter:            atomic.Pointer[rate.Limiter]{},
+		transportCache:     atomic.Pointer[registry.TransportCache]{},
+		onMirrorFallback:   nil,
+		onMirrorFallbackMu: sync.RWMutex{},
+	}
+}
+
+func buildFetchFunc(src RootSourceConfig) trustedRootFetchFunc {
+	if src.TUFMirror == "" {
+		return root.FetchTrustedRoot
+	}
+
+	return func() (*root.TrustedRoot, error) {
+		opts := tuf.DefaultOptions().
+			WithRepositoryBaseURL(src.TUFMirror).
+			WithDisableLocalCache()
+
+		if len(src.TUFRootBytes) > 0 {
+			opts = opts.WithRoot(src.TUFRootBytes)
+		}
+
+		return root.FetchTrustedRootWithOptions(opts)
+	}
+}
+
 // SetStaleRootCallback sets a function to be called each time the fetcher
 // serves a stale trusted root from cache after a refresh failure.
 // Must be called during initialization, before any concurrent Fetch calls.
-func (f *OCIFetcher) SetStaleRootCallback(fn func()) {
+func (f *OCIFetcher) SetStaleRootCallback(callback func()) {
 	if f.rootCache != nil {
-		f.rootCache.onStaleHit = fn
+		f.rootCache.onStaleHit = callback
+	}
+
+	for _, c := range f.rootCaches {
+		c.onStaleHit = callback
 	}
 }
 
@@ -317,20 +391,55 @@ func (f *OCIFetcher) TransportCache() *registry.TransportCache {
 	return f.transportCache.Load()
 }
 
-// Warm pre-fetches the Sigstore trusted root so that the first verification
+// IsMultiRoot reports whether this fetcher was configured with multiple
+// trusted root sources (via NewOCIFetcherWithMultipleRoots).
+func (f *OCIFetcher) IsMultiRoot() bool {
+	return len(f.rootCaches) > 0
+}
+
+// Warm pre-fetches the Sigstore trusted root(s) so that the first verification
 // does not pay the latency cost. Non-fatal: returns an error on failure but
 // the fetcher remains usable (it will retry lazily on the first Fetch call).
+// When multiple root caches are configured, all are warmed concurrently.
 func (f *OCIFetcher) Warm(ctx context.Context) error {
-	if f.rootCache == nil {
+	if f.rootCache != nil {
+		_, err := f.rootCache.get(ctx)
+		if err != nil {
+			return fmt.Errorf("pre-warming trusted root: %w", err)
+		}
+
 		return nil
 	}
 
-	_, err := f.rootCache.get(ctx)
-	if err != nil {
-		return fmt.Errorf("pre-warming trusted root: %w", err)
+	if len(f.rootCaches) == 0 {
+		return nil
 	}
 
-	return nil
+	// Warm all root caches independently so that a failure in one does not
+	// cancel the others via a derived context.
+	var (
+		warmMu sync.Mutex
+		errs   []error
+		warmWg sync.WaitGroup
+	)
+
+	for i := range f.rootCaches {
+		cache := f.rootCaches[i]
+
+		warmWg.Go(func() {
+			_, err := cache.get(ctx)
+			if err != nil {
+				warmMu.Lock()
+
+				errs = append(errs, fmt.Errorf("pre-warming trusted root: %w", err))
+				warmMu.Unlock()
+			}
+		})
+	}
+
+	warmWg.Wait()
+
+	return errors.Join(errs...)
 }
 
 // Fetch discovers and returns verified attestations for the given image.

@@ -7,6 +7,7 @@ nri-supply-chain plugin.
 
 - [Operational Config](#operational-config)
 - [Private Sigstore Instances](#private-sigstore-instances)
+  - [Multiple Sigstore Trusted Roots](#multiple-sigstore-trusted-roots)
 - [Registries](#registries)
 - [Policy Distribution](#policy-distribution)
 - [Policy Files](#policy-files)
@@ -112,6 +113,89 @@ When `tuf_mirror` or `tuf_root` is changed via config reload, the plugin
 creates a new fetcher with the updated settings and invalidates the
 verification cache. Changes to the file content at the same `tuf_root` path
 are not detected; update the config value to force a re-read.
+
+### Multiple Sigstore Trusted Roots
+
+Some environments need to verify attestations signed by more than one Sigstore
+infrastructure. For example, images may carry attestations from both the public
+Sigstore instance and GitHub's private Sigstore deployment (used by
+`actions/attest-build-provenance`). The `[[sigstore.roots]]` array lets you
+configure multiple trusted roots:
+
+```toml
+[sigstore]
+include_public_root = true
+
+[[sigstore.roots]]
+name = "github"
+tuf_mirror = "https://tuf-repo.github.com"
+tuf_root = "/etc/sigstore/github-tuf-root.json"
+
+[[sigstore.roots]]
+name = "internal"
+tuf_mirror = "https://tuf.internal.example.com"
+```
+
+| Field                          | Default                   | Description                                                             |
+| ------------------------------ | ------------------------- | ----------------------------------------------------------------------- |
+| `sigstore.roots[].name`        | (required)                | Human-readable label, must be unique across entries                     |
+| `sigstore.roots[].tuf_mirror`  | (empty = public Sigstore) | HTTPS URL of the TUF mirror for this root                               |
+| `sigstore.roots[].tuf_root`    | (empty)                   | Absolute path to a custom root.json for TUF trust anchor initialization |
+| `sigstore.include_public_root` | `true`                    | Include the public Sigstore trusted root alongside custom roots         |
+
+Each entry creates an independent trusted root cache that refreshes from its
+TUF mirror on the same schedule as the single-root case (1h TTL, 24h max
+staleness). During verification, the plugin builds a combined trusted material
+set from all configured roots. A bundle is accepted if it validates against any
+one of the trusted roots.
+
+When `include_public_root` is true (the default), the public Sigstore trusted
+root is automatically prepended to the list. Set it to false when you only
+want to accept attestations signed by your configured private roots.
+
+**Note:** `include_public_root` only takes effect when `[[sigstore.roots]]` is
+used. When using the legacy scalar `tuf_mirror`/`tuf_root` fields, it has no
+effect; the scalar path always uses only the configured private mirror (matching
+pre-roots behavior).
+
+**Migrating from scalar fields.** The scalar `[sigstore]` fields (`tuf_mirror`,
+`tuf_root`) and the `[[sigstore.roots]]` array are mutually exclusive. To
+migrate, replace the scalar fields with a single `[[sigstore.roots]]` entry.
+The following two configurations are equivalent:
+
+```toml
+# Old (scalar):
+[sigstore]
+tuf_mirror = "https://tuf.internal.example.com"
+tuf_root = "/etc/sigstore/root.json"
+
+# New (roots array):
+[sigstore]
+include_public_root = false
+
+[[sigstore.roots]]
+name = "internal"
+tuf_mirror = "https://tuf.internal.example.com"
+tuf_root = "/etc/sigstore/root.json"
+```
+
+**GitHub attestations example.** To verify attestations produced by GitHub
+Actions `actions/attest-build-provenance`, add the GitHub TUF root and
+configure a policy that trusts the GitHub OIDC issuer:
+
+```toml
+[sigstore]
+include_public_root = true
+
+[[sigstore.roots]]
+name = "github"
+tuf_mirror = "https://tuf-repo.github.com"
+tuf_root = "/etc/sigstore/github-tuf-root.json"
+```
+
+Pair this with a policy file that trusts the GitHub Actions OIDC issuer and
+restricts SAN patterns to your organization (see
+`deploy/examples/policies/github-attestations.json`).
 
 ## Registries
 

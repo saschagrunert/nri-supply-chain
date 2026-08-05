@@ -96,6 +96,136 @@ func verifyBundleWithCache(
 	return extractVerifiedPayload(&bndl)
 }
 
+func verifyBundleWithMultipleRoots(
+	ctx context.Context,
+	bundleBytes []byte,
+	opts *FetchOptions,
+	rootCaches []*trustedRootCache,
+) ([]byte, error) {
+	err := ctx.Err()
+	if err != nil {
+		return nil, fmt.Errorf("context canceled before bundle verification: %w", err)
+	}
+
+	var bndl bundle.Bundle
+
+	err = bndl.UnmarshalJSON(bundleBytes)
+	if err != nil {
+		return nil, fmt.Errorf("parsing sigstore bundle: %w", err)
+	}
+
+	trustedMaterial, verifierOpts, policyOpts, err := buildVerificationConfigMultiRoot(
+		ctx, opts, rootCaches,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	verifier, err := verify.NewVerifier(trustedMaterial, verifierOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("creating sigstore verifier: %w", err)
+	}
+
+	artPolicy, artErr := artifactPolicy(opts.Digest)
+	if artErr != nil {
+		return nil, fmt.Errorf("artifact policy: %w", artErr)
+	}
+
+	pol := verify.NewPolicy(
+		artPolicy,
+		policyOpts...,
+	)
+
+	_, err = verifier.Verify(&bndl, pol)
+	if err != nil {
+		return nil, fmt.Errorf("verifying sigstore bundle: %w", err)
+	}
+
+	return extractVerifiedPayload(&bndl)
+}
+
+func buildVerificationConfigMultiRoot(
+	ctx context.Context,
+	opts *FetchOptions,
+	rootCaches []*trustedRootCache,
+) (root.TrustedMaterialCollection, []verify.VerifierOption, []verify.PolicyOption, error) {
+	var (
+		materials    root.TrustedMaterialCollection
+		verifierOpts []verify.VerifierOption
+		policyOpts   []verify.PolicyOption
+	)
+
+	if len(opts.TrustedKeys) > 0 {
+		keyMaterial, err := buildKeyMaterial(opts.TrustedKeys)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+
+		materials = append(materials, keyMaterial)
+		verifierOpts = append(
+			verifierOpts,
+			keyOnlyVerifierOpts(len(opts.TrustedIssuers) > 0, opts.RequireTransparencyLog)...,
+		)
+		policyOpts = append(policyOpts, verify.WithKey())
+	}
+
+	if len(opts.TrustedIssuers) > 0 {
+		issuerMaterial, issuerVerifierOpts, issuerPolicyOpts, err := buildKeylessConfigMultiRoot(
+			ctx, opts, rootCaches,
+		)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+
+		materials = append(materials, issuerMaterial...)
+		verifierOpts = append(verifierOpts, issuerVerifierOpts...)
+		policyOpts = append(policyOpts, issuerPolicyOpts...)
+	}
+
+	if len(materials) == 0 {
+		return nil, nil, nil, fmt.Errorf(
+			"%w: provide trusted keys or issuers in policy", errNoTrustedMaterial,
+		)
+	}
+
+	return materials, verifierOpts, policyOpts, nil
+}
+
+func buildKeylessConfigMultiRoot(
+	ctx context.Context,
+	opts *FetchOptions,
+	rootCaches []*trustedRootCache,
+) (root.TrustedMaterialCollection, []verify.VerifierOption, []verify.PolicyOption, error) {
+	var materials root.TrustedMaterialCollection
+
+	for _, cache := range rootCaches {
+		tr, err := fetchTrustedRootWithContext(ctx, cache)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("fetching sigstore trusted root: %w", err)
+		}
+
+		materials = append(materials, tr)
+	}
+
+	verifierOpts := []verify.VerifierOption{
+		verify.WithSignedCertificateTimestamps(1),
+		verify.WithObserverTimestamps(1),
+	}
+
+	if opts.RequireTransparencyLog {
+		verifierOpts = append(verifierOpts, verify.WithTransparencyLog(1))
+	}
+
+	certID, err := buildCertificateIdentity(opts.TrustedIssuers, opts.SANPatterns)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	policyOpts := []verify.PolicyOption{verify.WithCertificateIdentity(certID)}
+
+	return materials, verifierOpts, policyOpts, nil
+}
+
 func buildVerificationConfig(
 	ctx context.Context,
 	opts *FetchOptions,

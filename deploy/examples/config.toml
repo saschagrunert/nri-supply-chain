@@ -48,6 +48,22 @@ circuit_breaker_cooldown = "30s"
 # oci_ref = "ghcr.io/myorg/supply-chain-policies:v1"
 # poll_interval = "5m"
 
+# Private Sigstore instance (single root, backward compatible).
+# [sigstore]
+# tuf_mirror = "https://tuf.internal.example.com"
+# tuf_root = "/etc/sigstore/root.json"
+
+# Multiple Sigstore trusted roots (e.g. public + GitHub attestations).
+# When using [[sigstore.roots]], the scalar tuf_mirror/tuf_root fields
+# above must not be set (they are mutually exclusive).
+# [sigstore]
+# include_public_root = true
+#
+# [[sigstore.roots]]
+# name = "github"
+# tuf_mirror = "https://tuf-repo.github.com"
+# tuf_root = "/etc/sigstore/github-tuf-root.json"
+
 # Registry mirror with automatic fallback to the original registry.
 # When the mirror is unreachable, requests fall back to ghcr.io.
 # [[registries]]

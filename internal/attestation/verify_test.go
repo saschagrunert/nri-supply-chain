@@ -1107,3 +1107,103 @@ func TestNewTestOCIFetcherInjectsBoth(t *testing.T) {
 		t.Errorf("expected 1 attestation, got %d", len(result))
 	}
 }
+
+func TestBuildVerificationConfigMultiRoot(t *testing.T) {
+	t.Parallel()
+
+	t.Cleanup(attestation.ResetSANPatternWarnings)
+
+	t.Run("single root backward compat", func(t *testing.T) {
+		t.Parallel()
+
+		cache := attestation.NewTestTrustedRootCacheWithRoot(
+			func() (*root.TrustedRoot, error) {
+				return fakeTrustedRoot(), nil
+			},
+			fakeTrustedRoot(),
+			time.Now(),
+		)
+
+		opts := &attestation.FetchOptions{
+			TrustedIssuers: []string{testIssuerGoogle},
+		}
+
+		err := attestation.ExportBuildVerificationCfgMultiRoot(
+			context.Background(), opts,
+			[]*attestation.TrustedRootCacheForTest{cache},
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("multiple roots produces merged material", func(t *testing.T) {
+		t.Parallel()
+
+		cache1 := attestation.NewTestTrustedRootCacheWithRoot(
+			func() (*root.TrustedRoot, error) {
+				return fakeTrustedRoot(), nil
+			},
+			fakeTrustedRoot(),
+			time.Now(),
+		)
+
+		cache2 := attestation.NewTestTrustedRootCacheWithRoot(
+			func() (*root.TrustedRoot, error) {
+				return fakeTrustedRoot(), nil
+			},
+			fakeTrustedRoot(),
+			time.Now(),
+		)
+
+		opts := &attestation.FetchOptions{
+			TrustedIssuers: []string{testIssuerGoogle},
+		}
+
+		err := attestation.ExportBuildVerificationCfgMultiRoot(
+			context.Background(), opts,
+			[]*attestation.TrustedRootCacheForTest{cache1, cache2},
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("empty caches with no keys returns error", func(t *testing.T) {
+		t.Parallel()
+
+		opts := &attestation.FetchOptions{}
+
+		err := attestation.ExportBuildVerificationCfgMultiRoot(
+			context.Background(), opts,
+			[]*attestation.TrustedRootCacheForTest{},
+		)
+		if err == nil {
+			t.Fatal("expected error for empty caches with no trusted material")
+		}
+	})
+
+	t.Run("cache fetch error propagates", func(t *testing.T) {
+		t.Parallel()
+
+		failCache := attestation.NewTestTrustedRootCache(func() (*root.TrustedRoot, error) {
+			return nil, errRootFetchFailed
+		})
+
+		opts := &attestation.FetchOptions{
+			TrustedIssuers: []string{testIssuerGoogle},
+		}
+
+		err := attestation.ExportBuildVerificationCfgMultiRoot(
+			context.Background(), opts,
+			[]*attestation.TrustedRootCacheForTest{failCache},
+		)
+		if err == nil {
+			t.Fatal("expected error for failed cache fetch")
+		}
+
+		if !strings.Contains(err.Error(), "root fetch failed") {
+			t.Errorf("expected error containing 'root fetch failed', got: %v", err)
+		}
+	})
+}

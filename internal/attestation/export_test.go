@@ -185,6 +185,7 @@ func NewTestOCIFetcher(verifier BundleVerifyFunc, imageFetcher ImageFetchFunc) *
 		fetchImage:         imageFetcher,
 		referrers:          nil,
 		rootCache:          nil,
+		rootCaches:         nil,
 		limiter:            atomic.Pointer[rate.Limiter]{},
 		transportCache:     atomic.Pointer[registry.TransportCache]{},
 		onMirrorFallback:   nil,
@@ -201,6 +202,7 @@ func NewTestOCIFetcherFull(
 		fetchImage:         imageFetcher,
 		referrers:          referrersFn,
 		rootCache:          nil,
+		rootCaches:         nil,
 		limiter:            atomic.Pointer[rate.Limiter]{},
 		transportCache:     atomic.Pointer[registry.TransportCache]{},
 		onMirrorFallback:   nil,
@@ -341,6 +343,11 @@ func (c *trustedRootCache) SetOnStaleHit(fn func()) {
 	c.onStaleHit = fn
 }
 
+// OnStaleHit returns the onStaleHit callback for testing.
+func (c *trustedRootCache) OnStaleHit() func() {
+	return c.onStaleHit
+}
+
 // ExportExceededTotalAttestationSize exposes exceededTotalAttestationSize for external tests.
 func ExportExceededTotalAttestationSize(ctx context.Context, totalSize int64) bool {
 	return exceededTotalAttestationSize(ctx, totalSize)
@@ -377,6 +384,22 @@ func (r *CircuitBreakerRegistry) ExportCooldown() time.Duration {
 // ExportHasLimiter returns whether the fetcher has an active rate limiter.
 func (f *OCIFetcher) ExportHasLimiter() bool {
 	return f.limiter.Load() != nil
+}
+
+// ExportRootCaches returns the rootCaches slice for testing.
+func (f *OCIFetcher) ExportRootCaches() []*trustedRootCache {
+	return f.rootCaches
+}
+
+// ExportBuildVerificationCfgMultiRoot exposes buildVerificationConfigMultiRoot for external tests.
+func ExportBuildVerificationCfgMultiRoot(
+	ctx context.Context,
+	opts *FetchOptions,
+	caches []*trustedRootCache,
+) error {
+	_, _, _, err := buildVerificationConfigMultiRoot(ctx, opts, caches)
+
+	return err
 }
 
 // ExportFetchWithFallback exposes fetchWithFallback for external tests.

@@ -686,8 +686,7 @@ func (v *Verifier) prepareFetcher(
 	prev := v.state.Load()
 
 	if prev.fetcher != nil &&
-		prev.config.Sigstore.TUFMirror == cfg.Sigstore.TUFMirror &&
-		prev.config.Sigstore.TUFRoot == cfg.Sigstore.TUFRoot {
+		!config.SigstoreConfigChanged(&prev.config.Sigstore, &cfg.Sigstore) {
 		return nil, nil //nolint:nilnil // no config change, reuse existing
 	}
 
@@ -925,16 +924,93 @@ func createAndWarmFetcher(
 }
 
 func createFetcher(cfg *config.Config) (*attestation.OCIFetcher, error) {
-	if cfg.Sigstore.TUFMirror == "" {
+	effectiveRoots := cfg.Sigstore.EffectiveRoots()
+
+	if len(effectiveRoots) == 0 {
 		return attestation.NewOCIFetcher(), nil
 	}
 
-	tufRootBytes, err := readTUFRootBytes(cfg.Sigstore.TUFRoot)
+	// Legacy scalar path: when the user set tuf_mirror/tuf_root (not the
+	// roots array), preserve the old single-root behavior exactly. The
+	// public Sigstore root is NOT included, matching the pre-roots behavior
+	// where setting tuf_mirror locked verification to the private mirror.
+	//nolint:staticcheck // backward compatibility: scalar TUFMirror/TUFRoot fields
+	scalarMirror := cfg.Sigstore.TUFMirror
+	//nolint:staticcheck // backward compatibility: scalar TUFMirror/TUFRoot fields
+	scalarRoot := cfg.Sigstore.TUFRoot
+
+	if len(cfg.Sigstore.Roots) == 0 && scalarMirror != "" {
+		tufRootBytes, err := readTUFRootBytes(scalarRoot)
+		if err != nil {
+			return nil, err
+		}
+
+		return attestation.NewOCIFetcherWithTUFMirror(
+			scalarMirror, tufRootBytes,
+		), nil
+	}
+
+	// New roots array path: single root without public root inclusion uses
+	// the simpler single-root constructor.
+	if len(effectiveRoots) == 1 && !cfg.Sigstore.ShouldIncludePublicRoot() {
+		if effectiveRoots[0].TUFMirror == "" {
+			return attestation.NewOCIFetcher(), nil
+		}
+
+		tufRootBytes, err := readTUFRootBytes(effectiveRoots[0].TUFRoot)
+		if err != nil {
+			return nil, err
+		}
+
+		return attestation.NewOCIFetcherWithTUFMirror(
+			effectiveRoots[0].TUFMirror, tufRootBytes,
+		), nil
+	}
+
+	// Multiple roots or a single custom root plus the public root.
+	sources, err := buildRootSourceConfigs(cfg, effectiveRoots)
 	if err != nil {
 		return nil, err
 	}
 
-	return attestation.NewOCIFetcherWithTUFMirror(cfg.Sigstore.TUFMirror, tufRootBytes), nil
+	return attestation.NewOCIFetcherWithMultipleRoots(sources), nil
+}
+
+func buildRootSourceConfigs(
+	cfg *config.Config, roots []config.SigstoreRootSource,
+) ([]attestation.RootSourceConfig, error) {
+	var sources []attestation.RootSourceConfig
+
+	includePublic := cfg.Sigstore.ShouldIncludePublicRoot()
+
+	if includePublic {
+		sources = append(sources, attestation.RootSourceConfig{
+			Name:         "public-sigstore",
+			TUFMirror:    "",
+			TUFRootBytes: nil,
+		})
+	}
+
+	for _, root := range roots {
+		// Skip user roots with empty TUF mirror when the public root is
+		// already included, avoiding duplicate caches for the same root.
+		if root.TUFMirror == "" && includePublic {
+			continue
+		}
+
+		tufRootBytes, err := readTUFRootBytes(root.TUFRoot)
+		if err != nil {
+			return nil, err
+		}
+
+		sources = append(sources, attestation.RootSourceConfig{
+			Name:         root.Name,
+			TUFMirror:    root.TUFMirror,
+			TUFRootBytes: tufRootBytes,
+		})
+	}
+
+	return sources, nil
 }
 
 func readTUFRootBytes(path string) ([]byte, error) {
@@ -959,8 +1035,7 @@ func cacheAffectingFieldsChanged(prev, next *config.Config) bool {
 		prev.PolicyDir != next.PolicyDir ||
 		cacheTimingsChanged(prev, next) ||
 		prev.FetchFailurePolicy != next.FetchFailurePolicy ||
-		prev.Sigstore.TUFMirror != next.Sigstore.TUFMirror ||
-		prev.Sigstore.TUFRoot != next.Sigstore.TUFRoot ||
+		config.SigstoreConfigChanged(&prev.Sigstore, &next.Sigstore) ||
 		config.RegistriesChanged(prev.Registries, next.Registries) ||
 		policySourceChanged(prev, next)
 }
