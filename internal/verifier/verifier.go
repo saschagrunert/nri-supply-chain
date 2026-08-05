@@ -21,11 +21,15 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/sigstore/sigstore-go/pkg/root"
+	"github.com/sigstore/sigstore-go/pkg/tuf"
 	"golang.org/x/sync/semaphore"
 	"golang.org/x/sync/singleflight"
 
@@ -108,7 +112,7 @@ func New(
 		})
 	}
 
-	policies, hashes, ociDigest, err := loadAndHashPolicies(ctx, &cfgCopy, fetcher)
+	policies, hashes, policyFetcher, ociDigest, err := loadAndHashPolicies(ctx, &cfgCopy, fetcher)
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +140,7 @@ func New(
 	verif.state.Store(snap)
 
 	if cfgCopy.Policy.Source == config.PolicySourceOCI {
-		verif.startPoller(ctx, &cfgCopy, fetcher, ociDigest)
+		verif.startPoller(ctx, policyFetcher, &cfgCopy, ociDigest)
 	}
 
 	return verif, nil
@@ -504,7 +508,11 @@ func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 
 	prev := v.state.Load()
 
-	policies, newHashes, ociDigest, err := loadAndHashPolicies(ctx, &cfgCopy, prev.fetcher)
+	policies, newHashes, policyFetcher, ociDigest, err := loadAndHashPolicies(
+		ctx,
+		&cfgCopy,
+		prev.fetcher,
+	)
 	if err != nil {
 		return err
 	}
@@ -532,11 +540,25 @@ func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 	// Re-read after lock to use the latest snapshot (onPolicyUpdate may have run).
 	current := v.state.Load()
 
-	fetcher := v.applyReload(ctx, current, &cfgCopy, policies, newHashes, newFetcher)
+	// applyReload updates the attestation fetcher (newFetcher) in the snapshot.
+	// The policy fetcher (policyFetcher) is separate and used only by the poller.
+	v.applyReload(ctx, current, &cfgCopy, policies, newHashes, newFetcher)
+
+	// Keep the policy fetcher's transport cache in sync with registry changes.
+	registriesChanged := config.RegistriesChanged(
+		current.config.Registries, cfgCopy.Registries,
+	)
+
+	if policyFetcher != nil && registriesChanged {
+		reloaded := v.state.Load()
+		policyFetcher.SetTransportCache(
+			transportCacheFromFetcher(reloaded.fetcher),
+		)
+	}
 
 	// Start new poller if source is OCI (old poller already stopped above).
 	if cfgCopy.Policy.Source == config.PolicySourceOCI {
-		v.startPoller(ctx, &cfgCopy, fetcher, ociDigest)
+		v.startPoller(ctx, policyFetcher, &cfgCopy, ociDigest)
 	}
 
 	if cfgCopy.Enabled() {
@@ -546,14 +568,14 @@ func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 	return nil
 }
 
-func (v *Verifier) applyReload( //nolint:ireturn // returns attestation.Fetcher interface
+func (v *Verifier) applyReload(
 	ctx context.Context,
 	current *snapshot,
 	cfgCopy *config.Config,
 	policies map[string]*policy.Policy,
 	newHashes map[string]string,
 	newFetcher *attestation.OCIFetcher,
-) attestation.Fetcher {
+) {
 	policiesChanged := !policyHashesEqual(v.policyHashes, newHashes)
 	cacheInvalidated := cacheAffectingFieldsChanged(current.config, cfgCopy) || policiesChanged
 	newCache := reloadCache(current, cfgCopy, cacheInvalidated)
@@ -578,8 +600,6 @@ func (v *Verifier) applyReload( //nolint:ireturn // returns attestation.Fetcher 
 		auditLogger:     current.auditLogger,
 	})
 	v.policyHashes = newHashes
-
-	return fetcher
 }
 
 // stopPoller reads and nil-outs v.poller under v.mu, then stops the
@@ -745,44 +765,58 @@ func loadAndHashPolicies(
 	ctx context.Context,
 	cfg *config.Config,
 	fetcher attestation.Fetcher,
-) (policies map[string]*policy.Policy, hashes map[string]string, ociDigest string, err error) {
+) (
+	policies map[string]*policy.Policy,
+	hashes map[string]string,
+	policyFetcher *policy.OCIFetcher,
+	ociDigest string,
+	err error,
+) {
 	if cfg.Enabled() {
-		policies, ociDigest, err = loadPoliciesFromSource(ctx, cfg, fetcher)
+		policies, policyFetcher, ociDigest, err = loadPoliciesFromSource(ctx, cfg, fetcher)
 		if err != nil {
-			return nil, nil, "", err
+			return nil, nil, nil, "", err
 		}
 
 		err = validatePoliciesRuntime(policies)
 		if err != nil {
-			return nil, nil, "", err
+			return nil, nil, nil, "", err
 		}
 	}
 
 	hashes, err = hashPolicies(policies)
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, nil, "", err
 	}
 
-	return policies, hashes, ociDigest, nil
+	return policies, hashes, policyFetcher, ociDigest, nil
 }
 
 func loadPoliciesFromSource(
 	ctx context.Context, cfg *config.Config, fetcher attestation.Fetcher,
-) (policies map[string]*policy.Policy, ociDigest string, err error) {
+) (
+	policies map[string]*policy.Policy,
+	policyFetcher *policy.OCIFetcher,
+	ociDigest string,
+	err error,
+) {
 	if cfg.Policy.Source != config.PolicySourceOCI {
 		policies, err = policy.LoadAll(cfg.PolicyDir)
 		if err != nil {
-			return nil, "", fmt.Errorf("loading policies: %w", err)
+			return nil, nil, "", fmt.Errorf("loading policies: %w", err)
 		}
 
-		return policies, "", nil
+		return policies, nil, "", nil
 	}
 
-	policyFetcher := policy.NewOCIFetcher(transportCacheFromFetcher(fetcher))
+	policyFetcher, buildErr := buildPolicyFetcher(cfg, fetcher)
+	if buildErr != nil {
+		return nil, nil, "", fmt.Errorf("building policy fetcher: %w", buildErr)
+	}
 
 	result, err := policyFetcher.FetchFromOCI(ctx, cfg.Policy.OCIRef)
 	if err != nil {
-		return nil, "", fmt.Errorf("loading OCI policies: %w", err)
+		return nil, nil, "", fmt.Errorf("loading OCI policies: %w", err)
 	}
 
 	slog.Info("Loaded policies from OCI artifact",
@@ -791,7 +825,156 @@ func loadPoliciesFromSource(
 		"count", len(result.Policies),
 	)
 
-	return result.Policies, result.Digest, nil
+	return result.Policies, policyFetcher, result.Digest, nil
+}
+
+func buildPolicyFetcher(
+	cfg *config.Config, fetcher attestation.Fetcher,
+) (*policy.OCIFetcher, error) {
+	fetcherTransportCache := transportCacheFromFetcher(fetcher)
+
+	if !cfg.Policy.SignatureVerificationRequired() {
+		return policy.NewOCIFetcher(fetcherTransportCache), nil
+	}
+
+	sigCfg := &policy.SignatureConfig{
+		Issuers:     cfg.Policy.Issuers,
+		SANPatterns: cfg.Policy.SANPatterns,
+		Keys:        cfg.Policy.Keys,
+	}
+
+	fetchTrustedRoot := buildTrustedRootFetchFunc(cfg)
+
+	verifyFn, err := policy.NewSignatureVerifyFunc(
+		sigCfg, fetchTrustedRoot, remote.Image, remote.Referrers,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"creating policy signature verifier: %w", err,
+		)
+	}
+
+	return policy.NewOCIFetcherWithSignatureVerification(
+		fetcherTransportCache, verifyFn,
+	), nil
+}
+
+// trustedRootResult holds the result of a trusted root fetch for use with
+// the goroutine + select context-cancellation pattern.
+type trustedRootResult struct {
+	root *root.TrustedRoot
+	err  error
+}
+
+func buildTrustedRootFetchFunc(
+	cfg *config.Config,
+) policy.FetchTrustedRootFunc {
+	if len(cfg.Policy.Issuers) == 0 {
+		return nil
+	}
+
+	return func(ctx context.Context) (*root.TrustedRoot, error) {
+		err := ctx.Err()
+		if err != nil {
+			return nil, fmt.Errorf(
+				"context canceled before fetching trusted root: %w", err,
+			)
+		}
+
+		resultCh := make(chan trustedRootResult, 1)
+
+		go func() {
+			r, e := fetchTrustedRootSync(cfg)
+			resultCh <- trustedRootResult{root: r, err: e}
+		}()
+
+		select {
+		case <-ctx.Done():
+			slog.WarnContext(ctx,
+				"Context canceled while policy trusted root fetch "+
+					"is in progress; background goroutine will "+
+					"complete when the HTTP request finishes")
+
+			return nil, fmt.Errorf(
+				"context canceled during policy trusted root fetch: %w", ctx.Err(),
+			)
+		case res := <-resultCh:
+			return res.root, res.err
+		}
+	}
+}
+
+func fetchTrustedRootSync(cfg *config.Config) (*root.TrustedRoot, error) {
+	effectiveRoots := cfg.Sigstore.EffectiveRoots()
+
+	if len(effectiveRoots) == 0 {
+		return fetchPublicTrustedRoot()
+	}
+
+	if len(effectiveRoots) == 1 {
+		r := &effectiveRoots[0]
+		if r.TUFMirror == "" {
+			return fetchPublicTrustedRoot()
+		}
+
+		return fetchTrustedRootFromMirror(r.TUFMirror, r.TUFRoot)
+	}
+
+	return fetchTrustedRootFromFirstRoot(effectiveRoots)
+}
+
+func fetchPublicTrustedRoot() (*root.TrustedRoot, error) {
+	trustedRoot, err := root.FetchTrustedRoot()
+	if err != nil {
+		return nil, fmt.Errorf("fetching public trusted root: %w", err)
+	}
+
+	return trustedRoot, nil
+}
+
+func fetchTrustedRootFromMirror(
+	mirror, tufRoot string,
+) (*root.TrustedRoot, error) {
+	tufRootBytes, err := readTUFRootBytes(tufRoot)
+	if err != nil {
+		return nil, err
+	}
+
+	opts := tuf.DefaultOptions().
+		WithRepositoryBaseURL(mirror).
+		WithDisableLocalCache()
+
+	if len(tufRootBytes) > 0 {
+		opts = opts.WithRoot(tufRootBytes)
+	}
+
+	trustedRoot, err := root.FetchTrustedRootWithOptions(opts)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"fetching trusted root with custom mirror: %w", err,
+		)
+	}
+
+	return trustedRoot, nil
+}
+
+// fetchTrustedRootFromFirstRoot returns the trusted root from the first
+// configured root with a TUF mirror. Policy signatures are expected to come
+// from a single Sigstore instance, unlike image attestations which may span
+// multiple roots (handled by TrustedMaterialCollection in the attestation path).
+func fetchTrustedRootFromFirstRoot(
+	roots []config.SigstoreRootSource,
+) (*root.TrustedRoot, error) {
+	for idx := range roots {
+		r := &roots[idx]
+		if r.TUFMirror == "" {
+			continue
+		}
+
+		return fetchTrustedRootFromMirror(r.TUFMirror, r.TUFRoot)
+	}
+
+	return fetchPublicTrustedRoot()
 }
 
 func transportCacheFromFetcher(fetcher attestation.Fetcher) *registry.TransportCache {
@@ -804,11 +987,15 @@ func transportCacheFromFetcher(fetcher attestation.Fetcher) *registry.TransportC
 
 func (v *Verifier) startPoller(
 	ctx context.Context,
+	policyFetcher *policy.OCIFetcher,
 	cfg *config.Config,
-	fetcher attestation.Fetcher,
 	ociDigest string,
 ) {
-	policyFetcher := policy.NewOCIFetcher(transportCacheFromFetcher(fetcher))
+	if policyFetcher == nil {
+		slog.Warn("No policy fetcher available; not starting poller")
+
+		return
+	}
 
 	pollerInstance := policy.NewPoller(
 		policyFetcher,
@@ -1048,7 +1235,10 @@ func cacheTimingsChanged(prev, next *config.Config) bool {
 
 func policySourceChanged(prev, next *config.Config) bool {
 	return prev.Policy.Source != next.Policy.Source ||
-		prev.Policy.OCIRef != next.Policy.OCIRef
+		prev.Policy.OCIRef != next.Policy.OCIRef ||
+		!slices.Equal(prev.Policy.Issuers, next.Policy.Issuers) ||
+		!slices.Equal(prev.Policy.SANPatterns, next.Policy.SANPatterns) ||
+		!slices.Equal(prev.Policy.Keys, next.Policy.Keys)
 }
 
 func (v *Verifier) verifyOnce(

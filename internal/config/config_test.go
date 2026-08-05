@@ -42,6 +42,9 @@ const (
 	testRegistryGHCR   = "ghcr.io"
 	testMirrorInternal = "mirror.internal"
 	testOCIRef         = "ghcr.io/myorg/policies:v1"
+	testIssuerGoogle   = "https://accounts.google.com"
+	testKeyPath        = "/etc/keys/policy.pub"
+	testSANPattern     = "*@example.com"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -2226,6 +2229,163 @@ func TestConfigValidatePolicyConfig(t *testing.T) {
 	}
 }
 
+func TestConfigValidatePolicySignatureFields(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		modify      func(*config.Config)
+		wantErr     bool
+		expectedErr error
+	}{
+		{
+			name: "issuers is valid",
+			modify: func(c *config.Config) {
+				c.Policy.Source = config.PolicySourceOCI
+				c.Policy.OCIRef = testOCIRef
+				c.Policy.Issuers = []string{testIssuerGoogle}
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name: "keys is valid",
+			modify: func(c *config.Config) {
+				c.Policy.Source = config.PolicySourceOCI
+				c.Policy.OCIRef = testOCIRef
+				c.Policy.Keys = []string{testKeyPath}
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name: "san_patterns without issuers rejected",
+			modify: func(c *config.Config) {
+				c.Policy.Source = config.PolicySourceOCI
+				c.Policy.OCIRef = testOCIRef
+				c.Policy.SANPatterns = []string{testSANPattern}
+			},
+			wantErr:     true,
+			expectedErr: config.ErrPolicySANPatternsWithoutIssuers,
+		},
+		{
+			name: "san_patterns with keys only rejected",
+			modify: func(c *config.Config) {
+				c.Policy.Source = config.PolicySourceOCI
+				c.Policy.OCIRef = testOCIRef
+				c.Policy.Keys = []string{testKeyPath}
+				c.Policy.SANPatterns = []string{testSANPattern}
+			},
+			wantErr:     true,
+			expectedErr: config.ErrPolicySANPatternsWithoutIssuers,
+		},
+		{
+			name: "keys with relative path rejected",
+			modify: func(c *config.Config) {
+				c.Policy.Source = config.PolicySourceOCI
+				c.Policy.OCIRef = testOCIRef
+				c.Policy.Keys = []string{"relative/path.pub"}
+			},
+			wantErr:     true,
+			expectedErr: config.ErrPolicySignatureKeyNotAbsolute,
+		},
+		{
+			name: "duplicate key path rejected",
+			modify: func(c *config.Config) {
+				c.Policy.Source = config.PolicySourceOCI
+				c.Policy.OCIRef = testOCIRef
+				c.Policy.Keys = []string{testKeyPath, testKeyPath}
+			},
+			wantErr:     true,
+			expectedErr: config.ErrPolicySignatureKeyDuplicate,
+		},
+		{
+			name: "issuers with source=local warns but no error",
+			modify: func(c *config.Config) {
+				c.Policy.Source = config.PolicySourceLocal
+				c.Policy.Issuers = []string{testIssuerGoogle}
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name: "san_patterns with issuers is valid",
+			modify: func(c *config.Config) {
+				c.Policy.Source = config.PolicySourceOCI
+				c.Policy.OCIRef = testOCIRef
+				c.Policy.Issuers = []string{testIssuerGoogle}
+				c.Policy.SANPatterns = []string{testSANPattern}
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name: "issuers and keys together rejected",
+			modify: func(c *config.Config) {
+				c.Policy.Source = config.PolicySourceOCI
+				c.Policy.OCIRef = testOCIRef
+				c.Policy.Issuers = []string{testIssuerGoogle}
+				c.Policy.Keys = []string{testKeyPath}
+			},
+			wantErr:     true,
+			expectedErr: config.ErrPolicyIssuersAndKeysMutuallyExclusive,
+		},
+		{
+			name: "empty issuer string rejected",
+			modify: func(c *config.Config) {
+				c.Policy.Source = config.PolicySourceOCI
+				c.Policy.OCIRef = testOCIRef
+				c.Policy.Issuers = []string{""}
+			},
+			wantErr:     true,
+			expectedErr: config.ErrPolicyIssuerEmpty,
+		},
+		{
+			name: "empty san_pattern string rejected",
+			modify: func(c *config.Config) {
+				c.Policy.Source = config.PolicySourceOCI
+				c.Policy.OCIRef = testOCIRef
+				c.Policy.Issuers = []string{testIssuerGoogle}
+				c.Policy.SANPatterns = []string{""}
+			},
+			wantErr:     true,
+			expectedErr: config.ErrPolicySANPatternEmpty,
+		},
+		{
+			name: "empty key path rejected",
+			modify: func(c *config.Config) {
+				c.Policy.Source = config.PolicySourceOCI
+				c.Policy.OCIRef = testOCIRef
+				c.Policy.Keys = []string{""}
+			},
+			wantErr:     true,
+			expectedErr: config.ErrPolicyKeyEmpty,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := config.DefaultConfig()
+			test.modify(cfg)
+
+			err := cfg.Validate()
+			if test.wantErr && err == nil {
+				t.Error("expected error, got nil")
+			}
+
+			if !test.wantErr && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+
+			if test.expectedErr != nil && !errors.Is(err, test.expectedErr) {
+				t.Errorf("expected error %v, got %v", test.expectedErr, err)
+			}
+		})
+	}
+}
+
 func TestConfigLoadFromStringPolicySection(t *testing.T) {
 	t.Parallel()
 
@@ -2675,6 +2835,49 @@ func TestValidateRuntimeSigstoreRootsTUFRoot(t *testing.T) {
 		err := cfg.ValidateRuntime()
 		if !errors.Is(err, config.ErrTUFRootNotFound) {
 			t.Errorf("expected ErrTUFRootNotFound, got %v", err)
+		}
+	})
+}
+
+func TestConfigLoadFromStringPolicySignature(t *testing.T) {
+	t.Parallel()
+
+	t.Run("issuers from TOML", func(t *testing.T) {
+		t.Parallel()
+
+		cfg, err := config.LoadFromString(`
+[policy]
+source = "oci"
+oci_ref = "ghcr.io/myorg/policies:v1"
+issuers = ["https://accounts.google.com"]
+san_patterns = ["*@example.com"]
+`)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, true, cfg.Policy.SignatureVerificationRequired())
+
+		if len(cfg.Policy.Issuers) != 1 || cfg.Policy.Issuers[0] != testIssuerGoogle {
+			t.Errorf("unexpected issuers: %v", cfg.Policy.Issuers)
+		}
+
+		if len(cfg.Policy.SANPatterns) != 1 || cfg.Policy.SANPatterns[0] != testSANPattern {
+			t.Errorf("unexpected san_patterns: %v", cfg.Policy.SANPatterns)
+		}
+	})
+
+	t.Run("keys from TOML", func(t *testing.T) {
+		t.Parallel()
+
+		cfg, err := config.LoadFromString(`
+[policy]
+source = "oci"
+oci_ref = "ghcr.io/myorg/policies:v1"
+keys = ["/etc/keys/policy.pub"]
+`)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, true, cfg.Policy.SignatureVerificationRequired())
+
+		if len(cfg.Policy.Keys) != 1 || cfg.Policy.Keys[0] != testKeyPath {
+			t.Errorf("unexpected keys: %v", cfg.Policy.Keys)
 		}
 	})
 }

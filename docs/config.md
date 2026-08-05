@@ -286,6 +286,39 @@ poll_interval = "5m"
 | `policy.oci_ref`       | (empty) | OCI image reference containing policy layers (required when source is `oci`). Using a digest reference is recommended over a mutable tag for integrity. |
 | `policy.poll_interval` | `5m`    | How often to poll the OCI registry for policy updates (minimum 30s)                                                                                     |
 
+### Policy Signature Verification
+
+OCI-distributed policies can be signed with Sigstore to ensure only trusted
+policy artifacts are loaded. When trust material (`issuers` or `keys`) is
+configured, the plugin verifies that the policy artifact has a valid Sigstore
+signature before extracting policies. If verification fails, the artifact is
+rejected and the plugin retains the last known-good policy (or fails to start
+if no policy was loaded yet).
+
+```toml
+[policy]
+source = "oci"
+oci_ref = "ghcr.io/myorg/supply-chain-policies:v1"
+issuers = ["https://accounts.google.com"]
+san_patterns = ["policy-signer@myorg.iam.gserviceaccount.com"]
+# keys = ["/etc/keys/policy-signing.pub"]  # cannot be used together with issuers
+```
+
+| Field                 | Default | Description                                                                                  |
+| --------------------- | ------- | -------------------------------------------------------------------------------------------- |
+| `policy.issuers`      | (empty) | Trusted OIDC issuers for keyless signature verification                                      |
+| `policy.san_patterns` | (empty) | Subject Alternative Name patterns to match against signing certificates (requires `issuers`) |
+| `policy.keys`         | (empty) | Absolute paths to PEM-encoded public key files for key-based signature verification          |
+
+The `issuers` and `keys` fields are mutually exclusive: set `issuers` for
+keyless (OIDC-based) verification or `keys` for key-based verification, but not
+both. The `san_patterns` field requires `issuers` to be set. Key paths must be
+absolute.
+
+When trust material is configured but the policy source is not `oci`, a warning
+is logged but no error is returned (signature verification only applies to OCI
+policies).
+
 When `source = "oci"` is set, the `policy_dir` field is ignored for policy
 loading. The plugin fetches the OCI image at startup and polls for changes at
 the configured interval. Each layer in the OCI image is treated as a policy

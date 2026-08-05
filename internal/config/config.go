@@ -187,6 +187,38 @@ var (
 	// ErrPollIntervalTooShort indicates the poll interval is below the minimum.
 	ErrPollIntervalTooShort = errors.New("policy.poll_interval must be at least 30s")
 
+	// ErrPolicyIssuersAndKeysMutuallyExclusive indicates both issuers and keys
+	// are configured, which is not supported by sigstore-go.
+	ErrPolicyIssuersAndKeysMutuallyExclusive = errors.New(
+		"policy.issuers and policy.keys are mutually exclusive",
+	)
+
+	// ErrPolicySANPatternsWithoutIssuers indicates san_patterns is set
+	// without issuers.
+	ErrPolicySANPatternsWithoutIssuers = errors.New(
+		"policy.san_patterns requires policy.issuers",
+	)
+
+	// ErrPolicyIssuerEmpty indicates an empty string in the issuers list.
+	ErrPolicyIssuerEmpty = errors.New("policy.issuers entries must not be empty")
+
+	// ErrPolicySANPatternEmpty indicates an empty string in the san_patterns list.
+	ErrPolicySANPatternEmpty = errors.New("policy.san_patterns entries must not be empty")
+
+	// ErrPolicySignatureKeyNotAbsolute indicates a policy key path is not absolute.
+	ErrPolicySignatureKeyNotAbsolute = errors.New(
+		"policy.keys path must be absolute",
+	)
+
+	// ErrPolicySignatureKeyDuplicate indicates the same key path appears
+	// more than once.
+	ErrPolicySignatureKeyDuplicate = errors.New(
+		"duplicate policy.keys path",
+	)
+
+	// ErrPolicyKeyEmpty indicates an empty string in the keys list.
+	ErrPolicyKeyEmpty = errors.New("policy.keys entries must not be empty")
+
 	// ErrVerificationTimeoutNotPositive indicates a non-positive verification timeout.
 	ErrVerificationTimeoutNotPositive = errors.New("verification_timeout must be positive")
 
@@ -201,6 +233,9 @@ var (
 
 	// ErrSymlinkNotAllowed indicates a path is a symbolic link.
 	ErrSymlinkNotAllowed = errors.New("symbolic links are not allowed")
+
+	// ErrPolicyKeyNotRegularFile indicates a policy key path is not a regular file.
+	ErrPolicyKeyNotRegularFile = errors.New("policy.keys path is not a regular file")
 
 	// ErrConfigFileTooLarge indicates the config file exceeds the size limit.
 	ErrConfigFileTooLarge = errors.New("config file exceeds maximum size")
@@ -351,6 +386,21 @@ type PolicyConfig struct {
 	// PollInterval is how often the plugin checks for policy updates in the
 	// remote registry. Minimum 30s, default 5m.
 	PollInterval Duration `toml:"poll_interval"`
+	// Issuers is a list of trusted OIDC issuers for keyless signature
+	// verification of OCI policy artifacts.
+	Issuers []string `toml:"issuers"`
+	// SANPatterns is a list of Subject Alternative Name patterns to match
+	// against the signing certificate. Requires Issuers to be set.
+	SANPatterns []string `toml:"san_patterns"`
+	// Keys is a list of absolute paths to PEM-encoded public key files for
+	// signature verification of OCI policy artifacts.
+	Keys []string `toml:"keys"`
+}
+
+// SignatureVerificationRequired returns true when trust material (issuers or
+// keys) is configured, meaning OCI policy artifacts must be signed.
+func (p *PolicyConfig) SignatureVerificationRequired() bool {
+	return len(p.Issuers) > 0 || len(p.Keys) > 0
 }
 
 // Config represents the operational configuration for the NRI supply chain plugin.
@@ -433,6 +483,9 @@ func DefaultConfig() *Config {
 			Source:       PolicySourceLocal,
 			OCIRef:       "",
 			PollInterval: Duration{Duration: defaultPollInterval},
+			Issuers:      nil,
+			SANPatterns:  nil,
+			Keys:         nil,
 		},
 	}
 }
@@ -513,23 +566,8 @@ func (c *Config) ValidateRuntime() error {
 		errs = append(errs, c.validateTUFRootRuntime()...)
 	}
 
-	for idx := range c.Registries {
-		reg := &c.Registries[idx]
-		if reg.CACert != "" {
-			caInfo, statErr := os.Lstat(reg.CACert)
-			if statErr != nil {
-				errs = append(errs, fmt.Errorf(
-					"%w: registries[%d] ca_cert %q: %w",
-					ErrRegistryCACertNotFound, idx, reg.CACert, statErr,
-				))
-			} else if caInfo.Mode()&os.ModeSymlink != 0 {
-				errs = append(errs, fmt.Errorf(
-					"%w: registries[%d] ca_cert %q",
-					ErrSymlinkNotAllowed, idx, reg.CACert,
-				))
-			}
-		}
-	}
+	errs = append(errs, c.validatePolicyKeysRuntime()...)
+	errs = append(errs, c.validateRegistryCACertsRuntime()...)
 
 	return errors.Join(errs...)
 }
@@ -623,6 +661,59 @@ func SigstoreConfigChanged(prev, next *SigstoreConfig) bool {
 	}
 
 	return prev.ShouldIncludePublicRoot() != next.ShouldIncludePublicRoot()
+}
+
+func (c *Config) validatePolicyKeysRuntime() []error {
+	if !c.Policy.SignatureVerificationRequired() {
+		return nil
+	}
+
+	var errs []error
+
+	for _, keyPath := range c.Policy.Keys {
+		keyInfo, statErr := os.Lstat(keyPath)
+
+		switch {
+		case statErr != nil:
+			errs = append(errs, fmt.Errorf(
+				"policy.keys file %q: %w", keyPath, statErr,
+			))
+		case keyInfo.Mode()&os.ModeSymlink != 0:
+			errs = append(errs, fmt.Errorf(
+				"%w: policy.keys %q", ErrSymlinkNotAllowed, keyPath,
+			))
+		case !keyInfo.Mode().IsRegular():
+			errs = append(errs, fmt.Errorf(
+				"%w: %q", ErrPolicyKeyNotRegularFile, keyPath,
+			))
+		}
+	}
+
+	return errs
+}
+
+func (c *Config) validateRegistryCACertsRuntime() []error {
+	var errs []error
+
+	for idx := range c.Registries {
+		reg := &c.Registries[idx]
+		if reg.CACert != "" {
+			caInfo, statErr := os.Lstat(reg.CACert)
+			if statErr != nil {
+				errs = append(errs, fmt.Errorf(
+					"%w: registries[%d] ca_cert %q: %w",
+					ErrRegistryCACertNotFound, idx, reg.CACert, statErr,
+				))
+			} else if caInfo.Mode()&os.ModeSymlink != 0 {
+				errs = append(errs, fmt.Errorf(
+					"%w: registries[%d] ca_cert %q",
+					ErrSymlinkNotAllowed, idx, reg.CACert,
+				))
+			}
+		}
+	}
+
+	return errs
 }
 
 func (c *Config) validateModeAndLogLevel() []error {
@@ -1088,15 +1179,17 @@ func validateTUFMirrorURL(mirror string) error {
 }
 
 func (c *Config) validatePolicyConfig() error {
+	errs := c.validatePolicySignatureFields()
+
 	switch c.Policy.Source {
 	case PolicySourceLocal, "":
-		return nil
+		return errors.Join(errs...)
 	case PolicySourceOCI:
 	default:
-		return fmt.Errorf("%w: got %q", ErrInvalidPolicySource, c.Policy.Source)
-	}
+		errs = append(errs, fmt.Errorf("%w: got %q", ErrInvalidPolicySource, c.Policy.Source))
 
-	var errs []error
+		return errors.Join(errs...)
+	}
 
 	if c.Policy.OCIRef == "" {
 		errs = append(errs, ErrPolicyOCIRefRequired)
@@ -1116,6 +1209,100 @@ func (c *Config) validatePolicyConfig() error {
 	}
 
 	return errors.Join(errs...)
+}
+
+// validatePolicySignatureFields checks structural constraints on signature
+// fields, catching misconfigurations early.
+func (c *Config) validatePolicySignatureFields() []error {
+	var errs []error
+
+	hasIssuers := len(c.Policy.Issuers) > 0
+	hasKeys := len(c.Policy.Keys) > 0
+
+	if hasIssuers && hasKeys {
+		errs = append(errs, ErrPolicyIssuersAndKeysMutuallyExclusive)
+	}
+
+	if len(c.Policy.SANPatterns) > 0 && !hasIssuers {
+		errs = append(errs, ErrPolicySANPatternsWithoutIssuers)
+	}
+
+	errs = append(errs, validatePolicySignatureEntries(&c.Policy)...)
+	errs = append(errs, validatePolicyKeyPaths(c.Policy.Keys)...)
+	warnSignatureSourceMismatch(c, len(errs) == 0)
+	warnIssuersWithoutSANPatterns(c, len(errs) == 0)
+
+	return errs
+}
+
+func validatePolicySignatureEntries(pol *PolicyConfig) []error {
+	var errs []error
+
+	if slices.Contains(pol.Issuers, "") {
+		errs = append(errs, ErrPolicyIssuerEmpty)
+	}
+
+	if slices.Contains(pol.SANPatterns, "") {
+		errs = append(errs, ErrPolicySANPatternEmpty)
+	}
+
+	if slices.Contains(pol.Keys, "") {
+		errs = append(errs, ErrPolicyKeyEmpty)
+	}
+
+	return errs
+}
+
+func validatePolicyKeyPaths(keys []string) []error {
+	var errs []error
+
+	seen := make(map[string]struct{}, len(keys))
+
+	for _, keyPath := range keys {
+		if !filepath.IsAbs(keyPath) {
+			errs = append(errs, fmt.Errorf(
+				"%w: %q", ErrPolicySignatureKeyNotAbsolute, keyPath,
+			))
+		}
+
+		if _, dup := seen[keyPath]; dup {
+			errs = append(errs, fmt.Errorf(
+				"%w: %q", ErrPolicySignatureKeyDuplicate, keyPath,
+			))
+		}
+
+		seen[keyPath] = struct{}{}
+	}
+
+	return errs
+}
+
+func warnSignatureSourceMismatch(cfg *Config, valid bool) {
+	if !valid || !cfg.Policy.SignatureVerificationRequired() {
+		return
+	}
+
+	if cfg.Policy.Source != PolicySourceOCI {
+		slog.Warn(
+			"signature trust material (issuers/keys) is configured but "+
+				"policy.source is not \"oci\"; "+
+				"signature verification only applies to OCI policies",
+			"source", cfg.Policy.Source,
+		)
+	}
+}
+
+func warnIssuersWithoutSANPatterns(cfg *Config, valid bool) {
+	if !valid || !cfg.Policy.SignatureVerificationRequired() {
+		return
+	}
+
+	if len(cfg.Policy.Issuers) > 0 && len(cfg.Policy.SANPatterns) == 0 {
+		slog.Warn(
+			"policy.issuers is set without policy.san_patterns; " +
+				"any identity from the configured issuers will be accepted",
+		)
+	}
 }
 
 // LoadFromFile reads and parses a TOML config file. The file size is limited
