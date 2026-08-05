@@ -97,24 +97,30 @@ type Cache struct {
 
 // New creates a new verification result cache with the given TTL.
 func New(ttl time.Duration) *Cache {
-	return NewWithGauge(ttl, nil, nil)
+	return NewWithGauge(ttl, 0, nil, nil)
 }
 
 // NewWithGauge creates a cache that updates the given Prometheus gauge
-// on entry count changes and tracks evictions.
+// on entry count changes and tracks evictions. If maxSize is <= 0,
+// DefaultMaxSize is used as a fallback.
 func NewWithGauge(
-	ttl time.Duration,
+	ttl time.Duration, maxSize int,
 	gauge prometheus.Gauge, evictions *prometheus.CounterVec,
 ) *Cache {
 	if gauge != nil {
 		gauge.Set(0)
 	}
 
+	effectiveMaxSize := maxSize
+	if effectiveMaxSize <= 0 {
+		effectiveMaxSize = DefaultMaxSize
+	}
+
 	c := &Cache{ //nolint:varnamelen // c is the standard receiver name for Cache
 		mu:        sync.RWMutex{},
 		entries:   make(map[key]entry),
 		ttl:       ttl,
-		maxSize:   DefaultMaxSize,
+		maxSize:   effectiveMaxSize,
 		gauge:     gauge,
 		evictions: evictions,
 		expHeap:   nil,

@@ -155,7 +155,7 @@ func newSnapshot(
 		policies:     policies,
 		policyHashes: hashes,
 		cache: cache.NewWithGauge(
-			cfg.CacheTTL.Duration,
+			cfg.CacheTTL.Duration, cfg.CacheMaxEntries,
 			met.CacheEntriesTotal, met.CacheEvictionsTotal,
 		),
 		metrics: met,
@@ -667,7 +667,7 @@ func reloadCache(prev *snapshot, cfg *config.Config, invalidated bool) *cache.Ca
 	prev.cache.Stop()
 
 	return cache.NewWithGauge(
-		cfg.CacheTTL.Duration,
+		cfg.CacheTTL.Duration, cfg.CacheMaxEntries,
 		prev.metrics.CacheEntriesTotal, prev.metrics.CacheEvictionsTotal,
 	)
 }
@@ -749,6 +749,7 @@ func (v *Verifier) reloadFetcher( //nolint:ireturn // returns prev.fetcher which
 
 	if ociFetcher, ok := prev.fetcher.(*attestation.OCIFetcher); ok {
 		ociFetcher.SetRateLimit(cfg.FetchRateLimit)
+		ociFetcher.SetMaxAttestationSize(cfg.MaxAttestationSize)
 
 		if config.RegistriesChanged(prev.config.Registries, cfg.Registries) {
 			ociFetcher.SetTransportCache(registry.NewTransportCacheOrNil(cfg.Registries))
@@ -927,7 +928,7 @@ func (v *Verifier) applyPolicyUpdate(
 		policies:     policies,
 		policyHashes: newHashes,
 		cache: cache.NewWithGauge(
-			state.config.CacheTTL.Duration,
+			state.config.CacheTTL.Duration, state.config.CacheMaxEntries,
 			state.metrics.CacheEntriesTotal,
 			state.metrics.CacheEvictionsTotal,
 		),
@@ -956,7 +957,8 @@ func cacheAffectingFieldsChanged(prev, next *config.Config) bool {
 		prev.FetchFailurePolicy != next.FetchFailurePolicy ||
 		config.SigstoreConfigChanged(&prev.Sigstore, &next.Sigstore) ||
 		config.RegistriesChanged(prev.Registries, next.Registries) ||
-		policySourceChanged(prev, next)
+		policySourceChanged(prev, next) ||
+		prev.CacheMaxEntries != next.CacheMaxEntries
 }
 
 func cacheTimingsChanged(prev, next *config.Config) bool {

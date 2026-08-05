@@ -33,6 +33,7 @@ import (
 	"golang.org/x/sync/singleflight"
 	"golang.org/x/time/rate"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 )
 
@@ -180,7 +181,7 @@ func ExportTrustedRootMaxStaleness() time.Duration { return trustedRootMaxStalen
 
 // NewTestOCIFetcher creates a fetcher with injectable dependencies for testing.
 func NewTestOCIFetcher(verifier BundleVerifyFunc, imageFetcher ImageFetchFunc) *OCIFetcher {
-	return &OCIFetcher{
+	fetcher := &OCIFetcher{
 		verifyBundle:       verifier,
 		fetchImage:         imageFetcher,
 		referrers:          nil,
@@ -188,16 +189,20 @@ func NewTestOCIFetcher(verifier BundleVerifyFunc, imageFetcher ImageFetchFunc) *
 		rootCaches:         nil,
 		limiter:            atomic.Pointer[rate.Limiter]{},
 		transportCache:     atomic.Pointer[registry.TransportCache]{},
+		maxAttestationSize: atomic.Int64{},
 		onMirrorFallback:   nil,
 		onMirrorFallbackMu: sync.RWMutex{},
 	}
+	fetcher.maxAttestationSize.Store(config.DefaultMaxAttestationSize)
+
+	return fetcher
 }
 
 // NewTestOCIFetcherFull creates a fetcher with all injectable dependencies for testing.
 func NewTestOCIFetcherFull(
 	verifier BundleVerifyFunc, imageFetcher ImageFetchFunc, referrersFn ReferrersFunc,
 ) *OCIFetcher {
-	return &OCIFetcher{
+	fetcher := &OCIFetcher{
 		verifyBundle:       verifier,
 		fetchImage:         imageFetcher,
 		referrers:          referrersFn,
@@ -205,9 +210,13 @@ func NewTestOCIFetcherFull(
 		rootCaches:         nil,
 		limiter:            atomic.Pointer[rate.Limiter]{},
 		transportCache:     atomic.Pointer[registry.TransportCache]{},
+		maxAttestationSize: atomic.Int64{},
 		onMirrorFallback:   nil,
 		onMirrorFallbackMu: sync.RWMutex{},
 	}
+	fetcher.maxAttestationSize.Store(config.DefaultMaxAttestationSize)
+
+	return fetcher
 }
 
 // ExportCosignAttestationTag exposes cosignAttestationTag for external tests.
@@ -300,8 +309,8 @@ func ExportIsNotationCandidate(artifactType string) bool {
 	return isNotationCandidate(artifactType)
 }
 
-// ExportMaxAttestationSize returns the maxAttestationSize constant for external tests.
-const ExportMaxAttestationSize = maxAttestationSize
+// ExportMaxAttestationSize returns the default max attestation size for external tests.
+const ExportMaxAttestationSize = config.DefaultMaxAttestationSize
 
 // FetchNotationSignature exposes fetchNotationSignature for external tests.
 func (f *OCIFetcher) FetchNotationSignature(
@@ -315,10 +324,10 @@ func (f *OCIFetcher) FetchNotationSignature(
 }
 
 // ExportReadNotationEnvelope exposes readNotationEnvelope for external tests.
-func ExportReadNotationEnvelope(
+func (f *OCIFetcher) ExportReadNotationEnvelope(
 	ctx context.Context, img v1.Image, descDigest string,
 ) ([]byte, bool) {
-	return readNotationEnvelope(ctx, img, descDigest)
+	return f.readNotationEnvelope(ctx, img, descDigest)
 }
 
 // CollectNotationSignatures exposes collectNotationSignatures for external tests.

@@ -83,6 +83,16 @@ const (
 
 	defaultPollInterval = 5 * time.Minute
 	minPollInterval     = 30 * time.Second
+
+	minAttestationSize = 1 << 20   // 1 MiB
+	maxAttestationSize = 100 << 20 // 100 MiB
+	// DefaultMaxAttestationSize is the default maximum attestation bundle
+	// size in bytes. Exported so the attestation package can share the same
+	// value without duplicating the constant.
+	DefaultMaxAttestationSize = 10 << 20 // 10 MiB
+	minCacheMaxEntries        = 100
+	maxCacheMaxEntries        = 1_000_000
+	defaultCacheMaxEntries    = 10_000
 )
 
 // Duration wraps time.Duration to support TOML unmarshalling from strings.
@@ -286,6 +296,12 @@ type Config struct {
 	Registries []Registry `toml:"registries"`
 	// Policy configures the policy source: local filesystem (default) or OCI registry.
 	Policy PolicyConfig `toml:"policy"`
+	// MaxAttestationSize is the maximum allowed size in bytes for a single
+	// attestation bundle. Defaults to 10 MiB, minimum 1 MiB, maximum 100 MiB.
+	MaxAttestationSize int64 `toml:"max_attestation_size"`
+	// CacheMaxEntries is the maximum number of entries in the verification
+	// result cache. Defaults to 10,000, minimum 100, maximum 1,000,000.
+	CacheMaxEntries int `toml:"cache_max_entries"`
 }
 
 // DefaultConfig returns the default configuration.
@@ -319,6 +335,8 @@ func DefaultConfig() *Config {
 			SANPatterns:  nil,
 			Keys:         nil,
 		},
+		MaxAttestationSize: DefaultMaxAttestationSize,
+		CacheMaxEntries:    defaultCacheMaxEntries,
 	}
 }
 
@@ -900,7 +918,39 @@ func (c *Config) validateResilienceFields() error {
 		))
 	}
 
+	errs = append(errs, c.validateLimitsFields()...)
+
 	return errors.Join(errs...)
+}
+
+func (c *Config) validateLimitsFields() []error {
+	var errs []error
+
+	if c.MaxAttestationSize < minAttestationSize {
+		errs = append(errs, fmt.Errorf(
+			"%w: got %d", ErrMaxAttestationSizeTooSmall, c.MaxAttestationSize,
+		))
+	}
+
+	if c.MaxAttestationSize > maxAttestationSize {
+		errs = append(errs, fmt.Errorf(
+			"%w: got %d", ErrMaxAttestationSizeTooLarge, c.MaxAttestationSize,
+		))
+	}
+
+	if c.CacheMaxEntries < minCacheMaxEntries {
+		errs = append(errs, fmt.Errorf(
+			"%w: got %d", ErrCacheMaxEntriesTooSmall, c.CacheMaxEntries,
+		))
+	}
+
+	if c.CacheMaxEntries > maxCacheMaxEntries {
+		errs = append(errs, fmt.Errorf(
+			"%w: got %d", ErrCacheMaxEntriesTooLarge, c.CacheMaxEntries,
+		))
+	}
+
+	return errs
 }
 
 func (c *Config) validateSigstoreConfig() error {

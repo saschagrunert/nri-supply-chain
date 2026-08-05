@@ -1737,7 +1737,8 @@ func TestReadNotationEnvelope(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			envelope, ok := attestation.ExportReadNotationEnvelope(
+			fetcher := attestation.NewOCIFetcher()
+			envelope, ok := fetcher.ExportReadNotationEnvelope(
 				context.Background(), tt.image, "sha256:test",
 			)
 
@@ -1749,6 +1750,57 @@ func TestReadNotationEnvelope(t *testing.T) {
 				t.Errorf("expected payload %q, got %q", tt.wantPayload, string(envelope))
 			}
 		})
+	}
+}
+
+func TestSetMaxAttestationSizeEnforced(t *testing.T) {
+	t.Parallel()
+
+	const customLimit = 256
+
+	payload := make([]byte, customLimit+1)
+	image := fakeImageWithPayload(payload)
+
+	fetcher := attestation.NewOCIFetcher()
+	fetcher.SetMaxAttestationSize(customLimit)
+
+	_, ok := fetcher.ExportReadNotationEnvelope(
+		context.Background(), image, "sha256:test",
+	)
+
+	if ok {
+		t.Fatal("expected oversized attestation to be rejected with custom limit")
+	}
+}
+
+func TestSetMaxAttestationSizeIgnoresZeroAndNegative(t *testing.T) {
+	t.Parallel()
+
+	fetcher := attestation.NewOCIFetcher()
+
+	fetcher.SetMaxAttestationSize(500)
+
+	fetcher.SetMaxAttestationSize(0)
+
+	payload := make([]byte, 501)
+	image := fakeImageWithPayload(payload)
+
+	_, ok := fetcher.ExportReadNotationEnvelope(
+		context.Background(), image, "sha256:test",
+	)
+
+	if ok {
+		t.Fatal("expected SetMaxAttestationSize(0) to be ignored, keeping previous limit")
+	}
+
+	fetcher.SetMaxAttestationSize(-1)
+
+	_, ok = fetcher.ExportReadNotationEnvelope(
+		context.Background(), image, "sha256:test",
+	)
+
+	if ok {
+		t.Fatal("expected SetMaxAttestationSize(-1) to be ignored, keeping previous limit")
 	}
 }
 

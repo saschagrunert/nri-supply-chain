@@ -177,6 +177,65 @@ teardown_file() {
 	assert_log_contains "Verification failed (non-enforce mode, allowing)"
 }
 
+@test "SIGHUP reloads with custom max_attestation_size and cache_max_entries" {
+	cat >"$PLUGIN_CONFIG" <<-EOF
+		verification = "warn"
+		policy_dir = "${POLICY_DIR}"
+		fetch_timeout = "30s"
+		fetch_failure_policy = "deny"
+		cache_ttl = "5m"
+		metrics_addr = ":9090"
+		max_attestation_size = 5242880
+		cache_max_entries = 500
+	EOF
+	reload_plugin
+	assert_log_contains "Config reloaded successfully"
+
+	run curl_metrics
+	[[ "$status" -eq 0 ]]
+
+	write_plugin_config "warn"
+	reload_plugin
+}
+
+@test "SIGHUP with invalid max_attestation_size does not crash plugin" {
+	cat >"$PLUGIN_CONFIG" <<-EOF
+		verification = "warn"
+		policy_dir = "${POLICY_DIR}"
+		fetch_timeout = "30s"
+		cache_ttl = "5m"
+		metrics_addr = ":9090"
+		max_attestation_size = 500
+	EOF
+	reload_plugin
+	assert_log_contains "Config reload failed"
+
+	run curl_metrics
+	[[ "$status" -eq 0 ]]
+
+	write_plugin_config "warn"
+	reload_plugin
+}
+
+@test "SIGHUP with invalid cache_max_entries does not crash plugin" {
+	cat >"$PLUGIN_CONFIG" <<-EOF
+		verification = "warn"
+		policy_dir = "${POLICY_DIR}"
+		fetch_timeout = "30s"
+		cache_ttl = "5m"
+		metrics_addr = ":9090"
+		cache_max_entries = 10
+	EOF
+	reload_plugin
+	assert_log_contains "Config reload failed"
+
+	run curl_metrics
+	[[ "$status" -eq 0 ]]
+
+	write_plugin_config "warn"
+	reload_plugin
+}
+
 @test "cache is cleared on config reload" {
 	stop_plugin
 	write_plugin_config "warn"
