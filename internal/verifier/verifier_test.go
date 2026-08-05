@@ -44,6 +44,10 @@ const testDigest = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4" +
 
 const testTUFMirrorURL = "https://tuf.example.com"
 
+const testRootNameGitHub = "github"
+
+const testGitHubTUFMirror = "https://tuf-repo.github.com"
+
 type delayFetcher struct {
 	delay   time.Duration
 	started chan struct{}
@@ -85,8 +89,8 @@ func TestNewFetcherEmptyTUFRoot(t *testing.T) {
 	testutil.AssertNoError(t, os.WriteFile(rootPath, []byte{}, 0o600))
 
 	cfg := config.DefaultConfig()
-	cfg.Sigstore.TUFMirror = testTUFMirrorURL
-	cfg.Sigstore.TUFRoot = rootPath
+	cfg.Sigstore.TUFMirror = testTUFMirrorURL //nolint:staticcheck // backward compatibility
+	cfg.Sigstore.TUFRoot = rootPath           //nolint:staticcheck // backward compatibility
 
 	_, err := verifier.NewFetcher(context.Background(), cfg, nil)
 	if err == nil {
@@ -758,7 +762,7 @@ func TestReloadClearsCacheWhenTUFMirrorChanges(t *testing.T) {
 	changed.CacheFailureTTL = cfg.CacheFailureTTL
 	changed.FetchFailurePolicy = cfg.FetchFailurePolicy
 	changed.FetchTimeout = cfg.FetchTimeout
-	changed.Sigstore.TUFMirror = testTUFMirrorURL
+	changed.Sigstore.TUFMirror = testTUFMirrorURL //nolint:staticcheck // backward compatibility
 
 	if !verifier.ExportCacheAffectingFieldsChanged(cfg, changed) {
 		t.Error("expected cache invalidation when Sigstore.TUFMirror changes")
@@ -772,7 +776,7 @@ func TestReloadClearsCacheWhenTUFMirrorChanges(t *testing.T) {
 	same.CacheFailureTTL = cfg.CacheFailureTTL
 	same.FetchFailurePolicy = cfg.FetchFailurePolicy
 	same.FetchTimeout = cfg.FetchTimeout
-	same.Sigstore.TUFMirror = cfg.Sigstore.TUFMirror
+	same.Sigstore.TUFMirror = cfg.Sigstore.TUFMirror //nolint:staticcheck // backward compatibility
 
 	if verifier.ExportCacheAffectingFieldsChanged(cfg, same) {
 		t.Error("expected no cache invalidation when Sigstore.TUFMirror is unchanged")
@@ -789,7 +793,7 @@ func TestReloadClearsCacheWhenTUFRootChanges(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = dir
 	cfg.CacheTTL = config.Duration{Duration: time.Hour}
-	cfg.Sigstore.TUFMirror = testTUFMirrorURL
+	cfg.Sigstore.TUFMirror = testTUFMirrorURL //nolint:staticcheck // backward compatibility
 
 	// Verify that changing Sigstore.TUFRoot triggers cache invalidation.
 	changed := config.DefaultConfig()
@@ -799,8 +803,8 @@ func TestReloadClearsCacheWhenTUFRootChanges(t *testing.T) {
 	changed.CacheFailureTTL = cfg.CacheFailureTTL
 	changed.FetchFailurePolicy = cfg.FetchFailurePolicy
 	changed.FetchTimeout = cfg.FetchTimeout
-	changed.Sigstore.TUFMirror = cfg.Sigstore.TUFMirror
-	changed.Sigstore.TUFRoot = "/etc/sigstore/root.json"
+	changed.Sigstore.TUFMirror = cfg.Sigstore.TUFMirror  //nolint:staticcheck // backward compatibility
+	changed.Sigstore.TUFRoot = "/etc/sigstore/root.json" //nolint:staticcheck // backward compatibility
 
 	if !verifier.ExportCacheAffectingFieldsChanged(cfg, changed) {
 		t.Error("expected cache invalidation when Sigstore.TUFRoot changes")
@@ -814,8 +818,8 @@ func TestReloadClearsCacheWhenTUFRootChanges(t *testing.T) {
 	same.CacheFailureTTL = cfg.CacheFailureTTL
 	same.FetchFailurePolicy = cfg.FetchFailurePolicy
 	same.FetchTimeout = cfg.FetchTimeout
-	same.Sigstore.TUFMirror = cfg.Sigstore.TUFMirror
-	same.Sigstore.TUFRoot = cfg.Sigstore.TUFRoot
+	same.Sigstore.TUFMirror = cfg.Sigstore.TUFMirror //nolint:staticcheck // backward compatibility
+	same.Sigstore.TUFRoot = cfg.Sigstore.TUFRoot     //nolint:staticcheck // backward compatibility
 
 	if verifier.ExportCacheAffectingFieldsChanged(cfg, same) {
 		t.Error("expected no cache invalidation when Sigstore.TUFRoot is unchanged")
@@ -846,7 +850,7 @@ func TestReloadCreatesFetcherWhenTUFMirrorChanges(t *testing.T) {
 	newCfg := config.DefaultConfig()
 	newCfg.Verification = config.ModeWarn
 	newCfg.PolicyDir = dir
-	newCfg.Sigstore.TUFMirror = server.URL
+	newCfg.Sigstore.TUFMirror = server.URL //nolint:staticcheck // backward compatibility
 
 	err = verif.Reload(context.Background(), newCfg)
 	testutil.AssertNoError(t, err)
@@ -2515,4 +2519,160 @@ func TestPolicyHashForNamespace(t *testing.T) {
 			t.Errorf("expected empty string, got %q", got)
 		}
 	})
+}
+
+func TestCreateFetcherWithRoots(t *testing.T) {
+	t.Parallel()
+
+	t.Run("sigstore roots creates multi-root fetcher", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Sigstore.Roots = []config.SigstoreRootSource{
+			{Name: testRootNameGitHub, TUFMirror: testGitHubTUFMirror, TUFRoot: ""},
+		}
+
+		// Note: this will attempt a TUF fetch which will fail, but the fetcher
+		// is created and the warm failure is non-fatal.
+		fetcher, err := verifier.NewFetcher(context.Background(), cfg, nil)
+		testutil.AssertNoError(t, err)
+
+		if fetcher == nil {
+			t.Fatal("expected non-nil OCIFetcher")
+		}
+	})
+
+	t.Run("backward compat scalar fields empty", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		// Empty sigstore config uses default public fetcher.
+		fetcher, err := verifier.NewFetcher(context.Background(), cfg, nil)
+		testutil.AssertNoError(t, err)
+
+		if fetcher == nil {
+			t.Fatal("expected non-nil OCIFetcher from default config")
+		}
+	})
+
+	t.Run("scalar tuf_mirror does not include public root", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Sigstore.TUFMirror = "https://tuf.internal.example.com" //nolint:staticcheck // backward compatibility
+
+		// The legacy scalar path must use the single-root constructor
+		// (NewOCIFetcherWithTUFMirror), not the multi-root path that
+		// would silently include the public Sigstore root.
+		fetcher, err := verifier.ExportCreateFetcher(cfg)
+		testutil.AssertNoError(t, err)
+
+		if fetcher == nil {
+			t.Fatal("expected non-nil OCIFetcher")
+		}
+
+		if fetcher.IsMultiRoot() {
+			t.Error("scalar tuf_mirror must use single-root path, not multi-root")
+		}
+	})
+
+	t.Run("single root without public root uses single-root path", func(t *testing.T) {
+		t.Parallel()
+
+		falseVal := false
+		cfg := config.DefaultConfig()
+		cfg.Sigstore.Roots = []config.SigstoreRootSource{
+			{Name: "internal", TUFMirror: "https://tuf.internal.example.com", TUFRoot: ""},
+		}
+		cfg.Sigstore.IncludePublicRoot = &falseVal
+
+		fetcher, err := verifier.NewFetcher(context.Background(), cfg, nil)
+		testutil.AssertNoError(t, err)
+
+		if fetcher == nil {
+			t.Fatal("expected non-nil OCIFetcher")
+		}
+	})
+}
+
+func TestCacheAffectingFieldsChangedRoots(t *testing.T) {
+	t.Parallel()
+
+	base := func() *config.Config {
+		cfg := config.DefaultConfig()
+		cfg.Sigstore.Roots = []config.SigstoreRootSource{
+			{Name: testRootNameGitHub, TUFMirror: testGitHubTUFMirror, TUFRoot: ""},
+		}
+
+		return cfg
+	}
+
+	t.Run("same roots no change", func(t *testing.T) {
+		t.Parallel()
+
+		prev := base()
+		next := base()
+
+		if verifier.ExportCacheAffectingFieldsChanged(prev, next) {
+			t.Error("expected no change")
+		}
+	})
+
+	t.Run("different roots triggers change", func(t *testing.T) {
+		t.Parallel()
+
+		prev := base()
+		next := base()
+		next.Sigstore.Roots = append(
+			next.Sigstore.Roots,
+			config.SigstoreRootSource{
+				Name: "extra", TUFMirror: "https://extra.example.com", TUFRoot: "",
+			},
+		)
+
+		if !verifier.ExportCacheAffectingFieldsChanged(prev, next) {
+			t.Error("expected change when roots list grows")
+		}
+	})
+
+	t.Run("include_public_root change triggers cache invalidation", func(t *testing.T) {
+		t.Parallel()
+
+		falseVal := false
+		prev := base()
+		next := base()
+		next.Sigstore.IncludePublicRoot = &falseVal
+
+		if !verifier.ExportCacheAffectingFieldsChanged(prev, next) {
+			t.Error("expected change when include_public_root differs")
+		}
+	})
+}
+
+func TestReloadCreatesFetcherWhenRootsChange(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{}`)
+
+	// Start with a default config (public Sigstore).
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	defer verif.Stop()
+
+	// Reload with a roots config. The reload should succeed.
+	cfg2 := config.DefaultConfig()
+	cfg2.Verification = config.ModeWarn
+	cfg2.PolicyDir = dir
+	cfg2.Sigstore.Roots = []config.SigstoreRootSource{
+		{Name: testRootNameGitHub, TUFMirror: testGitHubTUFMirror, TUFRoot: ""},
+	}
+
+	err = verif.Reload(context.Background(), cfg2)
+	testutil.AssertNoError(t, err)
 }

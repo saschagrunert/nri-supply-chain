@@ -28,6 +28,8 @@ import (
 
 const (
 	testTUFMirrorURL                         = "https://tuf.example.com"
+	testTUFRootPath                          = "/etc/sigstore/root.json"
+	testXExampleURL                          = "https://x.example.com"
 	testModeUnknown  config.VerificationMode = "unknown"
 )
 
@@ -400,7 +402,7 @@ func TestConfigValidateRuntime(t *testing.T) {
 		cfg := config.DefaultConfig()
 		cfg.Verification = config.ModeWarn
 		cfg.PolicyDir = dir
-		cfg.Sigstore.TUFMirror = "https://tuf.example.com"
+		cfg.Sigstore.TUFMirror = testTUFMirrorURL
 		cfg.Sigstore.TUFRoot = linkFile
 
 		err := cfg.ValidateRuntime()
@@ -1589,7 +1591,7 @@ tuf_mirror = "https://tuf.example.com"
 tuf_root = "/etc/sigstore/root.json"
 `)
 		testutil.AssertNoError(t, err)
-		testutil.AssertEqual(t, "/etc/sigstore/root.json", cfg.Sigstore.TUFRoot)
+		testutil.AssertEqual(t, testTUFRootPath, cfg.Sigstore.TUFRoot)
 	})
 
 	t.Run("tuf_root without tuf_mirror rejected", func(t *testing.T) {
@@ -1630,7 +1632,7 @@ tuf_root = "/etc/sigstore/root.json"
 `)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, testTUFMirrorURL, cfg.Sigstore.TUFMirror)
-		testutil.AssertEqual(t, "/etc/sigstore/root.json", cfg.Sigstore.TUFRoot)
+		testutil.AssertEqual(t, testTUFRootPath, cfg.Sigstore.TUFRoot)
 	})
 }
 
@@ -1649,7 +1651,7 @@ func TestConfigValidateTUFRoot(t *testing.T) {
 			mirror: "", wantErr: false, expectedErr: nil,
 		},
 		{
-			name: "absolute path is valid", root: "/etc/sigstore/root.json",
+			name: "absolute path is valid", root: testTUFRootPath,
 			mirror: testTUFMirrorURL, wantErr: false, expectedErr: nil,
 		},
 		{
@@ -1661,7 +1663,7 @@ func TestConfigValidateTUFRoot(t *testing.T) {
 			mirror: testTUFMirrorURL, wantErr: true, expectedErr: config.ErrTUFRootNotAbsolute,
 		},
 		{
-			name: "root without mirror rejected", root: "/etc/sigstore/root.json",
+			name: "root without mirror rejected", root: testTUFRootPath,
 			mirror: "", wantErr: true, expectedErr: config.ErrTUFRootRequiresMirror,
 		},
 	}
@@ -2282,4 +2284,397 @@ poll_interval = "10m"
 			}
 		})
 	}
+}
+
+func TestLoadFromStringSigstoreRoots(t *testing.T) {
+	t.Parallel()
+
+	t.Run("multiple roots parsed", func(t *testing.T) {
+		t.Parallel()
+
+		cfg, err := config.LoadFromString(`
+[[sigstore.roots]]
+name = "github"
+tuf_mirror = "https://tuf-repo.github.com"
+tuf_root = "/etc/sigstore/github-root.json"
+
+[[sigstore.roots]]
+name = "internal"
+tuf_mirror = "https://tuf.internal.example.com"
+`)
+		testutil.AssertNoError(t, err)
+
+		if len(cfg.Sigstore.Roots) != 2 {
+			t.Fatalf("expected 2 roots, got %d", len(cfg.Sigstore.Roots))
+		}
+
+		testutil.AssertEqual(t, "github", cfg.Sigstore.Roots[0].Name)
+		testutil.AssertEqual(t, "https://tuf-repo.github.com", cfg.Sigstore.Roots[0].TUFMirror)
+		testutil.AssertEqual(t, "/etc/sigstore/github-root.json", cfg.Sigstore.Roots[0].TUFRoot)
+
+		testutil.AssertEqual(t, "internal", cfg.Sigstore.Roots[1].Name)
+		testutil.AssertEqual(t, "https://tuf.internal.example.com", cfg.Sigstore.Roots[1].TUFMirror)
+		testutil.AssertEqual(t, "", cfg.Sigstore.Roots[1].TUFRoot)
+	})
+
+	t.Run("backward compat scalar tuf_mirror still works", func(t *testing.T) {
+		t.Parallel()
+
+		cfg, err := config.LoadFromString(`
+[sigstore]
+tuf_mirror = "https://tuf.example.com"
+tuf_root = "/etc/sigstore/root.json"
+`)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, testTUFMirrorURL, cfg.Sigstore.TUFMirror)
+		testutil.AssertEqual(t, testTUFRootPath, cfg.Sigstore.TUFRoot)
+
+		if len(cfg.Sigstore.Roots) != 0 {
+			t.Errorf("expected empty roots, got %d", len(cfg.Sigstore.Roots))
+		}
+	})
+
+	t.Run("mutual exclusion scalar and roots", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := config.LoadFromString(`
+[sigstore]
+tuf_mirror = "https://tuf.example.com"
+
+[[sigstore.roots]]
+name = "extra"
+tuf_mirror = "https://extra.example.com"
+`)
+		testutil.AssertError(t, err)
+
+		if !errors.Is(err, config.ErrSigstoreRootsMutualExclusion) {
+			t.Errorf("expected ErrSigstoreRootsMutualExclusion, got %v", err)
+		}
+	})
+
+	t.Run("duplicate names rejected", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := config.LoadFromString(`
+[[sigstore.roots]]
+name = "github"
+tuf_mirror = "https://tuf-repo.github.com"
+
+[[sigstore.roots]]
+name = "github"
+tuf_mirror = "https://other.example.com"
+`)
+		testutil.AssertError(t, err)
+
+		if !errors.Is(err, config.ErrSigstoreRootNameDuplicate) {
+			t.Errorf("expected ErrSigstoreRootNameDuplicate, got %v", err)
+		}
+	})
+
+	t.Run("missing name rejected", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := config.LoadFromString(`
+[[sigstore.roots]]
+tuf_mirror = "https://tuf-repo.github.com"
+`)
+		testutil.AssertError(t, err)
+
+		if !errors.Is(err, config.ErrSigstoreRootNameRequired) {
+			t.Errorf("expected ErrSigstoreRootNameRequired, got %v", err)
+		}
+	})
+
+	t.Run("tuf_root without tuf_mirror in roots rejected", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := config.LoadFromString(`
+[[sigstore.roots]]
+name = "broken"
+tuf_root = "/etc/sigstore/root.json"
+`)
+		testutil.AssertError(t, err)
+
+		if !errors.Is(err, config.ErrTUFRootRequiresMirror) {
+			t.Errorf("expected ErrTUFRootRequiresMirror, got %v", err)
+		}
+	})
+
+	t.Run("invalid tuf_mirror URL in roots rejected", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := config.LoadFromString(`
+[[sigstore.roots]]
+name = "broken"
+tuf_mirror = "http://insecure.example.com"
+`)
+		testutil.AssertError(t, err)
+
+		if !errors.Is(err, config.ErrInvalidTUFMirror) {
+			t.Errorf("expected ErrInvalidTUFMirror, got %v", err)
+		}
+	})
+
+	t.Run("relative tuf_root in roots rejected", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := config.LoadFromString(`
+[[sigstore.roots]]
+name = "broken"
+tuf_mirror = "https://tuf.example.com"
+tuf_root = "relative/root.json"
+`)
+		testutil.AssertError(t, err)
+
+		if !errors.Is(err, config.ErrTUFRootNotAbsolute) {
+			t.Errorf("expected ErrTUFRootNotAbsolute, got %v", err)
+		}
+	})
+
+	t.Run("include_public_root false", func(t *testing.T) {
+		t.Parallel()
+
+		cfg, err := config.LoadFromString(`
+[sigstore]
+include_public_root = false
+
+[[sigstore.roots]]
+name = "private"
+tuf_mirror = "https://tuf.internal.example.com"
+`)
+		testutil.AssertNoError(t, err)
+
+		if cfg.Sigstore.ShouldIncludePublicRoot() {
+			t.Error("expected ShouldIncludePublicRoot() == false")
+		}
+	})
+
+	t.Run("include_public_root default is true", func(t *testing.T) {
+		t.Parallel()
+
+		cfg, err := config.LoadFromString(`
+[[sigstore.roots]]
+name = "private"
+tuf_mirror = "https://tuf.internal.example.com"
+`)
+		testutil.AssertNoError(t, err)
+
+		if !cfg.Sigstore.ShouldIncludePublicRoot() {
+			t.Error("expected ShouldIncludePublicRoot() == true by default")
+		}
+	})
+}
+
+func TestEffectiveRoots(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty config returns nil", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		roots := cfg.Sigstore.EffectiveRoots()
+
+		if roots != nil {
+			t.Errorf("expected nil, got %v", roots)
+		}
+	})
+
+	t.Run("scalar mirror synthesizes single entry", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Sigstore.TUFMirror = testTUFMirrorURL
+		cfg.Sigstore.TUFRoot = testTUFRootPath
+
+		roots := cfg.Sigstore.EffectiveRoots()
+
+		if len(roots) != 1 {
+			t.Fatalf("expected 1 root, got %d", len(roots))
+		}
+
+		testutil.AssertEqual(t, "default", roots[0].Name)
+		testutil.AssertEqual(t, testTUFMirrorURL, roots[0].TUFMirror)
+		testutil.AssertEqual(t, testTUFRootPath, roots[0].TUFRoot)
+	})
+
+	t.Run("roots array returned directly", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Sigstore.Roots = []config.SigstoreRootSource{
+			{Name: "a", TUFMirror: "https://a.example.com", TUFRoot: ""},
+			{Name: "b", TUFMirror: "https://b.example.com", TUFRoot: ""},
+		}
+
+		roots := cfg.Sigstore.EffectiveRoots()
+
+		if len(roots) != 2 {
+			t.Fatalf("expected 2 roots, got %d", len(roots))
+		}
+
+		testutil.AssertEqual(t, "a", roots[0].Name)
+		testutil.AssertEqual(t, "b", roots[1].Name)
+	})
+}
+
+func TestSigstoreConfigChanged(t *testing.T) {
+	t.Parallel()
+
+	t.Run("identical configs", func(t *testing.T) {
+		t.Parallel()
+
+		a := &config.SigstoreConfig{
+			TUFMirror: testTUFMirrorURL, TUFRoot: "",
+			Roots: nil, IncludePublicRoot: nil,
+		}
+		b := &config.SigstoreConfig{
+			TUFMirror: testTUFMirrorURL, TUFRoot: "",
+			Roots: nil, IncludePublicRoot: nil,
+		}
+
+		if config.SigstoreConfigChanged(a, b) {
+			t.Error("expected no change")
+		}
+	})
+
+	t.Run("mirror changed", func(t *testing.T) {
+		t.Parallel()
+
+		a := &config.SigstoreConfig{
+			TUFMirror: "https://a.example.com", TUFRoot: "",
+			Roots: nil, IncludePublicRoot: nil,
+		}
+		b := &config.SigstoreConfig{
+			TUFMirror: "https://b.example.com", TUFRoot: "",
+			Roots: nil, IncludePublicRoot: nil,
+		}
+
+		if !config.SigstoreConfigChanged(a, b) {
+			t.Error("expected change")
+		}
+	})
+
+	t.Run("roots list changed", func(t *testing.T) {
+		t.Parallel()
+
+		a := &config.SigstoreConfig{
+			TUFMirror: "",
+			TUFRoot:   "",
+			Roots: []config.SigstoreRootSource{
+				{Name: "x", TUFMirror: testXExampleURL, TUFRoot: ""},
+			},
+			IncludePublicRoot: nil,
+		}
+		b := &config.SigstoreConfig{
+			TUFMirror: "",
+			TUFRoot:   "",
+			Roots: []config.SigstoreRootSource{
+				{Name: "y", TUFMirror: "https://y.example.com", TUFRoot: ""},
+			},
+			IncludePublicRoot: nil,
+		}
+
+		if !config.SigstoreConfigChanged(a, b) {
+			t.Error("expected change")
+		}
+	})
+
+	t.Run("include_public_root changed", func(t *testing.T) {
+		t.Parallel()
+
+		falseVal := false
+		a := &config.SigstoreConfig{
+			TUFMirror: "",
+			TUFRoot:   "",
+			Roots: []config.SigstoreRootSource{
+				{Name: "x", TUFMirror: testXExampleURL, TUFRoot: ""},
+			},
+			IncludePublicRoot: &falseVal,
+		}
+		b := &config.SigstoreConfig{
+			TUFMirror: "",
+			TUFRoot:   "",
+			Roots: []config.SigstoreRootSource{
+				{Name: "x", TUFMirror: testXExampleURL, TUFRoot: ""},
+			},
+			IncludePublicRoot: nil,
+		}
+
+		if !config.SigstoreConfigChanged(a, b) {
+			t.Error("expected change when include_public_root differs")
+		}
+	})
+
+	t.Run("scalar to roots migration is detected", func(t *testing.T) {
+		t.Parallel()
+
+		prev := &config.SigstoreConfig{
+			TUFMirror:         testTUFMirrorURL,
+			TUFRoot:           "",
+			Roots:             nil,
+			IncludePublicRoot: nil,
+		}
+		next := &config.SigstoreConfig{
+			TUFMirror: "",
+			TUFRoot:   "",
+			Roots: []config.SigstoreRootSource{
+				{Name: "default", TUFMirror: testTUFMirrorURL, TUFRoot: ""},
+			},
+			IncludePublicRoot: nil,
+		}
+
+		if !config.SigstoreConfigChanged(prev, next) {
+			t.Error("expected change when migrating from scalar to roots array")
+		}
+	})
+}
+
+func TestValidateRuntimeSigstoreRootsTUFRoot(t *testing.T) {
+	t.Parallel()
+
+	t.Run("valid roots tuf_root file", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		rootPath := filepath.Join(dir, "root.json")
+		testutil.AssertNoError(t, os.WriteFile(rootPath, []byte(`{}`), 0o600))
+
+		policyDir := filepath.Join(dir, "policies")
+		testutil.AssertNoError(t, os.MkdirAll(policyDir, 0o750))
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.PolicyDir = policyDir
+		cfg.Sigstore.Roots = []config.SigstoreRootSource{
+			{
+				Name:      "test",
+				TUFMirror: testTUFMirrorURL,
+				TUFRoot:   rootPath,
+			},
+		}
+
+		testutil.AssertNoError(t, cfg.ValidateRuntime())
+	})
+
+	t.Run("missing roots tuf_root file fails", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.PolicyDir = dir
+		cfg.Sigstore.Roots = []config.SigstoreRootSource{
+			{
+				Name:      "test",
+				TUFMirror: testTUFMirrorURL,
+				TUFRoot:   filepath.Join(dir, "nonexistent.json"),
+			},
+		}
+
+		err := cfg.ValidateRuntime()
+		if !errors.Is(err, config.ErrTUFRootNotFound) {
+			t.Errorf("expected ErrTUFRootNotFound, got %v", err)
+		}
+	})
 }

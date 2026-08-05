@@ -204,6 +204,18 @@ var (
 
 	// ErrConfigFileTooLarge indicates the config file exceeds the size limit.
 	ErrConfigFileTooLarge = errors.New("config file exceeds maximum size")
+
+	// ErrSigstoreRootNameRequired indicates a sigstore.roots entry is missing its name.
+	ErrSigstoreRootNameRequired = errors.New("sigstore.roots[].name must not be empty")
+
+	// ErrSigstoreRootNameDuplicate indicates two sigstore.roots entries share the same name.
+	ErrSigstoreRootNameDuplicate = errors.New("duplicate sigstore.roots[].name")
+
+	// ErrSigstoreRootsMutualExclusion indicates both scalar tuf_mirror/tuf_root and
+	// the new roots array are set, which is not allowed.
+	ErrSigstoreRootsMutualExclusion = errors.New(
+		"sigstore.tuf_mirror/tuf_root and sigstore.roots are mutually exclusive",
+	)
 )
 
 // Duration wraps time.Duration to support TOML unmarshalling from strings.
@@ -228,6 +240,24 @@ func (d Duration) MarshalText() ([]byte, error) {
 	return []byte(d.String()), nil
 }
 
+// SigstoreRootSource describes a single TUF-based Sigstore trusted root.
+// Multiple entries allow verifying attestations signed by different Sigstore
+// infrastructures (for example, the public Sigstore instance alongside
+// GitHub's private Sigstore deployment).
+type SigstoreRootSource struct {
+	// Name is a human-readable label for this root source. Must be unique
+	// across all entries and non-empty.
+	Name string `toml:"name"`
+
+	// TUFMirror is the URL of the TUF mirror serving the trusted root.
+	// Must use the https scheme.
+	TUFMirror string `toml:"tuf_mirror"`
+
+	// TUFRoot is the path to a custom root.json file for TUF trust anchor
+	// initialization. When set, requires TUFMirror and must be absolute.
+	TUFRoot string `toml:"tuf_root"`
+}
+
 // SigstoreConfig configures private Sigstore instance endpoints for keyless
 // verification. When all fields are empty, the public Sigstore instance is used.
 type SigstoreConfig struct {
@@ -241,6 +271,8 @@ type SigstoreConfig struct {
 	// as a CDN mirror of the public Sigstore TUF repository and the embedded
 	// public root.json is used as the trust anchor. This is suitable for
 	// air-gapped environments that mirror the public Sigstore infrastructure.
+	//
+	// Deprecated: use Roots instead for multi-root configurations.
 	TUFMirror string `toml:"tuf_mirror"`
 
 	// TUFRoot is the path to a custom root.json file for TUF trust anchor
@@ -249,7 +281,51 @@ type SigstoreConfig struct {
 	// When set, the file contents replace the embedded public Sigstore
 	// root.json so that TUF verification uses the private deployment's
 	// trust chain. Must be an absolute path.
+	//
+	// Deprecated: use Roots instead for multi-root configurations.
 	TUFRoot string `toml:"tuf_root"`
+
+	// Roots defines multiple Sigstore trusted root sources. Each entry
+	// independently fetches its trusted root from its TUF mirror.
+	// Mutually exclusive with the scalar TUFMirror/TUFRoot fields.
+	Roots []SigstoreRootSource `toml:"roots"`
+
+	// IncludePublicRoot controls whether the public Sigstore trusted root
+	// is included alongside custom roots. Defaults to true (nil means true).
+	// Set to false to verify only against the configured custom roots.
+	IncludePublicRoot *bool `toml:"include_public_root"`
+}
+
+// EffectiveRoots returns the list of root sources to use for verification.
+// If Roots is non-empty, it is returned directly.
+// If Roots is empty but the scalar TUFMirror is set, a single-element slice
+// is synthesized from the legacy fields.
+// If both are empty, nil is returned, signaling that the default
+// public Sigstore trusted root should be used.
+func (s *SigstoreConfig) EffectiveRoots() []SigstoreRootSource {
+	if len(s.Roots) > 0 {
+		out := make([]SigstoreRootSource, len(s.Roots))
+		copy(out, s.Roots)
+
+		return out
+	}
+
+	if s.TUFMirror != "" {
+		return []SigstoreRootSource{{
+			Name:      "default",
+			TUFMirror: s.TUFMirror,
+			TUFRoot:   s.TUFRoot,
+		}}
+	}
+
+	return nil
+}
+
+// ShouldIncludePublicRoot returns true when the public Sigstore trusted root
+// should be included in the verification set. True when IncludePublicRoot is
+// nil (default) or when *IncludePublicRoot is true.
+func (s *SigstoreConfig) ShouldIncludePublicRoot() bool {
+	return s.IncludePublicRoot == nil || *s.IncludePublicRoot
 }
 
 // Registry represents configuration for an OCI registry endpoint.
@@ -346,8 +422,13 @@ func DefaultConfig() *Config {
 		VerificationTimeout:     Duration{Duration: defaultVerificationTimeout},
 		FetchRateLimit:          0,
 		LogLevel:                "",
-		Sigstore:                SigstoreConfig{TUFMirror: "", TUFRoot: ""},
-		Registries:              nil,
+		Sigstore: SigstoreConfig{
+			TUFMirror:         "",
+			TUFRoot:           "",
+			Roots:             nil,
+			IncludePublicRoot: nil,
+		},
+		Registries: nil,
 		Policy: PolicyConfig{
 			Source:       PolicySourceLocal,
 			OCIRef:       "",
@@ -474,6 +555,30 @@ func (c *Config) Normalize() {
 		slog.Warn("cache_ttl is zero, verification result caching is disabled")
 	}
 
+	c.normalizeCacheTTLs()
+
+	if c.Sigstore.IncludePublicRoot != nil && len(c.Sigstore.Roots) == 0 {
+		slog.Warn("include_public_root has no effect without [[sigstore.roots]]")
+	}
+
+	c.normalizeRegistryPrefixes()
+}
+
+// WarnInsecureRegistries logs a warning for each registry configured with
+// insecure TLS. Call at startup or reload time, not during validation.
+func (c *Config) WarnInsecureRegistries() {
+	for idx := range c.Registries {
+		if c.Registries[idx].Insecure {
+			slog.Warn("Registry configured with insecure TLS (skip verify)",
+				"prefix", c.Registries[idx].Prefix,
+				"index", idx,
+			)
+		}
+	}
+}
+
+// normalizeCacheTTLs clamps cache TTL fields and warns about edge cases.
+func (c *Config) normalizeCacheTTLs() {
 	if c.CacheTTL.Duration == 0 && c.CacheFailureTTL.Duration > 0 {
 		slog.Warn("cache_failure_ttl reset to zero because cache_ttl is zero",
 			"cache_failure_ttl", c.CacheFailureTTL.Duration,
@@ -496,26 +601,28 @@ func (c *Config) Normalize() {
 			"cache_ttl", c.CacheTTL.Duration,
 		)
 	}
-
-	c.normalizeRegistryPrefixes()
-}
-
-// WarnInsecureRegistries logs a warning for each registry configured with
-// insecure TLS. Call at startup or reload time, not during validation.
-func (c *Config) WarnInsecureRegistries() {
-	for idx := range c.Registries {
-		if c.Registries[idx].Insecure {
-			slog.Warn("Registry configured with insecure TLS (skip verify)",
-				"prefix", c.Registries[idx].Prefix,
-				"index", idx,
-			)
-		}
-	}
 }
 
 // RegistriesChanged reports whether two registry slices differ.
 func RegistriesChanged(prev, next []Registry) bool {
 	return !slices.Equal(prev, next)
+}
+
+// SigstoreConfigChanged reports whether two SigstoreConfig values differ in a
+// way that affects verification (effective roots list, include_public_root).
+func SigstoreConfigChanged(prev, next *SigstoreConfig) bool {
+	if (len(prev.Roots) > 0) != (len(next.Roots) > 0) {
+		return true
+	}
+
+	prevRoots := prev.EffectiveRoots()
+	nextRoots := next.EffectiveRoots()
+
+	if !slices.Equal(prevRoots, nextRoots) {
+		return true
+	}
+
+	return prev.ShouldIncludePublicRoot() != next.ShouldIncludePublicRoot()
 }
 
 func (c *Config) validateModeAndLogLevel() []error {
@@ -561,32 +668,49 @@ func (c *Config) validatePolicyDirRuntime() []error {
 }
 
 func (c *Config) validateTUFRootRuntime() []error {
-	if c.Sigstore.TUFRoot == "" {
+	var errs []error
+
+	if c.Sigstore.TUFRoot != "" {
+		errs = append(errs, validateTUFRootFile(c.Sigstore.TUFRoot, "sigstore.tuf_root")...)
+	}
+
+	for idx := range c.Sigstore.Roots {
+		if c.Sigstore.Roots[idx].TUFRoot != "" {
+			label := fmt.Sprintf("sigstore.roots[%d].tuf_root", idx)
+			errs = append(errs, validateTUFRootFile(c.Sigstore.Roots[idx].TUFRoot, label)...)
+		}
+	}
+
+	if len(errs) == 0 {
 		return nil
 	}
 
-	rootInfo, err := os.Lstat(c.Sigstore.TUFRoot)
+	return errs
+}
+
+func validateTUFRootFile(path, label string) []error {
+	rootInfo, err := os.Lstat(path)
 	if err != nil {
 		return []error{fmt.Errorf(
-			"%w: %q: %w", ErrTUFRootNotFound, c.Sigstore.TUFRoot, err,
+			"%w: %q: %w", ErrTUFRootNotFound, path, err,
 		)}
 	}
 
 	if rootInfo.Mode()&os.ModeSymlink != 0 {
 		return []error{fmt.Errorf(
-			"%w: sigstore.tuf_root %q", ErrSymlinkNotAllowed, c.Sigstore.TUFRoot,
+			"%w: %s %q", ErrSymlinkNotAllowed, label, path,
 		)}
 	}
 
 	if !rootInfo.Mode().IsRegular() {
 		return []error{fmt.Errorf(
-			"%w: %q", ErrTUFRootNotRegularFile, c.Sigstore.TUFRoot,
+			"%w: %q", ErrTUFRootNotRegularFile, path,
 		)}
 	}
 
 	if rootInfo.Size() == 0 {
 		return []error{fmt.Errorf(
-			"%w: %q", ErrTUFRootEmpty, c.Sigstore.TUFRoot,
+			"%w: %q", ErrTUFRootEmpty, path,
 		)}
 	}
 
@@ -859,6 +983,15 @@ func (c *Config) validateResilienceFields() error {
 func (c *Config) validateSigstoreConfig() error {
 	var errs []error
 
+	hasScalarFields := c.Sigstore.TUFMirror != "" || c.Sigstore.TUFRoot != ""
+	hasRoots := len(c.Sigstore.Roots) > 0
+
+	if hasScalarFields && hasRoots {
+		errs = append(errs, ErrSigstoreRootsMutualExclusion)
+
+		return errors.Join(errs...)
+	}
+
 	if c.Sigstore.TUFMirror != "" {
 		err := validateTUFMirrorURL(c.Sigstore.TUFMirror)
 		if err != nil {
@@ -876,7 +1009,61 @@ func (c *Config) validateSigstoreConfig() error {
 		}
 	}
 
+	errs = append(errs, validateSigstoreRoots(c.Sigstore.Roots)...)
+
 	return errors.Join(errs...)
+}
+
+func validateSigstoreRoots(roots []SigstoreRootSource) []error {
+	if len(roots) == 0 {
+		return nil
+	}
+
+	var errs []error
+
+	seen := make(map[string]int, len(roots))
+
+	for idx := range roots {
+		root := &roots[idx]
+
+		if root.Name == "" {
+			errs = append(errs, fmt.Errorf(
+				"%w: roots[%d]", ErrSigstoreRootNameRequired, idx,
+			))
+		} else {
+			if prevIdx, ok := seen[root.Name]; ok {
+				errs = append(errs, fmt.Errorf(
+					"%w: %q at roots[%d] and roots[%d]",
+					ErrSigstoreRootNameDuplicate, root.Name, prevIdx, idx,
+				))
+			} else {
+				seen[root.Name] = idx
+			}
+		}
+
+		if root.TUFMirror != "" {
+			err := validateTUFMirrorURL(root.TUFMirror)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("roots[%d]: %w", idx, err))
+			}
+		}
+
+		if root.TUFRoot != "" {
+			if !filepath.IsAbs(root.TUFRoot) {
+				errs = append(errs, fmt.Errorf(
+					"%w: roots[%d] %q", ErrTUFRootNotAbsolute, idx, root.TUFRoot,
+				))
+			}
+
+			if root.TUFMirror == "" {
+				errs = append(errs, fmt.Errorf(
+					"%w: roots[%d]", ErrTUFRootRequiresMirror, idx,
+				))
+			}
+		}
+	}
+
+	return errs
 }
 
 func validateTUFMirrorURL(mirror string) error {

@@ -2145,3 +2145,57 @@ func TestExceededTotalAttestationSize(t *testing.T) {
 		t.Error("expected true for size exceeding max")
 	}
 }
+
+func TestNewOCIFetcherWithMultipleRoots(t *testing.T) {
+	t.Parallel()
+
+	t.Run("creates fetcher with multiple caches", func(t *testing.T) {
+		t.Parallel()
+
+		sources := []attestation.RootSourceConfig{
+			{Name: "public", TUFMirror: "", TUFRootBytes: nil},
+			{Name: "github", TUFMirror: "https://tuf-repo.github.com", TUFRootBytes: nil},
+		}
+
+		fetcher := attestation.NewOCIFetcherWithMultipleRoots(sources)
+		if fetcher == nil {
+			t.Fatal("expected non-nil fetcher")
+		}
+
+		caches := fetcher.ExportRootCaches()
+		if len(caches) != 2 {
+			t.Errorf("expected 2 root caches, got %d", len(caches))
+		}
+	})
+}
+
+func TestMultiRootStaleCallback(t *testing.T) {
+	t.Parallel()
+
+	sources := []attestation.RootSourceConfig{
+		{Name: "a", TUFMirror: "", TUFRootBytes: nil},
+		{Name: "b", TUFMirror: "", TUFRootBytes: nil},
+	}
+
+	fetcher := attestation.NewOCIFetcherWithMultipleRoots(sources)
+
+	var callCount int
+
+	fetcher.SetStaleRootCallback(func() {
+		callCount++
+	})
+
+	caches := fetcher.ExportRootCaches()
+	for _, c := range caches {
+		staleHit := c.OnStaleHit()
+		if staleHit == nil {
+			t.Fatal("expected onStaleHit callback to be set")
+		}
+
+		staleHit()
+	}
+
+	if callCount != 2 {
+		t.Errorf("expected stale callback to fire for each cache (2), got %d", callCount)
+	}
+}

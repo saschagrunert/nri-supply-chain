@@ -20,6 +20,7 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/name"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
@@ -165,4 +166,9 @@ func ExportResolveNodeName() string {
 // ExportPolicyHashForNamespace exposes policyHashForNamespace for external tests.
 func ExportPolicyHashForNamespace(hashes map[string]string, namespace string) string {
 	return policyHashForNamespace(hashes, namespace)
+}
+
+// ExportCreateFetcher exposes createFetcher for external tests.
+func ExportCreateFetcher(cfg *config.Config) (*attestation.OCIFetcher, error) {
+	return createFetcher(cfg)
 }
