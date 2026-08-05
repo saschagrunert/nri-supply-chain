@@ -47,6 +47,13 @@ circuit_breaker_cooldown = "30s"
 # source = "oci"
 # oci_ref = "ghcr.io/myorg/supply-chain-policies:v1"
 # poll_interval = "5m"
+#
+# Policy signature verification (requires source = "oci").
+# When issuers or keys are configured, the plugin verifies that the OCI
+# policy artifact has a valid Sigstore signature before loading policies.
+# issuers = ["https://accounts.google.com"]
+# san_patterns = ["policy-signer@myorg.iam.gserviceaccount.com"]
+# keys = ["/etc/keys/policy-signing.pub"]  # cannot be used together with issuers
 
 # Private Sigstore instance (single root, backward compatible).
 # [sigstore]

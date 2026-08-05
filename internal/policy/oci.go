@@ -70,17 +70,33 @@ type HeadFetchFunc func(ref name.Reference, options ...remote.Option) (*ociV1.De
 
 // OCIFetcher pulls policy files from an OCI registry artifact.
 type OCIFetcher struct {
-	fetchImage     ImageFetchFunc
-	fetchHead      HeadFetchFunc
-	transportCache *registry.TransportCache
+	fetchImage      ImageFetchFunc
+	fetchHead       HeadFetchFunc
+	transportCache  *registry.TransportCache
+	verifySignature SignatureVerifyFunc
 }
 
 // NewOCIFetcher creates a new OCI policy fetcher.
 func NewOCIFetcher(tc *registry.TransportCache) *OCIFetcher {
 	return &OCIFetcher{
-		fetchImage:     remote.Image,
-		fetchHead:      remote.Head,
-		transportCache: tc,
+		fetchImage:      remote.Image,
+		fetchHead:       remote.Head,
+		transportCache:  tc,
+		verifySignature: nil,
+	}
+}
+
+// NewOCIFetcherWithSignatureVerification creates an OCI policy fetcher that
+// verifies Sigstore signatures on the policy artifact before extracting
+// policies.
+func NewOCIFetcherWithSignatureVerification(
+	tc *registry.TransportCache, verifyFn SignatureVerifyFunc,
+) *OCIFetcher {
+	return &OCIFetcher{
+		fetchImage:      remote.Image,
+		fetchHead:       remote.Head,
+		transportCache:  tc,
+		verifySignature: verifyFn,
 	}
 }
 
@@ -91,10 +107,18 @@ func NewOCIFetcherWithImageFunc(
 	fn ImageFetchFunc, tc *registry.TransportCache,
 ) *OCIFetcher {
 	return &OCIFetcher{
-		fetchImage:     fn,
-		fetchHead:      nil,
-		transportCache: tc,
+		fetchImage:      fn,
+		fetchHead:       nil,
+		transportCache:  tc,
+		verifySignature: nil,
 	}
+}
+
+// SetTransportCache replaces the transport cache used for registry connections.
+// This is not safe for concurrent use; callers must ensure the fetcher is not
+// in active use (e.g., the poller is stopped).
+func (f *OCIFetcher) SetTransportCache(tc *registry.TransportCache) {
+	f.transportCache = tc
 }
 
 // CheckDigest returns the manifest digest for the given OCI reference without
@@ -164,6 +188,15 @@ func (f *OCIFetcher) FetchFromOCI(
 	img, err := f.fetchImage(ref, remoteOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("pulling OCI policy artifact %q: %w", ociRef, err)
+	}
+
+	if f.verifySignature != nil {
+		sigErr := f.verifySignature(ctx, ref, img, remoteOpts)
+		if sigErr != nil {
+			return nil, fmt.Errorf(
+				"OCI policy signature verification failed for %q: %w", ociRef, sigErr,
+			)
+		}
 	}
 
 	digest, err := img.Digest()
