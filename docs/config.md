@@ -10,6 +10,7 @@ nri-supply-chain plugin.
   - [Multiple Sigstore Trusted Roots](#multiple-sigstore-trusted-roots)
 - [Registries](#registries)
 - [Policy Distribution](#policy-distribution)
+  - [Policy Signature Verification](#policy-signature-verification)
 - [Policy Files](#policy-files)
 - [CLI](#cli)
   - [Batch Verification](#batch-verification)
