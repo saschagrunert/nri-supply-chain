@@ -495,53 +495,66 @@ func runParallelCheck(
 	*result = checkFunc()
 }
 
-func runSBOMCheck(
+const (
+	reasonMissingAttestation = "missing_attestation"
+	reasonMissingSignature   = "missing_signature"
+)
+
+type checkRunner struct {
+	checkType     types.CheckType
+	label         string
+	missingPolicy types.Action
+	missingLog    string
+	missingReason string
+	missingDetail string
+}
+
+func (cr *checkRunner) run(
 	ctx context.Context,
-	sbomAtts []attestation.VerifiedAttestation,
-	pol *policy.Policy, met *metrics.Metrics,
-	imageRef, digest, namespace string,
+	met *metrics.Metrics,
+	namespace, imageRef string,
+	hasAttestations bool,
+	verify func() (*types.CheckResult, error),
 ) *types.CheckResult {
 	start := time.Now()
 
 	defer func() {
 		met.VerificationDuration.WithLabelValues(
-			string(types.CheckTypeSBOM),
+			string(cr.checkType),
 		).Observe(time.Since(start).Seconds())
 	}()
 
-	if len(sbomAtts) == 0 {
-		logMissingAttestation(ctx, pol.SBOMMissingPolicy(),
-			"No SBOM attestation found", imageRef, "missing_attestation",
+	if !hasAttestations {
+		logMissingAttestation(
+			ctx, cr.missingPolicy,
+			cr.missingLog, imageRef, cr.missingReason,
 		)
 
 		return handleMissingAttestation(
-			pol.SBOMMissingPolicy(),
-			types.CheckTypeSBOM,
-			"no SBOM attestation found for image "+imageRef,
+			cr.missingPolicy,
+			cr.checkType,
+			cr.missingDetail+imageRef,
 		)
 	}
 
-	payloads := make([][]byte, 0, len(sbomAtts))
-	for idx := range sbomAtts {
-		payloads = append(payloads, sbomAtts[idx].Payload)
-	}
-
-	result, err := sbom.VerifyMultiple(ctx, payloads, pol, digest)
+	result, err := verify()
 	if err != nil {
-		slog.ErrorContext(ctx, "SBOM verification error",
+		slog.ErrorContext(ctx,
+			cr.label+" verification error",
 			"error", err,
 			"reason", "verification_error",
 			"image", imageRef,
 		)
 
 		met.VerificationTotal.WithLabelValues(
-			string(types.CheckTypeSBOM), "error", namespace,
+			string(cr.checkType), "error", namespace,
 		).Inc()
 
 		return types.FailResult(
-			types.CheckTypeSBOM,
+			cr.checkType,
 			fmt.Sprintf(
-				"SBOM verification error for %s: %s", imageRef, err,
+				"%s verification error for %s: %s",
+				cr.label, imageRef, err,
 			),
 			err,
 		)
@@ -550,100 +563,88 @@ func runSBOMCheck(
 	return result
 }
 
+func runSBOMCheck(
+	ctx context.Context,
+	sbomAtts []attestation.VerifiedAttestation,
+	pol *policy.Policy, met *metrics.Metrics,
+	imageRef, digest, namespace string,
+) *types.CheckResult {
+	runner := &checkRunner{
+		checkType:     types.CheckTypeSBOM,
+		label:         "SBOM",
+		missingPolicy: pol.SBOMMissingPolicy(),
+		missingLog:    "No SBOM attestation found",
+		missingReason: reasonMissingAttestation,
+		missingDetail: "no SBOM attestation found for image ",
+	}
+
+	return runner.run(
+		ctx, met, namespace, imageRef, len(sbomAtts) > 0,
+		func() (*types.CheckResult, error) {
+			payloads := make([][]byte, 0, len(sbomAtts))
+			for idx := range sbomAtts {
+				payloads = append(payloads, sbomAtts[idx].Payload)
+			}
+
+			return sbom.VerifyMultiple(ctx, payloads, pol, digest)
+		},
+	)
+}
+
 func runSLSACheck(
 	ctx context.Context,
 	slsaAtts []attestation.VerifiedAttestation,
-	pol *policy.Policy, met *metrics.Metrics, imageRef, digest, namespace string,
+	pol *policy.Policy, met *metrics.Metrics,
+	imageRef, digest, namespace string,
 ) *types.CheckResult {
-	start := time.Now()
-
-	defer func() {
-		met.VerificationDuration.WithLabelValues(string(types.CheckTypeSLSA)).Observe(
-			time.Since(start).Seconds(),
-		)
-	}()
-
-	if len(slsaAtts) == 0 {
-		logMissingAttestation(ctx, pol.SLSAMissingPolicy(),
-			"No provenance attestation found", imageRef, "missing_attestation",
-		)
-
-		return handleMissingAttestation(
-			pol.SLSAMissingPolicy(),
-			types.CheckTypeSLSA,
-			"no provenance attestation found for image "+imageRef,
-		)
+	runner := &checkRunner{
+		checkType:     types.CheckTypeSLSA,
+		label:         "SLSA",
+		missingPolicy: pol.SLSAMissingPolicy(),
+		missingLog:    "No provenance attestation found",
+		missingReason: reasonMissingAttestation,
+		missingDetail: "no provenance attestation found for image ",
 	}
 
-	result, err := slsa.VerifyMultiple(ctx, slsaAtts, pol, digest)
-	if err != nil {
-		slog.ErrorContext(ctx, "SLSA verification error",
-			"error", err,
-			"reason", "verification_error",
-			"image", imageRef,
-		)
-
-		met.VerificationTotal.WithLabelValues(string(types.CheckTypeSLSA), "error", namespace).Inc()
-
-		return types.FailResult(
-			types.CheckTypeSLSA,
-			fmt.Sprintf("SLSA verification error for %s: %s", imageRef, err),
-			err,
-		)
-	}
-
-	return result
+	return runner.run(
+		ctx, met, namespace, imageRef, len(slsaAtts) > 0,
+		func() (*types.CheckResult, error) {
+			return slsa.VerifyMultiple(ctx, slsaAtts, pol, digest)
+		},
+	)
 }
 
 func runVEXCheck(
 	ctx context.Context,
 	vexAtts []attestation.VerifiedAttestation,
-	pol *policy.Policy, met *metrics.Metrics, imageRef, digest, namespace string,
+	pol *policy.Policy, met *metrics.Metrics,
+	imageRef, digest, namespace string,
 	parsedRef name.Reference,
 ) *types.CheckResult {
-	start := time.Now()
-
-	defer func() {
-		met.VerificationDuration.WithLabelValues(string(types.CheckTypeVEX)).Observe(
-			time.Since(start).Seconds(),
-		)
-	}()
-
-	if len(vexAtts) == 0 {
-		logMissingAttestation(ctx, pol.VEXMissingPolicy(),
-			"No VEX attestation found", imageRef, "missing_attestation",
-		)
-
-		return handleMissingAttestation(
-			pol.VEXMissingPolicy(),
-			types.CheckTypeVEX,
-			"no VEX attestation found for image "+imageRef,
-		)
+	runner := &checkRunner{
+		checkType:     types.CheckTypeVEX,
+		label:         "VEX",
+		missingPolicy: pol.VEXMissingPolicy(),
+		missingLog:    "No VEX attestation found",
+		missingReason: reasonMissingAttestation,
+		missingDetail: "no VEX attestation found for image ",
 	}
 
-	payloads := make([][]byte, 0, len(vexAtts))
-	for idx := range vexAtts {
-		payloads = append(payloads, vexAtts[idx].Payload)
-	}
+	return runner.run(
+		ctx, met, namespace, imageRef, len(vexAtts) > 0,
+		func() (*types.CheckResult, error) {
+			payloads := make([][]byte, 0, len(vexAtts))
+			for idx := range vexAtts {
+				payloads = append(
+					payloads, vexAtts[idx].Payload,
+				)
+			}
 
-	result, err := vex.VerifyMultiple(ctx, payloads, pol, imageRef, digest, parsedRef)
-	if err != nil {
-		slog.ErrorContext(ctx, "VEX verification error",
-			"error", err,
-			"reason", "verification_error",
-			"image", imageRef,
-		)
-
-		met.VerificationTotal.WithLabelValues(string(types.CheckTypeVEX), "error", namespace).Inc()
-
-		return types.FailResult(
-			types.CheckTypeVEX,
-			fmt.Sprintf("VEX verification error for %s: %s", imageRef, err),
-			err,
-		)
-	}
-
-	return result
+			return vex.VerifyMultiple(
+				ctx, payloads, pol, imageRef, digest, parsedRef,
+			)
+		},
+	)
 }
 
 func runNotationCheck(
@@ -652,50 +653,23 @@ func runNotationCheck(
 	pol *policy.Policy, met *metrics.Metrics,
 	imageRef, digest, namespace string,
 ) *types.CheckResult {
-	start := time.Now()
-
-	defer func() {
-		met.VerificationDuration.WithLabelValues(
-			string(types.CheckTypeNotation),
-		).Observe(time.Since(start).Seconds())
-	}()
-
-	if len(notationAtts) == 0 {
-		logMissingAttestation(ctx, pol.NotationMissingPolicy(),
-			"No Notation signature found", imageRef, "missing_signature",
-		)
-
-		return handleMissingAttestation(
-			pol.NotationMissingPolicy(),
-			types.CheckTypeNotation,
-			"no Notation signature found for image "+imageRef,
-		)
+	runner := &checkRunner{
+		checkType:     types.CheckTypeNotation,
+		label:         "Notation",
+		missingPolicy: pol.NotationMissingPolicy(),
+		missingLog:    "No Notation signature found",
+		missingReason: reasonMissingSignature,
+		missingDetail: "no Notation signature found for image ",
 	}
 
-	result, err := notation.VerifyMultiple(
-		ctx, notationAtts, imageRef, digest, pol,
+	return runner.run(
+		ctx, met, namespace, imageRef, len(notationAtts) > 0,
+		func() (*types.CheckResult, error) {
+			return notation.VerifyMultiple(
+				ctx, notationAtts, imageRef, digest, pol,
+			)
+		},
 	)
-	if err != nil {
-		slog.ErrorContext(ctx, "Notation verification error",
-			"error", err,
-			"reason", "verification_error",
-			"image", imageRef,
-		)
-
-		met.VerificationTotal.WithLabelValues(
-			string(types.CheckTypeNotation), "error", namespace,
-		).Inc()
-
-		return types.FailResult(
-			types.CheckTypeNotation,
-			fmt.Sprintf(
-				"Notation verification error for %s: %s", imageRef, err,
-			),
-			err,
-		)
-	}
-
-	return result
 }
 
 func runCELCheck(

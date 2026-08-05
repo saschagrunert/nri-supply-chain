@@ -78,7 +78,7 @@ func TestPollerDetectsDigestChange(t *testing.T) {
 	poller.Start(t.Context())
 
 	// Wait for a poll with no changes.
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 
 	if callCount.Load() != 0 {
 		t.Errorf("expected 0 reload calls with same digest, got %d", callCount.Load())
@@ -136,7 +136,7 @@ func TestPollerStopsCleanly(t *testing.T) {
 	poller.Start(ctx)
 
 	// Let it run briefly.
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 
 	// Stop should complete without hanging.
 	done := make(chan struct{})
@@ -179,7 +179,7 @@ func TestPollerHandlesFetchError(t *testing.T) {
 	poller.Start(ctx)
 
 	// Let it attempt a few polls.
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 	cancel()
 	poller.Stop()
 
@@ -224,7 +224,7 @@ func TestPollerRetriesOnReloadError(t *testing.T) {
 
 	// Let it attempt several polls; all should be retried because the
 	// callback returns an error.
-	time.Sleep(250 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 
 	count := reloadCount.Load()
 	if count < 2 {
@@ -238,7 +238,7 @@ func TestPollerRetriesOnReloadError(t *testing.T) {
 
 	prevCount := reloadCount.Load()
 
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 
 	// Should have succeeded once more, then stopped retrying.
 	afterCount := reloadCount.Load()
@@ -330,7 +330,7 @@ func TestPollerTOCTOURaceDoesNotReload(t *testing.T) {
 	poller.Start(ctx)
 
 	// Wait long enough for at least one poll cycle to run.
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 	cancel()
 	poller.Stop()
 

@@ -74,7 +74,7 @@ func TestCircuitBreakerRecordFailureReturnsTrueOnTrip(t *testing.T) {
 func TestCircuitBreakerTransitionsToHalfOpenAfterCooldown(t *testing.T) {
 	t.Parallel()
 
-	breaker := attestation.NewCircuitBreaker(1, time.Millisecond)
+	breaker := attestation.NewCircuitBreaker(1, 10*time.Millisecond)
 
 	breaker.RecordFailure()
 
@@ -82,7 +82,7 @@ func TestCircuitBreakerTransitionsToHalfOpenAfterCooldown(t *testing.T) {
 		t.Error("expected Allow() = false immediately after trip")
 	}
 
-	time.Sleep(5 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 
 	if !breaker.Allow() {
 		t.Error("expected Allow() = true after cooldown (half-open probe)")
@@ -96,11 +96,11 @@ func TestCircuitBreakerTransitionsToHalfOpenAfterCooldown(t *testing.T) {
 func TestCircuitBreakerSuccessResetsToClosed(t *testing.T) {
 	t.Parallel()
 
-	breaker := attestation.NewCircuitBreaker(1, time.Millisecond)
+	breaker := attestation.NewCircuitBreaker(1, 10*time.Millisecond)
 
 	breaker.RecordFailure()
 
-	time.Sleep(5 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 
 	breaker.Allow()
 
@@ -118,11 +118,11 @@ func TestCircuitBreakerSuccessResetsToClosed(t *testing.T) {
 func TestCircuitBreakerFailureInHalfOpenReopens(t *testing.T) {
 	t.Parallel()
 
-	breaker := attestation.NewCircuitBreaker(1, time.Millisecond)
+	breaker := attestation.NewCircuitBreaker(1, 10*time.Millisecond)
 
 	breaker.RecordFailure()
 
-	time.Sleep(5 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 
 	breaker.Allow()
 
@@ -240,7 +240,7 @@ func TestCircuitBreakerRegistrySharedOverflowWhenAllOpen(t *testing.T) {
 func TestCircuitBreakerRegistryPreservesHalfOpenOnEviction(t *testing.T) {
 	t.Parallel()
 
-	registry := attestation.NewCircuitBreakerRegistry(1, time.Nanosecond)
+	registry := attestation.NewCircuitBreakerRegistry(1, 10*time.Millisecond)
 
 	for idx := range attestation.ExportMaxCircuitBreakers {
 		breaker := registry.Get(fmt.Sprintf("host-%d.example.com", idx))
@@ -248,7 +248,7 @@ func TestCircuitBreakerRegistryPreservesHalfOpenOnEviction(t *testing.T) {
 		if idx == 0 {
 			breaker.RecordFailure()
 
-			time.Sleep(time.Millisecond)
+			time.Sleep(100 * time.Millisecond)
 
 			if !breaker.Allow() {
 				t.Fatal("expected half-open breaker to allow probe after cooldown")

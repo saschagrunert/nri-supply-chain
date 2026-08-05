@@ -62,16 +62,40 @@ type hostSemMap struct {
 	count atomic.Int64
 }
 
+func (hsm *hostSemMap) load(host string) (*semaphore.Weighted, bool) {
+	value, found := hsm.m.Load(host)
+	if !found {
+		return nil, false
+	}
+
+	weighted, valid := value.(*semaphore.Weighted)
+
+	return weighted, valid
+}
+
+func (hsm *hostSemMap) loadOrStore(
+	host string, sem *semaphore.Weighted,
+) (*semaphore.Weighted, bool) {
+	value, loaded := hsm.m.LoadOrStore(host, sem)
+
+	stored, valid := value.(*semaphore.Weighted)
+	if !valid {
+		return sem, loaded
+	}
+
+	return stored, loaded
+}
+
 func acquireHostSem(hsm *hostSemMap, host string) *semaphore.Weighted {
-	if val, ok := hsm.m.Load(host); ok {
-		return val.(*semaphore.Weighted) //nolint:forcetypeassert // hostSem is private, only stores *Weighted
+	if existing, ok := hsm.load(host); ok {
+		return existing
 	}
 
 	sem := semaphore.NewWeighted(maxConcurrentFetchesPerHost)
 
-	val, loaded := hsm.m.LoadOrStore(host, sem)
+	stored, loaded := hsm.loadOrStore(host, sem)
 	if loaded {
-		return val.(*semaphore.Weighted) //nolint:forcetypeassert // hostSem is private, only stores *Weighted
+		return stored
 	}
 
 	newCount := hsm.count.Add(1)
@@ -89,7 +113,7 @@ func acquireHostSem(hsm *hostSemMap, host string) *semaphore.Weighted {
 		return sem
 	}
 
-	return val.(*semaphore.Weighted) //nolint:forcetypeassert // hostSem is private, only stores *Weighted
+	return stored
 }
 
 // digestRefFromParsed builds a digest reference string using a pre-parsed
