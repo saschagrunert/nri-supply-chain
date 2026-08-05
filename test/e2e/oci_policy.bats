@@ -156,3 +156,46 @@ teardown_file() {
 	write_plugin_config_oci "warn" "$OCI_POLICY_REF" "1m"
 	reload_plugin
 }
+
+@test "OCI source: unreachable registry starts plugin in pending state" {
+	stop_plugin
+
+	# Point at a nonexistent registry.
+	write_plugin_config_oci "warn" "localhost:1/nonexistent:v1" "30s"
+
+	# The plugin should start despite the unreachable registry.
+	"$BINARY" \
+		--config "$PLUGIN_CONFIG" \
+		--log-level debug \
+		>"$PLUGIN_LOG" 2>&1 &
+	echo $! >"$PLUGIN_PID_FILE"
+	# shellcheck disable=SC2034
+	LOG_OFFSET=0
+
+	local pid
+	pid=$(cat "$PLUGIN_PID_FILE")
+
+	local elapsed=0
+	while [[ $elapsed -lt 15 ]]; do
+		if grep -q "starting in pending state" "$PLUGIN_LOG" 2>/dev/null; then
+			break
+		fi
+		if ! kill -0 "$pid" 2>/dev/null; then
+			cat "$PLUGIN_LOG"
+			fail "plugin exited unexpectedly"
+		fi
+		sleep 1
+		elapsed=$((elapsed + 1))
+	done
+
+	assert_log_contains "starting in pending state"
+
+	# Readiness probe should return 503.
+	run curl -s -o /dev/null -w "%{http_code}" "http://localhost:9090/readyz"
+	[[ "$output" == "503" ]]
+
+	# Restore.
+	stop_plugin
+	write_plugin_config_oci "warn" "$OCI_POLICY_REF" "1m"
+	start_plugin
+}
