@@ -2881,3 +2881,114 @@ keys = ["/etc/keys/policy.pub"]
 		}
 	})
 }
+
+func TestConfigValidatePolicyKeysRuntime(t *testing.T) {
+	t.Parallel()
+
+	t.Run("no keys configured (issuers only) returns nil", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.PolicyDir = dir
+		cfg.Policy.Issuers = []string{testIssuerGoogle}
+
+		testutil.AssertNoError(t, cfg.ValidateRuntime())
+	})
+
+	t.Run("valid key file returns nil", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		keyPath := filepath.Join(dir, "policy.pub")
+		testutil.AssertNoError(t, os.WriteFile(keyPath, []byte("pubkey"), 0o600))
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.PolicyDir = dir
+		cfg.Policy.Keys = []string{keyPath}
+
+		testutil.AssertNoError(t, cfg.ValidateRuntime())
+	})
+
+	t.Run("key file does not exist returns stat error", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		missingKey := filepath.Join(dir, "nonexistent.pub")
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.PolicyDir = dir
+		cfg.Policy.Keys = []string{missingKey}
+
+		err := cfg.ValidateRuntime()
+		testutil.AssertError(t, err)
+		testutil.AssertContains(t, err.Error(), "nonexistent.pub")
+	})
+
+	t.Run("key file is a symlink returns ErrSymlinkNotAllowed", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		realKey := filepath.Join(dir, "real.pub")
+		testutil.AssertNoError(t, os.WriteFile(realKey, []byte("pubkey"), 0o600))
+
+		linkKey := filepath.Join(dir, "link.pub")
+		testutil.AssertNoError(t, os.Symlink(realKey, linkKey))
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.PolicyDir = dir
+		cfg.Policy.Keys = []string{linkKey}
+
+		err := cfg.ValidateRuntime()
+		testutil.AssertErrorIs(t, err, config.ErrSymlinkNotAllowed)
+	})
+
+	t.Run("key file is a directory returns ErrPolicyKeyNotRegularFile", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		keyDir := filepath.Join(dir, "not-a-file")
+		testutil.AssertNoError(t, os.Mkdir(keyDir, 0o750))
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.PolicyDir = dir
+		cfg.Policy.Keys = []string{keyDir}
+
+		err := cfg.ValidateRuntime()
+		testutil.AssertErrorIs(t, err, config.ErrPolicyKeyNotRegularFile)
+	})
+
+	t.Run("multiple keys with mixed errors", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+
+		// Valid key.
+		goodKey := filepath.Join(dir, "good.pub")
+		testutil.AssertNoError(t, os.WriteFile(goodKey, []byte("pubkey"), 0o600))
+
+		// Missing key.
+		missingKey := filepath.Join(dir, "missing.pub")
+
+		// Directory key.
+		dirKey := filepath.Join(dir, "dir-key")
+		testutil.AssertNoError(t, os.Mkdir(dirKey, 0o750))
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.PolicyDir = dir
+		cfg.Policy.Keys = []string{goodKey, missingKey, dirKey}
+
+		err := cfg.ValidateRuntime()
+		testutil.AssertError(t, err)
+		testutil.AssertContains(t, err.Error(), "missing.pub")
+
+		testutil.AssertErrorIs(t, err, config.ErrPolicyKeyNotRegularFile)
+	})
+}
