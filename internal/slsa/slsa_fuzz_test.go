@@ -42,7 +42,7 @@ func FuzzVerify(f *testing.F) {
 			},
 			RunDetails: slsa.RunDetails{
 				Builder:  slsa.Builder{ID: "https://github.com/actions/runner"},
-				Metadata: slsa.Metadata{InvocationID: "run-1"},
+				Metadata: slsa.Metadata{InvocationID: "run-1", StartedOn: nil},
 			},
 		},
 	}
@@ -105,6 +105,19 @@ func FuzzVerify(f *testing.F) {
 		`"externalParameters":{"source":"github.com/other-org/other-repo","custom-key":"custom-value","extra":"data"},` +
 		`"internalParameters":{"internal":"param"}},"runDetails":{"builder":{"id":"https://custom-builder.example.com"},` +
 		`"metadata":{"invocationId":"run-999"}}}` +
+		`}`))
+
+	// Seed: valid statement with startedOn timestamp in metadata to exercise
+	// the freshness verification path.
+	f.Add([]byte(`{` +
+		`"_type":"https://in-toto.io/Statement/v1",` +
+		`"subject":[{"name":"nginx","digest":{"sha256":"` +
+		testDigestHash + `"}}],` +
+		`"predicateType":"https://slsa.dev/provenance/v1",` +
+		`"predicate":{"buildDefinition":{"buildType":"https://actions.github.io/buildtypes/workflow/v1",` +
+		`"externalParameters":{"source":"github.com/example/repo"},` +
+		`"internalParameters":{}},"runDetails":{"builder":{"id":"https://github.com/actions/runner"},` +
+		`"metadata":{"invocationId":"run-1","startedOn":"2025-01-15T10:30:00Z"}}}` +
 		`}`))
 
 	f.Fuzz(func(_ *testing.T, data []byte) {

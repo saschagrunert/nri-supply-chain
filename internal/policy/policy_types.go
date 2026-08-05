@@ -91,6 +91,9 @@ var (
 	// ErrVSAMaxAgeNotPositive indicates a non-positive VSA maxAge value.
 	ErrVSAMaxAgeNotPositive = errors.New("vsa.maxAge must be positive")
 
+	// ErrSLSAMaxAgeNotPositive indicates a non-positive SLSA maxAge value.
+	ErrSLSAMaxAgeNotPositive = errors.New("slsa.maxAge must be positive")
+
 	// ErrPolicyFileTooLarge indicates a policy file exceeds the size limit.
 	ErrPolicyFileTooLarge = errors.New("policy file exceeds size limit")
 
@@ -287,6 +290,10 @@ type SLSAPolicy struct {
 	// RejectUnknownParameters is true. If empty, defaults to the GitHub
 	// Actions parameter set (source, repository, ref, workflow, buildType).
 	KnownParameters []string `json:"knownParameters,omitempty"`
+	// MaxAge is the maximum age of a provenance build timestamp before it's considered stale.
+	MaxAge string `json:"maxAge,omitempty"`
+	// MaxAgeDuration is the parsed form of MaxAge, resolved after validation.
+	MaxAgeDuration time.Duration `json:"-"`
 }
 
 // VEXPolicy contains VEX verification settings.

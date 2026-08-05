@@ -24,6 +24,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/glob"
@@ -37,6 +38,13 @@ const (
 	metaBuilderID = "builderID"
 	metaBuildType = "buildType"
 	metaSource    = "source"
+
+	clockSkewTolerance = 60 * time.Second
+
+	// maxReasonableAge caps the computed age to prevent time.Duration overflow
+	// on crafted timestamps (e.g., year 0001). time.Duration is int64
+	// nanoseconds, overflowing at ~292 years.
+	maxReasonableAge = 200 * 365 * 24 * time.Hour
 )
 
 var (
@@ -57,6 +65,12 @@ var (
 
 	// ErrInvalidProvenance indicates the provenance attestation could not be parsed.
 	ErrInvalidProvenance = errors.New("invalid provenance attestation")
+
+	// ErrStaleProvenance indicates the provenance is older than the maximum allowed age.
+	ErrStaleProvenance = errors.New("provenance is stale")
+
+	// ErrFutureTimestamp indicates the provenance build timestamp is in the future.
+	ErrFutureTimestamp = errors.New("provenance build timestamp is in the future")
 
 	warnedMaxLevel   sync.Map //nolint:gochecknoglobals // dedup per builder ID
 	warnedEmptyTrust sync.Map //nolint:gochecknoglobals // one-time empty trust warning
@@ -102,7 +116,8 @@ type Builder struct {
 
 // Metadata holds build metadata.
 type Metadata struct {
-	InvocationID string `json:"invocationId"` //nolint:tagliatelle // SLSA spec field name.
+	InvocationID string     `json:"invocationId"` //nolint:tagliatelle // SLSA spec field name.
+	StartedOn    *time.Time `json:"startedOn,omitempty"`
 }
 
 // Verify checks a SLSA provenance attestation against the given policy.
@@ -168,6 +183,11 @@ func verifyV1(
 		return failResult(err.Error()), nil
 	}
 
+	err = verifyFreshness(stmt.Predicate.RunDetails.Metadata.StartedOn, pol)
+	if err != nil {
+		return failResult(err.Error()), nil
+	}
+
 	result := passResult()
 	result.Metadata = map[string]any{
 		metaBuilderID: stmt.Predicate.RunDetails.Builder.ID,
@@ -192,6 +212,12 @@ type ProvenancePredicateV02 struct {
 	BuildType  string        `json:"buildType"`
 	Invocation InvocationV02 `json:"invocation"`
 	Materials  []MaterialV02 `json:"materials"`
+	Metadata   MetadataV02   `json:"metadata"`
+}
+
+// MetadataV02 holds build metadata for v0.2 provenance.
+type MetadataV02 struct {
+	BuildStartedOn *time.Time `json:"buildStartedOn,omitempty"`
 }
 
 // InvocationV02 holds v0.2 invocation metadata.
@@ -236,7 +262,7 @@ func verifyV02(
 		return failResult(err.Error()), nil
 	}
 
-	err = verifySourceV02(stmt.Predicate, pol)
+	err = verifySourceV02(&stmt.Predicate, pol)
 	if err != nil {
 		return failResult(err.Error()), nil
 	}
@@ -244,17 +270,22 @@ func verifyV02(
 	// v0.2 has no externalParameters, so rejectUnknownParameters does not
 	// apply. Parameter validation is only meaningful for v1 provenance.
 
+	err = verifyFreshness(stmt.Predicate.Metadata.BuildStartedOn, pol)
+	if err != nil {
+		return failResult(err.Error()), nil
+	}
+
 	result := passResult()
 	result.Metadata = map[string]any{
 		metaBuilderID: stmt.Predicate.Builder.ID,
 		metaBuildType: stmt.Predicate.BuildType,
-		metaSource:    normalizeSourceV02(sourceV02(stmt.Predicate)),
+		metaSource:    normalizeSourceV02(sourceV02(&stmt.Predicate)),
 	}
 
 	return result, nil
 }
 
-func verifySourceV02(pred ProvenancePredicateV02, pol *policy.Policy) error {
+func verifySourceV02(pred *ProvenancePredicateV02, pol *policy.Policy) error {
 	if pol.Trust == nil || len(pol.Trust.Sources) == 0 {
 		return nil
 	}
@@ -281,7 +312,7 @@ func verifySourceV02(pred ProvenancePredicateV02, pol *policy.Policy) error {
 // sourceV02 returns the raw source URI from a v0.2 provenance predicate.
 // Falls back to the first material URI; this relies on the SLSA GitHub
 // generator always listing the source repo as the first material.
-func sourceV02(pred ProvenancePredicateV02) string {
+func sourceV02(pred *ProvenancePredicateV02) string {
 	if pred.Invocation.ConfigSource.URI != "" {
 		return pred.Invocation.ConfigSource.URI
 	}
@@ -500,6 +531,47 @@ func warnEmptyTrust(ctx context.Context, pol *policy.Policy) {
 	slog.WarnContext(ctx,
 		"SLSA verification has no trusted builders, sources, or build types configured; "+
 			"any provenance will pass builder and source checks")
+}
+
+func verifyFreshness(buildStarted *time.Time, pol *policy.Policy) error {
+	maxAgeConfigured := pol.SLSA != nil && pol.SLSA.MaxAge != ""
+
+	if buildStarted == nil {
+		if maxAgeConfigured {
+			return fmt.Errorf("%w: no build timestamp in provenance", ErrStaleProvenance)
+		}
+
+		return nil
+	}
+
+	age := time.Since(*buildStarted)
+
+	if age < -clockSkewTolerance {
+		return fmt.Errorf("%w: %s", ErrFutureTimestamp, buildStarted.Format(time.RFC3339Nano))
+	}
+
+	if age < 0 {
+		age = 0
+	}
+
+	if age > maxReasonableAge {
+		return fmt.Errorf(
+			"%w: timestamp %s is unreasonably old",
+			ErrStaleProvenance,
+			buildStarted.Format(time.RFC3339Nano),
+		)
+	}
+
+	if maxAgeConfigured && age > pol.SLSA.MaxAgeDuration {
+		return fmt.Errorf(
+			"%w: built %s ago, max %s",
+			ErrStaleProvenance,
+			age.Truncate(time.Second),
+			pol.SLSA.MaxAgeDuration,
+		)
+	}
+
+	return nil
 }
 
 func failResult(detail string) *types.CheckResult {

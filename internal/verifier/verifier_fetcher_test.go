@@ -108,6 +108,7 @@ func validSLSAPayload(tb testing.TB) []byte {
 				},
 				Metadata: slsa.Metadata{
 					InvocationID: "run-123",
+					StartedOn:    nil,
 				},
 			},
 		},
@@ -1351,6 +1352,7 @@ func TestVerifyIndexDigestFallback(t *testing.T) {
 					},
 					Metadata: slsa.Metadata{
 						InvocationID: "run-123",
+						StartedOn:    nil,
 					},
 				},
 			},

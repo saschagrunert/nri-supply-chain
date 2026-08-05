@@ -18,7 +18,8 @@
   },
   "slsa": {
     "missingPolicy": "deny",
-    "rejectUnknownParameters": true
+    "rejectUnknownParameters": true,
+    "maxAge": "720h"
   },
   "vex": {
     "missingPolicy": "deny",

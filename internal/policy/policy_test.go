@@ -65,6 +65,7 @@ const (
 	testDefaultLabel           = "default"
 	testDefaultIncludeGlob     = "default-include/**"
 	testDefaultExcludeGlob     = "default-exclude/**"
+	testMaxAge                 = "24h"
 )
 
 type validateTest struct {
@@ -1807,7 +1808,7 @@ func TestValidateVSAMaxAgeResolved(t *testing.T) {
 
 	pol := policy.Policy{
 		Sections: policy.Sections{
-			VSA: &policy.VSAPolicy{MaxAge: "24h"},
+			VSA: &policy.VSAPolicy{MaxAge: testMaxAge},
 		},
 	}
 
@@ -1826,6 +1827,77 @@ func TestValidateVSANoMaxAgeSkipsResolve(t *testing.T) {
 
 	testutil.AssertNoError(t, pol.Validate())
 	testutil.AssertEqual(t, time.Duration(0), pol.VSA.MaxAgeDuration)
+}
+
+func TestValidateSLSAMaxAgeNegative(t *testing.T) {
+	t.Parallel()
+
+	pol := policy.Policy{
+		Sections: policy.Sections{
+			SLSA: &policy.SLSAPolicy{MaxAge: "-1h"},
+		},
+	}
+
+	err := pol.Validate()
+	if !errors.Is(err, policy.ErrSLSAMaxAgeNotPositive) {
+		t.Errorf("expected ErrSLSAMaxAgeNotPositive, got %v", err)
+	}
+}
+
+func TestValidateSLSAMaxAgeZero(t *testing.T) {
+	t.Parallel()
+
+	pol := policy.Policy{
+		Sections: policy.Sections{
+			SLSA: &policy.SLSAPolicy{MaxAge: "0s"},
+		},
+	}
+
+	err := pol.Validate()
+	if !errors.Is(err, policy.ErrSLSAMaxAgeNotPositive) {
+		t.Errorf("expected ErrSLSAMaxAgeNotPositive, got %v", err)
+	}
+}
+
+func TestValidateSLSAMaxAgeResolved(t *testing.T) {
+	t.Parallel()
+
+	pol := policy.Policy{
+		Sections: policy.Sections{
+			SLSA: &policy.SLSAPolicy{MaxAge: testMaxAge},
+		},
+	}
+
+	testutil.AssertNoError(t, pol.Validate())
+	testutil.AssertEqual(t, 24*time.Hour, pol.SLSA.MaxAgeDuration)
+}
+
+func TestValidateSLSANoMaxAgeSkipsResolve(t *testing.T) {
+	t.Parallel()
+
+	pol := policy.Policy{
+		Sections: policy.Sections{
+			SLSA: &policy.SLSAPolicy{},
+		},
+	}
+
+	testutil.AssertNoError(t, pol.Validate())
+	testutil.AssertEqual(t, time.Duration(0), pol.SLSA.MaxAgeDuration)
+}
+
+func TestValidateSLSAMaxAgeInvalidFormat(t *testing.T) {
+	t.Parallel()
+
+	pol := policy.Policy{
+		Sections: policy.Sections{
+			SLSA: &policy.SLSAPolicy{MaxAge: "not-a-duration"},
+		},
+	}
+
+	err := pol.Validate()
+	if err == nil {
+		t.Error("expected error for invalid maxAge format, got nil")
+	}
 }
 
 func TestTooManyPolicyFiles(t *testing.T) {
@@ -2496,7 +2568,7 @@ func TestPolicyValidateRulesVSADurationResolved(t *testing.T) {
 				Sections: policy.Sections{
 					VSA: &policy.VSAPolicy{
 						MissingPolicy: types.ActionDeny,
-						MaxAge:        "24h",
+						MaxAge:        testMaxAge,
 					},
 				},
 			},
@@ -2508,6 +2580,30 @@ func TestPolicyValidateRulesVSADurationResolved(t *testing.T) {
 	if pol.Rules[0].VSA.MaxAgeDuration != 24*time.Hour {
 		t.Errorf("expected MaxAgeDuration 24h, got %v",
 			pol.Rules[0].VSA.MaxAgeDuration)
+	}
+}
+
+func TestPolicyValidateRulesSLSADurationResolved(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{
+		Rules: []policy.ImageRule{
+			{
+				Images: []string{testRuleImagesGlob},
+				Sections: policy.Sections{
+					SLSA: &policy.SLSAPolicy{
+						MaxAge: testMaxAge,
+					},
+				},
+			},
+		},
+	}
+
+	testutil.AssertNoError(t, pol.Validate())
+
+	if pol.Rules[0].SLSA.MaxAgeDuration != 24*time.Hour {
+		t.Errorf("expected MaxAgeDuration 24h, got %v",
+			pol.Rules[0].SLSA.MaxAgeDuration)
 	}
 }
 

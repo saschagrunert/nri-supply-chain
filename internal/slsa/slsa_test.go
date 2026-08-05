@@ -19,6 +19,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
@@ -44,6 +45,7 @@ const (
 	testValue            = "value"
 	testSubjectName      = "nginx"
 	testSourceV02        = "git+https://github.com/example/repo@refs/heads/main"
+	testMaxAge           = "24h"
 )
 
 func validStatementV02() slsa.StatementV02 {
@@ -67,6 +69,7 @@ func validStatementV02() slsa.StatementV02 {
 			Materials: []slsa.MaterialV02{
 				{URI: testSourceV02},
 			},
+			Metadata: slsa.MetadataV02{BuildStartedOn: nil},
 		},
 	}
 }
@@ -96,6 +99,7 @@ func validStatement() slsa.Statement {
 				},
 				Metadata: slsa.Metadata{
 					InvocationID: "run-123",
+					StartedOn:    nil,
 				},
 			},
 		},
@@ -646,6 +650,290 @@ func TestVerify(t *testing.T) {
 				return testutil.MustMarshal(t, stmt)
 			},
 			policy:     &policy.Policy{},
+			digest:     testDigest,
+			wantErr:    nil,
+			wantPass:   true,
+			wantType:   types.CheckTypeSLSA,
+			wantStatus: types.StatusPass,
+		},
+		{
+			name: "v1 fresh provenance within maxAge",
+			data: func(t *testing.T) []byte {
+				t.Helper()
+
+				stmt := validStatement()
+				ts := time.Now().Add(-1 * time.Hour)
+				stmt.Predicate.RunDetails.Metadata.StartedOn = &ts
+
+				return testutil.MustMarshal(t, stmt)
+			},
+			policy: &policy.Policy{
+				Sections: policy.Sections{
+					SLSA: &policy.SLSAPolicy{
+						MaxAge:         testMaxAge,
+						MaxAgeDuration: 24 * time.Hour,
+					},
+				},
+			},
+			digest:     testDigest,
+			wantErr:    nil,
+			wantPass:   true,
+			wantType:   types.CheckTypeSLSA,
+			wantStatus: types.StatusPass,
+		},
+		{
+			name: "v1 stale provenance beyond maxAge",
+			data: func(t *testing.T) []byte {
+				t.Helper()
+
+				stmt := validStatement()
+				ts := time.Now().Add(-25 * time.Hour)
+				stmt.Predicate.RunDetails.Metadata.StartedOn = &ts
+
+				return testutil.MustMarshal(t, stmt)
+			},
+			policy: &policy.Policy{
+				Sections: policy.Sections{
+					SLSA: &policy.SLSAPolicy{
+						MaxAge:         testMaxAge,
+						MaxAgeDuration: 24 * time.Hour,
+					},
+				},
+			},
+			digest:     testDigest,
+			wantErr:    nil,
+			wantPass:   false,
+			wantType:   types.CheckTypeSLSA,
+			wantStatus: types.StatusFail,
+		},
+		{
+			name: "v1 no maxAge configured no timestamp passes",
+			data: func(t *testing.T) []byte {
+				t.Helper()
+
+				return testutil.MustMarshal(t, validStatement())
+			},
+			policy:     &policy.Policy{},
+			digest:     testDigest,
+			wantErr:    nil,
+			wantPass:   true,
+			wantType:   types.CheckTypeSLSA,
+			wantStatus: types.StatusPass,
+		},
+		{
+			name: "v1 maxAge configured but missing timestamp",
+			data: func(t *testing.T) []byte {
+				t.Helper()
+
+				return testutil.MustMarshal(t, validStatement())
+			},
+			policy: &policy.Policy{
+				Sections: policy.Sections{
+					SLSA: &policy.SLSAPolicy{
+						MaxAge:         testMaxAge,
+						MaxAgeDuration: 24 * time.Hour,
+					},
+				},
+			},
+			digest:     testDigest,
+			wantErr:    nil,
+			wantPass:   false,
+			wantType:   types.CheckTypeSLSA,
+			wantStatus: types.StatusFail,
+		},
+		{
+			name: "v1 future timestamp within tolerance",
+			data: func(t *testing.T) []byte {
+				t.Helper()
+
+				stmt := validStatement()
+				ts := time.Now().Add(30 * time.Second)
+				stmt.Predicate.RunDetails.Metadata.StartedOn = &ts
+
+				return testutil.MustMarshal(t, stmt)
+			},
+			policy:     &policy.Policy{},
+			digest:     testDigest,
+			wantErr:    nil,
+			wantPass:   true,
+			wantType:   types.CheckTypeSLSA,
+			wantStatus: types.StatusPass,
+		},
+		{
+			name: "v1 future timestamp beyond tolerance",
+			data: func(t *testing.T) []byte {
+				t.Helper()
+
+				stmt := validStatement()
+				ts := time.Now().Add(2 * time.Minute)
+				stmt.Predicate.RunDetails.Metadata.StartedOn = &ts
+
+				return testutil.MustMarshal(t, stmt)
+			},
+			policy:     &policy.Policy{},
+			digest:     testDigest,
+			wantErr:    nil,
+			wantPass:   false,
+			wantType:   types.CheckTypeSLSA,
+			wantStatus: types.StatusFail,
+		},
+		{
+			name: "v0.2 fresh provenance within maxAge",
+			data: func(t *testing.T) []byte {
+				t.Helper()
+
+				stmt := validStatementV02()
+				ts := time.Now().Add(-1 * time.Hour)
+				stmt.Predicate.Metadata.BuildStartedOn = &ts
+
+				return testutil.MustMarshal(t, stmt)
+			},
+			policy: &policy.Policy{
+				Sections: policy.Sections{
+					Trust: &policy.TrustPolicy{
+						Builders: []policy.TrustedBuilder{
+							{ID: testBuilderID},
+						},
+					},
+					SLSA: &policy.SLSAPolicy{
+						MaxAge:         testMaxAge,
+						MaxAgeDuration: 24 * time.Hour,
+					},
+				},
+			},
+			digest:     testDigest,
+			wantErr:    nil,
+			wantPass:   true,
+			wantType:   types.CheckTypeSLSA,
+			wantStatus: types.StatusPass,
+		},
+		{
+			name: "v0.2 stale provenance beyond maxAge",
+			data: func(t *testing.T) []byte {
+				t.Helper()
+
+				stmt := validStatementV02()
+				ts := time.Now().Add(-25 * time.Hour)
+				stmt.Predicate.Metadata.BuildStartedOn = &ts
+
+				return testutil.MustMarshal(t, stmt)
+			},
+			policy: &policy.Policy{
+				Sections: policy.Sections{
+					Trust: &policy.TrustPolicy{
+						Builders: []policy.TrustedBuilder{
+							{ID: testBuilderID},
+						},
+					},
+					SLSA: &policy.SLSAPolicy{
+						MaxAge:         testMaxAge,
+						MaxAgeDuration: 24 * time.Hour,
+					},
+				},
+			},
+			digest:     testDigest,
+			wantErr:    nil,
+			wantPass:   false,
+			wantType:   types.CheckTypeSLSA,
+			wantStatus: types.StatusFail,
+		},
+		{
+			name: "v0.2 maxAge configured but missing timestamp",
+			data: func(t *testing.T) []byte {
+				t.Helper()
+
+				return testutil.MustMarshal(t, validStatementV02())
+			},
+			policy: &policy.Policy{
+				Sections: policy.Sections{
+					Trust: &policy.TrustPolicy{
+						Builders: []policy.TrustedBuilder{
+							{ID: testBuilderID},
+						},
+					},
+					SLSA: &policy.SLSAPolicy{
+						MaxAge:         testMaxAge,
+						MaxAgeDuration: 24 * time.Hour,
+					},
+				},
+			},
+			digest:     testDigest,
+			wantErr:    nil,
+			wantPass:   false,
+			wantType:   types.CheckTypeSLSA,
+			wantStatus: types.StatusFail,
+		},
+		{
+			name: "v1 unreasonably old timestamp rejected",
+			data: func(t *testing.T) []byte {
+				t.Helper()
+
+				stmt := validStatement()
+				ts := time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC)
+				stmt.Predicate.RunDetails.Metadata.StartedOn = &ts
+
+				return testutil.MustMarshal(t, stmt)
+			},
+			policy: &policy.Policy{
+				Sections: policy.Sections{
+					SLSA: &policy.SLSAPolicy{
+						MaxAge:         "8760h",
+						MaxAgeDuration: 8760 * time.Hour,
+					},
+				},
+			},
+			digest:     testDigest,
+			wantErr:    nil,
+			wantPass:   false,
+			wantType:   types.CheckTypeSLSA,
+			wantStatus: types.StatusFail,
+		},
+		{
+			name: "v0.2 unreasonably old timestamp rejected",
+			data: func(t *testing.T) []byte {
+				t.Helper()
+
+				stmt := validStatementV02()
+				ts := time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC)
+				stmt.Predicate.Metadata.BuildStartedOn = &ts
+
+				return testutil.MustMarshal(t, stmt)
+			},
+			policy: &policy.Policy{
+				Sections: policy.Sections{
+					Trust: &policy.TrustPolicy{
+						Builders: []policy.TrustedBuilder{
+							{ID: testBuilderID},
+						},
+					},
+					SLSA: &policy.SLSAPolicy{
+						MaxAge:         "8760h",
+						MaxAgeDuration: 8760 * time.Hour,
+					},
+				},
+			},
+			digest:     testDigest,
+			wantErr:    nil,
+			wantPass:   false,
+			wantType:   types.CheckTypeSLSA,
+			wantStatus: types.StatusFail,
+		},
+		{
+			name: "v0.2 no maxAge no timestamp passes",
+			data: func(t *testing.T) []byte {
+				t.Helper()
+
+				return testutil.MustMarshal(t, validStatementV02())
+			},
+			policy: &policy.Policy{
+				Sections: policy.Sections{
+					Trust: &policy.TrustPolicy{
+						Builders: []policy.TrustedBuilder{
+							{ID: testBuilderID},
+						},
+					},
+				},
+			},
 			digest:     testDigest,
 			wantErr:    nil,
 			wantPass:   true,
@@ -1252,6 +1540,43 @@ func TestVerifyMultiple(t *testing.T) {
 			policy:             &policy.Policy{},
 			wantPass:           false,
 			wantDetailContains: "no valid provenance:",
+		},
+		{
+			name: "one stale and one fresh passes",
+			attestations: func(t *testing.T) []attestation.VerifiedAttestation {
+				t.Helper()
+
+				staleStmt := validStatement()
+				staleTS := time.Now().Add(-25 * time.Hour)
+				staleStmt.Predicate.RunDetails.Metadata.StartedOn = &staleTS
+
+				freshStmt := validStatement()
+				freshTS := time.Now().Add(-1 * time.Hour)
+				freshStmt.Predicate.RunDetails.Metadata.StartedOn = &freshTS
+
+				return []attestation.VerifiedAttestation{
+					{
+						PredicateType: attestation.PredicateSLSAProvenanceV1,
+						Payload:       testutil.MustMarshal(t, staleStmt),
+						Digest:        testDigest,
+					},
+					{
+						PredicateType: attestation.PredicateSLSAProvenanceV1,
+						Payload:       testutil.MustMarshal(t, freshStmt),
+						Digest:        testDigest,
+					},
+				}
+			},
+			policy: &policy.Policy{
+				Sections: policy.Sections{
+					SLSA: &policy.SLSAPolicy{
+						MaxAge:         testMaxAge,
+						MaxAgeDuration: 24 * time.Hour,
+					},
+				},
+			},
+			wantPass:           true,
+			wantDetailContains: "",
 		},
 	}
 
