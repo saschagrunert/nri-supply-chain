@@ -92,6 +92,21 @@ teardown_file() {
 	start_plugin
 }
 
+@test "container_lifetime_seconds recorded after pod deletion" {
+	run_pod "metric-lifetime" "$PAUSE_IMAGE"
+	wait_for_pod_status "metric-lifetime" "Running"
+	wait_for_metrics 'nri_supply_chain_verification_total'
+
+	kubectl delete pod "metric-lifetime" -n "$TEST_NS" --force --grace-period=0 \
+		--request-timeout="${KUBECTL_TIMEOUT}s"
+
+	wait_for_metrics 'nri_supply_chain_container_lifetime_seconds'
+
+	run curl_metrics
+	[[ "$status" -eq 0 ]]
+	echo "$output" | grep -q 'nri_supply_chain_container_lifetime_seconds'
+}
+
 @test "metrics endpoint returns valid Prometheus format" {
 	run curl_metrics
 	[[ "$status" -eq 0 ]]

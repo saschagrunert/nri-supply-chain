@@ -18,6 +18,7 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/containerd/nri/pkg/api"
 
@@ -73,6 +74,7 @@ func ExportDefaultDigestResolver(
 		prewarmMu:            sync.Mutex{},
 		prewarmCancel:        nil,
 		transportCache:       atomic.Pointer[registry.TransportCache]{},
+		containerTimes:       sync.Map{},
 	}
 
 	return plug.registryAwareResolver(ctx, imageRef)
@@ -93,4 +95,21 @@ func ExportBuildVerificationAdjustment(
 	result *types.Result, mode config.VerificationMode,
 ) *api.ContainerAdjustment {
 	return buildVerificationAdjustment(result, mode)
+}
+
+// ExportStoreContainerTime stores a creation timestamp for a container ID.
+func (p *Plugin) ExportStoreContainerTime(containerID string, t time.Time) {
+	p.containerTimes.Store(containerID, t)
+}
+
+// ExportLoadContainerTime loads the creation timestamp for a container ID.
+func (p *Plugin) ExportLoadContainerTime(containerID string) (time.Time, bool) {
+	val, ok := p.containerTimes.Load(containerID)
+	if !ok {
+		return time.Time{}, false
+	}
+
+	t, ok := val.(time.Time)
+
+	return t, ok
 }

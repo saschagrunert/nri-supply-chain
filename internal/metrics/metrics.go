@@ -41,6 +41,10 @@ const (
 	bucketPrewarmLong    = 60
 	bucketPrewarmLonger  = 120
 	bucketPrewarmMax     = 300
+
+	bucketLifetimeStart = 0.5
+	bucketLifetimeBase  = 2
+	bucketLifetimeCount = 21
 )
 
 // Metrics holds Prometheus metrics for supply chain verification.
@@ -83,7 +87,9 @@ type Metrics struct {
 	PrewarmDurationSeconds *prometheus.HistogramVec
 	// MirrorFallbackTotal counts mirror fallback events by registry and type.
 	MirrorFallbackTotal *prometheus.CounterVec
-	registry            *prometheus.Registry
+	// ContainerLifetime measures the duration between container creation and removal.
+	ContainerLifetime *prometheus.HistogramVec
+	registry          *prometheus.Registry
 }
 
 // New creates and registers all supply chain verification metrics.
@@ -160,7 +166,8 @@ func New() *Metrics {
 			labelRegistry,
 			labelType,
 		),
-		registry: prometheus.NewRegistry(),
+		ContainerLifetime: newContainerLifetime(),
+		registry:          prometheus.NewRegistry(),
 	}
 
 	met.register()
@@ -265,6 +272,20 @@ func newPrewarmDuration() *prometheus.HistogramVec {
 	)
 }
 
+func newContainerLifetime() *prometheus.HistogramVec {
+	return prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "container_lifetime_seconds",
+			Help:      "Duration between container creation and removal in seconds.",
+			Buckets: prometheus.ExponentialBuckets(
+				bucketLifetimeStart, bucketLifetimeBase, bucketLifetimeCount,
+			),
+		},
+		[]string{labelNamespace},
+	)
+}
+
 func newVerificationSkipped() *prometheus.CounterVec {
 	return prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -314,6 +335,7 @@ func (m *Metrics) register() {
 		m.FetchDuration,
 		m.PrewarmDurationSeconds,
 		m.MirrorFallbackTotal,
+		m.ContainerLifetime,
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{
 			PidFn:        nil,
 			Namespace:    "",

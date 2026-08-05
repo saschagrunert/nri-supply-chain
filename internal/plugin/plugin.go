@@ -98,8 +98,8 @@ const (
 	AnnotationChecks = "supply-chain.nri/checks"
 )
 
-// Plugin implements the NRI CreateContainer and Configure hooks
-// for supply chain attestation verification.
+// Plugin implements the NRI CreateContainer, RemoveContainer, and Configure
+// hooks for supply chain attestation verification.
 type Plugin struct {
 	verifier             ImageVerifier
 	metrics              *metrics.Metrics
@@ -112,6 +112,7 @@ type Plugin struct {
 	prewarmMu            sync.Mutex
 	prewarmCancel        context.CancelFunc
 	transportCache       atomic.Pointer[registry.TransportCache]
+	containerTimes       sync.Map // map[string]time.Time (container ID -> creation time)
 }
 
 // New creates a new Plugin with the given verifier, metrics, and config file path.
@@ -132,6 +133,7 @@ func New(
 		prewarmMu:            sync.Mutex{},
 		prewarmCancel:        nil,
 		transportCache:       atomic.Pointer[registry.TransportCache]{},
+		containerTimes:       sync.Map{},
 	}
 
 	plug.digestResolveTimeout.Store(int64(digestResolveTimeout))
@@ -219,6 +221,8 @@ func (p *Plugin) Synchronize(
 		podNS[pod.GetId()] = pod.GetNamespace()
 	}
 
+	p.cleanStaleContainerTimes(containers)
+
 	images := p.collectPrewarmImages(containers, podNS)
 
 	if len(images) == 0 {
@@ -256,9 +260,12 @@ func (p *Plugin) CancelPrewarm() {
 
 // CreateContainer is called for each new container before it is created.
 // It verifies supply chain attestations and rejects the container on failure.
+//
+//nolint:funlen // NRI hook handler with annotation resolution and verification
 func (p *Plugin) CreateContainer(
 	ctx context.Context, pod *api.PodSandbox, ctr *api.Container,
 ) (*api.ContainerAdjustment, []*api.ContainerUpdate, error) {
+	createdAt := time.Now()
 	annotations := ctr.GetAnnotations()
 	imageRef, digest := resolveImage(annotations)
 	namespace := pod.GetNamespace()
@@ -283,9 +290,14 @@ func (p *Plugin) CreateContainer(
 			return nil, nil, fmt.Errorf("supply chain verification: %w", resolveErr)
 		}
 
-		return p.handleMissingAnnotations(
+		adj, _, handleErr := p.handleMissingAnnotations(
 			ctx, namespace, pod, ctr, imageRef, digest, len(annotations),
 		)
+		if handleErr == nil {
+			p.containerTimes.Store(ctr.GetId(), createdAt)
+		}
+
+		return adj, nil, handleErr
 	}
 
 	result, err := p.verifier.Verify(ctx, imageRef, digest, indexDigest, namespace, serviceAccount)
@@ -308,6 +320,8 @@ func (p *Plugin) CreateContainer(
 		"image", imageRef,
 		"allowed", result.Allowed,
 	)
+
+	p.containerTimes.Store(ctr.GetId(), createdAt)
 
 	adj := buildVerificationAdjustment(result, mode)
 
@@ -361,6 +375,63 @@ func buildVerificationAdjustment(
 	return adj
 }
 
+// RemoveContainer is called when a container is removed from the runtime.
+// It records the container lifetime as a histogram metric.
+func (p *Plugin) RemoveContainer(
+	ctx context.Context,
+	pod *api.PodSandbox,
+	ctr *api.Container,
+) error {
+	containerID := ctr.GetId()
+	namespace := pod.GetNamespace()
+
+	val, loaded := p.containerTimes.LoadAndDelete(containerID)
+	if !loaded {
+		return nil
+	}
+
+	createdAt, ok := val.(time.Time)
+	if !ok {
+		return nil
+	}
+
+	lifetime := time.Since(createdAt).Seconds()
+
+	p.metrics.ContainerLifetime.WithLabelValues(namespace).Observe(lifetime)
+
+	slog.InfoContext(ctx, "Container removed",
+		"container", containerID,
+		"namespace", namespace,
+		"lifetime_seconds", lifetime,
+		"pod", pod.GetName(),
+	)
+
+	return nil
+}
+
+// cleanStaleContainerTimes removes entries from the containerTimes map for
+// containers that are no longer in the active set. This handles containers
+// that were removed while the plugin was disconnected.
+func (p *Plugin) cleanStaleContainerTimes(active []*api.Container) {
+	activeIDs := make(map[string]struct{}, len(active))
+	for _, ctr := range active {
+		activeIDs[ctr.GetId()] = struct{}{}
+	}
+
+	p.containerTimes.Range(func(key, _ any) bool {
+		containerID, ok := key.(string)
+		if !ok {
+			return true
+		}
+
+		if _, exists := activeIDs[containerID]; !exists {
+			p.containerTimes.Delete(key)
+		}
+
+		return true
+	})
+}
+
 func (p *Plugin) registryAwareResolver(
 	ctx context.Context, imageRef string,
 ) (digest, indexDigest string, err error) {
@@ -378,6 +449,7 @@ func (p *Plugin) registryAwareResolver(
 	return digest, indexDigest, nil
 }
 
+//nolint:unparam // second return matches the NRI ContainerAdjustment API contract
 func (p *Plugin) handleMissingAnnotations(
 	ctx context.Context, namespace string,
 	pod *api.PodSandbox, ctr *api.Container,

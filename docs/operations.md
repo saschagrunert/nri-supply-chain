@@ -43,6 +43,7 @@ The plugin exposes Prometheus metrics at the configured
 | `nri_supply_chain_config_reload_errors_total`     | Counter   |                               | Failed config reload attempts                                                                        |
 | `nri_supply_chain_prewarm_duration_seconds`       | Histogram | `result`                      | Cache prewarm latency (buckets: 1, 5, 10, 30, 60, 120, 300)                                          |
 | `nri_supply_chain_mirror_fallback_total`          | Counter   | `registry`, `type`            | Mirror fallback events. `type`: `digest`, `attestation`                                              |
+| `nri_supply_chain_container_lifetime_seconds`     | Histogram | `namespace`                   | Duration containers run before removal (buckets: exponential 0.5s \* 2^n, n=0..20)                   |
 
 When `include` is configured, the include check runs before the exclude check.
 Images that do not match any include pattern are counted as `not_included` even

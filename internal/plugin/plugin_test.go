@@ -33,6 +33,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/types"
+	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
@@ -1369,6 +1370,24 @@ func (v *capturingVerifier) EffectiveModeForNamespace(_ string) config.Verificat
 
 func (v *capturingVerifier) Reload(_ context.Context, _ *config.Config) error { return nil }
 
+var errVerifyFailed = errors.New("verification failed")
+
+type failingVerifier struct{}
+
+func (v *failingVerifier) Verify(
+	_ context.Context, _, _, _, _, _ string,
+) (*scTypes.Result, error) {
+	return nil, errVerifyFailed
+}
+
+func (v *failingVerifier) Ready() (ready bool, reason string)               { return true, "" }
+func (v *failingVerifier) Enforcing() bool                                  { return true }
+func (v *failingVerifier) Reload(_ context.Context, _ *config.Config) error { return nil }
+
+func (v *failingVerifier) EffectiveModeForNamespace(_ string) config.VerificationMode {
+	return config.ModeEnforce
+}
+
 func TestCreateContainerPassesServiceAccount(t *testing.T) {
 	t.Parallel()
 
@@ -1714,5 +1733,310 @@ func TestFilterRelevantAnnotationsEmpty(t *testing.T) {
 
 	if len(filtered) != 0 {
 		t.Errorf("expected 0 filtered annotations, got %d", len(filtered))
+	}
+}
+
+func TestRemoveContainerUnknownID(t *testing.T) {
+	t.Parallel()
+
+	cv := &capturingVerifier{serviceAccount: "", mu: sync.Mutex{}}
+	met := metrics.New()
+	plug := plugin.New(cv, met, "", 30*time.Second, 1*time.Second, nil)
+
+	pod := &api.PodSandbox{
+		Namespace: testNamespace,
+		Name:      testPodName,
+	}
+	ctr := &api.Container{
+		Id:   "unknown-container",
+		Name: testCtrName,
+	}
+
+	err := plug.RemoveContainer(context.Background(), pod, ctr)
+	testutil.AssertNoError(t, err)
+
+	count := promtestutil.CollectAndCount(met.ContainerLifetime)
+	if count != 0 {
+		t.Errorf("expected 0 metric samples, got %d", count)
+	}
+}
+
+func TestRemoveContainerRecordsLifetime(t *testing.T) {
+	t.Parallel()
+
+	cv := &capturingVerifier{serviceAccount: "", mu: sync.Mutex{}}
+	met := metrics.New()
+	plug := plugin.New(cv, met, "", 30*time.Second, 1*time.Second, nil)
+
+	const ctrID = "test-ctr-1"
+
+	// Store a creation time in the past.
+	plug.ExportStoreContainerTime(ctrID, time.Now().Add(-5*time.Second))
+
+	pod := &api.PodSandbox{
+		Namespace: testNamespace,
+		Name:      testPodName,
+	}
+	ctr := &api.Container{
+		Id:   ctrID,
+		Name: testCtrName,
+	}
+
+	err := plug.RemoveContainer(context.Background(), pod, ctr)
+	testutil.AssertNoError(t, err)
+
+	count := promtestutil.CollectAndCount(met.ContainerLifetime)
+	if count == 0 {
+		t.Error("expected container lifetime metric to be recorded")
+	}
+}
+
+func TestCreateThenRemoveContainerRecordsPositiveLifetime(t *testing.T) {
+	t.Parallel()
+
+	cv := &capturingVerifier{serviceAccount: "", mu: sync.Mutex{}}
+	met := metrics.New()
+	plug := plugin.New(cv, met, "", 30*time.Second, 1*time.Second, nil)
+
+	const ctrID = "lifecycle-ctr"
+
+	pod := &api.PodSandbox{
+		Namespace: testNamespace,
+		Name:      testPodName,
+	}
+	ctr := &api.Container{
+		Id:   ctrID,
+		Name: testCtrName,
+		Annotations: map[string]string{
+			plugin.AnnotationImage:    testImage,
+			plugin.AnnotationImageRef: testDigest,
+		},
+	}
+
+	_, _, err := plug.CreateContainer(context.Background(), pod, ctr)
+	testutil.AssertNoError(t, err)
+
+	// Verify the timestamp was stored.
+	if _, ok := plug.ExportLoadContainerTime(ctrID); !ok {
+		t.Fatal("expected container time to be stored after CreateContainer")
+	}
+
+	err = plug.RemoveContainer(context.Background(), pod, ctr)
+	testutil.AssertNoError(t, err)
+
+	count := promtestutil.CollectAndCount(met.ContainerLifetime)
+	if count == 0 {
+		t.Error("expected container lifetime metric to be recorded")
+	}
+
+	// After removal the entry should be gone.
+	if _, ok := plug.ExportLoadContainerTime(ctrID); ok {
+		t.Error("expected container time to be deleted after RemoveContainer")
+	}
+}
+
+func TestSynchronizeCleansStaleContainerTimes(t *testing.T) {
+	t.Parallel()
+
+	cv := &capturingVerifier{serviceAccount: "", mu: sync.Mutex{}}
+	met := metrics.New()
+	plug := plugin.New(cv, met, "", 30*time.Second, 1*time.Second, nil)
+
+	// Simulate containers that were created while the plugin was active.
+	plug.ExportStoreContainerTime("active-ctr", time.Now())
+	plug.ExportStoreContainerTime("stale-ctr", time.Now())
+
+	pods := []*api.PodSandbox{
+		{Id: testPodID, Namespace: testNamespace, Name: testPodName},
+	}
+
+	// Only "active-ctr" is still running.
+	containers := []*api.Container{
+		{
+			Id:           "active-ctr",
+			PodSandboxId: testPodID,
+			Name:         testCtrName,
+		},
+	}
+
+	_, err := plug.Synchronize(context.Background(), pods, containers)
+	testutil.AssertNoError(t, err)
+
+	if _, ok := plug.ExportLoadContainerTime("active-ctr"); !ok {
+		t.Error("expected active container time to be preserved")
+	}
+
+	if _, ok := plug.ExportLoadContainerTime("stale-ctr"); ok {
+		t.Error("expected stale container time to be cleaned up")
+	}
+}
+
+func TestSynchronizeDoesNotTrackPreExistingContainers(t *testing.T) {
+	t.Parallel()
+
+	cv := &capturingVerifier{serviceAccount: "", mu: sync.Mutex{}}
+	met := metrics.New()
+	plug := plugin.New(cv, met, "", 30*time.Second, 1*time.Second, nil)
+
+	const ctrID = "pre-existing-ctr"
+
+	pods := []*api.PodSandbox{
+		{Id: testPodID, Namespace: testNamespace, Name: testPodName},
+	}
+
+	containers := []*api.Container{
+		{
+			Id:           ctrID,
+			PodSandboxId: testPodID,
+			Name:         testCtrName,
+		},
+	}
+
+	_, err := plug.Synchronize(context.Background(), pods, containers)
+	testutil.AssertNoError(t, err)
+
+	// Pre-existing containers should not be tracked because we did not
+	// observe their creation and cannot report an accurate lifetime.
+	if _, ok := plug.ExportLoadContainerTime(ctrID); ok {
+		t.Error("expected Synchronize to not track pre-existing containers")
+	}
+}
+
+func TestMissingAnnotationsWarnModeTracksLifetime(t *testing.T) {
+	t.Parallel()
+
+	cv := &capturingVerifier{serviceAccount: "", mu: sync.Mutex{}}
+	met := metrics.New()
+	plug := plugin.New(cv, met, "", 30*time.Second, 1*time.Second, nil)
+
+	const ctrID = "missing-annot-ctr"
+
+	pod := &api.PodSandbox{
+		Namespace: testNamespace,
+		Name:      testPodName,
+	}
+	ctr := &api.Container{
+		Id:          ctrID,
+		Name:        testCtrName,
+		Annotations: map[string]string{},
+	}
+
+	_, _, err := plug.CreateContainer(context.Background(), pod, ctr)
+	testutil.AssertNoError(t, err)
+
+	if _, ok := plug.ExportLoadContainerTime(ctrID); !ok {
+		t.Fatal("expected container time to be stored on missing-annotations warn path")
+	}
+
+	err = plug.RemoveContainer(context.Background(), pod, ctr)
+	testutil.AssertNoError(t, err)
+
+	count := promtestutil.CollectAndCount(met.ContainerLifetime)
+	if count == 0 {
+		t.Error("expected container lifetime metric after RemoveContainer")
+	}
+
+	if _, ok := plug.ExportLoadContainerTime(ctrID); ok {
+		t.Error("expected container time to be deleted after RemoveContainer")
+	}
+}
+
+func TestCreateContainerVerifyErrorDoesNotTrackTime(t *testing.T) {
+	t.Parallel()
+
+	fv := &failingVerifier{}
+	met := metrics.New()
+	plug := plugin.New(fv, met, "", 30*time.Second, 1*time.Second, nil)
+
+	const ctrID = "fail-verify-ctr"
+
+	pod := &api.PodSandbox{
+		Namespace: testNamespace,
+		Name:      testPodName,
+	}
+	ctr := &api.Container{
+		Id:   ctrID,
+		Name: testCtrName,
+		Annotations: map[string]string{
+			plugin.AnnotationImage:    testImage,
+			plugin.AnnotationImageRef: testDigest,
+		},
+	}
+
+	_, _, err := plug.CreateContainer(context.Background(), pod, ctr)
+	if err == nil {
+		t.Fatal("expected CreateContainer to return an error")
+	}
+
+	if _, ok := plug.ExportLoadContainerTime(ctrID); ok {
+		t.Error("expected container time to not be stored after verification failure")
+	}
+}
+
+func TestMissingAnnotationsEnforceModeDoesNotTrackTime(t *testing.T) {
+	t.Parallel()
+
+	fv := &failingVerifier{}
+	met := metrics.New()
+	plug := plugin.New(fv, met, "", 30*time.Second, 1*time.Second, nil)
+
+	const ctrID = "enforce-missing-annot-ctr"
+
+	pod := &api.PodSandbox{
+		Namespace: testNamespace,
+		Name:      testPodName,
+	}
+	ctr := &api.Container{
+		Id:          ctrID,
+		Name:        testCtrName,
+		Annotations: map[string]string{},
+	}
+
+	_, _, err := plug.CreateContainer(context.Background(), pod, ctr)
+	if err == nil {
+		t.Fatal("expected CreateContainer to return an error in enforce mode")
+	}
+
+	if _, ok := plug.ExportLoadContainerTime(ctrID); ok {
+		t.Error("expected container time to not be stored after enforce-mode rejection")
+	}
+}
+
+func TestRemoveContainerConcurrentSameID(t *testing.T) {
+	t.Parallel()
+
+	cv := &capturingVerifier{serviceAccount: "", mu: sync.Mutex{}}
+	met := metrics.New()
+	plug := plugin.New(cv, met, "", 30*time.Second, 1*time.Second, nil)
+
+	const ctrID = "concurrent-ctr"
+
+	plug.ExportStoreContainerTime(ctrID, time.Now().Add(-5*time.Second))
+
+	pod := &api.PodSandbox{
+		Namespace: testNamespace,
+		Name:      testPodName,
+	}
+	ctr := &api.Container{
+		Id:   ctrID,
+		Name: testCtrName,
+	}
+
+	var wg sync.WaitGroup
+
+	for range 10 {
+		wg.Go(func() {
+			err := plug.RemoveContainer(context.Background(), pod, ctr)
+			if err != nil {
+				t.Errorf("RemoveContainer returned error: %v", err)
+			}
+		})
+	}
+
+	wg.Wait()
+
+	count := promtestutil.CollectAndCount(met.ContainerLifetime)
+	if count == 0 {
+		t.Error("expected at least one lifetime metric observation")
 	}
 }
