@@ -182,4 +182,16 @@ var (
 	ErrSigstoreRootsMutualExclusion = errors.New(
 		"sigstore.tuf_mirror/tuf_root and sigstore.roots are mutually exclusive",
 	)
+
+	// ErrMaxAttestationSizeTooSmall indicates the max attestation size is below the minimum.
+	ErrMaxAttestationSizeTooSmall = errors.New("max_attestation_size must be at least 1 MiB")
+
+	// ErrMaxAttestationSizeTooLarge indicates the max attestation size exceeds the maximum.
+	ErrMaxAttestationSizeTooLarge = errors.New("max_attestation_size must not exceed 100 MiB")
+
+	// ErrCacheMaxEntriesTooSmall indicates the cache max entries is below the minimum.
+	ErrCacheMaxEntriesTooSmall = errors.New("cache_max_entries must be at least 100")
+
+	// ErrCacheMaxEntriesTooLarge indicates the cache max entries exceeds the maximum.
+	ErrCacheMaxEntriesTooLarge = errors.New("cache_max_entries must not exceed 1000000")
 )

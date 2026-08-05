@@ -103,3 +103,109 @@ EOF
 	[[ "$status" -ne 0 ]]
 	[[ "$output" == *"source"* ]]
 }
+
+@test "valid max_attestation_size and cache_max_entries accepted" {
+	cat >"$TEST_DIR/config.toml" <<EOF
+verification = "disabled"
+max_attestation_size = 5242880
+cache_max_entries = 500
+EOF
+	run_binary --config "$TEST_DIR/config.toml" validate
+	[[ "$status" -eq 0 ]]
+}
+
+@test "max_attestation_size at minimum boundary accepted" {
+	cat >"$TEST_DIR/config.toml" <<EOF
+verification = "disabled"
+max_attestation_size = 1048576
+EOF
+	run_binary --config "$TEST_DIR/config.toml" validate
+	[[ "$status" -eq 0 ]]
+}
+
+@test "max_attestation_size at maximum boundary accepted" {
+	cat >"$TEST_DIR/config.toml" <<EOF
+verification = "disabled"
+max_attestation_size = 104857600
+EOF
+	run_binary --config "$TEST_DIR/config.toml" validate
+	[[ "$status" -eq 0 ]]
+}
+
+@test "max_attestation_size below minimum rejected" {
+	cat >"$TEST_DIR/config.toml" <<EOF
+verification = "disabled"
+max_attestation_size = 1000
+EOF
+	run_binary --config "$TEST_DIR/config.toml" validate
+	[[ "$status" -ne 0 ]]
+	[[ "$output" == *"max_attestation_size"* ]]
+}
+
+@test "max_attestation_size above maximum rejected" {
+	cat >"$TEST_DIR/config.toml" <<EOF
+verification = "disabled"
+max_attestation_size = 209715200
+EOF
+	run_binary --config "$TEST_DIR/config.toml" validate
+	[[ "$status" -ne 0 ]]
+	[[ "$output" == *"max_attestation_size"* ]]
+}
+
+@test "cache_max_entries at minimum boundary accepted" {
+	cat >"$TEST_DIR/config.toml" <<EOF
+verification = "disabled"
+cache_max_entries = 100
+EOF
+	run_binary --config "$TEST_DIR/config.toml" validate
+	[[ "$status" -eq 0 ]]
+}
+
+@test "cache_max_entries at maximum boundary accepted" {
+	cat >"$TEST_DIR/config.toml" <<EOF
+verification = "disabled"
+cache_max_entries = 1000000
+EOF
+	run_binary --config "$TEST_DIR/config.toml" validate
+	[[ "$status" -eq 0 ]]
+}
+
+@test "cache_max_entries below minimum rejected" {
+	cat >"$TEST_DIR/config.toml" <<EOF
+verification = "disabled"
+cache_max_entries = 50
+EOF
+	run_binary --config "$TEST_DIR/config.toml" validate
+	[[ "$status" -ne 0 ]]
+	[[ "$output" == *"cache_max_entries"* ]]
+}
+
+@test "cache_max_entries above maximum rejected" {
+	cat >"$TEST_DIR/config.toml" <<EOF
+verification = "disabled"
+cache_max_entries = 2000000
+EOF
+	run_binary --config "$TEST_DIR/config.toml" validate
+	[[ "$status" -ne 0 ]]
+	[[ "$output" == *"cache_max_entries"* ]]
+}
+
+@test "both limits invalid collects multiple errors" {
+	cat >"$TEST_DIR/config.toml" <<EOF
+verification = "disabled"
+max_attestation_size = 500
+cache_max_entries = 10
+EOF
+	run_binary --config "$TEST_DIR/config.toml" validate
+	[[ "$status" -ne 0 ]]
+	[[ "$output" == *"max_attestation_size"* ]]
+	[[ "$output" == *"cache_max_entries"* ]]
+}
+
+@test "default limits pass validation without explicit values" {
+	cat >"$TEST_DIR/config.toml" <<EOF
+verification = "disabled"
+EOF
+	run_binary --config "$TEST_DIR/config.toml" validate
+	[[ "$status" -eq 0 ]]
+}

@@ -42,7 +42,7 @@ func TestNewWithGaugeResetsToZero(t *testing.T) {
 	})
 	testGauge.Set(42)
 
-	c := cache.NewWithGauge(time.Hour, testGauge, nil)
+	c := cache.NewWithGauge(time.Hour, 0, testGauge, nil)
 	t.Cleanup(c.Stop)
 
 	val := testutil.ToFloat64(testGauge)
@@ -54,7 +54,7 @@ func TestNewWithGaugeResetsToZero(t *testing.T) {
 func TestNewWithGaugeNilGauge(t *testing.T) {
 	t.Parallel()
 
-	testCache := cache.NewWithGauge(time.Hour, nil, nil)
+	testCache := cache.NewWithGauge(time.Hour, 0, nil, nil)
 	t.Cleanup(testCache.Stop)
 
 	testCache.Set(testDigest, "default", &types.Result{
@@ -74,7 +74,7 @@ func TestGaugeUpdatesOnSetAndClear(t *testing.T) {
 		Help: testGaugeHelp,
 	})
 
-	testCache := cache.NewWithGauge(time.Hour, testGauge, nil)
+	testCache := cache.NewWithGauge(time.Hour, 0, testGauge, nil)
 	t.Cleanup(testCache.Stop)
 
 	testCache.Set("sha256:b2c3d4e5f6a1b2c3d4e5f6a1b2"+
@@ -110,7 +110,7 @@ func TestGaugeUpdatesOnExpiry(t *testing.T) {
 		Help: testGaugeHelp,
 	})
 
-	testCache := cache.NewWithGauge(time.Millisecond, testGauge, nil)
+	testCache := cache.NewWithGauge(time.Millisecond, 0, testGauge, nil)
 	t.Cleanup(testCache.Stop)
 
 	testCache.Set("sha256:b2c3d4e5f6a1b2c3d4e5f6a1b2"+
@@ -362,7 +362,7 @@ func TestCacheCapacityEvictionUpdatesGauge(t *testing.T) {
 		Help: testGaugeHelp,
 	})
 
-	testCache := cache.NewWithGauge(time.Hour, testGauge, nil)
+	testCache := cache.NewWithGauge(time.Hour, 0, testGauge, nil)
 	t.Cleanup(testCache.Stop)
 
 	for idx := range 10001 {
@@ -390,7 +390,7 @@ func TestCacheOverwriteAtCapacityKeepsGauge(t *testing.T) {
 		Help: testGaugeHelp,
 	})
 
-	testCache := cache.NewWithGauge(time.Hour, testGauge, nil)
+	testCache := cache.NewWithGauge(time.Hour, 0, testGauge, nil)
 	t.Cleanup(testCache.Stop)
 
 	for idx := range cache.DefaultMaxSize {
@@ -549,6 +549,31 @@ func TestCacheConcurrentStress(t *testing.T) {
 	length := testCache.Len()
 	if length < 0 {
 		t.Errorf("expected non-negative cache length, got %d", length)
+	}
+}
+
+func TestCacheCustomMaxSizeEviction(t *testing.T) {
+	t.Parallel()
+
+	const customMax = 200
+
+	testCache := cache.NewWithGauge(time.Hour, customMax, nil, nil)
+	t.Cleanup(testCache.Stop)
+
+	for idx := range customMax + 1 {
+		testCache.Set(
+			fmt.Sprintf("sha256:%d", idx), "default",
+			&types.Result{Allowed: true, Reason: "", CheckResults: nil},
+		)
+	}
+
+	if testCache.Len() != customMax {
+		t.Errorf("expected cache size %d after eviction, got %d", customMax, testCache.Len())
+	}
+
+	got := testCache.Get(fmt.Sprintf("sha256:%d", customMax), "default")
+	if got == nil {
+		t.Error("expected new entry to be stored after oldest eviction")
 	}
 }
 

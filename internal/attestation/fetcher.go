@@ -41,6 +41,7 @@ import (
 	"golang.org/x/sync/singleflight"
 	"golang.org/x/time/rate"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 )
 
@@ -50,7 +51,6 @@ var (
 )
 
 const (
-	maxAttestationSize        = 10 << 20 // 10 MiB
 	maxTotalAttestationSize   = 50 << 20 // 50 MiB aggregate limit per image
 	maxReferrers              = 50
 	maxConcurrentCollectFetch = 5
@@ -187,6 +187,7 @@ type OCIFetcher struct {
 	rootCaches         []*trustedRootCache
 	limiter            atomic.Pointer[rate.Limiter]
 	transportCache     atomic.Pointer[registry.TransportCache]
+	maxAttestationSize atomic.Int64
 	onMirrorFallback   func(registryHost string)
 	onMirrorFallbackMu sync.RWMutex
 }
@@ -202,7 +203,7 @@ func NewOCIFetcher() *OCIFetcher {
 		onStaleHit: nil,
 	}
 
-	return &OCIFetcher{
+	fetcher := &OCIFetcher{
 		verifyBundle: func(
 			ctx context.Context, bundleBytes []byte, opts *FetchOptions,
 		) ([]byte, error) {
@@ -214,14 +215,18 @@ func NewOCIFetcher() *OCIFetcher {
 		rootCaches:         nil,
 		limiter:            atomic.Pointer[rate.Limiter]{},
 		transportCache:     atomic.Pointer[registry.TransportCache]{},
+		maxAttestationSize: atomic.Int64{},
 		onMirrorFallback:   nil,
 		onMirrorFallbackMu: sync.RWMutex{},
 	}
+	fetcher.maxAttestationSize.Store(config.DefaultMaxAttestationSize)
+
+	return fetcher
 }
 
 // NewOCIFetcherWithVerifier creates a fetcher with a custom bundle verification function.
 func NewOCIFetcherWithVerifier(verifier BundleVerifyFunc) *OCIFetcher {
-	return &OCIFetcher{
+	fetcher := &OCIFetcher{
 		verifyBundle:       verifier,
 		fetchImage:         remote.Image,
 		referrers:          remote.Referrers,
@@ -229,9 +234,13 @@ func NewOCIFetcherWithVerifier(verifier BundleVerifyFunc) *OCIFetcher {
 		rootCaches:         nil,
 		limiter:            atomic.Pointer[rate.Limiter]{},
 		transportCache:     atomic.Pointer[registry.TransportCache]{},
+		maxAttestationSize: atomic.Int64{},
 		onMirrorFallback:   nil,
 		onMirrorFallbackMu: sync.RWMutex{},
 	}
+	fetcher.maxAttestationSize.Store(config.DefaultMaxAttestationSize)
+
+	return fetcher
 }
 
 // NewOCIFetcherWithTUFMirror creates an OCI-based attestation fetcher that
@@ -265,7 +274,7 @@ func NewOCIFetcherWithTUFMirror(tufMirror string, tufRootBytes []byte) *OCIFetch
 		onStaleHit: nil,
 	}
 
-	return &OCIFetcher{
+	fetcher := &OCIFetcher{
 		verifyBundle: func(
 			ctx context.Context, bundleBytes []byte, opts *FetchOptions,
 		) ([]byte, error) {
@@ -277,9 +286,13 @@ func NewOCIFetcherWithTUFMirror(tufMirror string, tufRootBytes []byte) *OCIFetch
 		rootCaches:         nil,
 		limiter:            atomic.Pointer[rate.Limiter]{},
 		transportCache:     atomic.Pointer[registry.TransportCache]{},
+		maxAttestationSize: atomic.Int64{},
 		onMirrorFallback:   nil,
 		onMirrorFallbackMu: sync.RWMutex{},
 	}
+	fetcher.maxAttestationSize.Store(config.DefaultMaxAttestationSize)
+
+	return fetcher
 }
 
 // NewOCIFetcherWithMultipleRoots creates an OCI-based attestation fetcher that
@@ -304,7 +317,7 @@ func NewOCIFetcherWithMultipleRoots(sources []RootSourceConfig) *OCIFetcher {
 		}
 	}
 
-	return &OCIFetcher{
+	fetcher := &OCIFetcher{
 		verifyBundle: func(
 			ctx context.Context, bundleBytes []byte, opts *FetchOptions,
 		) ([]byte, error) {
@@ -316,9 +329,13 @@ func NewOCIFetcherWithMultipleRoots(sources []RootSourceConfig) *OCIFetcher {
 		rootCaches:         caches,
 		limiter:            atomic.Pointer[rate.Limiter]{},
 		transportCache:     atomic.Pointer[registry.TransportCache]{},
+		maxAttestationSize: atomic.Int64{},
 		onMirrorFallback:   nil,
 		onMirrorFallbackMu: sync.RWMutex{},
 	}
+	fetcher.maxAttestationSize.Store(config.DefaultMaxAttestationSize)
+
+	return fetcher
 }
 
 func buildFetchFunc(src RootSourceConfig) trustedRootFetchFunc {
@@ -389,6 +406,14 @@ func (f *OCIFetcher) SetTransportCache(cache *registry.TransportCache) {
 // TransportCache returns the current transport cache, or nil if none is set.
 func (f *OCIFetcher) TransportCache() *registry.TransportCache {
 	return f.transportCache.Load()
+}
+
+// SetMaxAttestationSize overrides the per-attestation size limit. Values <= 0
+// are ignored and the existing limit is kept.
+func (f *OCIFetcher) SetMaxAttestationSize(size int64) {
+	if size > 0 {
+		f.maxAttestationSize.Store(size)
+	}
 }
 
 // IsMultiRoot reports whether this fetcher was configured with multiple
@@ -747,7 +772,7 @@ func (f *OCIFetcher) fetchNotationSignature(
 		return VerifiedAttestation{}, false
 	}
 
-	envelope, ok := readNotationEnvelope(ctx, img, desc.Digest.String())
+	envelope, ok := f.readNotationEnvelope(ctx, img, desc.Digest.String())
 	if !ok {
 		return VerifiedAttestation{}, false
 	}
@@ -772,7 +797,7 @@ func (f *OCIFetcher) fetchNotationSignature(
 	return att, true
 }
 
-func readNotationEnvelope(
+func (f *OCIFetcher) readNotationEnvelope(
 	ctx context.Context, img ociV1.Image, descDigest string,
 ) ([]byte, bool) {
 	layers, err := img.Layers()
@@ -804,7 +829,9 @@ func readNotationEnvelope(
 		}
 	}()
 
-	envelope, err := io.ReadAll(io.LimitReader(reader, maxAttestationSize+1))
+	maxSize := f.maxAttestationSize.Load()
+
+	envelope, err := io.ReadAll(io.LimitReader(reader, maxSize+1))
 	if err != nil {
 		slog.WarnContext(ctx, "Failed to read Notation signature envelope",
 			"digest", descDigest,
@@ -814,10 +841,10 @@ func readNotationEnvelope(
 		return nil, false
 	}
 
-	if int64(len(envelope)) > maxAttestationSize {
+	if int64(len(envelope)) > maxSize {
 		slog.WarnContext(ctx, "Notation signature envelope exceeds size limit",
 			"size", len(envelope),
-			"limit", maxAttestationSize,
+			"limit", maxSize,
 		)
 
 		return nil, false
@@ -981,7 +1008,9 @@ func (f *OCIFetcher) processCosignLayer(
 		}
 	}()
 
-	data, dataErr := io.ReadAll(io.LimitReader(reader, maxAttestationSize+1))
+	maxSize := f.maxAttestationSize.Load()
+
+	data, dataErr := io.ReadAll(io.LimitReader(reader, maxSize+1))
 	if dataErr != nil {
 		slog.WarnContext(ctx, "Failed to read cosign attestation data",
 			"error", dataErr,
@@ -990,10 +1019,10 @@ func (f *OCIFetcher) processCosignLayer(
 		return VerifiedAttestation{}, false
 	}
 
-	if int64(len(data)) > maxAttestationSize {
+	if int64(len(data)) > maxSize {
 		slog.WarnContext(ctx, "Cosign attestation exceeds size limit",
 			"size", len(data),
-			"limit", maxAttestationSize,
+			"limit", maxSize,
 		)
 
 		return VerifiedAttestation{}, false
@@ -1296,17 +1325,18 @@ func (f *OCIFetcher) extractPayloadFromImage(
 		}
 	}()
 
-	limited := io.LimitReader(reader, maxAttestationSize+1)
+	maxSize := f.maxAttestationSize.Load()
+	limited := io.LimitReader(reader, maxSize+1)
 
 	bundleBytes, err := io.ReadAll(limited)
 	if err != nil {
 		return nil, fmt.Errorf("reading attestation bundle: %w", err)
 	}
 
-	if int64(len(bundleBytes)) > maxAttestationSize {
+	if int64(len(bundleBytes)) > maxSize {
 		return nil, fmt.Errorf(
 			"attestation size %d exceeds limit of %d bytes: %w",
-			len(bundleBytes), maxAttestationSize, errAttestationTooLarge,
+			len(bundleBytes), maxSize, errAttestationTooLarge,
 		)
 	}
 

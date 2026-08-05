@@ -65,6 +65,8 @@ circuit_breaker_cooldown = "30s"
 | `circuit_breaker_cooldown`  | `30s`                            | Duration the circuit breaker stays open before allowing a probe                                                                                                               |
 | `verification_timeout`      | `5m`                             | Maximum time for a single image verification. Must be positive, maximum 30m.                                                                                                  |
 | `fetch_rate_limit`          | `0` (unlimited)                  | Maximum registry fetch requests per second (max 10,000)                                                                                                                       |
+| `max_attestation_size`      | `10485760` (10 MiB)              | Maximum allowed size in bytes for a single attestation bundle. Min 1 MiB, max 100 MiB.                                                                                        |
+| `cache_max_entries`         | `10000`                          | Maximum number of entries in the verification result cache. Min 100, max 1,000,000.                                                                                           |
 
 See [operations.md](operations.md) for the metrics reference, config reload
 behavior, and health/readiness probes.

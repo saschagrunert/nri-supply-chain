@@ -60,6 +60,8 @@ func TestDefaultConfig(t *testing.T) {
 	testutil.AssertEqual(t, 5*time.Minute, cfg.CacheFailureTTL.Duration)
 	testutil.AssertEqual(t, "/etc/nri-supply-chain/policies", cfg.PolicyDir)
 	testutil.AssertEqual(t, "127.0.0.1:9090", cfg.MetricsAddr)
+	testutil.AssertEqual(t, int64(10<<20), cfg.MaxAttestationSize)
+	testutil.AssertEqual(t, 10_000, cfg.CacheMaxEntries)
 }
 
 func TestConfigEnabled(t *testing.T) {
@@ -2990,5 +2992,93 @@ func TestConfigValidatePolicyKeysRuntime(t *testing.T) {
 		testutil.AssertContains(t, err.Error(), "missing.pub")
 
 		testutil.AssertErrorIs(t, err, config.ErrPolicyKeyNotRegularFile)
+	})
+}
+
+func TestConfigValidateMaxAttestationSize(t *testing.T) {
+	t.Parallel()
+
+	t.Run("too small", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.MaxAttestationSize = (1 << 20) - 1
+
+		err := cfg.Validate()
+		testutil.AssertErrorIs(t, err, config.ErrMaxAttestationSizeTooSmall)
+	})
+
+	t.Run("too large", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.MaxAttestationSize = (100 << 20) + 1
+
+		err := cfg.Validate()
+		testutil.AssertErrorIs(t, err, config.ErrMaxAttestationSizeTooLarge)
+	})
+
+	t.Run("at minimum boundary", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.MaxAttestationSize = 1 << 20
+
+		err := cfg.Validate()
+		testutil.AssertNoError(t, err)
+	})
+
+	t.Run("at maximum boundary", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.MaxAttestationSize = 100 << 20
+
+		err := cfg.Validate()
+		testutil.AssertNoError(t, err)
+	})
+}
+
+func TestConfigValidateCacheMaxEntries(t *testing.T) {
+	t.Parallel()
+
+	t.Run("too small", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.CacheMaxEntries = 99
+
+		err := cfg.Validate()
+		testutil.AssertErrorIs(t, err, config.ErrCacheMaxEntriesTooSmall)
+	})
+
+	t.Run("too large", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.CacheMaxEntries = 1_000_001
+
+		err := cfg.Validate()
+		testutil.AssertErrorIs(t, err, config.ErrCacheMaxEntriesTooLarge)
+	})
+
+	t.Run("at minimum boundary", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.CacheMaxEntries = 100
+
+		err := cfg.Validate()
+		testutil.AssertNoError(t, err)
+	})
+
+	t.Run("at maximum boundary", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.CacheMaxEntries = 1_000_000
+
+		err := cfg.Validate()
+		testutil.AssertNoError(t, err)
 	})
 }

@@ -37,6 +37,8 @@ func createAndWarmFetcher(
 		ociFetcher.SetRateLimit(cfg.FetchRateLimit)
 	}
 
+	ociFetcher.SetMaxAttestationSize(cfg.MaxAttestationSize)
+
 	if transportCache != nil {
 		ociFetcher.SetTransportCache(transportCache)
 	} else if len(cfg.Registries) > 0 {
