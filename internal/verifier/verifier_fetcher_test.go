@@ -898,7 +898,7 @@ func TestVerifyCircuitBreakerIntegration(t *testing.T) {
 	cfg.CacheTTL = config.Duration{Duration: 0}
 	cfg.CacheFailureTTL = config.Duration{Duration: 0}
 	cfg.CircuitBreakerThreshold = 3
-	cfg.CircuitBreakerCooldown = config.Duration{Duration: 100 * time.Millisecond}
+	cfg.CircuitBreakerCooldown = config.Duration{Duration: time.Second}
 
 	ver, err := verifier.New(t.Context(), cfg, metrics.New(), fetcher)
 	testutil.AssertNoError(t, err)
@@ -942,7 +942,7 @@ func TestVerifyCircuitBreakerIntegration(t *testing.T) {
 	}
 
 	// Wait for cooldown to expire, then verify the breaker allows a probe.
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(1100 * time.Millisecond)
 
 	_, err = ver.Verify(
 		context.Background(), imageRef, digest, "", namespace, "",
@@ -969,7 +969,7 @@ func TestVerifyCircuitBreakerMetric(t *testing.T) {
 	cfg.PolicyDir = dir
 	cfg.CacheTTL = config.Duration{Duration: 0}
 	cfg.CircuitBreakerThreshold = 2
-	cfg.CircuitBreakerCooldown = config.Duration{Duration: 100 * time.Millisecond}
+	cfg.CircuitBreakerCooldown = config.Duration{Duration: time.Second}
 
 	ver, err := verifier.New(t.Context(), cfg, met, fetcher)
 	testutil.AssertNoError(t, err)
@@ -1010,7 +1010,7 @@ func TestVerifyCircuitBreakerMetric(t *testing.T) {
 	}
 
 	// Wait for cooldown, verify the breaker allows a probe.
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(1100 * time.Millisecond)
 
 	digest = "sha256:" + strings.Repeat("d", 64)
 
