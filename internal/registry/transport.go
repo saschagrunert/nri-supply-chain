@@ -44,6 +44,9 @@ var (
 
 	// ErrCACertParse indicates a failure parsing a CA certificate file.
 	ErrCACertParse = errors.New("failed to parse CA certificate")
+
+	defaultTransportOnce sync.Once       //nolint:gochecknoglobals // singleton default transport
+	defaultTransport     *http.Transport //nolint:gochecknoglobals // singleton default transport
 )
 
 const (
@@ -51,7 +54,7 @@ const (
 	transportTLSTimeout    = 10 * time.Second
 	transportIdleTimeout   = 90 * time.Second
 	transportMaxIdleConns  = 100
-	transportIdlePerHost   = 10
+	transportIdlePerHost   = 50
 	transportKeepAlive     = 30 * time.Second
 	transportExpectTimeout = time.Second
 )
@@ -93,20 +96,23 @@ func (tc *TransportCache) Registries() []config.Registry {
 	return slices.Clone(tc.registries)
 }
 
-// CloseIdleConnections closes idle connections on all cached transports.
+// CloseIdleConnections closes idle connections on all cached transports,
+// skipping the shared default transport to avoid disrupting other caches.
 func (tc *TransportCache) CloseIdleConnections() {
 	tc.mu.RLock()
 	defer tc.mu.RUnlock()
 
+	shared := getDefaultTransport()
+
 	for _, rt := range tc.transports {
-		if t, ok := rt.(*http.Transport); ok {
+		if t, ok := rt.(*http.Transport); ok && t != shared {
 			t.CloseIdleConnections()
 		}
 	}
 }
 
 // getTransport returns the cached transport for the given prefix, building
-// it on first access. Returns nil when the registry needs no custom transport.
+// it on first access. Returns nil when no registry matches the prefix.
 func (tc *TransportCache) getTransport(prefix string) (http.RoundTripper, error) {
 	tc.mu.RLock()
 
@@ -137,7 +143,7 @@ func (tc *TransportCache) getTransport(prefix string) (http.RoundTripper, error)
 	}
 
 	if reg == nil {
-		return nil, nil //nolint:nilnil // nil signals "use default transport"
+		return nil, nil //nolint:nilnil // nil signals "no matching registry"
 	}
 
 	builtTransport, err := BuildTransport(reg.CACert, reg.Insecure)
@@ -151,11 +157,12 @@ func (tc *TransportCache) getTransport(prefix string) (http.RoundTripper, error)
 }
 
 // BuildTransport creates an http.RoundTripper configured with the given
-// CA certificate and insecure TLS settings. If caCertPath is empty and
-// insecure is false, nil is returned (use the default transport).
+// CA certificate and insecure TLS settings. When caCertPath is empty and
+// insecure is false, a shared default transport with tuned connection pool
+// settings is returned.
 func BuildTransport(caCertPath string, insecure bool) (http.RoundTripper, error) {
 	if caCertPath == "" && !insecure {
-		return nil, nil //nolint:nilnil // nil signals "use default transport"
+		return getDefaultTransport(), nil
 	}
 
 	tlsCfg := newTLSConfig(insecure)
@@ -170,6 +177,14 @@ func BuildTransport(caCertPath string, insecure bool) (http.RoundTripper, error)
 	}
 
 	return newHTTPTransport(tlsCfg), nil
+}
+
+func getDefaultTransport() *http.Transport {
+	defaultTransportOnce.Do(func() {
+		defaultTransport = newHTTPTransport(newTLSConfig(false))
+	})
+
+	return defaultTransport
 }
 
 func newTLSConfig(insecure bool) *tls.Config {
@@ -297,7 +312,7 @@ func FindMatchingRegistry(
 type FallbackInfo struct {
 	// OriginalRef is the unmodified image reference (before mirror rewrite).
 	OriginalRef string
-	// TransportOpt is the remote.Option for the original registry (may be nil).
+	// TransportOpt is the remote.Option for the original registry.
 	TransportOpt remote.Option
 }
 
@@ -362,9 +377,8 @@ func isNetworkOrTLSError(err error) bool {
 }
 
 // OptionsForRegistries returns the (possibly rewritten) image reference plus
-// the transport remote.Option for the matching registry. The transport option
-// is nil when no custom transport is needed. If no registry matches, the
-// original imageRef is returned with a nil transport option.
+// the transport remote.Option for the matching registry. If no registry
+// matches, the original imageRef is returned with a nil transport option.
 //
 // When the matching registry has a mirror configured, a non-nil FallbackInfo
 // is returned with the original reference and transport option for retrying
@@ -397,21 +411,13 @@ func OptionsForRegistries(
 		return imageRef, nil, nil, transportErr
 	}
 
-	if roundTripper != nil {
-		transportOpt = remote.WithTransport(roundTripper)
-	}
+	transportOpt = remote.WithTransport(roundTripper)
 
 	// Build fallback info when a mirror is configured.
 	if reg.Mirror != "" {
-		var fallbackTransportOpt remote.Option
-
-		if roundTripper != nil {
-			fallbackTransportOpt = remote.WithTransport(roundTripper)
-		}
-
 		fallback = &FallbackInfo{
 			OriginalRef:  imageRef,
-			TransportOpt: fallbackTransportOpt,
+			TransportOpt: remote.WithTransport(roundTripper),
 		}
 	}
 
@@ -452,9 +458,9 @@ func ResolveWithRegistries(
 			"error", err,
 		)
 
-		fallbackOpts := []remote.Option{remote.WithAuthFromKeychain(authn.DefaultKeychain)}
-		if fallback.TransportOpt != nil {
-			fallbackOpts = append(fallbackOpts, fallback.TransportOpt)
+		fallbackOpts := []remote.Option{
+			remote.WithAuthFromKeychain(authn.DefaultKeychain),
+			fallback.TransportOpt,
 		}
 
 		digest, indexDigest, fallbackErr := ResolveDigest(

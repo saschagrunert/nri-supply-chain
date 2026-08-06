@@ -107,8 +107,83 @@ func TestBuildTransportNoConfig(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if roundTripper != nil {
-		t.Error("expected nil transport for default settings")
+	if roundTripper == nil {
+		t.Fatal("expected non-nil default transport")
+	}
+
+	httpTransport, ok := roundTripper.(*http.Transport)
+	if !ok {
+		t.Fatalf("expected *http.Transport, got %T", roundTripper)
+	}
+
+	if httpTransport.TLSClientConfig == nil {
+		t.Fatal("expected TLSClientConfig to be set on default transport")
+	}
+
+	if httpTransport.TLSClientConfig.MinVersion != tls.VersionTLS12 {
+		t.Errorf("MinVersion = %d, want %d",
+			httpTransport.TLSClientConfig.MinVersion, tls.VersionTLS12)
+	}
+}
+
+func TestBuildTransportDefaultShared(t *testing.T) {
+	t.Parallel()
+
+	rt1, err := registry.BuildTransport("", false)
+	if err != nil {
+		t.Fatalf("first call: unexpected error: %v", err)
+	}
+
+	rt2, err := registry.BuildTransport("", false)
+	if err != nil {
+		t.Fatalf("second call: unexpected error: %v", err)
+	}
+
+	if rt1 != rt2 {
+		t.Error("expected same transport instance for default config (singleton broken)")
+	}
+}
+
+func TestDefaultTransportPoolSettings(t *testing.T) {
+	t.Parallel()
+
+	roundTripper, err := registry.BuildTransport("", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	httpTransport, ok := roundTripper.(*http.Transport)
+	if !ok {
+		t.Fatalf("expected *http.Transport, got %T", roundTripper)
+	}
+
+	if httpTransport.MaxIdleConns != registry.TransportMaxIdleConns {
+		t.Errorf("MaxIdleConns = %d, want %d",
+			httpTransport.MaxIdleConns, registry.TransportMaxIdleConns)
+	}
+
+	if httpTransport.MaxIdleConnsPerHost != registry.TransportIdlePerHost {
+		t.Errorf("MaxIdleConnsPerHost = %d, want %d",
+			httpTransport.MaxIdleConnsPerHost, registry.TransportIdlePerHost)
+	}
+
+	if httpTransport.IdleConnTimeout != registry.TransportIdleTimeout {
+		t.Errorf("IdleConnTimeout = %v, want %v",
+			httpTransport.IdleConnTimeout, registry.TransportIdleTimeout)
+	}
+
+	if httpTransport.TLSHandshakeTimeout != registry.TransportTLSTimeout {
+		t.Errorf("TLSHandshakeTimeout = %v, want %v",
+			httpTransport.TLSHandshakeTimeout, registry.TransportTLSTimeout)
+	}
+
+	if !httpTransport.ForceAttemptHTTP2 {
+		t.Error("expected ForceAttemptHTTP2 to be true")
+	}
+
+	if httpTransport.ExpectContinueTimeout != registry.TransportExpectTimeout {
+		t.Errorf("ExpectContinueTimeout = %v, want %v",
+			httpTransport.ExpectContinueTimeout, registry.TransportExpectTimeout)
 	}
 }
 
@@ -462,9 +537,9 @@ func TestOptionsForRegistriesWithMirror(t *testing.T) {
 		t.Errorf("ref = %q, want mirror rewrite", ref)
 	}
 
-	// No transport option since no CA/insecure.
-	if transportOpt != nil {
-		t.Error("expected nil transport option (no CA/insecure)")
+	// Default pool transport is always returned for matching registries.
+	if transportOpt == nil {
+		t.Error("expected non-nil transport option (default pool transport)")
 	}
 }
 
@@ -614,6 +689,32 @@ func TestTransportCacheCloseIdleConnections(t *testing.T) {
 		{Prefix: "other.io", Mirror: "", CACert: "", Insecure: false},
 	})
 	empty.CloseIdleConnections()
+}
+
+func TestCloseIdleConnectionsSkipsDefaultTransport(t *testing.T) {
+	t.Parallel()
+
+	cache := registry.NewTransportCache([]config.Registry{
+		{Prefix: testMirrorInternal, Mirror: "", CACert: "", Insecure: false},
+	})
+
+	// Trigger a lookup so the default transport gets cached.
+	rt, err := cache.GetCachedTransport(testMirrorInternal)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	defaultRT, err := registry.BuildTransport("", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if rt != defaultRT {
+		t.Fatal("expected default transport singleton for no-CA no-insecure registry")
+	}
+
+	// CloseIdleConnections should not panic and should skip the default.
+	cache.CloseIdleConnections()
 }
 
 func TestTransportCacheConcurrentAccess(t *testing.T) {
