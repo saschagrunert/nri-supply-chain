@@ -252,43 +252,44 @@ func warnPermissiveFetchPolicy(cfg *config.Config) {
 }
 
 func warnPermissiveMissingPolicies(label string, pol *policy.Policy) {
-	if pol.SLSAMissingPolicy() == types.ActionAllow {
-		slog.Warn("enforce mode with default SLSA missing_policy=allow allows "+
-			"containers without SLSA provenance attestations; consider setting missingPolicy=deny",
-			"policy", label,
-			"slsa_missing_policy", pol.SLSAMissingPolicy(),
-		)
+	checks := []struct {
+		name, artifact, logKey, setting string
+		enabled                         bool
+		action                          types.Action
+	}{
+		{
+			"SLSA", "SLSA provenance attestations", "slsa_missing_policy", "missingPolicy",
+			true, pol.SLSAMissingPolicy(),
+		},
+		{
+			"VEX", "VEX attestations", "vex_missing_policy", "vex.missingPolicy",
+			true, pol.VEXMissingPolicy(),
+		},
+		{
+			"Notation", "Notation signatures", "notation_missing_policy", "notation.missingPolicy",
+			pol.Notation != nil, pol.NotationMissingPolicy(),
+		},
+		{
+			"SBOM", "SBOM attestations", "sbom_missing_policy", "sbom.missingPolicy",
+			pol.SBOM != nil, pol.SBOMMissingPolicy(),
+		},
+		{
+			"VSA", "VSA attestations", "vsa_missing_policy", "vsa.missingPolicy",
+			pol.VSA != nil, pol.VSAMissingPolicy(),
+		},
 	}
 
-	if pol.VEXMissingPolicy() == types.ActionAllow {
-		slog.Warn("enforce mode with default VEX missing_policy=allow allows "+
-			"containers without VEX attestations; consider setting vex.missingPolicy=deny",
-			"policy", label,
-			"vex_missing_policy", pol.VEXMissingPolicy(),
-		)
-	}
+	for _, chk := range checks {
+		if !chk.enabled || chk.action != types.ActionAllow {
+			continue
+		}
 
-	if pol.Notation != nil && pol.NotationMissingPolicy() == types.ActionAllow {
-		slog.Warn("enforce mode with default Notation missing_policy=allow allows "+
-			"containers without Notation signatures; consider setting notation.missingPolicy=deny",
+		slog.Warn(
+			fmt.Sprintf("enforce mode with default %s missing_policy=allow allows "+
+				"containers without %s; consider setting %s=deny",
+				chk.name, chk.artifact, chk.setting),
 			"policy", label,
-			"notation_missing_policy", pol.NotationMissingPolicy(),
-		)
-	}
-
-	if pol.SBOM != nil && pol.SBOMMissingPolicy() == types.ActionAllow {
-		slog.Warn("enforce mode with default SBOM missing_policy=allow allows "+
-			"containers without SBOM attestations; consider setting sbom.missingPolicy=deny",
-			"policy", label,
-			"sbom_missing_policy", pol.SBOMMissingPolicy(),
-		)
-	}
-
-	if pol.VSA != nil && pol.VSAMissingPolicy() == types.ActionAllow {
-		slog.Warn("enforce mode with default VSA missing_policy=allow allows "+
-			"containers without VSA attestations; consider setting vsa.missingPolicy=deny",
-			"policy", label,
-			"vsa_missing_policy", pol.VSAMissingPolicy(),
+			chk.logKey, chk.action,
 		)
 	}
 }
@@ -316,8 +317,9 @@ func warnKeyOnlyWithoutTLog(label string, pol *policy.Policy) {
 		return
 	}
 
-	slog.Warn("enforce mode with key-only verification and requireTransparencyLog=false; "+
-		"compromised keys cannot be time-bounded without transparency log entries",
+	slog.Warn(
+		"enforce mode with key-only verification and requireTransparencyLog=false; "+
+			"compromised keys cannot be time-bounded without transparency log entries",
 		"policy", label,
 	)
 }
@@ -549,7 +551,8 @@ func handleVerifyError(
 	info *auditInfo,
 ) (*types.Result, error) {
 	if mode != config.ModeEnforce {
-		slog.WarnContext(ctx, "Verification error (non-enforce mode, allowing)",
+		slog.WarnContext(
+			ctx, "Verification error (non-enforce mode, allowing)",
 			"image", imageRef,
 			"mode", mode,
 			"error", err,
@@ -838,7 +841,8 @@ func handleOCIStartupFailure(
 		return nil, nil, nil, loadErr
 	}
 
-	slog.Warn("OCI policy fetch failed at startup, starting in pending state",
+	slog.Warn(
+		"OCI policy fetch failed at startup, starting in pending state",
 		"oci_ref", cfg.Policy.OCIRef,
 		"error", loadErr,
 	)
@@ -904,7 +908,8 @@ func loadPoliciesFromSource(
 		return nil, policyFetcher, "", fmt.Errorf("loading OCI policies: %w", err)
 	}
 
-	slog.Info("Loaded policies from OCI artifact",
+	slog.Info(
+		"Loaded policies from OCI artifact",
 		"oci_ref", cfg.Policy.OCIRef,
 		"digest", result.Digest,
 		"count", len(result.Policies),
@@ -1032,7 +1037,8 @@ func (v *Verifier) applyPolicyUpdate(
 		WarnEnforceDefaults(state.config, policies)
 	}
 
-	slog.Info("OCI policy update applied",
+	slog.Info(
+		"OCI policy update applied",
 		"policies_count", len(policies),
 	)
 }
