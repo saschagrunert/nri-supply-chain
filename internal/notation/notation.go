@@ -80,12 +80,12 @@ func Verify(
 		return nil, err
 	}
 
-	notationVerifier, err := buildVerifierForImage(notationPolicy, imageRef)
+	notationVerifier, trustPolicyName, err := buildVerifierForImage(notationPolicy, imageRef)
 	if err != nil {
 		return nil, err
 	}
 
-	return verifySignatureEntry(ctx, notationVerifier, sig, imageRef, digest), nil
+	return verifySignatureEntry(ctx, notationVerifier, sig, imageRef, digest, trustPolicyName), nil
 }
 
 // VerifyMultiple checks multiple Notation signatures, accepting if any valid one passes.
@@ -105,12 +105,12 @@ func VerifyMultiple(
 		return nil, err
 	}
 
-	notationVerifier, err := buildVerifierForImage(notationPolicy, imageRef)
+	notationVerifier, trustPolicyName, err := buildVerifierForImage(notationPolicy, imageRef)
 	if err != nil {
 		return nil, err
 	}
 
-	return verifySignatures(ctx, notationVerifier, signatures, imageRef, digest)
+	return verifySignatures(ctx, notationVerifier, signatures, imageRef, digest, trustPolicyName)
 }
 
 func checkPolicyRequirements(notationPolicy *policy.NotationPolicy) error {
@@ -129,12 +129,19 @@ func verifySignatures(
 	ctx context.Context,
 	notationVerifier notationlib.Verifier,
 	signatures []attestation.VerifiedAttestation,
-	imageRef, digest string,
+	imageRef, digest, trustPolicyName string,
 ) (*types.CheckResult, error) {
 	var failReasons []string
 
 	for idx := range signatures {
-		result := verifySignatureEntry(ctx, notationVerifier, &signatures[idx], imageRef, digest)
+		result := verifySignatureEntry(
+			ctx,
+			notationVerifier,
+			&signatures[idx],
+			imageRef,
+			digest,
+			trustPolicyName,
+		)
 		if result.Passed {
 			return result, nil
 		}
@@ -156,30 +163,30 @@ func buildMultipleResult(failReasons []string) *types.CheckResult {
 //nolint:ireturn // notation.Verifier is the API type returned by notation-go.
 func buildVerifierForImage(
 	notationPolicy *policy.NotationPolicy, imageRef string,
-) (notationlib.Verifier, error) {
+) (notationlib.Verifier, string, error) {
 	policyDoc := buildTrustPolicyDocument(notationPolicy)
 
 	err := policyDoc.Validate()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrBuildTrustPolicy, err)
+		return nil, "", fmt.Errorf("%w: %w", ErrBuildTrustPolicy, err)
 	}
 
 	trustStore, err := newTrustStore(notationPolicy.TrustStores)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrBuildVerifier, err)
+		return nil, "", fmt.Errorf("%w: %w", ErrBuildVerifier, err)
 	}
 
 	notationVerifier, err := verifier.New(policyDoc, trustStore, nil)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrBuildVerifier, err)
+		return nil, "", fmt.Errorf("%w: %w", ErrBuildVerifier, err)
 	}
 
-	_, err = policyDoc.GetApplicableTrustPolicy(imageRef)
+	tp, err := policyDoc.GetApplicableTrustPolicy(imageRef)
 	if err != nil {
-		return nil, fmt.Errorf("%w for %q: %w", ErrNoApplicableTrustPolicy, imageRef, err)
+		return nil, "", fmt.Errorf("%w for %q: %w", ErrNoApplicableTrustPolicy, imageRef, err)
 	}
 
-	return notationVerifier, nil
+	return notationVerifier, tp.Name, nil
 }
 
 func buildTrustPolicyDocument(notationPolicy *policy.NotationPolicy) *trustpolicy.Document {
@@ -208,11 +215,12 @@ func buildTrustPolicyDocument(notationPolicy *policy.NotationPolicy) *trustpolic
 	}
 }
 
+//nolint:funlen // sequential verification steps
 func verifySignatureEntry(
 	ctx context.Context,
 	notationVerifier notationlib.Verifier,
 	sig *attestation.VerifiedAttestation,
-	imageRef, digest string,
+	imageRef, digest, trustPolicyName string,
 ) *types.CheckResult {
 	desc := ocispec.Descriptor{
 		MediaType: sig.NotationSubjectMediaType,
@@ -268,7 +276,28 @@ func verifySignatureEntry(
 
 	slog.DebugContext(ctx, "Notation signature cryptographically verified", logAttrs...)
 
-	return passResult()
+	meta := map[string]any{
+		"signerDN":    extractSignerDN(outcome),
+		"trustPolicy": trustPolicyName,
+	}
+
+	result := passResult()
+	result.Metadata = meta
+
+	return result
+}
+
+func extractSignerDN(outcome *notationlib.VerificationOutcome) string {
+	if outcome == nil || outcome.EnvelopeContent == nil {
+		return ""
+	}
+
+	chain := outcome.EnvelopeContent.SignerInfo.CertificateChain
+	if len(chain) == 0 {
+		return ""
+	}
+
+	return chain[0].Subject.String()
 }
 
 func passResult() *types.CheckResult {

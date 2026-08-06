@@ -682,7 +682,7 @@ func runCELCheck(
 
 	registry, repository := extractRegistryRepo(parsedRef, imageRef)
 
-	var slsaResult, vexResult, vsaResult, sbomResult *types.CheckResult
+	var slsaResult, vexResult, vsaResult, sbomResult, notationResult *types.CheckResult
 
 	for idx := range result.CheckResults {
 		switch result.CheckResults[idx].Type {
@@ -694,14 +694,16 @@ func runCELCheck(
 			vsaResult = &result.CheckResults[idx]
 		case types.CheckTypeSBOM:
 			sbomResult = &result.CheckResults[idx]
+		case types.CheckTypeNotation:
+			notationResult = &result.CheckResults[idx]
 		case types.CheckTypeFetch, types.CheckTypePolicy,
-			types.CheckTypeCEL, types.CheckTypeNotation:
+			types.CheckTypeCEL:
 		}
 	}
 
 	vars := celengine.BuildVars(
 		imageRef, registry, repository, digest, namespace,
-		slsaResult, vexResult, vsaResult, sbomResult,
+		slsaResult, vexResult, vsaResult, sbomResult, notationResult,
 	)
 
 	return celengine.Evaluate(pol.CompiledCEL, vars)

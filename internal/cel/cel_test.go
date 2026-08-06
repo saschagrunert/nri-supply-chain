@@ -36,10 +36,25 @@ const (
 	testSourceRepo = "https://github.com/myorg/myrepo"
 	testRunnerURL  = "https://github.com/actions/runner"
 
+	testSignerDN    = "CN=test"
+	testTrustPolicy = "prod-ca"
+
+	metaSignerDN    = "signerDN"
+	metaTrustPolicy = "trustPolicy"
+
+	metaFormat            = "format"
+	metaComponentCount    = "componentCount"
+	metaLicenseCount      = "licenseCount"
+	metaCVSSMax           = "cvssMax"
+	metaCVSSCriticalCount = "cvssCriticalCount"
+	metaCVSSHighCount     = "cvssHighCount"
+	testFormatCycloneDX   = "cyclonedx"
+
 	exprMatchGHCR        = "image.registry == 'ghcr.io'"
 	exprSLSAVerified     = "slsa.verified == true"
 	exprVEXVerified      = "vex.verified == true"
 	exprSBOMVerified     = "sbom.verified == true"
+	exprNotationVerified = "notation.verified == true"
 	exprTrue             = "true"
 	exprFalse            = "false"
 	exprImageRef         = "image.ref"
@@ -54,6 +69,7 @@ func defaultVars() map[string]any {
 		types.PassResult(types.CheckTypeVEX, "ok"),
 		nil,
 		types.PassResult(types.CheckTypeSBOM, "ok"),
+		nil,
 	)
 }
 
@@ -394,6 +410,7 @@ func TestEvaluateSLSAVariables(t *testing.T) {
 		types.PassResult(types.CheckTypeVEX, "ok"),
 		nil,
 		types.PassResult(types.CheckTypeSBOM, "ok"),
+		nil,
 	)
 
 	result = celengine.Evaluate(compiled, varsUnverified)
@@ -422,6 +439,7 @@ func TestEvaluateVEXVariables(t *testing.T) {
 		types.FailResult(types.CheckTypeVEX, "fail", nil),
 		nil,
 		types.PassResult(types.CheckTypeSBOM, "ok"),
+		nil,
 	)
 
 	result := celengine.Evaluate(compiled, vars)
@@ -477,6 +495,7 @@ func TestEvaluateSBOMVariables(t *testing.T) {
 		types.PassResult(types.CheckTypeVEX, "ok"),
 		nil,
 		types.FailResult(types.CheckTypeSBOM, "fail", nil),
+		nil,
 	)
 
 	result = celengine.Evaluate(compiled, varsUnverified)
@@ -490,7 +509,10 @@ func TestEvaluateNilResults(t *testing.T) {
 	t.Parallel()
 
 	rules := []celengine.Rule{
-		{Require: "slsa.verified == false && vex.verified == false && sbom.verified == false"},
+		{
+			Require: "slsa.verified == false && vex.verified == false && " +
+				"sbom.verified == false && notation.verified == false",
+		},
 	}
 
 	compiled, err := celengine.Compile(rules)
@@ -500,7 +522,7 @@ func TestEvaluateNilResults(t *testing.T) {
 
 	vars := celengine.BuildVars(
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
-		nil, nil, nil, nil,
+		nil, nil, nil, nil, nil,
 	)
 
 	result := celengine.Evaluate(compiled, vars)
@@ -620,6 +642,47 @@ func TestBuildVarsTypes(t *testing.T) {
 	if _, ok := sbomMap["verified"].(bool); !ok {
 		t.Error("sbom.verified should be a bool")
 	}
+
+	if _, ok := sbomMap[metaFormat].(string); !ok {
+		t.Error("sbom.format should be a string")
+	}
+
+	if _, ok := sbomMap[metaComponentCount].(int64); !ok {
+		t.Error("sbom.componentCount should be an int64")
+	}
+
+	if _, ok := sbomMap[metaLicenseCount].(int64); !ok {
+		t.Error("sbom.licenseCount should be an int64")
+	}
+
+	if _, ok := sbomMap[metaCVSSMax].(float64); !ok {
+		t.Error("sbom.cvssMax should be a float64")
+	}
+
+	if _, ok := sbomMap[metaCVSSCriticalCount].(int64); !ok {
+		t.Error("sbom.cvssCriticalCount should be an int64")
+	}
+
+	if _, ok := sbomMap[metaCVSSHighCount].(int64); !ok {
+		t.Error("sbom.cvssHighCount should be an int64")
+	}
+
+	notationMap, ok := vars["notation"].(map[string]any)
+	if !ok {
+		t.Fatal("notation vars should be map[string]any")
+	}
+
+	if _, ok := notationMap["verified"].(bool); !ok {
+		t.Error("notation.verified should be a bool")
+	}
+
+	if _, ok := notationMap[metaSignerDN].(string); !ok {
+		t.Error("notation.signerDN should be a string")
+	}
+
+	if _, ok := notationMap[metaTrustPolicy].(string); !ok {
+		t.Error("notation.trustPolicy should be a string")
+	}
 }
 
 func TestBuildVarsPopulatesMetadata(t *testing.T) {
@@ -644,7 +707,7 @@ func TestBuildVarsPopulatesMetadata(t *testing.T) {
 
 	vars := celengine.BuildVars(
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
-		slsa, vex, vsa, types.PassResult(types.CheckTypeSBOM, "ok"),
+		slsa, vex, vsa, types.PassResult(types.CheckTypeSBOM, "ok"), nil,
 	)
 
 	slsaVars, ok := vars["slsa"].(map[string]any)
@@ -717,7 +780,7 @@ func TestEvaluateMetadataInCELExpression(t *testing.T) {
 	vars := celengine.BuildVars(
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
 		slsa, types.PassResult(types.CheckTypeVEX, "ok"),
-		nil, types.PassResult(types.CheckTypeSBOM, "ok"),
+		nil, types.PassResult(types.CheckTypeSBOM, "ok"), nil,
 	)
 
 	result := celengine.Evaluate(compiled, vars)
@@ -735,7 +798,7 @@ func TestEvaluateMetadataInCELExpression(t *testing.T) {
 	varsWrong := celengine.BuildVars(
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
 		slsaWrong, types.PassResult(types.CheckTypeVEX, "ok"),
-		nil, types.PassResult(types.CheckTypeSBOM, "ok"),
+		nil, types.PassResult(types.CheckTypeSBOM, "ok"), nil,
 	)
 
 	result = celengine.Evaluate(compiled, varsWrong)
@@ -815,6 +878,228 @@ func TestCompileMultipleErrors(t *testing.T) {
 
 	if !strings.Contains(errStr, "rules[1]") {
 		t.Errorf("expected error mentioning rules[1], got: %s", errStr)
+	}
+}
+
+func TestEvaluateNotationVariables(t *testing.T) {
+	t.Parallel()
+
+	celengine.ResetEnvironmentForTest()
+
+	tests := []struct {
+		name    string
+		require string
+		result  *types.CheckResult
+		pass    bool
+	}{
+		{
+			name:    "notation.verified true",
+			require: exprNotationVerified,
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeNotation, "ok")
+				r.Metadata = map[string]any{
+					metaSignerDN:    testSignerDN,
+					metaTrustPolicy: testTrustPolicy,
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name:    "notation.signerDN match",
+			require: `notation.signerDN == "CN=test"`,
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeNotation, "ok")
+				r.Metadata = map[string]any{
+					metaSignerDN:    testSignerDN,
+					metaTrustPolicy: testTrustPolicy,
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name:    "notation.trustPolicy match",
+			require: `notation.trustPolicy == "prod-ca"`,
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeNotation, "ok")
+				r.Metadata = map[string]any{
+					metaSignerDN:    testSignerDN,
+					metaTrustPolicy: testTrustPolicy,
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name:    "notation defaults with nil result",
+			require: `notation.verified == false && notation.signerDN == "" && notation.trustPolicy == ""`,
+			result:  nil,
+			pass:    true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			rules := []celengine.Rule{{Require: test.require}}
+
+			compiled, err := celengine.Compile(rules)
+			if err != nil {
+				t.Fatalf("compile error: %v", err)
+			}
+
+			vars := celengine.BuildVars(
+				testImageRef, testRegistry, testRepository, testDigest, testNamespace,
+				types.PassResult(types.CheckTypeSLSA, "ok"),
+				types.PassResult(types.CheckTypeVEX, "ok"),
+				nil,
+				types.PassResult(types.CheckTypeSBOM, "ok"),
+				test.result,
+			)
+
+			result := celengine.Evaluate(compiled, vars)
+
+			if result.Passed != test.pass {
+				t.Errorf("expected passed=%v, got passed=%v: %s",
+					test.pass, result.Passed, result.Detail)
+			}
+		})
+	}
+}
+
+func TestEvaluateExtendedSBOMVariables(t *testing.T) {
+	t.Parallel()
+
+	celengine.ResetEnvironmentForTest()
+
+	tests := []struct {
+		name    string
+		require string
+		result  *types.CheckResult
+		pass    bool
+	}{
+		{
+			name:    "sbom.format cyclonedx",
+			require: `sbom.format == "cyclonedx"`,
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeSBOM, "ok")
+				r.Metadata = map[string]any{
+					metaFormat:         testFormatCycloneDX,
+					metaComponentCount: int64(15),
+					metaLicenseCount:   int64(3),
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name:    "sbom.componentCount greater than",
+			require: "sbom.componentCount > 10",
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeSBOM, "ok")
+				r.Metadata = map[string]any{
+					metaFormat:         "spdx",
+					metaComponentCount: int64(15),
+					metaLicenseCount:   int64(1),
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name:    "sbom.licenseCount at least 1",
+			require: "sbom.licenseCount >= 1",
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeSBOM, "ok")
+				r.Metadata = map[string]any{
+					metaFormat:         "spdx",
+					metaComponentCount: int64(5),
+					metaLicenseCount:   int64(1),
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name:    "sbom.cvssMax threshold",
+			require: "sbom.cvssMax <= 7.0",
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeSBOM, "ok")
+				r.Metadata = map[string]any{
+					metaFormat:            testFormatCycloneDX,
+					metaComponentCount:    int64(5),
+					metaLicenseCount:      int64(1),
+					metaCVSSMax:           float64(5.5),
+					metaCVSSCriticalCount: int64(0),
+					metaCVSSHighCount:     int64(1),
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name:    "sbom.cvssCriticalCount zero",
+			require: "sbom.cvssCriticalCount == 0",
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeSBOM, "ok")
+				r.Metadata = map[string]any{
+					metaFormat:            testFormatCycloneDX,
+					metaComponentCount:    int64(5),
+					metaLicenseCount:      int64(1),
+					metaCVSSMax:           float64(5.5),
+					metaCVSSCriticalCount: int64(0),
+					metaCVSSHighCount:     int64(1),
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name: "sbom defaults with nil result",
+			require: `sbom.format == "" && sbom.componentCount == 0 && sbom.licenseCount == 0` +
+				` && sbom.cvssMax == 0.0 && sbom.cvssCriticalCount == 0 && sbom.cvssHighCount == 0`,
+			result: nil,
+			pass:   true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			rules := []celengine.Rule{{Require: test.require}}
+
+			compiled, err := celengine.Compile(rules)
+			if err != nil {
+				t.Fatalf("compile error: %v", err)
+			}
+
+			vars := celengine.BuildVars(
+				testImageRef, testRegistry, testRepository, testDigest, testNamespace,
+				types.PassResult(types.CheckTypeSLSA, "ok"),
+				types.PassResult(types.CheckTypeVEX, "ok"),
+				nil,
+				test.result,
+				nil,
+			)
+
+			result := celengine.Evaluate(compiled, vars)
+
+			if result.Passed != test.pass {
+				t.Errorf("expected passed=%v, got passed=%v: %s",
+					test.pass, result.Passed, result.Detail)
+			}
+		})
 	}
 }
 

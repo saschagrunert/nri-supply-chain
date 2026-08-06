@@ -107,6 +107,7 @@ func initEnvironment() (*cel.Env, error) {
 			cel.Variable("vex", cel.MapType(cel.StringType, cel.DynType)),
 			cel.Variable("vsa", cel.MapType(cel.StringType, cel.DynType)),
 			cel.Variable("sbom", cel.MapType(cel.StringType, cel.DynType)),
+			cel.Variable("notation", cel.MapType(cel.StringType, cel.DynType)),
 			ext.Strings(),
 		)
 	})
@@ -311,7 +312,7 @@ func isCostError(err error) bool {
 // BuildVars constructs the CEL variable map from check results and image context.
 func BuildVars(
 	imageRef, registry, repository, digest, namespace string,
-	slsaResult, vexResult, vsaResult, sbomResult *types.CheckResult,
+	slsaResult, vexResult, vsaResult, sbomResult, notationResult *types.CheckResult,
 ) map[string]any {
 	imageVars := map[string]any{
 		"ref":        imageRef,
@@ -325,13 +326,15 @@ func BuildVars(
 	vexVars := buildVEXVars(vexResult)
 	vsaVars := buildVSAVars(vsaResult)
 	sbomVars := buildSBOMVars(sbomResult)
+	notationVars := buildNotationVars(notationResult)
 
 	return map[string]any{
-		"image": imageVars,
-		"slsa":  slsaVars,
-		"vex":   vexVars,
-		"vsa":   vsaVars,
-		"sbom":  sbomVars,
+		"image":    imageVars,
+		"slsa":     slsaVars,
+		"vex":      vexVars,
+		"vsa":      vsaVars,
+		"sbom":     sbomVars,
+		"notation": notationVars,
 	}
 }
 
@@ -376,12 +379,7 @@ func buildVSAVars(result *types.CheckResult) map[string]any {
 	if result != nil {
 		vars[varVerified] = result.Passed
 		extractStringMeta(result.Metadata, vars, "verifierID", "result")
-
-		if result.Metadata != nil {
-			if v, ok := result.Metadata["level"].(int64); ok {
-				vars["level"] = v
-			}
-		}
+		extractInt64Meta(result.Metadata, vars, "level")
 	}
 
 	return vars
@@ -399,13 +397,62 @@ func extractStringMeta(meta, vars map[string]any, keys ...string) {
 	}
 }
 
+func extractInt64Meta(meta, vars map[string]any, keys ...string) {
+	if meta == nil {
+		return
+	}
+
+	for _, key := range keys {
+		if v, ok := meta[key].(int64); ok {
+			vars[key] = v
+		}
+	}
+}
+
+func extractFloat64Meta(meta, vars map[string]any, keys ...string) {
+	if meta == nil {
+		return
+	}
+
+	for _, key := range keys {
+		if v, ok := meta[key].(float64); ok {
+			vars[key] = v
+		}
+	}
+}
+
 func buildSBOMVars(result *types.CheckResult) map[string]any {
 	vars := map[string]any{
-		varVerified: false,
+		varVerified:         false,
+		"format":            "",
+		"componentCount":    int64(0),
+		"licenseCount":      int64(0),
+		"cvssMax":           float64(0),
+		"cvssCriticalCount": int64(0),
+		"cvssHighCount":     int64(0),
 	}
 
 	if result != nil {
 		vars[varVerified] = result.Passed
+		extractStringMeta(result.Metadata, vars, "format")
+		extractInt64Meta(result.Metadata, vars, "componentCount", "licenseCount",
+			"cvssCriticalCount", "cvssHighCount")
+		extractFloat64Meta(result.Metadata, vars, "cvssMax")
+	}
+
+	return vars
+}
+
+func buildNotationVars(result *types.CheckResult) map[string]any {
+	vars := map[string]any{
+		varVerified:   false,
+		"signerDN":    "",
+		"trustPolicy": "",
+	}
+
+	if result != nil {
+		vars[varVerified] = result.Passed
+		extractStringMeta(result.Metadata, vars, "signerDN", "trustPolicy")
 	}
 
 	return vars
