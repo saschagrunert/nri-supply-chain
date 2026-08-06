@@ -20,3 +20,12 @@ import "net/http"
 func (tc *TransportCache) GetCachedTransport(prefix string) (http.RoundTripper, error) {
 	return tc.getTransport(prefix)
 }
+
+// Exported constants for testing.
+const (
+	TransportMaxIdleConns  = transportMaxIdleConns
+	TransportIdlePerHost   = transportIdlePerHost
+	TransportIdleTimeout   = transportIdleTimeout
+	TransportTLSTimeout    = transportTLSTimeout
+	TransportExpectTimeout = transportExpectTimeout
+)
