@@ -430,13 +430,14 @@ func buildSBOMVars(result *types.CheckResult) map[string]any {
 		"cvssMax":           float64(0),
 		"cvssCriticalCount": int64(0),
 		"cvssHighCount":     int64(0),
+		"cvssMediumCount":   int64(0),
 	}
 
 	if result != nil {
 		vars[varVerified] = result.Passed
 		extractStringMeta(result.Metadata, vars, "format")
 		extractInt64Meta(result.Metadata, vars, "componentCount", "licenseCount",
-			"cvssCriticalCount", "cvssHighCount")
+			"cvssCriticalCount", "cvssHighCount", "cvssMediumCount")
 		extractFloat64Meta(result.Metadata, vars, "cvssMax")
 	}
 

@@ -188,6 +188,16 @@ var (
 	ErrInvalidComponentPURL = errors.New(
 		"invalid component entry, must be a valid PURL (pkg: scheme)",
 	)
+
+	// ErrCVSSMaxScoreRange indicates maxScore is outside the valid range.
+	ErrCVSSMaxScoreRange = errors.New(
+		"sbom.cvss.maxScore must be between 0.0 and 10.0",
+	)
+
+	// ErrCVSSMinSeverityInvalid indicates an unrecognized minSeverity value.
+	ErrCVSSMinSeverityInvalid = errors.New(
+		`sbom.cvss.minSeverity must be "low", "medium", "high", or "critical"`,
+	)
 )
 
 // Sections groups the verification settings that can be overridden
@@ -369,6 +379,22 @@ type SBOMPolicy struct {
 	License *SBOMLicensePolicy `json:"license,omitempty"`
 	// Component contains component allow/deny list settings for SBOM verification.
 	Component *SBOMComponentPolicy `json:"component,omitempty"`
+	// CVSS contains CVSS vulnerability scoring threshold settings.
+	CVSS *SBOMCVSSPolicy `json:"cvss,omitempty"`
+}
+
+// SBOMCVSSPolicy contains CVSS vulnerability scoring thresholds.
+type SBOMCVSSPolicy struct {
+	// MaxScore is the maximum allowed CVSS score (0.0-10.0).
+	// Vulnerabilities with any rating exceeding this score are flagged.
+	MaxScore *float64 `json:"maxScore,omitempty"`
+	// MinSeverity is the minimum severity level that meets or exceeds the
+	// violation threshold. Valid values: "low", "medium", "high", "critical".
+	// A vulnerability is flagged if it exceeds MaxScore or meets/exceeds
+	// MinSeverity.
+	MinSeverity string `json:"minSeverity,omitempty"`
+	// IgnoreCVEs is a list of CVE IDs to exclude from threshold checks (exact match).
+	IgnoreCVEs []string `json:"ignoreCVEs,omitempty"` //nolint:tagliatelle // CVEs is an acronym
 }
 
 // SBOMLicensePolicy contains license allow/deny list settings.

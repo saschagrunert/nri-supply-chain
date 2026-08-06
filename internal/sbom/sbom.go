@@ -20,6 +20,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"maps"
 	"strings"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/intoto"
@@ -28,6 +30,12 @@ import (
 )
 
 const checkType = types.CheckTypeSBOM
+
+const (
+	severityRankMedium   = 2
+	severityRankHigh     = 3
+	severityRankCritical = 4
+)
 
 var (
 	// ErrInvalidSBOM indicates the SBOM document could not be parsed.
@@ -81,10 +89,31 @@ type spdxChecksum struct {
 	Value     string `json:"checksumValue"`
 }
 
+// severityRank maps CVSS severity strings to numeric ranks for comparison.
+var severityRank = map[string]int{ //nolint:gochecknoglobals // immutable lookup table
+	"none":     0,
+	"low":      1,
+	"medium":   severityRankMedium,
+	"high":     severityRankHigh,
+	"critical": severityRankCritical,
+}
+
 // cyclonedxBOM represents the subset of a CycloneDX 1.x JSON BOM needed
 // for license and component deny-list checks.
 type cyclonedxBOM struct {
-	Components []cyclonedxComponent `json:"components"`
+	Components      []cyclonedxComponent     `json:"components"`
+	Vulnerabilities []cyclonedxVulnerability `json:"vulnerabilities"`
+}
+
+type cyclonedxVulnerability struct {
+	ID      string            `json:"id"`
+	Ratings []cyclonedxRating `json:"ratings"`
+}
+
+type cyclonedxRating struct {
+	Score    *float64 `json:"score"`
+	Severity string   `json:"severity"`
+	Method   string   `json:"method"`
 }
 
 type cyclonedxComponent struct {
@@ -117,7 +146,7 @@ func Verify( //nolint:revive // ctx reserved for future context-aware logging
 
 // VerifyMultiple checks multiple SBOM attestations. Any denied license or
 // component in any document causes failure.
-func VerifyMultiple(
+func VerifyMultiple( //nolint:cyclop // metadata accumulation adds branches
 	ctx context.Context,
 	attestations [][]byte, pol *policy.Policy, imageDigest string,
 ) (*types.CheckResult, error) {
@@ -142,8 +171,12 @@ func VerifyMultiple(
 			failDetails = append(failDetails, result.Detail)
 		}
 
-		if result.Passed && passedMeta == nil {
-			passedMeta = result.Metadata
+		if result.Passed && result.Metadata != nil {
+			if passedMeta == nil {
+				passedMeta = make(map[string]any)
+			}
+
+			mergeCVSSMeta(passedMeta, result.Metadata)
 		}
 	}
 
@@ -157,16 +190,18 @@ func VerifyMultiple(
 		), nil
 	}
 
-	combined := passResult()
-	combined.Metadata = passedMeta
+	result := passResult()
+	result.Metadata = passedMeta
 
-	return combined, nil
+	return result, nil
 }
 
 func verifySBOMPredicate(
 	predicate []byte, pol *policy.Policy,
 ) (*types.CheckResult, error) {
-	licenses, purls, format, componentCount, licenseCount, err := extractSBOMData(predicate, pol)
+	licenses, purls, format, componentCount, licenseCount, vulns, err := extractSBOMData(
+		predicate, pol,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -178,36 +213,55 @@ func verifySBOMPredicate(
 		"licenseCount":   int64(licenseCount),
 	}
 
+	if !result.Passed {
+		return result, nil
+	}
+
+	if format == "cyclonedx" && pol.SBOM != nil && pol.SBOM.CVSS != nil {
+		cvssResult := checkCVSSThresholds(vulns, pol.SBOM.CVSS)
+		if !cvssResult.Passed {
+			maps.Copy(cvssResult.Metadata, result.Metadata)
+
+			return cvssResult, nil
+		}
+
+		maps.Copy(result.Metadata, cvssResult.Metadata)
+	}
+
 	return result, nil
 }
 
 //nolint:gocritic // returns are tightly coupled
 func extractSBOMData(
 	predicate []byte, pol *policy.Policy,
-) (licenses, purls []string, format string, componentCount, licenseCount int, err error) {
+) (
+	licenses, purls []string, format string,
+	componentCount, licenseCount int,
+	vulns []cyclonedxVulnerability, err error,
+) {
 	licenses, purls, componentCount, licenseCount, spdxErr := parseSPDX(predicate)
 	if spdxErr == nil {
 		if !formatAllowed(pol, "spdx") {
-			return nil, nil, "", 0, 0, fmt.Errorf(
+			return nil, nil, "", 0, 0, nil, fmt.Errorf(
 				"%w: spdx not in allowed formats", ErrUnsupportedFormat,
 			)
 		}
 
-		return licenses, purls, "spdx", componentCount, licenseCount, nil
+		return licenses, purls, "spdx", componentCount, licenseCount, nil, nil
 	}
 
-	licenses, purls, componentCount, licenseCount, cdxErr := parseCycloneDX(predicate)
+	licenses, purls, componentCount, licenseCount, vulns, cdxErr := parseCycloneDX(predicate)
 	if cdxErr == nil {
 		if !formatAllowed(pol, "cyclonedx") {
-			return nil, nil, "", 0, 0, fmt.Errorf(
+			return nil, nil, "", 0, 0, nil, fmt.Errorf(
 				"%w: cyclonedx not in allowed formats", ErrUnsupportedFormat,
 			)
 		}
 
-		return licenses, purls, "cyclonedx", componentCount, licenseCount, nil
+		return licenses, purls, "cyclonedx", componentCount, licenseCount, vulns, nil
 	}
 
-	return nil, nil, "", 0, 0, fmt.Errorf(
+	return nil, nil, "", 0, 0, nil, fmt.Errorf(
 		"%w: not valid SPDX (%w) or CycloneDX (%w)",
 		ErrInvalidSBOM, spdxErr, cdxErr,
 	)
@@ -279,18 +333,18 @@ func appendSPDXPURLs(purls []string, pkg *spdxPackage) []string {
 	return purls
 }
 
-func parseCycloneDX(
+func parseCycloneDX( //nolint:gocritic // tightly coupled returns
 	data []byte,
-) (licenses, purls []string, componentCount, licenseCount int, err error) {
+) (licenses, purls []string, componentCount, licenseCount int, vulns []cyclonedxVulnerability, err error) {
 	var bom cyclonedxBOM
 
 	err = json.Unmarshal(data, &bom)
 	if err != nil {
-		return nil, nil, 0, 0, fmt.Errorf("parsing CycloneDX: %w", err)
+		return nil, nil, 0, 0, nil, fmt.Errorf("parsing CycloneDX: %w", err)
 	}
 
 	if len(bom.Components) == 0 {
-		return nil, nil, 0, 0, errNotCycloneDX
+		return nil, nil, 0, 0, nil, errNotCycloneDX
 	}
 
 	uniqueLicenses := make(map[string]struct{})
@@ -318,7 +372,7 @@ func parseCycloneDX(
 		}
 	}
 
-	return licenses, purls, len(bom.Components), len(uniqueLicenses), nil
+	return licenses, purls, len(bom.Components), len(uniqueLicenses), bom.Vulnerabilities, nil
 }
 
 func checkDenyLists(
@@ -531,6 +585,157 @@ func componentInList(purl string, list []string) bool {
 	}
 
 	return false
+}
+
+type vulnAggregate struct {
+	maxScore    float64
+	maxSeverity string
+}
+
+func checkCVSSThresholds( //nolint:cyclop,funlen // two-pass design requires branches
+	vulns []cyclonedxVulnerability, cvssPolicy *policy.SBOMCVSSPolicy,
+) *types.CheckResult {
+	ignoredCVEs := make(map[string]bool, len(cvssPolicy.IgnoreCVEs))
+	for _, cve := range cvssPolicy.IgnoreCVEs {
+		ignoredCVEs[cve] = true
+	}
+
+	minSeverityRank := 0
+	if cvssPolicy.MinSeverity != "" {
+		minSeverityRank = severityRank[strings.ToLower(cvssPolicy.MinSeverity)]
+	}
+
+	var (
+		globalMaxScore float64
+		criticalCount  int64
+		highCount      int64
+		mediumCount    int64
+	)
+
+	cached := make([]vulnAggregate, len(vulns))
+
+	// First pass: compute aggregate statistics across ALL vulnerabilities.
+	// Ignored CVEs still contribute to aggregate statistics for visibility
+	// in CEL rules.
+	for idx := range vulns {
+		score, sev := aggregateRatings(vulns[idx].Ratings)
+		cached[idx] = vulnAggregate{maxScore: score, maxSeverity: sev}
+
+		if score > globalMaxScore {
+			globalMaxScore = score
+		}
+
+		switch sevRank := severityRank[strings.ToLower(sev)]; {
+		case sevRank >= severityRankCritical:
+			criticalCount++
+		case sevRank >= severityRankHigh:
+			highCount++
+		case sevRank >= severityRankMedium:
+			mediumCount++
+		}
+	}
+
+	meta := map[string]any{
+		"cvssMax":           globalMaxScore,
+		"cvssCriticalCount": criticalCount,
+		"cvssHighCount":     highCount,
+		"cvssMediumCount":   mediumCount,
+	}
+
+	// Second pass: check each non-ignored vulnerability against thresholds,
+	// using cached aggregates from the first pass.
+	for idx := range vulns {
+		if ignoredCVEs[vulns[idx].ID] {
+			continue
+		}
+
+		agg := &cached[idx]
+		exceeded := false
+
+		if cvssPolicy.MaxScore != nil && agg.maxScore > *cvssPolicy.MaxScore {
+			exceeded = true
+		}
+
+		vulnSevRank := severityRank[strings.ToLower(agg.maxSeverity)]
+		if cvssPolicy.MinSeverity != "" && vulnSevRank >= minSeverityRank {
+			exceeded = true
+		}
+
+		if exceeded {
+			detail := fmt.Sprintf(
+				"CVSS threshold exceeded: %s (score %.1f, severity %s)",
+				vulns[idx].ID, agg.maxScore, strings.ToLower(agg.maxSeverity),
+			)
+
+			result := failResult(detail)
+			result.Metadata = meta
+
+			return result
+		}
+	}
+
+	result := passResult()
+	result.Metadata = meta
+
+	return result
+}
+
+func aggregateRatings(ratings []cyclonedxRating) (maxScore float64, maxSeverity string) {
+	maxSevRank := -1
+
+	for idx := range ratings {
+		rating := &ratings[idx]
+
+		if rating.Score != nil && *rating.Score > maxScore {
+			maxScore = *rating.Score
+		}
+
+		sev := strings.ToLower(rating.Severity)
+
+		rank, known := severityRank[sev]
+		if !known && rating.Severity != "" {
+			slog.Warn("Unrecognized CVSS severity, treating as none",
+				"severity", rating.Severity)
+		}
+
+		if rank > maxSevRank {
+			maxSevRank = rank
+			maxSeverity = rating.Severity
+		}
+	}
+
+	if maxSeverity == "" {
+		maxSeverity = "none"
+	}
+
+	return maxScore, maxSeverity
+}
+
+func mergeCVSSMeta(dst, src map[string]any) { //nolint:cyclop // type assertions on known keys
+	for key, val := range src {
+		existing, hasPrev := dst[key]
+		if !hasPrev {
+			dst[key] = val
+
+			continue
+		}
+
+		switch key {
+		case "cvssMax":
+			if srcScore, ok := val.(float64); ok {
+				if dstScore, ok := existing.(float64); ok && srcScore > dstScore {
+					dst[key] = srcScore
+				}
+			}
+		case "cvssCriticalCount", "cvssHighCount", "cvssMediumCount":
+			if srcCount, ok := val.(int64); ok {
+				if dstCount, ok := existing.(int64); ok {
+					dst[key] = dstCount + srcCount
+				}
+			}
+		default:
+		}
+	}
 }
 
 func passResult() *types.CheckResult {

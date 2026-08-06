@@ -26,6 +26,7 @@ patterns for the nri-supply-chain plugin.
   - [<code>sbom</code> (object)](#sbom-object)
     - [<code>sbom.license</code> (object)](#sbomlicense-object)
     - [<code>sbom.component</code> (object)](#sbomcomponent-object)
+    - [<code>sbom.cvss</code> (object)](#sbomcvss-object)
   - [<code>rules</code> (array of objects)](#rules-array-of-objects)
   - [<code>cel</code> (object)](#cel-object)
 - [Verification Types](#verification-types)
@@ -389,22 +390,37 @@ nri-supply-chain json-schema policy
       "additionalProperties": false,
       "type": "object"
     },
-    "SBOMPolicy": {
+    "SBOMCVSSPolicy": {
       "properties": {
-        "missingPolicy": {
+        "maxScore": {
+          "type": "number"
+        },
+        "minSeverity": {
           "type": "string"
         },
-        "formats": {
+        "ignoreCVEs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "SBOMComponentPolicy": {
+      "properties": {
+        "deny": {
           "items": {
             "type": "string"
           },
           "type": "array"
         },
-        "license": {
-          "$ref": "#/$defs/SBOMLicensePolicy"
-        },
-        "component": {
-          "$ref": "#/$defs/SBOMComponentPolicy"
+        "allow": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "additionalProperties": false,
@@ -428,19 +444,25 @@ nri-supply-chain json-schema policy
       "additionalProperties": false,
       "type": "object"
     },
-    "SBOMComponentPolicy": {
+    "SBOMPolicy": {
       "properties": {
-        "deny": {
+        "missingPolicy": {
+          "type": "string"
+        },
+        "formats": {
           "items": {
             "type": "string"
           },
           "type": "array"
         },
-        "allow": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
+        "license": {
+          "$ref": "#/$defs/SBOMLicensePolicy"
+        },
+        "component": {
+          "$ref": "#/$defs/SBOMComponentPolicy"
+        },
+        "cvss": {
+          "$ref": "#/$defs/SBOMCVSSPolicy"
         }
       },
       "additionalProperties": false,
@@ -731,6 +753,7 @@ SPDX and CycloneDX SBOM attestations attached to container images.
 | `formats`       | array  | (both)  | Accepted SBOM formats: `spdx`, `cyclonedx`. When empty, both accepted. |
 | `license`       | object | (none)  | License allow/deny list settings (see below)                           |
 | `component`     | object | (none)  | Component allow/deny list settings (see below)                         |
+| `cvss`          | object | (none)  | CVSS vulnerability scoring thresholds (CycloneDX only, see below)      |
 
 #### `sbom.license` (object)
 
@@ -751,6 +774,22 @@ lists is denied.
 
 When both `deny` and `allow` are set, deny takes precedence: a component
 matching a deny entry is denied even if it also matches an allow entry.
+
+#### `sbom.cvss` (object)
+
+CVSS vulnerability scoring thresholds. Only evaluated for CycloneDX SBOMs
+(SPDX does not carry vulnerability data). A vulnerability is flagged if it
+exceeds `maxScore` or meets/exceeds `minSeverity` (OR logic). Ignored CVEs
+still contribute to aggregate statistics for visibility in CEL rules.
+
+| Field         | Type   | Default | Description                                                                       |
+| ------------- | ------ | ------- | --------------------------------------------------------------------------------- |
+| `maxScore`    | number | (none)  | Maximum allowed CVSS score (0.0-10.0). Vulnerabilities exceeding this are flagged |
+| `minSeverity` | string | (none)  | Minimum severity that triggers a violation: `low`, `medium`, `high`, `critical`   |
+| `ignoreCVEs`  | array  | (none)  | CVE IDs to exclude from threshold checks (exact match)                            |
+
+When both `maxScore` and `minSeverity` are set, a vulnerability is flagged if
+either condition is met (OR logic, not AND).
 
 ### `rules` (array of objects)
 
@@ -867,6 +906,7 @@ Each rule is an object with:
 | `sbom.cvssMax`           | float  | Highest CVSS score across all vulnerabilities     |
 | `sbom.cvssCriticalCount` | int    | Number of critical-severity vulnerabilities       |
 | `sbom.cvssHighCount`     | int    | Number of high-severity vulnerabilities           |
+| `sbom.cvssMediumCount`   | int    | Number of medium-severity vulnerabilities         |
 
 Standard string functions are available via `ext.Strings()`: `startsWith`,
 `endsWith`, `contains`, `matches`.
@@ -1139,9 +1179,18 @@ Checks performed:
   any component not matching an allow entry causes failure.
 - **Deny over allow**: If a license or component appears in both the deny and
   allow lists, it is denied. Deny always takes precedence.
+- **CVSS thresholds** (CycloneDX only): When `sbom.cvss` is configured,
+  vulnerabilities in CycloneDX BOMs are checked against score and severity
+  thresholds. A vulnerability is flagged if its highest rating score exceeds
+  `maxScore` or its highest severity meets or exceeds `minSeverity` (OR logic).
+  CVEs listed in `ignoreCVEs` are excluded from threshold checks but still
+  contribute to aggregate statistics (cvssMax, cvssCriticalCount, cvssHighCount,
+  cvssMediumCount) exposed as CEL variables. SPDX documents do not carry
+  vulnerability data, so CVSS checks are silently skipped for SPDX.
 
 When multiple SBOM attestations exist, any denied license or component in any
-document causes failure.
+document causes failure. CVSS metadata from passing attestations is accumulated
+and available in CEL rules.
 
 If all SBOM documents fail to parse (as opposed to being absent), the check
 always fails regardless of `missingPolicy`. The `missingPolicy` setting only
@@ -1161,6 +1210,11 @@ Example configuration:
     "component": {
       "deny": ["pkg:npm/event-stream@3.3.6"],
       "allow": ["pkg:npm/trusted"]
+    },
+    "cvss": {
+      "maxScore": 7.0,
+      "minSeverity": "critical",
+      "ignoreCVEs": ["CVE-2024-0001"]
     }
   }
 }

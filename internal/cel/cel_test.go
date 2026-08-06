@@ -48,6 +48,7 @@ const (
 	metaCVSSMax           = "cvssMax"
 	metaCVSSCriticalCount = "cvssCriticalCount"
 	metaCVSSHighCount     = "cvssHighCount"
+	metaCVSSMediumCount   = "cvssMediumCount"
 	testFormatCycloneDX   = "cyclonedx"
 
 	exprMatchGHCR        = "image.registry == 'ghcr.io'"
@@ -667,6 +668,10 @@ func TestBuildVarsTypes(t *testing.T) {
 		t.Error("sbom.cvssHighCount should be an int64")
 	}
 
+	if _, ok := sbomMap[metaCVSSMediumCount].(int64); !ok {
+		t.Error("sbom.cvssMediumCount should be an int64")
+	}
+
 	notationMap, ok := vars["notation"].(map[string]any)
 	if !ok {
 		t.Fatal("notation vars should be map[string]any")
@@ -1067,7 +1072,8 @@ func TestEvaluateExtendedSBOMVariables(t *testing.T) {
 		{
 			name: "sbom defaults with nil result",
 			require: `sbom.format == "" && sbom.componentCount == 0 && sbom.licenseCount == 0` +
-				` && sbom.cvssMax == 0.0 && sbom.cvssCriticalCount == 0 && sbom.cvssHighCount == 0`,
+				` && sbom.cvssMax == 0.0 && sbom.cvssCriticalCount == 0 && sbom.cvssHighCount == 0` +
+				` && sbom.cvssMediumCount == 0`,
 			result: nil,
 			pass:   true,
 		},
@@ -1167,6 +1173,112 @@ func TestEvaluateNoMatchSkipsRequire(t *testing.T) {
 		t.Errorf("expected pass (staging rule skipped, production passes), got fail: %s",
 			result.Detail)
 	}
+}
+
+func TestEvaluateSBOMCVSSVariables(t *testing.T) {
+	t.Parallel()
+
+	t.Run("cvssMax threshold rule", func(t *testing.T) {
+		t.Parallel()
+
+		rules := []celengine.Rule{
+			{Require: "sbom.cvssMax <= 7.0", Message: "max CVSS must be <= 7.0"},
+		}
+
+		compiled, err := celengine.Compile(rules)
+		if err != nil {
+			t.Fatalf("compile error: %v", err)
+		}
+
+		sbomResult := types.PassResult(types.CheckTypeSBOM, "ok")
+		sbomResult.Metadata = map[string]any{
+			"cvssMax":           float64(9.8),
+			"cvssCriticalCount": int64(1),
+			"cvssHighCount":     int64(2),
+		}
+
+		vars := celengine.BuildVars(
+			testImageRef, testRegistry, testRepository, testDigest, testNamespace,
+			types.PassResult(types.CheckTypeSLSA, "ok"),
+			types.PassResult(types.CheckTypeVEX, "ok"),
+			nil,
+			sbomResult,
+			nil,
+		)
+
+		result := celengine.Evaluate(compiled, vars)
+		if result.Passed {
+			t.Error("expected fail: cvssMax 9.8 exceeds 7.0")
+		}
+
+		if result.Detail != "max CVSS must be <= 7.0" {
+			t.Errorf("expected custom message, got: %s", result.Detail)
+		}
+	})
+
+	t.Run("cvssCriticalCount zero rule", func(t *testing.T) {
+		t.Parallel()
+
+		rules := []celengine.Rule{
+			{Require: "sbom.cvssCriticalCount == 0", Message: "no critical vulns allowed"},
+		}
+
+		compiled, err := celengine.Compile(rules)
+		if err != nil {
+			t.Fatalf("compile error: %v", err)
+		}
+
+		sbomResult := types.PassResult(types.CheckTypeSBOM, "ok")
+		sbomResult.Metadata = map[string]any{
+			"cvssMax":           float64(5.0),
+			"cvssCriticalCount": int64(0),
+			"cvssHighCount":     int64(1),
+		}
+
+		vars := celengine.BuildVars(
+			testImageRef, testRegistry, testRepository, testDigest, testNamespace,
+			types.PassResult(types.CheckTypeSLSA, "ok"),
+			types.PassResult(types.CheckTypeVEX, "ok"),
+			nil,
+			sbomResult,
+			nil,
+		)
+
+		result := celengine.Evaluate(compiled, vars)
+		if !result.Passed {
+			t.Errorf("expected pass: cvssCriticalCount is 0, got: %s", result.Detail)
+		}
+	})
+
+	t.Run("cvss defaults when no metadata", func(t *testing.T) {
+		t.Parallel()
+
+		rules := []celengine.Rule{
+			{
+				Require: "sbom.cvssMax == 0.0 && sbom.cvssCriticalCount == 0" +
+					" && sbom.cvssHighCount == 0 && sbom.cvssMediumCount == 0",
+			},
+		}
+
+		compiled, err := celengine.Compile(rules)
+		if err != nil {
+			t.Fatalf("compile error: %v", err)
+		}
+
+		vars := celengine.BuildVars(
+			testImageRef, testRegistry, testRepository, testDigest, testNamespace,
+			types.PassResult(types.CheckTypeSLSA, "ok"),
+			types.PassResult(types.CheckTypeVEX, "ok"),
+			nil,
+			types.PassResult(types.CheckTypeSBOM, "ok"),
+			nil,
+		)
+
+		result := celengine.Evaluate(compiled, vars)
+		if !result.Passed {
+			t.Errorf("expected pass with default CVSS values, got: %s", result.Detail)
+		}
+	})
 }
 
 var (

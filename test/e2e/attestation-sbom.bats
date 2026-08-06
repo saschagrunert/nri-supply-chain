@@ -166,3 +166,81 @@ teardown_file() {
 
 	restore_default_keybased_policy
 }
+
+@test "CVSS threshold exceeded rejects pod" {
+	write_policy "default" "$(
+		cat <<-EOF
+			{
+			  "trust": {
+			    "verifiers": [{"id": "test-verifier", "keys": ["${COSIGN_PUB}"]}]
+			  },
+			  "slsa": {"missingPolicy": "allow"},
+			  "vex": {"missingPolicy": "allow"},
+			  "sbom": {
+			    "missingPolicy": "deny",
+			    "cvss": {"maxScore": 7.0}
+			  },
+			  "signatures": {"requireTransparencyLog": false}
+			}
+		EOF
+	)"
+	reload_plugin
+
+	run_pod "sbom-cvss-fail" "$SBOM_CVSS_CRITICAL_IMAGE" || true
+	assert_log_contains "Container rejected"
+
+	restore_default_keybased_policy
+}
+
+@test "CVSS score under threshold allows pod" {
+	write_policy "default" "$(
+		cat <<-EOF
+			{
+			  "trust": {
+			    "verifiers": [{"id": "test-verifier", "keys": ["${COSIGN_PUB}"]}]
+			  },
+			  "slsa": {"missingPolicy": "allow"},
+			  "vex": {"missingPolicy": "allow"},
+			  "sbom": {
+			    "missingPolicy": "deny",
+			    "cvss": {"maxScore": 7.0}
+			  },
+			  "signatures": {"requireTransparencyLog": false}
+			}
+		EOF
+	)"
+	reload_plugin
+
+	run_pod "sbom-cvss-pass" "$SBOM_CVSS_LOW_IMAGE"
+	wait_for_pod_status "sbom-cvss-pass" "Running"
+
+	restore_default_keybased_policy
+}
+
+@test "CVSS ignored CVE allows pod" {
+	write_policy "default" "$(
+		cat <<-EOF
+			{
+			  "trust": {
+			    "verifiers": [{"id": "test-verifier", "keys": ["${COSIGN_PUB}"]}]
+			  },
+			  "slsa": {"missingPolicy": "allow"},
+			  "vex": {"missingPolicy": "allow"},
+			  "sbom": {
+			    "missingPolicy": "deny",
+			    "cvss": {
+			      "maxScore": 7.0,
+			      "ignoreCVEs": ["CVE-2024-9999"]
+			    }
+			  },
+			  "signatures": {"requireTransparencyLog": false}
+			}
+		EOF
+	)"
+	reload_plugin
+
+	run_pod "sbom-cvss-ignored" "$SBOM_CVSS_CRITICAL_IMAGE"
+	wait_for_pod_status "sbom-cvss-ignored" "Running"
+
+	restore_default_keybased_policy
+}

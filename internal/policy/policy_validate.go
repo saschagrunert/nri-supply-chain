@@ -788,6 +788,10 @@ func (p *Policy) validateSBOM() error {
 		)...)
 	}
 
+	if p.SBOM.CVSS != nil {
+		errs = append(errs, validateCVSSPolicy(p.SBOM.CVSS)...)
+	}
+
 	return errors.Join(errs...)
 }
 
@@ -829,6 +833,35 @@ func validateComponentPURLs(field string, components []string) []error {
 				ErrInvalidComponentPURL, field, idx, comp,
 			))
 		}
+	}
+
+	return errs
+}
+
+const (
+	cvssMaxScoreUpper = 10.0
+)
+
+func validateCVSSPolicy(cvss *SBOMCVSSPolicy) []error {
+	var errs []error
+
+	if cvss.MaxScore != nil {
+		if *cvss.MaxScore < 0 || *cvss.MaxScore > cvssMaxScoreUpper {
+			errs = append(errs, ErrCVSSMaxScoreRange)
+		}
+	}
+
+	if cvss.MinSeverity != "" {
+		switch strings.ToLower(cvss.MinSeverity) {
+		case "low", "medium", "high", "critical":
+		default:
+			errs = append(errs, ErrCVSSMinSeverityInvalid)
+		}
+	}
+
+	err := validateNonEmpty("sbom.cvss.ignoreCVEs", cvss.IgnoreCVEs)
+	if err != nil {
+		errs = append(errs, err)
 	}
 
 	return errs
