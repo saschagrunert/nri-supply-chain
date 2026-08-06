@@ -226,5 +226,17 @@ func cloneSBOM(src *SBOMPolicy) *SBOMPolicy {
 		clone.Component = &comp
 	}
 
+	if clone.CVSS != nil {
+		cvss := *clone.CVSS
+		cvss.IgnoreCVEs = slices.Clone(cvss.IgnoreCVEs)
+
+		if cvss.MaxScore != nil {
+			score := *cvss.MaxScore
+			cvss.MaxScore = &score
+		}
+
+		clone.CVSS = &cvss
+	}
+
 	return &clone
 }

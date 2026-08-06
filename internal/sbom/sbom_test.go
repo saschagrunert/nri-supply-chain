@@ -29,22 +29,27 @@ import (
 )
 
 const (
-	testImageRef        = "docker.io/library/nginx:latest"
-	testDigest          = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
-	testDigestAlgo      = "sha256"
-	testInTotoType      = "https://in-toto.io/Statement/v1"
-	testSubjectName     = "test-image"
-	testPredicateType   = "https://spdx.dev/Document"
-	testSPDXVersion     = "SPDX-2.3"
-	testCycloneDXBOM    = "CycloneDX"
-	testLibName         = "mylib"
-	testLibPURL         = "pkg:npm/mylib@1.0.0"
-	testLicenseNone     = "NOASSERTION"
-	testLicenseMIT      = "MIT"
-	testFormatCycloneDX = "cyclonedx"
-	testFormatSPDX      = "spdx"
-	testLicenseGPL3Only = "GPL-3.0-only"
-	testLicenseGPL2Only = "GPL-2.0-only"
+	testImageRef         = "docker.io/library/nginx:latest"
+	testDigest           = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+	testDigestAlgo       = "sha256"
+	testInTotoType       = "https://in-toto.io/Statement/v1"
+	testSubjectName      = "test-image"
+	testPredicateType    = "https://spdx.dev/Document"
+	testSPDXVersion      = "SPDX-2.3"
+	testCycloneDXBOM     = "CycloneDX"
+	testLibName          = "mylib"
+	testLibPURL          = "pkg:npm/mylib@1.0.0"
+	testLicenseNone      = "NOASSERTION"
+	testLicenseMIT       = "MIT"
+	testFormatCycloneDX  = "cyclonedx"
+	testFormatSPDX       = "spdx"
+	testLicenseGPL3Only  = "GPL-3.0-only"
+	testLicenseGPL2Only  = "GPL-2.0-only"
+	testMethodCVSSv31    = "CVSSv31"
+	testSeverityMedium   = "medium"
+	testSeverityHigh     = "high"
+	testSeverityCritical = "critical"
+	testCVEID            = "CVE-2024-0001"
 )
 
 type inTotoWrapper struct {
@@ -91,6 +96,7 @@ func validCycloneDXDoc() cyclonedxDoc {
 				},
 			},
 		},
+		Vulnerabilities: nil,
 	}
 }
 
@@ -113,8 +119,20 @@ type spdxExtRef struct {
 }
 
 type cyclonedxDoc struct {
-	BOMFormat  string         `json:"bomFormat"`
-	Components []cdxComponent `json:"components"`
+	BOMFormat       string             `json:"bomFormat"`
+	Components      []cdxComponent     `json:"components"`
+	Vulnerabilities []cdxVulnerability `json:"vulnerabilities,omitempty"`
+}
+
+type cdxVulnerability struct {
+	ID      string      `json:"id"`
+	Ratings []cdxRating `json:"ratings"`
+}
+
+type cdxRating struct {
+	Score    *float64 `json:"score,omitempty"`
+	Severity string   `json:"severity"`
+	Method   string   `json:"method,omitempty"`
 }
 
 type cdxComponent struct {
@@ -746,6 +764,7 @@ func TestVerifyCycloneDXLicenseName(t *testing.T) {
 				},
 			},
 		},
+		Vulnerabilities: nil,
 	}
 
 	att := wrapInToto(t, doc, testDigest)
@@ -1018,6 +1037,7 @@ func TestVerifyCycloneDXNilLicense(t *testing.T) {
 				Licenses: []cdxLicenseWrapper{{License: nil}},
 			},
 		},
+		Vulnerabilities: nil,
 	}
 
 	att := wrapInToto(t, doc, testDigest)
@@ -1264,4 +1284,533 @@ func TestVerifyComponentAllowList(t *testing.T) {
 			t.Errorf("expected pass with empty allow list, got: %s", result.Detail)
 		}
 	})
+}
+
+func cyclonedxWithVulns(vulns []cdxVulnerability) cyclonedxDoc {
+	doc := validCycloneDXDoc()
+	doc.Vulnerabilities = vulns
+
+	return doc
+}
+
+func TestVerifyCVSSThresholdExceeded(t *testing.T) {
+	t.Parallel()
+
+	doc := cyclonedxWithVulns([]cdxVulnerability{
+		{
+			ID: "CVE-2024-1234",
+			Ratings: []cdxRating{
+				{Score: new(9.8), Severity: testSeverityCritical, Method: testMethodCVSSv31},
+			},
+		},
+	})
+
+	att := wrapInToto(t, doc, testDigest)
+
+	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
+		Sections: policy.Sections{
+			SBOM: &policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{
+					MaxScore: new(7.0),
+				},
+			},
+		},
+	}, testDigest)
+	testutil.AssertNoError(t, err)
+
+	if result.Passed {
+		t.Error("expected fail for CVSS threshold exceeded")
+	}
+
+	if !strings.Contains(result.Detail, "CVE-2024-1234") {
+		t.Errorf("expected detail to contain CVE ID, got %q", result.Detail)
+	}
+
+	if !strings.Contains(result.Detail, "9.8") {
+		t.Errorf("expected detail to contain score, got %q", result.Detail)
+	}
+}
+
+func TestVerifyCVSSThresholdUnder(t *testing.T) {
+	t.Parallel()
+
+	doc := cyclonedxWithVulns([]cdxVulnerability{
+		{
+			ID: "CVE-2024-5678",
+			Ratings: []cdxRating{
+				{Score: new(3.5), Severity: "low", Method: testMethodCVSSv31},
+			},
+		},
+	})
+
+	att := wrapInToto(t, doc, testDigest)
+
+	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
+		Sections: policy.Sections{
+			SBOM: &policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{
+					MaxScore: new(7.0),
+				},
+			},
+		},
+	}, testDigest)
+	testutil.AssertNoError(t, err)
+
+	if !result.Passed {
+		t.Errorf("expected pass for CVSS score under threshold, got: %s", result.Detail)
+	}
+}
+
+func TestVerifyCVSSIgnoredCVE(t *testing.T) {
+	t.Parallel()
+
+	doc := cyclonedxWithVulns([]cdxVulnerability{
+		{
+			ID: "CVE-2024-9999",
+			Ratings: []cdxRating{
+				{Score: new(9.8), Severity: testSeverityCritical, Method: testMethodCVSSv31},
+			},
+		},
+	})
+
+	att := wrapInToto(t, doc, testDigest)
+
+	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
+		Sections: policy.Sections{
+			SBOM: &policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{
+					MaxScore:   new(7.0),
+					IgnoreCVEs: []string{"CVE-2024-9999"},
+				},
+			},
+		},
+	}, testDigest)
+	testutil.AssertNoError(t, err)
+
+	if !result.Passed {
+		t.Errorf("expected pass for ignored CVE, got: %s", result.Detail)
+	}
+}
+
+func TestVerifyCVSSOrLogicScoreOnly(t *testing.T) {
+	t.Parallel()
+
+	doc := cyclonedxWithVulns([]cdxVulnerability{
+		{
+			ID: "CVE-2024-1111",
+			Ratings: []cdxRating{
+				{Score: new(8.0), Severity: testSeverityMedium, Method: testMethodCVSSv31},
+			},
+		},
+	})
+
+	att := wrapInToto(t, doc, testDigest)
+
+	// Exceeds maxScore but not minSeverity, should still flag.
+	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
+		Sections: policy.Sections{
+			SBOM: &policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{
+					MaxScore:    new(7.0),
+					MinSeverity: testSeverityCritical,
+				},
+			},
+		},
+	}, testDigest)
+	testutil.AssertNoError(t, err)
+
+	if result.Passed {
+		t.Error("expected fail: exceeds maxScore even if severity is below minSeverity")
+	}
+}
+
+func TestVerifyCVSSOrLogicSeverityOnly(t *testing.T) {
+	t.Parallel()
+
+	doc := cyclonedxWithVulns([]cdxVulnerability{
+		{
+			ID: "CVE-2024-2222",
+			Ratings: []cdxRating{
+				{Score: new(5.0), Severity: testSeverityHigh, Method: testMethodCVSSv31},
+			},
+		},
+	})
+
+	att := wrapInToto(t, doc, testDigest)
+
+	// Does not exceed maxScore but exceeds minSeverity, should flag.
+	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
+		Sections: policy.Sections{
+			SBOM: &policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{
+					MaxScore:    new(7.0),
+					MinSeverity: testSeverityHigh,
+				},
+			},
+		},
+	}, testDigest)
+	testutil.AssertNoError(t, err)
+
+	if result.Passed {
+		t.Error("expected fail: exceeds minSeverity even if score is below maxScore")
+	}
+}
+
+func TestVerifyCVSSEmptyVulnerabilities(t *testing.T) {
+	t.Parallel()
+
+	doc := cyclonedxWithVulns(nil)
+
+	att := wrapInToto(t, doc, testDigest)
+
+	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
+		Sections: policy.Sections{
+			SBOM: &policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{
+					MaxScore: new(7.0),
+				},
+			},
+		},
+	}, testDigest)
+	testutil.AssertNoError(t, err)
+
+	if !result.Passed {
+		t.Errorf("expected pass for empty vulnerabilities, got: %s", result.Detail)
+	}
+}
+
+func TestVerifyCVSSSkippedForSPDX(t *testing.T) {
+	t.Parallel()
+
+	doc := validSPDXDoc()
+
+	att := wrapInToto(t, doc, testDigest)
+
+	// CVSS settings are present but should be ignored for SPDX.
+	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
+		Sections: policy.Sections{
+			SBOM: &policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{
+					MaxScore: new(0.0),
+				},
+			},
+		},
+	}, testDigest)
+	testutil.AssertNoError(t, err)
+
+	if !result.Passed {
+		t.Errorf("expected pass: CVSS check should be skipped for SPDX, got: %s", result.Detail)
+	}
+}
+
+func TestVerifyCVSSMetadataPopulated(t *testing.T) {
+	t.Parallel()
+
+	doc := cyclonedxWithVulns([]cdxVulnerability{
+		{
+			ID: testCVEID,
+			Ratings: []cdxRating{
+				{Score: new(9.8), Severity: testSeverityCritical, Method: testMethodCVSSv31},
+			},
+		},
+		{
+			ID: "CVE-2024-0002",
+			Ratings: []cdxRating{
+				{Score: new(7.5), Severity: testSeverityHigh, Method: testMethodCVSSv31},
+			},
+		},
+		{
+			ID: "CVE-2024-0003",
+			Ratings: []cdxRating{
+				{Score: new(4.0), Severity: testSeverityMedium, Method: testMethodCVSSv31},
+			},
+		},
+	})
+
+	att := wrapInToto(t, doc, testDigest)
+
+	// Use a high threshold so all pass, but metadata still gets populated.
+	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
+		Sections: policy.Sections{
+			SBOM: &policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{
+					MaxScore: new(10.0),
+				},
+			},
+		},
+	}, testDigest)
+	testutil.AssertNoError(t, err)
+
+	if !result.Passed {
+		t.Fatalf("expected pass, got: %s", result.Detail)
+	}
+
+	if result.Metadata == nil {
+		t.Fatal("expected metadata to be populated")
+	}
+
+	cvssMax, ok := result.Metadata["cvssMax"].(float64)
+	if !ok {
+		t.Fatal("expected cvssMax to be float64")
+	}
+
+	if cvssMax != 9.8 {
+		t.Errorf("expected cvssMax 9.8, got %f", cvssMax)
+	}
+
+	critCount, ok := result.Metadata["cvssCriticalCount"].(int64)
+	if !ok {
+		t.Fatal("expected cvssCriticalCount to be int64")
+	}
+
+	if critCount != 1 {
+		t.Errorf("expected cvssCriticalCount 1, got %d", critCount)
+	}
+
+	highCount, ok := result.Metadata["cvssHighCount"].(int64)
+	if !ok {
+		t.Fatal("expected cvssHighCount to be int64")
+	}
+
+	if highCount != 1 {
+		t.Errorf("expected cvssHighCount 1, got %d", highCount)
+	}
+
+	mediumCount, ok := result.Metadata["cvssMediumCount"].(int64)
+	if !ok {
+		t.Fatal("expected cvssMediumCount to be int64")
+	}
+
+	if mediumCount != 1 {
+		t.Errorf("expected cvssMediumCount 1, got %d", mediumCount)
+	}
+}
+
+func TestVerifyCVSSEmptyRatings(t *testing.T) {
+	t.Parallel()
+
+	doc := cyclonedxWithVulns([]cdxVulnerability{
+		{ID: testCVEID, Ratings: []cdxRating{}},
+	})
+
+	att := wrapInToto(t, doc, testDigest)
+
+	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
+		Sections: policy.Sections{
+			SBOM: &policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{MaxScore: new(7.0)},
+			},
+		},
+	}, testDigest)
+	testutil.AssertNoError(t, err)
+
+	if !result.Passed {
+		t.Errorf("expected pass for vuln with empty ratings, got: %s", result.Detail)
+	}
+}
+
+func TestVerifyMultipleCVSSMetadata(t *testing.T) {
+	t.Parallel()
+
+	doc1 := cyclonedxWithVulns([]cdxVulnerability{
+		{
+			ID: testCVEID,
+			Ratings: []cdxRating{
+				{Score: new(9.8), Severity: testSeverityCritical, Method: testMethodCVSSv31},
+			},
+		},
+	})
+
+	doc2 := cyclonedxWithVulns([]cdxVulnerability{
+		{
+			ID: "CVE-2024-0002",
+			Ratings: []cdxRating{
+				{Score: new(7.5), Severity: testSeverityHigh, Method: testMethodCVSSv31},
+			},
+		},
+	})
+
+	attestations := [][]byte{
+		wrapInToto(t, doc1, testDigest),
+		wrapInToto(t, doc2, testDigest),
+	}
+
+	result, err := sbom.VerifyMultiple(context.Background(), attestations, &policy.Policy{
+		Sections: policy.Sections{
+			SBOM: &policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{MaxScore: new(10.0)},
+			},
+		},
+	}, testDigest)
+	testutil.AssertNoError(t, err)
+
+	if !result.Passed {
+		t.Fatalf("expected pass, got: %s", result.Detail)
+	}
+
+	if result.Metadata == nil {
+		t.Fatal("expected metadata to be populated via VerifyMultiple")
+	}
+
+	cvssMax, ok := result.Metadata["cvssMax"].(float64)
+	if !ok {
+		t.Fatal("expected cvssMax to be float64")
+	}
+
+	if cvssMax != 9.8 {
+		t.Errorf("expected cvssMax 9.8 (max across attestations), got %f", cvssMax)
+	}
+
+	critCount, ok := result.Metadata["cvssCriticalCount"].(int64)
+	if !ok {
+		t.Fatal("expected cvssCriticalCount to be int64")
+	}
+
+	if critCount != 1 {
+		t.Errorf("expected cvssCriticalCount 1, got %d", critCount)
+	}
+
+	highCount, ok := result.Metadata["cvssHighCount"].(int64)
+	if !ok {
+		t.Fatal("expected cvssHighCount to be int64")
+	}
+
+	if highCount != 1 {
+		t.Errorf("expected cvssHighCount 1, got %d", highCount)
+	}
+}
+
+func TestVerifyCVSSMinSeverityOnly(t *testing.T) {
+	t.Parallel()
+
+	doc := cyclonedxWithVulns([]cdxVulnerability{
+		{
+			ID: "CVE-2024-3333",
+			Ratings: []cdxRating{
+				{Score: new(5.0), Severity: testSeverityHigh, Method: testMethodCVSSv31},
+			},
+		},
+	})
+
+	att := wrapInToto(t, doc, testDigest)
+
+	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
+		Sections: policy.Sections{
+			SBOM: &policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{
+					MinSeverity: testSeverityHigh,
+				},
+			},
+		},
+	}, testDigest)
+	testutil.AssertNoError(t, err)
+
+	if result.Passed {
+		t.Error("expected fail: severity meets minSeverity threshold without maxScore set")
+	}
+}
+
+func TestVerifyCVSSMultiRatingAggregation(t *testing.T) {
+	t.Parallel()
+
+	doc := cyclonedxWithVulns([]cdxVulnerability{
+		{
+			ID: testCVEID,
+			Ratings: []cdxRating{
+				{Score: new(5.0), Severity: testSeverityMedium, Method: "CVSSv2"},
+				{Score: new(9.0), Severity: testSeverityCritical, Method: testMethodCVSSv31},
+			},
+		},
+	})
+
+	att := wrapInToto(t, doc, testDigest)
+
+	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
+		Sections: policy.Sections{
+			SBOM: &policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{
+					MaxScore: new(7.0),
+				},
+			},
+		},
+	}, testDigest)
+	testutil.AssertNoError(t, err)
+
+	if result.Passed {
+		t.Error("expected fail: highest rating across methods should be used")
+	}
+
+	if !strings.Contains(result.Detail, "9.0") {
+		t.Errorf("expected detail to show max score 9.0, got %q", result.Detail)
+	}
+}
+
+func TestVerifyCVSSNilScoreSeverityOnly(t *testing.T) {
+	t.Parallel()
+
+	doc := cyclonedxWithVulns([]cdxVulnerability{
+		{
+			ID: testCVEID,
+			Ratings: []cdxRating{
+				{Score: nil, Severity: testSeverityHigh, Method: testMethodCVSSv31},
+			},
+		},
+	})
+
+	att := wrapInToto(t, doc, testDigest)
+
+	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
+		Sections: policy.Sections{
+			SBOM: &policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{
+					MinSeverity: testSeverityHigh,
+				},
+			},
+		},
+	}, testDigest)
+	testutil.AssertNoError(t, err)
+
+	if result.Passed {
+		t.Error("expected fail: severity-only rating should still trigger minSeverity")
+	}
+
+	if !strings.Contains(result.Detail, "severity high") {
+		t.Errorf("expected detail to mention severity, got %q", result.Detail)
+	}
+
+	cvssMax, ok := result.Metadata["cvssMax"].(float64)
+	if !ok || cvssMax != 0 {
+		t.Errorf("expected cvssMax 0 for nil-score rating, got %v", cvssMax)
+	}
+}
+
+func TestVerifyCVSSUnrecognizedSeverity(t *testing.T) {
+	t.Parallel()
+
+	doc := cyclonedxWithVulns([]cdxVulnerability{
+		{
+			ID: testCVEID,
+			Ratings: []cdxRating{
+				{Score: new(5.0), Severity: "urgent", Method: testMethodCVSSv31},
+			},
+		},
+	})
+
+	att := wrapInToto(t, doc, testDigest)
+
+	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
+		Sections: policy.Sections{
+			SBOM: &policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{
+					MaxScore: new(7.0),
+				},
+			},
+		},
+	}, testDigest)
+	testutil.AssertNoError(t, err)
+
+	if !result.Passed {
+		t.Errorf("expected pass: unrecognized severity treated as none, got: %s",
+			result.Detail)
+	}
 }

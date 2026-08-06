@@ -1001,6 +1001,36 @@ write_cyclonedx_sbom_predicate() {
 	EOF
 }
 
+write_cyclonedx_sbom_with_vulns_predicate() {
+	local file="$1"
+	local vuln_id="$2"
+	local score="$3"
+	local severity="$4"
+
+	cat >"$file" <<-EOF
+		{
+		  "bomFormat": "CycloneDX",
+		  "specVersion": "1.5",
+		  "version": 1,
+		  "components": [
+		    {
+		      "type": "library",
+		      "name": "test-lib",
+		      "licenses": [{"license": {"id": "MIT"}}]
+		    }
+		  ],
+		  "vulnerabilities": [
+		    {
+		      "id": "${vuln_id}",
+		      "ratings": [
+		        {"score": ${score}, "severity": "${severity}", "method": "CVSSv31"}
+		      ]
+		    }
+		  ]
+		}
+	EOF
+}
+
 create_sbom_images() {
 	local pred_dir="${BATS_FILE_TMPDIR}/predicates"
 	mkdir -p "$pred_dir"
@@ -1053,8 +1083,29 @@ create_sbom_images() {
 	write_cyclonedx_sbom_predicate "${pred_dir}/sbom-cdx-denied.json" "bad-lib" "GPL-3.0"
 	attest_image "$SBOM_CDX_DENIED_IMAGE" "https://cyclonedx.org/bom" "${pred_dir}/sbom-cdx-denied.json"
 
+	# CycloneDX image with critical vulnerability (score 9.8)
+	SBOM_CVSS_CRITICAL_IMAGE=$(push_test_image "sbom-cvss-critical:v1")
+	write_slsa_predicate "${pred_dir}/sbom-cvss-critical-slsa.json" \
+		"https://test-builder.example.com" \
+		"https://github.com/testorg/repo" \
+		""
+	attest_image "$SBOM_CVSS_CRITICAL_IMAGE" "https://slsa.dev/provenance/v1" "${pred_dir}/sbom-cvss-critical-slsa.json"
+	write_cyclonedx_sbom_with_vulns_predicate "${pred_dir}/sbom-cvss-critical.json" "CVE-2024-9999" "9.8" "critical"
+	attest_image "$SBOM_CVSS_CRITICAL_IMAGE" "https://cyclonedx.org/bom" "${pred_dir}/sbom-cvss-critical.json"
+
+	# CycloneDX image with low vulnerability (score 3.5)
+	SBOM_CVSS_LOW_IMAGE=$(push_test_image "sbom-cvss-low:v1")
+	write_slsa_predicate "${pred_dir}/sbom-cvss-low-slsa.json" \
+		"https://test-builder.example.com" \
+		"https://github.com/testorg/repo" \
+		""
+	attest_image "$SBOM_CVSS_LOW_IMAGE" "https://slsa.dev/provenance/v1" "${pred_dir}/sbom-cvss-low-slsa.json"
+	write_cyclonedx_sbom_with_vulns_predicate "${pred_dir}/sbom-cvss-low.json" "CVE-2024-0001" "3.5" "low"
+	attest_image "$SBOM_CVSS_LOW_IMAGE" "https://cyclonedx.org/bom" "${pred_dir}/sbom-cvss-low.json"
+
 	export SBOM_ALLOWED_IMAGE SBOM_DENIED_LIC_IMAGE SBOM_DENIED_COMP_IMAGE
 	export SBOM_MISSING_IMAGE SBOM_CDX_DENIED_IMAGE
+	export SBOM_CVSS_CRITICAL_IMAGE SBOM_CVSS_LOW_IMAGE
 }
 
 # --- OCI policy helpers ---

@@ -55,6 +55,7 @@ const (
 	testCELExprFalse           = "false"
 	testCELExprSLSAVerified    = "slsa.verified == true"
 	testCELMsgBase             = "base"
+	testCVEID                  = "CVE-2024-0001"
 	testFormatCycloneDX        = "cyclonedx"
 	testFormatSPDX             = "spdx"
 	testLicenseAGPL            = "AGPL-3.0"
@@ -3295,6 +3296,78 @@ func TestPolicyValidateSBOM(t *testing.T) {
 			wantErr:     false,
 			expectedErr: nil,
 		},
+		{
+			name: "valid CVSS policy",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					SBOM: &policy.SBOMPolicy{
+						CVSS: &policy.SBOMCVSSPolicy{
+							MaxScore:    new(7.0),
+							MinSeverity: "high",
+							IgnoreCVEs:  []string{testCVEID},
+						},
+					},
+				},
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name: "CVSS maxScore too high",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					SBOM: &policy.SBOMPolicy{
+						CVSS: &policy.SBOMCVSSPolicy{
+							MaxScore: new(11.0),
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrCVSSMaxScoreRange,
+		},
+		{
+			name: "CVSS maxScore negative",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					SBOM: &policy.SBOMPolicy{
+						CVSS: &policy.SBOMCVSSPolicy{
+							MaxScore: new(-1.0),
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrCVSSMaxScoreRange,
+		},
+		{
+			name: "CVSS invalid minSeverity",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					SBOM: &policy.SBOMPolicy{
+						CVSS: &policy.SBOMCVSSPolicy{
+							MinSeverity: "extreme",
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrCVSSMinSeverityInvalid,
+		},
+		{
+			name: "CVSS empty ignoreCVEs entry",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					SBOM: &policy.SBOMPolicy{
+						CVSS: &policy.SBOMCVSSPolicy{
+							IgnoreCVEs: []string{testCVEID, ""},
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrEmptyValue,
+		},
 	})
 }
 
@@ -3442,6 +3515,43 @@ func TestCloneIsolatesSBOM(t *testing.T) {
 	if original.SBOM.Component.Allow[0] != "pkg:npm/good@1.0.0" {
 		t.Errorf("expected original component allow list unchanged, got %s",
 			original.SBOM.Component.Allow[0])
+	}
+}
+
+func TestCloneIsolatesCVSS(t *testing.T) {
+	t.Parallel()
+
+	original := &policy.Policy{
+		Sections: policy.Sections{
+			SBOM: &policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{
+					MaxScore:   new(7.0),
+					IgnoreCVEs: []string{testCVEID},
+				},
+			},
+		},
+	}
+
+	clone := policy.MergeWithDefault(&policy.Policy{}, original)
+
+	clone.SBOM.CVSS.IgnoreCVEs[0] = "CVE-MUTATED"
+	clone.SBOM.CVSS.IgnoreCVEs = append(clone.SBOM.CVSS.IgnoreCVEs, "CVE-EXTRA")
+
+	if original.SBOM.CVSS.IgnoreCVEs[0] != testCVEID {
+		t.Errorf("expected original ignoreCVEs unchanged, got %s",
+			original.SBOM.CVSS.IgnoreCVEs[0])
+	}
+
+	if len(original.SBOM.CVSS.IgnoreCVEs) != 1 {
+		t.Errorf("expected original to have 1 ignoreCVE, got %d",
+			len(original.SBOM.CVSS.IgnoreCVEs))
+	}
+
+	*clone.SBOM.CVSS.MaxScore = 9.9
+
+	if *original.SBOM.CVSS.MaxScore != 7.0 {
+		t.Errorf("expected original maxScore unchanged, got %f",
+			*original.SBOM.CVSS.MaxScore)
 	}
 }
 
