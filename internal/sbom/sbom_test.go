@@ -777,6 +777,84 @@ func TestVerifyCheckType(t *testing.T) {
 	testutil.AssertEqual(t, types.CheckType("sbom"), result.Type)
 }
 
+func TestVerifySPDXMetadata(t *testing.T) {
+	t.Parallel()
+
+	att := wrapInToto(t, validSPDXDoc(), testDigest)
+
+	result, err := sbom.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+	testutil.AssertNoError(t, err)
+
+	if result.Metadata == nil {
+		t.Fatal("expected metadata on SBOM result")
+	}
+
+	format, ok := result.Metadata["format"].(string)
+	if !ok || format != testFormatSPDX {
+		t.Errorf("format = %q, want %q", format, testFormatSPDX)
+	}
+
+	componentCount, ok := result.Metadata["componentCount"].(int64)
+	if !ok || componentCount != 1 {
+		t.Errorf("componentCount = %v, want 1", result.Metadata["componentCount"])
+	}
+
+	licenseCount, ok := result.Metadata["licenseCount"].(int64)
+	if !ok || licenseCount != 1 {
+		t.Errorf("licenseCount = %v, want 1", result.Metadata["licenseCount"])
+	}
+}
+
+func TestVerifyCycloneDXMetadata(t *testing.T) {
+	t.Parallel()
+
+	att := wrapInToto(t, validCycloneDXDoc(), testDigest)
+
+	result, err := sbom.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+	testutil.AssertNoError(t, err)
+
+	if result.Metadata == nil {
+		t.Fatal("expected metadata on SBOM result")
+	}
+
+	format, ok := result.Metadata["format"].(string)
+	if !ok || format != testFormatCycloneDX {
+		t.Errorf("format = %q, want %q", format, testFormatCycloneDX)
+	}
+
+	componentCount, ok := result.Metadata["componentCount"].(int64)
+	if !ok || componentCount != 1 {
+		t.Errorf("componentCount = %v, want 1", result.Metadata["componentCount"])
+	}
+
+	licenseCount, ok := result.Metadata["licenseCount"].(int64)
+	if !ok || licenseCount != 1 {
+		t.Errorf("licenseCount = %v, want 1", result.Metadata["licenseCount"])
+	}
+}
+
+func TestVerifyMultipleMetadataPropagation(t *testing.T) {
+	t.Parallel()
+
+	attestations := [][]byte{
+		wrapInToto(t, validSPDXDoc(), testDigest),
+	}
+
+	result, err := sbom.VerifyMultiple(
+		context.Background(), attestations, &policy.Policy{}, testDigest,
+	)
+	testutil.AssertNoError(t, err)
+
+	if result.Metadata == nil {
+		t.Fatal("expected metadata on VerifyMultiple result")
+	}
+
+	format, ok := result.Metadata["format"].(string)
+	if !ok || format != testFormatSPDX {
+		t.Errorf("format = %q, want %q", format, testFormatSPDX)
+	}
+}
+
 func TestVerifyMultiple(t *testing.T) {
 	t.Parallel()
 

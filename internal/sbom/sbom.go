@@ -125,6 +125,7 @@ func VerifyMultiple(
 		failDetails  []string
 		verifyErrors []string
 		anyValid     bool
+		passedMeta   map[string]any
 	)
 
 	for _, att := range attestations {
@@ -140,6 +141,10 @@ func VerifyMultiple(
 		if !result.Passed && result.Status == types.StatusFail {
 			failDetails = append(failDetails, result.Detail)
 		}
+
+		if result.Passed && passedMeta == nil {
+			passedMeta = result.Metadata
+		}
 	}
 
 	if len(failDetails) > 0 {
@@ -152,46 +157,57 @@ func VerifyMultiple(
 		), nil
 	}
 
-	return passResult(), nil
+	combined := passResult()
+	combined.Metadata = passedMeta
+
+	return combined, nil
 }
 
 func verifySBOMPredicate(
 	predicate []byte, pol *policy.Policy,
 ) (*types.CheckResult, error) {
-	licenses, purls, err := extractSBOMData(predicate, pol)
+	licenses, purls, format, componentCount, licenseCount, err := extractSBOMData(predicate, pol)
 	if err != nil {
 		return nil, err
 	}
 
-	return checkDenyLists(licenses, purls, pol), nil
+	result := checkDenyLists(licenses, purls, pol)
+	result.Metadata = map[string]any{
+		"format":         format,
+		"componentCount": int64(componentCount),
+		"licenseCount":   int64(licenseCount),
+	}
+
+	return result, nil
 }
 
+//nolint:gocritic // returns are tightly coupled
 func extractSBOMData(
 	predicate []byte, pol *policy.Policy,
-) (licenses, purls []string, err error) {
-	licenses, purls, spdxErr := parseSPDX(predicate)
+) (licenses, purls []string, format string, componentCount, licenseCount int, err error) {
+	licenses, purls, componentCount, licenseCount, spdxErr := parseSPDX(predicate)
 	if spdxErr == nil {
 		if !formatAllowed(pol, "spdx") {
-			return nil, nil, fmt.Errorf(
+			return nil, nil, "", 0, 0, fmt.Errorf(
 				"%w: spdx not in allowed formats", ErrUnsupportedFormat,
 			)
 		}
 
-		return licenses, purls, nil
+		return licenses, purls, "spdx", componentCount, licenseCount, nil
 	}
 
-	licenses, purls, cdxErr := parseCycloneDX(predicate)
+	licenses, purls, componentCount, licenseCount, cdxErr := parseCycloneDX(predicate)
 	if cdxErr == nil {
 		if !formatAllowed(pol, "cyclonedx") {
-			return nil, nil, fmt.Errorf(
+			return nil, nil, "", 0, 0, fmt.Errorf(
 				"%w: cyclonedx not in allowed formats", ErrUnsupportedFormat,
 			)
 		}
 
-		return licenses, purls, nil
+		return licenses, purls, "cyclonedx", componentCount, licenseCount, nil
 	}
 
-	return nil, nil, fmt.Errorf(
+	return nil, nil, "", 0, 0, fmt.Errorf(
 		"%w: not valid SPDX (%w) or CycloneDX (%w)",
 		ErrInvalidSBOM, spdxErr, cdxErr,
 	)
@@ -211,16 +227,18 @@ func formatAllowed(pol *policy.Policy, format string) bool {
 	return false
 }
 
-func parseSPDX(data []byte) (licenses, purls []string, err error) {
+func parseSPDX(
+	data []byte,
+) (licenses, purls []string, componentCount, licenseCount int, err error) {
 	var doc spdxDocument
 
 	err = json.Unmarshal(data, &doc)
 	if err != nil {
-		return nil, nil, fmt.Errorf("parsing SPDX: %w", err)
+		return nil, nil, 0, 0, fmt.Errorf("parsing SPDX: %w", err)
 	}
 
 	if doc.SPDXVersion == "" || len(doc.Packages) == 0 {
-		return nil, nil, errNotSPDX
+		return nil, nil, 0, 0, errNotSPDX
 	}
 
 	for idx := range doc.Packages {
@@ -229,7 +247,12 @@ func parseSPDX(data []byte) (licenses, purls []string, err error) {
 		purls = appendSPDXPURLs(purls, pkg)
 	}
 
-	return licenses, purls, nil
+	uniqueLicenses := make(map[string]struct{}, len(licenses))
+	for _, lic := range licenses {
+		uniqueLicenses[lic] = struct{}{}
+	}
+
+	return licenses, purls, len(doc.Packages), len(uniqueLicenses), nil
 }
 
 func appendSPDXLicenses(licenses []string, pkg *spdxPackage) []string {
@@ -256,17 +279,21 @@ func appendSPDXPURLs(purls []string, pkg *spdxPackage) []string {
 	return purls
 }
 
-func parseCycloneDX(data []byte) (licenses, purls []string, err error) {
+func parseCycloneDX(
+	data []byte,
+) (licenses, purls []string, componentCount, licenseCount int, err error) {
 	var bom cyclonedxBOM
 
 	err = json.Unmarshal(data, &bom)
 	if err != nil {
-		return nil, nil, fmt.Errorf("parsing CycloneDX: %w", err)
+		return nil, nil, 0, 0, fmt.Errorf("parsing CycloneDX: %w", err)
 	}
 
 	if len(bom.Components) == 0 {
-		return nil, nil, errNotCycloneDX
+		return nil, nil, 0, 0, errNotCycloneDX
 	}
+
+	uniqueLicenses := make(map[string]struct{})
 
 	for idx := range bom.Components {
 		comp := &bom.Components[idx]
@@ -279,8 +306,10 @@ func parseCycloneDX(data []byte) (licenses, purls []string, err error) {
 
 			if lic.License.ID != "" {
 				licenses = append(licenses, lic.License.ID)
+				uniqueLicenses[lic.License.ID] = struct{}{}
 			} else if lic.License.Name != "" {
 				licenses = append(licenses, lic.License.Name)
+				uniqueLicenses[lic.License.Name] = struct{}{}
 			}
 		}
 
@@ -289,7 +318,7 @@ func parseCycloneDX(data []byte) (licenses, purls []string, err error) {
 		}
 	}
 
-	return licenses, purls, nil
+	return licenses, purls, len(bom.Components), len(uniqueLicenses), nil
 }
 
 func checkDenyLists(

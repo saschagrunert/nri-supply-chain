@@ -17,9 +17,16 @@ package notation
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
+	"os"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/notaryproject/notation-core-go/signature"
+	notationlib "github.com/notaryproject/notation-go"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
@@ -646,5 +653,138 @@ func TestFailResult(t *testing.T) {
 
 	if result.Detail != detail {
 		t.Errorf("detail = %q, want %q", result.Detail, detail)
+	}
+}
+
+func TestExtractSignerDN(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil outcome returns empty", func(t *testing.T) {
+		t.Parallel()
+
+		dn := extractSignerDN(nil)
+		if dn != "" {
+			t.Errorf("expected empty, got %q", dn)
+		}
+	})
+
+	t.Run("nil envelope content returns empty", func(t *testing.T) {
+		t.Parallel()
+
+		outcome := &notationlib.VerificationOutcome{
+			RawSignature:        nil,
+			EnvelopeContent:     nil,
+			VerificationLevel:   nil,
+			VerificationResults: nil,
+			Error:               nil,
+		}
+		dn := extractSignerDN(outcome)
+
+		if dn != "" {
+			t.Errorf("expected empty, got %q", dn)
+		}
+	})
+
+	t.Run("empty certificate chain returns empty", func(t *testing.T) {
+		t.Parallel()
+
+		outcome := &notationlib.VerificationOutcome{
+			RawSignature: nil,
+			EnvelopeContent: &signature.EnvelopeContent{
+				SignerInfo: signature.SignerInfo{
+					SignedAttributes: signature.SignedAttributes{
+						SigningScheme:      "",
+						SigningTime:        time.Time{},
+						Expiry:             time.Time{},
+						ExtendedAttributes: nil,
+					},
+					UnsignedAttributes: signature.UnsignedAttributes{
+						TimestampSignature: nil,
+						SigningAgent:       "",
+					},
+					SignatureAlgorithm: 0,
+					CertificateChain:   nil,
+					Signature:          nil,
+				},
+				Payload: signature.Payload{
+					ContentType: "",
+					Content:     nil,
+				},
+			},
+			VerificationLevel:   nil,
+			VerificationResults: nil,
+			Error:               nil,
+		}
+		dn := extractSignerDN(outcome)
+
+		if dn != "" {
+			t.Errorf("expected empty, got %q", dn)
+		}
+	})
+
+	t.Run("certificate chain returns subject DN", func(t *testing.T) {
+		t.Parallel()
+
+		_, certPath := generateTestCert(t)
+
+		certData, readErr := os.ReadFile(certPath) //nolint:gosec // test helper reads test cert
+		if readErr != nil {
+			t.Fatalf("reading cert: %v", readErr)
+		}
+
+		block, _ := pem.Decode(certData)
+
+		cert, parseErr := x509.ParseCertificate(block.Bytes)
+		if parseErr != nil {
+			t.Fatalf("parsing cert: %v", parseErr)
+		}
+
+		outcome := &notationlib.VerificationOutcome{
+			RawSignature: nil,
+			EnvelopeContent: &signature.EnvelopeContent{
+				SignerInfo: signature.SignerInfo{
+					SignedAttributes: signature.SignedAttributes{
+						SigningScheme:      "",
+						SigningTime:        time.Time{},
+						Expiry:             time.Time{},
+						ExtendedAttributes: nil,
+					},
+					UnsignedAttributes: signature.UnsignedAttributes{
+						TimestampSignature: nil,
+						SigningAgent:       "",
+					},
+					SignatureAlgorithm: 0,
+					CertificateChain:   []*x509.Certificate{cert},
+					Signature:          nil,
+				},
+				Payload: signature.Payload{
+					ContentType: "",
+					Content:     nil,
+				},
+			},
+			VerificationLevel:   nil,
+			VerificationResults: nil,
+			Error:               nil,
+		}
+		dn := extractSignerDN(outcome)
+
+		if !strings.Contains(dn, "CN=test-cert") {
+			t.Errorf("expected DN containing CN=test-cert, got %q", dn)
+		}
+	})
+}
+
+func TestBuildVerifierForImageReturnsTrustPolicyName(t *testing.T) {
+	t.Parallel()
+
+	notationPolicy := validNotationPolicy(t)
+
+	_, trustPolicyName, err := buildVerifierForImage(notationPolicy, testImageRef)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if trustPolicyName != "default-rule" {
+		t.Errorf("trust policy name = %q, want %q", trustPolicyName, "default-rule")
 	}
 }
