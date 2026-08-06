@@ -441,6 +441,13 @@ Plugin flags (root command only):
 --plugin-idx       NRI plugin index (default: 10)
 ```
 
+The `validate` subcommand loads the config, parses all policy files, and runs
+`ValidateRuntime()` on each policy (checking that referenced key and certificate
+files exist and are readable). In enforce mode it also runs `ValidateEnforce()`
+to verify that trust roots, SAN patterns, and required fields are properly
+configured. Finally, it emits warnings for permissive defaults (such as
+`missingPolicy=allow` or key-only verification without a transparency log).
+
 Verify flags:
 
 ```text

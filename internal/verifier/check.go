@@ -581,12 +581,7 @@ func runSBOMCheck(
 	return runner.run(
 		ctx, met, namespace, imageRef, len(sbomAtts) > 0,
 		func() (*types.CheckResult, error) {
-			payloads := make([][]byte, 0, len(sbomAtts))
-			for idx := range sbomAtts {
-				payloads = append(payloads, sbomAtts[idx].Payload)
-			}
-
-			return sbom.VerifyMultiple(ctx, payloads, pol, digest)
+			return sbom.VerifyMultiple(ctx, extractPayloads(sbomAtts), pol, digest)
 		},
 	)
 }
@@ -633,15 +628,8 @@ func runVEXCheck(
 	return runner.run(
 		ctx, met, namespace, imageRef, len(vexAtts) > 0,
 		func() (*types.CheckResult, error) {
-			payloads := make([][]byte, 0, len(vexAtts))
-			for idx := range vexAtts {
-				payloads = append(
-					payloads, vexAtts[idx].Payload,
-				)
-			}
-
 			return vex.VerifyMultiple(
-				ctx, payloads, pol, imageRef, digest, parsedRef,
+				ctx, extractPayloads(vexAtts), pol, imageRef, digest, parsedRef,
 			)
 		},
 	)
@@ -875,4 +863,13 @@ func handleMissingAttestation(
 
 		return types.FailResult(checkType, detail, nil)
 	}
+}
+
+func extractPayloads(atts []attestation.VerifiedAttestation) [][]byte {
+	payloads := make([][]byte, 0, len(atts))
+	for idx := range atts {
+		payloads = append(payloads, atts[idx].Payload)
+	}
+
+	return payloads
 }

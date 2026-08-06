@@ -56,44 +56,11 @@ func verifyBundleWithCache(
 	opts *FetchOptions,
 	cachedRoot *trustedRootCache,
 ) ([]byte, error) {
-	err := ctx.Err()
-	if err != nil {
-		return nil, fmt.Errorf("context canceled before bundle verification: %w", err)
-	}
-
-	var bndl bundle.Bundle
-
-	err = bndl.UnmarshalJSON(bundleBytes)
-	if err != nil {
-		return nil, fmt.Errorf("parsing sigstore bundle: %w", err)
-	}
-
-	trustedMaterial, verifierOpts, policyOpts, err := buildVerificationConfig(ctx, opts, cachedRoot)
-	if err != nil {
-		return nil, err
-	}
-
-	verifier, err := verify.NewVerifier(trustedMaterial, verifierOpts...)
-	if err != nil {
-		return nil, fmt.Errorf("creating sigstore verifier: %w", err)
-	}
-
-	artPolicy, artErr := artifactPolicy(opts.Digest)
-	if artErr != nil {
-		return nil, fmt.Errorf("artifact policy: %w", artErr)
-	}
-
-	pol := verify.NewPolicy(
-		artPolicy,
-		policyOpts...,
-	)
-
-	_, err = verifier.Verify(&bndl, pol)
-	if err != nil {
-		return nil, fmt.Errorf("verifying sigstore bundle: %w", err)
-	}
-
-	return extractVerifiedPayload(&bndl)
+	return verifyBundleCommon(ctx, bundleBytes, opts, func() (
+		root.TrustedMaterialCollection, []verify.VerifierOption, []verify.PolicyOption, error,
+	) {
+		return buildVerificationConfig(ctx, opts, cachedRoot)
+	})
 }
 
 func verifyBundleWithMultipleRoots(
@@ -101,6 +68,23 @@ func verifyBundleWithMultipleRoots(
 	bundleBytes []byte,
 	opts *FetchOptions,
 	rootCaches []*trustedRootCache,
+) ([]byte, error) {
+	return verifyBundleCommon(ctx, bundleBytes, opts, func() (
+		root.TrustedMaterialCollection, []verify.VerifierOption, []verify.PolicyOption, error,
+	) {
+		return buildVerificationConfigMultiRoot(ctx, opts, rootCaches)
+	})
+}
+
+type buildConfigFunc func() (
+	root.TrustedMaterialCollection, []verify.VerifierOption, []verify.PolicyOption, error,
+)
+
+func verifyBundleCommon(
+	ctx context.Context,
+	bundleBytes []byte,
+	opts *FetchOptions,
+	buildConfig buildConfigFunc,
 ) ([]byte, error) {
 	err := ctx.Err()
 	if err != nil {
@@ -114,9 +98,7 @@ func verifyBundleWithMultipleRoots(
 		return nil, fmt.Errorf("parsing sigstore bundle: %w", err)
 	}
 
-	trustedMaterial, verifierOpts, policyOpts, err := buildVerificationConfigMultiRoot(
-		ctx, opts, rootCaches,
-	)
+	trustedMaterial, verifierOpts, policyOpts, err := buildConfig()
 	if err != nil {
 		return nil, err
 	}

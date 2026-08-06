@@ -192,42 +192,9 @@ type OCIFetcher struct {
 	onMirrorFallbackMu sync.RWMutex
 }
 
-// NewOCIFetcher creates a new OCI-based attestation fetcher.
-func NewOCIFetcher() *OCIFetcher {
-	cachedRoot := &trustedRootCache{
-		mu:         sync.RWMutex{},
-		root:       nil,
-		fetchedAt:  time.Time{},
-		fetchRoot:  root.FetchTrustedRoot,
-		inflight:   singleflight.Group{},
-		onStaleHit: nil,
-	}
-
+func newBaseFetcher(verifyFn BundleVerifyFunc) *OCIFetcher {
 	fetcher := &OCIFetcher{
-		verifyBundle: func(
-			ctx context.Context, bundleBytes []byte, opts *FetchOptions,
-		) ([]byte, error) {
-			return verifyBundleWithCache(ctx, bundleBytes, opts, cachedRoot)
-		},
-		fetchImage:         remote.Image,
-		referrers:          remote.Referrers,
-		rootCache:          cachedRoot,
-		rootCaches:         nil,
-		limiter:            atomic.Pointer[rate.Limiter]{},
-		transportCache:     atomic.Pointer[registry.TransportCache]{},
-		maxAttestationSize: atomic.Int64{},
-		onMirrorFallback:   nil,
-		onMirrorFallbackMu: sync.RWMutex{},
-	}
-	fetcher.maxAttestationSize.Store(config.DefaultMaxAttestationSize)
-
-	return fetcher
-}
-
-// NewOCIFetcherWithVerifier creates a fetcher with a custom bundle verification function.
-func NewOCIFetcherWithVerifier(verifier BundleVerifyFunc) *OCIFetcher {
-	fetcher := &OCIFetcher{
-		verifyBundle:       verifier,
+		verifyBundle:       verifyFn,
 		fetchImage:         remote.Image,
 		referrers:          remote.Referrers,
 		rootCache:          nil,
@@ -241,6 +208,32 @@ func NewOCIFetcherWithVerifier(verifier BundleVerifyFunc) *OCIFetcher {
 	fetcher.maxAttestationSize.Store(config.DefaultMaxAttestationSize)
 
 	return fetcher
+}
+
+// NewOCIFetcher creates a new OCI-based attestation fetcher.
+func NewOCIFetcher() *OCIFetcher {
+	cachedRoot := &trustedRootCache{
+		mu:         sync.RWMutex{},
+		root:       nil,
+		fetchedAt:  time.Time{},
+		fetchRoot:  root.FetchTrustedRoot,
+		inflight:   singleflight.Group{},
+		onStaleHit: nil,
+	}
+
+	fetcher := newBaseFetcher(func(
+		ctx context.Context, bundleBytes []byte, opts *FetchOptions,
+	) ([]byte, error) {
+		return verifyBundleWithCache(ctx, bundleBytes, opts, cachedRoot)
+	})
+	fetcher.rootCache = cachedRoot
+
+	return fetcher
+}
+
+// NewOCIFetcherWithVerifier creates a fetcher with a custom bundle verification function.
+func NewOCIFetcherWithVerifier(verifier BundleVerifyFunc) *OCIFetcher {
+	return newBaseFetcher(verifier)
 }
 
 // NewOCIFetcherWithTUFMirror creates an OCI-based attestation fetcher that
@@ -274,23 +267,12 @@ func NewOCIFetcherWithTUFMirror(tufMirror string, tufRootBytes []byte) *OCIFetch
 		onStaleHit: nil,
 	}
 
-	fetcher := &OCIFetcher{
-		verifyBundle: func(
-			ctx context.Context, bundleBytes []byte, opts *FetchOptions,
-		) ([]byte, error) {
-			return verifyBundleWithCache(ctx, bundleBytes, opts, cachedRoot)
-		},
-		fetchImage:         remote.Image,
-		referrers:          remote.Referrers,
-		rootCache:          cachedRoot,
-		rootCaches:         nil,
-		limiter:            atomic.Pointer[rate.Limiter]{},
-		transportCache:     atomic.Pointer[registry.TransportCache]{},
-		maxAttestationSize: atomic.Int64{},
-		onMirrorFallback:   nil,
-		onMirrorFallbackMu: sync.RWMutex{},
-	}
-	fetcher.maxAttestationSize.Store(config.DefaultMaxAttestationSize)
+	fetcher := newBaseFetcher(func(
+		ctx context.Context, bundleBytes []byte, opts *FetchOptions,
+	) ([]byte, error) {
+		return verifyBundleWithCache(ctx, bundleBytes, opts, cachedRoot)
+	})
+	fetcher.rootCache = cachedRoot
 
 	return fetcher
 }
@@ -317,23 +299,12 @@ func NewOCIFetcherWithMultipleRoots(sources []RootSourceConfig) *OCIFetcher {
 		}
 	}
 
-	fetcher := &OCIFetcher{
-		verifyBundle: func(
-			ctx context.Context, bundleBytes []byte, opts *FetchOptions,
-		) ([]byte, error) {
-			return verifyBundleWithMultipleRoots(ctx, bundleBytes, opts, caches)
-		},
-		fetchImage:         remote.Image,
-		referrers:          remote.Referrers,
-		rootCache:          nil,
-		rootCaches:         caches,
-		limiter:            atomic.Pointer[rate.Limiter]{},
-		transportCache:     atomic.Pointer[registry.TransportCache]{},
-		maxAttestationSize: atomic.Int64{},
-		onMirrorFallback:   nil,
-		onMirrorFallbackMu: sync.RWMutex{},
-	}
-	fetcher.maxAttestationSize.Store(config.DefaultMaxAttestationSize)
+	fetcher := newBaseFetcher(func(
+		ctx context.Context, bundleBytes []byte, opts *FetchOptions,
+	) ([]byte, error) {
+		return verifyBundleWithMultipleRoots(ctx, bundleBytes, opts, caches)
+	})
+	fetcher.rootCaches = caches
 
 	return fetcher
 }
