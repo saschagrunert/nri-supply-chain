@@ -189,6 +189,18 @@ var (
 		"notation verification level \"skip\" is not allowed in enforce mode",
 	)
 
+	// ErrNotationRevocationModeInvalid indicates an invalid revocation mode.
+	ErrNotationRevocationModeInvalid = errors.New(
+		`notation revocation mode must be "strict", "soft", or "skip"`,
+	)
+
+	// ErrNotationRevocationWithSkipLevel indicates that revocationMode
+	// cannot be set when verificationLevel is "skip" because notation-go
+	// rejects overrides when verification is skipped.
+	ErrNotationRevocationWithSkipLevel = errors.New(
+		`notation revocation mode cannot be set when verification level is "skip"`,
+	)
+
 	// ErrDuplicateNotationTrustStoreName indicates a duplicate trust store name.
 	ErrDuplicateNotationTrustStoreName = errors.New(
 		"duplicate notation trust store name",
@@ -381,6 +393,11 @@ type NotationPolicy struct {
 	// VerificationLevel controls how strict verification is.
 	// Valid values: "strict", "permissive", "audit", "skip". Defaults to "strict".
 	VerificationLevel string `json:"verificationLevel,omitempty" jsonschema:"enum=strict,enum=permissive,enum=audit,enum=skip"` //nolint:lll // struct tag
+	// RevocationMode controls OCSP/CRL certificate revocation checking.
+	// Valid values: "strict" (enforce), "soft" (log), "skip" (disable).
+	// When omitted, no override is set and the base verification level
+	// controls revocation behavior.
+	RevocationMode string `json:"revocationMode,omitempty" jsonschema:"enum=strict,enum=soft,enum=skip"` //nolint:lll // struct tag
 }
 
 // NotationTrustStore defines a named collection of certificates used for Notation verification.

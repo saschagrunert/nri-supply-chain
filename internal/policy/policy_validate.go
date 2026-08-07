@@ -30,7 +30,13 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
-const notationLevelSkip = "skip"
+const (
+	notationLevelSkip = "skip"
+
+	revocationModeStrict = "strict"
+	revocationModeSoft   = "soft"
+	revocationModeSkip   = "skip"
+)
 
 // ValidateModeStrictness checks that the per-namespace mode is at least as
 // strict as the global verification mode. Returns nil if Mode is empty (no
@@ -669,22 +675,46 @@ func (p *Policy) validateNotation() error {
 		}
 	}
 
-	if p.Notation.VerificationLevel != "" {
-		switch p.Notation.VerificationLevel {
+	errs = append(errs, validateNotationLevels(p.Notation)...)
+	errs = append(errs, validateNotationTrustStores(p.Notation.TrustStores)...)
+	errs = append(errs, validateNotationTrustPolicy(p.Notation.TrustPolicy)...)
+
+	return errors.Join(errs...)
+}
+
+func validateNotationLevels(notation *NotationPolicy) []error {
+	var errs []error
+
+	if notation.VerificationLevel != "" {
+		switch notation.VerificationLevel {
 		case "strict", "permissive", "audit", notationLevelSkip:
 		default:
 			errs = append(errs, fmt.Errorf(
 				"%w: got %q",
 				ErrNotationVerificationLevelInvalid,
-				p.Notation.VerificationLevel,
+				notation.VerificationLevel,
 			))
 		}
 	}
 
-	errs = append(errs, validateNotationTrustStores(p.Notation.TrustStores)...)
-	errs = append(errs, validateNotationTrustPolicy(p.Notation.TrustPolicy)...)
+	if notation.RevocationMode != "" {
+		switch notation.RevocationMode {
+		case revocationModeStrict, revocationModeSoft, revocationModeSkip:
+		default:
+			errs = append(errs, fmt.Errorf(
+				"%w: got %q",
+				ErrNotationRevocationModeInvalid,
+				notation.RevocationMode,
+			))
+		}
+	}
 
-	return errors.Join(errs...)
+	if notation.VerificationLevel == notationLevelSkip &&
+		notation.RevocationMode != "" {
+		errs = append(errs, ErrNotationRevocationWithSkipLevel)
+	}
+
+	return errs
 }
 
 func validateNotationTrustStores(stores []NotationTrustStore) []error {

@@ -27,6 +27,7 @@ import (
 
 	"github.com/notaryproject/notation-core-go/signature"
 	notationlib "github.com/notaryproject/notation-go"
+	"github.com/notaryproject/notation-go/verifier/trustpolicy"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
@@ -44,6 +45,10 @@ const (
 	testCertPlaceholder   = "/tmp/cert.pem"
 	testDocVersion        = "1.0"
 	testLevelStrict       = "strict"
+	testLevelSkip         = "skip"
+	testModeStrict        = "strict"
+	testModeSoft          = "soft"
+	testModeSkip          = "skip"
 	testStoreRefAlt       = "ca:store1"
 )
 
@@ -134,7 +139,7 @@ func TestBuildTrustPolicyDocument(t *testing.T) {
 		{
 			name: "custom verification level skip",
 			np: &policy.NotationPolicy{
-				VerificationLevel: "skip",
+				VerificationLevel: testLevelSkip,
 				TrustPolicy: []policy.NotationTrustPolicyRule{
 					{
 						Name:              testRuleName,
@@ -145,7 +150,7 @@ func TestBuildTrustPolicyDocument(t *testing.T) {
 				},
 			},
 			wantVersion:       testDocVersion,
-			wantLevel:         "skip",
+			wantLevel:         testLevelSkip,
 			wantPoliciesCount: 1,
 		},
 		{
@@ -201,6 +206,11 @@ func TestBuildTrustPolicyDocument(t *testing.T) {
 					t.Errorf("verification level = %q, want %q",
 						tp.SignatureVerification.VerificationLevel, tc.wantLevel)
 				}
+
+				if tp.SignatureVerification.Override != nil {
+					t.Errorf("expected nil Override when revocationMode is unset, got %v",
+						tp.SignatureVerification.Override)
+				}
 			}
 		})
 	}
@@ -246,6 +256,138 @@ func TestBuildTrustPolicyDocumentFieldMapping(t *testing.T) {
 
 	if len(tp.TrustedIdentities) != 2 {
 		t.Fatalf("trusted identities count = %d, want 2", len(tp.TrustedIdentities))
+	}
+}
+
+func TestBuildTrustPolicyDocumentRevocationOverride(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		mode       string
+		wantNil    bool
+		wantAction trustpolicy.ValidationAction
+	}{
+		{
+			name:       "strict mode enforces revocation",
+			mode:       testModeStrict,
+			wantNil:    false,
+			wantAction: trustpolicy.ActionEnforce,
+		},
+		{
+			name:       "soft mode logs revocation",
+			mode:       testModeSoft,
+			wantNil:    false,
+			wantAction: trustpolicy.ActionLog,
+		},
+		{
+			name:       "skip mode disables revocation",
+			mode:       testModeSkip,
+			wantNil:    false,
+			wantAction: trustpolicy.ActionSkip,
+		},
+		{
+			name:       "empty mode produces nil override",
+			mode:       "",
+			wantNil:    true,
+			wantAction: "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			np := &policy.NotationPolicy{
+				RevocationMode: tc.mode,
+				TrustPolicy: []policy.NotationTrustPolicyRule{
+					{
+						Name:              testRuleName,
+						RegistryScopes:    []string{"*"},
+						TrustStores:       []string{testStoreRefAlt},
+						TrustedIdentities: []string{"*"},
+					},
+				},
+			}
+
+			doc := buildTrustPolicyDocument(np)
+
+			if len(doc.TrustPolicies) != 1 {
+				t.Fatalf("expected 1 trust policy, got %d", len(doc.TrustPolicies))
+			}
+
+			override := doc.TrustPolicies[0].SignatureVerification.Override
+
+			if tc.wantNil {
+				if override != nil {
+					t.Fatalf("expected nil Override map, got %v", override)
+				}
+
+				return
+			}
+
+			if override == nil {
+				t.Fatal("expected non-nil Override map")
+			}
+
+			got, ok := override[trustpolicy.TypeRevocation]
+			if !ok {
+				t.Fatal("expected revocation key in Override map")
+			}
+
+			if got != tc.wantAction {
+				t.Errorf("revocation action = %q, want %q", got, tc.wantAction)
+			}
+		})
+	}
+}
+
+func TestRevocationOverride(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		mode       string
+		wantNil    bool
+		wantAction trustpolicy.ValidationAction
+	}{
+		{testModeStrict, testModeStrict, false, trustpolicy.ActionEnforce},
+		{testModeSoft, testModeSoft, false, trustpolicy.ActionLog},
+		{testModeSkip, testModeSkip, false, trustpolicy.ActionSkip},
+		{"empty defaults to nil", "", true, ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			override := revocationOverride(tc.mode)
+
+			if tc.wantNil {
+				if override != nil {
+					t.Fatalf("expected nil override map, got %v", override)
+				}
+
+				return
+			}
+
+			if override == nil {
+				t.Fatal("expected non-nil override map")
+			}
+
+			got, ok := override[trustpolicy.TypeRevocation]
+			if !ok {
+				t.Fatal("expected revocation key in override map")
+			}
+
+			if got != tc.wantAction {
+				t.Errorf("action = %q, want %q", got, tc.wantAction)
+			}
+
+			if len(override) != 1 {
+				t.Errorf("expected 1 entry in override map, got %d", len(override))
+			}
+		})
 	}
 }
 
