@@ -240,10 +240,7 @@ func buildKeyMaterial(keyPaths []string) (*root.TrustedPublicKeyMaterial, error)
 			return nil, fmt.Errorf("loading public key %q: %w", keyPath, err)
 		}
 
-		// SHA-256 is the only algorithm supported for key hint computation
-		// and artifact digest matching. Supporting additional algorithms
-		// would require policy-level configuration.
-		keyVerifier, err := signature.LoadVerifier(pubKey, crypto.SHA256)
+		keyVerifier, err := signature.LoadVerifier(pubKey, types.HashAlgorithmForKey(pubKey))
 		if err != nil {
 			return nil, fmt.Errorf("creating verifier for %q: %w", keyPath, err)
 		}

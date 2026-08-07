@@ -64,11 +64,6 @@ func LoadPEMPublicKeyForTest(path string) (crypto.PublicKey, error) {
 	return loadPEMPublicKey(path)
 }
 
-// HashAlgorithmForKeyForTest exposes hashAlgorithmForKey for tests.
-func HashAlgorithmForKeyForTest(pub crypto.PublicKey) crypto.Hash {
-	return hashAlgorithmForKey(pub)
-}
-
 // PolicyKeyHintForTest exposes policyKeyHint for tests.
 func PolicyKeyHintForTest(pub crypto.PublicKey) (string, error) {
 	return policyKeyHint(pub)
