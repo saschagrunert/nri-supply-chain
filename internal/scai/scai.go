@@ -202,7 +202,8 @@ func allHaveEvidence(attrs []attribute) bool {
 	for idx := range attrs {
 		if len(attrs[idx].Evidence) == 0 ||
 			string(attrs[idx].Evidence) == "null" ||
-			string(attrs[idx].Evidence) == "{}" {
+			string(attrs[idx].Evidence) == "{}" ||
+			string(attrs[idx].Evidence) == "[]" {
 			return false
 		}
 	}

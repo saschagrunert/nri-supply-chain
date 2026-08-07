@@ -84,6 +84,7 @@ must pass verification.
    VEX        pass     VEX verification passed
    NOTATION   pass     no Notation signature found for image ghcr.io/saschagrunert/nri-supply-chain:0.3.0
    SBOM       pass     SBOM verification passed
+   SCAI       pass     no SCAI attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.3.0
    ```
 
    Use `--output json` for machine-readable output:
@@ -118,6 +119,12 @@ must pass verification.
          "passed": true,
          "status": "pass",
          "detail": "SBOM verification passed"
+       },
+       {
+         "type": "scai",
+         "passed": true,
+         "status": "pass",
+         "detail": "no SCAI attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.3.0"
        }
      ]
    }
