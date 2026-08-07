@@ -298,10 +298,16 @@ func buildFetchOpts(
 			totalKeys += len(pol.Trust.Verifiers[idx].Keys)
 		}
 
-		keys := make([]string, 0, totalKeys)
+		keys := make([]attestation.TrustedKeyRef, 0, totalKeys)
 
 		for idx := range pol.Trust.Verifiers {
-			keys = append(keys, pol.Trust.Verifiers[idx].Keys...)
+			for _, keyPath := range pol.Trust.Verifiers[idx].Keys {
+				keys = append(keys, attestation.TrustedKeyRef{
+					Path:      keyPath,
+					NotBefore: pol.Trust.Verifiers[idx].NotBeforeTime,
+					NotAfter:  pol.Trust.Verifiers[idx].NotAfterTime,
+				})
+			}
 		}
 
 		opts.TrustedKeys = keys

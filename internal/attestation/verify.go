@@ -29,7 +29,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/sigstore/sigstore-go/pkg/bundle"
 	"github.com/sigstore/sigstore-go/pkg/root"
@@ -225,34 +224,35 @@ func keyOnlyVerifierOpts(hasIssuers, requireTLog bool) []verify.VerifierOption {
 		return []verify.VerifierOption{verify.WithTransparencyLog(1)}
 	}
 
-	// Key-only without tlog skips timestamp verification. A compromised
-	// key cannot be time-bounded after revocation; require tlog in policy
-	// to mitigate.
+	// Key-only without tlog skips timestamp verification. Operator-configured
+	// notBefore/notAfter bounds provide basic time-scoping, but tlog entries
+	// give cryptographic proof of signing time; require tlog in policy for
+	// stronger guarantees.
 	return []verify.VerifierOption{verify.WithNoObserverTimestamps()}
 }
 
-func buildKeyMaterial(keyPaths []string) (*root.TrustedPublicKeyMaterial, error) {
-	verifiers := make(map[string]*root.ExpiringKey, len(keyPaths))
+func buildKeyMaterial(keys []TrustedKeyRef) (*root.TrustedPublicKeyMaterial, error) {
+	verifiers := make(map[string]*root.ExpiringKey, len(keys))
 
-	for _, keyPath := range keyPaths {
-		pubKey, err := loadPublicKeyFromPEM(keyPath)
+	for idx := range keys {
+		pubKey, err := loadPublicKeyFromPEM(keys[idx].Path)
 		if err != nil {
-			return nil, fmt.Errorf("loading public key %q: %w", keyPath, err)
+			return nil, fmt.Errorf("loading public key %q: %w", keys[idx].Path, err)
 		}
 
 		keyVerifier, err := signature.LoadVerifier(pubKey, types.HashAlgorithmForKey(pubKey))
 		if err != nil {
-			return nil, fmt.Errorf("creating verifier for %q: %w", keyPath, err)
+			return nil, fmt.Errorf("creating verifier for %q: %w", keys[idx].Path, err)
 		}
 
 		hint, hintErr := computeKeyHint(pubKey)
 		if hintErr != nil {
-			return nil, fmt.Errorf("computing key hint for %q: %w", keyPath, hintErr)
+			return nil, fmt.Errorf("computing key hint for %q: %w", keys[idx].Path, hintErr)
 		}
 
 		// Zero-value time.Time means no validity period bounds; the key
 		// is accepted regardless of signing time.
-		verifiers[hint] = root.NewExpiringKey(keyVerifier, time.Time{}, time.Time{})
+		verifiers[hint] = root.NewExpiringKey(keyVerifier, keys[idx].NotBefore, keys[idx].NotAfter)
 	}
 
 	return root.NewTrustedPublicKeyMaterialFromMapping(verifiers), nil

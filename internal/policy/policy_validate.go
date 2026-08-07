@@ -342,7 +342,9 @@ func (p *Policy) validateVerifiers() error {
 
 	seenVerifiers := make(map[string]bool, len(p.Trust.Verifiers))
 
-	for idx, verif := range p.Trust.Verifiers {
+	for idx := range p.Trust.Verifiers {
+		verif := &p.Trust.Verifiers[idx]
+
 		if verif.ID == "" {
 			errs = append(errs, fmt.Errorf(
 				"%w: trust.verifiers[%d]", ErrVerifierIDRequired, idx,
@@ -361,10 +363,50 @@ func (p *Policy) validateVerifiers() error {
 
 		seenVerifiers[verif.ID] = true
 
-		errs = append(errs, validateVerifierKeys(p, idx, &verif)...)
+		errs = append(errs, validateVerifierKeys(p, idx, verif)...)
 	}
 
+	errs = append(errs, validateNoDuplicateKeysAcrossVerifiers(
+		p.Trust.Verifiers,
+	)...)
+
 	return errors.Join(errs...)
+}
+
+// validateNoDuplicateKeysAcrossVerifiers checks that no key path appears in
+// more than one verifier. The same physical key in two verifiers with
+// different time bounds would cause one to silently overwrite the other in
+// the key material map.
+func validateNoDuplicateKeysAcrossVerifiers(
+	verifiers []TrustedVerifier,
+) []error {
+	// keyPath -> first verifier ID that claimed it
+	seen := make(map[string]string)
+
+	var errs []error
+
+	for _, verif := range verifiers {
+		if verif.ID == "" {
+			continue
+		}
+
+		for _, key := range verif.Keys {
+			if key == "" {
+				continue
+			}
+
+			if firstID, exists := seen[key]; exists {
+				errs = append(errs, fmt.Errorf(
+					"%w: key %q appears in verifier %q and %q",
+					ErrDuplicateKeyAcrossVerifiers, key, firstID, verif.ID,
+				))
+			} else {
+				seen[key] = verif.ID
+			}
+		}
+	}
+
+	return errs
 }
 
 func validateVerifierKeys(
@@ -377,6 +419,13 @@ func validateVerifierKeys(
 			errs = append(errs, fmt.Errorf(
 				"%w: trust.verifiers[%d] %q",
 				ErrKeylessVerifierRequiresIssuers, idx, verif.ID,
+			))
+		}
+
+		if verif.NotBefore != "" || verif.NotAfter != "" {
+			errs = append(errs, fmt.Errorf(
+				"%w: trust.verifiers[%d] %q",
+				ErrTimeBoundsWithoutKeys, idx, verif.ID,
 			))
 		}
 
@@ -410,6 +459,52 @@ func validateVerifierKeys(
 			errs = append(errs, fmt.Errorf(
 				"%w: trust.verifiers[%d] %q: keys[%d] got %q",
 				ErrVerifierKeyNotAbsolute, idx, verif.ID, kidx, key,
+			))
+		}
+	}
+
+	errs = append(errs, validateVerifierTimeBounds(idx, verif)...)
+
+	return errs
+}
+
+func validateVerifierTimeBounds(idx int, verif *TrustedVerifier) []error {
+	var errs []error
+
+	if verif.NotBefore != "" {
+		notBefore, err := time.Parse(time.RFC3339, verif.NotBefore)
+		if err != nil {
+			errs = append(errs, fmt.Errorf(
+				"%w: trust.verifiers[%d] %q: got %q",
+				ErrInvalidNotBefore, idx, verif.ID, verif.NotBefore,
+			))
+		} else {
+			verif.NotBeforeTime = notBefore
+		}
+	}
+
+	if verif.NotAfter != "" {
+		notAfter, err := time.Parse(time.RFC3339, verif.NotAfter)
+		if err != nil {
+			errs = append(errs, fmt.Errorf(
+				"%w: trust.verifiers[%d] %q: got %q",
+				ErrInvalidNotAfter, idx, verif.ID, verif.NotAfter,
+			))
+		} else {
+			verif.NotAfterTime = notAfter
+		}
+	}
+
+	if len(errs) > 0 {
+		return errs
+	}
+
+	if !verif.NotBeforeTime.IsZero() && !verif.NotAfterTime.IsZero() {
+		if !verif.NotAfterTime.After(verif.NotBeforeTime) {
+			errs = append(errs, fmt.Errorf(
+				"%w: trust.verifiers[%d] %q: notBefore=%q notAfter=%q",
+				ErrNotAfterBeforeNotBefore, idx, verif.ID,
+				verif.NotBefore, verif.NotAfter,
 			))
 		}
 	}

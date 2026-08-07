@@ -318,8 +318,10 @@ func warnKeyOnlyWithoutTLog(label string, pol *policy.Policy) {
 	}
 
 	slog.Warn(
-		"enforce mode with key-only verification and requireTransparencyLog=false; "+
-			"compromised keys cannot be time-bounded without transparency log entries",
+		"enforce mode with key-only verification and "+
+			"requireTransparencyLog=false; operator-configured "+
+			"notBefore/notAfter provide basic time-scoping but "+
+			"tlog entries give cryptographic proof of signing time",
 		"policy", label,
 	)
 }

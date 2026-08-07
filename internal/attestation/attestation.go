@@ -24,6 +24,15 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 )
 
+// TrustedKeyRef holds a path to a public key file along with the enclosing
+// verifier's optional validity period bounds. When NotBefore or NotAfter are
+// non-zero, the key's validity is restricted to that time window.
+type TrustedKeyRef struct {
+	Path      string
+	NotBefore time.Time
+	NotAfter  time.Time
+}
+
 var (
 	errEmptyAttestation      = errors.New("empty attestation")
 	errAttestationTooLarge   = errors.New("attestation exceeds maximum size")
@@ -115,7 +124,7 @@ type Fetcher interface {
 // FetchOptions configures attestation fetching behavior.
 type FetchOptions struct {
 	TrustedIssuers         []string
-	TrustedKeys            []string
+	TrustedKeys            []TrustedKeyRef
 	SANPatterns            []string
 	RequireTransparencyLog bool
 	Timeout                time.Duration
