@@ -108,6 +108,7 @@ func initEnvironment() (*cel.Env, error) {
 			cel.Variable("vsa", cel.MapType(cel.StringType, cel.DynType)),
 			cel.Variable("sbom", cel.MapType(cel.StringType, cel.DynType)),
 			cel.Variable("notation", cel.MapType(cel.StringType, cel.DynType)),
+			cel.Variable("scai", cel.MapType(cel.StringType, cel.DynType)),
 			ext.Strings(),
 		)
 	})
@@ -312,7 +313,7 @@ func isCostError(err error) bool {
 // BuildVars constructs the CEL variable map from check results and image context.
 func BuildVars(
 	imageRef, registry, repository, digest, namespace string,
-	slsaResult, vexResult, vsaResult, sbomResult, notationResult *types.CheckResult,
+	slsaResult, vexResult, vsaResult, sbomResult, notationResult, scaiResult *types.CheckResult,
 ) map[string]any {
 	imageVars := map[string]any{
 		"ref":        imageRef,
@@ -327,6 +328,7 @@ func BuildVars(
 	vsaVars := buildVSAVars(vsaResult)
 	sbomVars := buildSBOMVars(sbomResult)
 	notationVars := buildNotationVars(notationResult)
+	scaiVars := buildSCAIVars(scaiResult)
 
 	return map[string]any{
 		"image":    imageVars,
@@ -335,6 +337,7 @@ func BuildVars(
 		"vsa":      vsaVars,
 		"sbom":     sbomVars,
 		"notation": notationVars,
+		"scai":     scaiVars,
 	}
 }
 
@@ -457,4 +460,34 @@ func buildNotationVars(result *types.CheckResult) map[string]any {
 	}
 
 	return vars
+}
+
+func buildSCAIVars(result *types.CheckResult) map[string]any {
+	vars := map[string]any{
+		varVerified:      false,
+		"attributes":     "",
+		"attributeCount": int64(0),
+		"hasEvidence":    false,
+	}
+
+	if result != nil {
+		vars[varVerified] = result.Passed
+		extractStringMeta(result.Metadata, vars, "attributes")
+		extractInt64Meta(result.Metadata, vars, "attributeCount")
+		extractBoolMeta(result.Metadata, vars, "hasEvidence")
+	}
+
+	return vars
+}
+
+func extractBoolMeta(meta, vars map[string]any, keys ...string) {
+	if meta == nil {
+		return
+	}
+
+	for _, key := range keys {
+		if v, ok := meta[key].(bool); ok {
+			vars[key] = v
+		}
+	}
 }

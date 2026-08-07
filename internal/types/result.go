@@ -49,6 +49,8 @@ const (
 	CheckTypeCEL CheckType = "cel"
 	// CheckTypeSBOM is the SBOM attestation check type.
 	CheckTypeSBOM CheckType = "sbom"
+	// CheckTypeSCAI is the SCAI attestation check type.
+	CheckTypeSCAI CheckType = "scai"
 )
 
 // Result represents the outcome of a supply chain verification.

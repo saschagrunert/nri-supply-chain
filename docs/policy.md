@@ -27,6 +27,7 @@ patterns for the nri-supply-chain plugin.
     - [<code>sbom.license</code> (object)](#sbomlicense-object)
     - [<code>sbom.component</code> (object)](#sbomcomponent-object)
     - [<code>sbom.cvss</code> (object)](#sbomcvss-object)
+  - [<code>scai</code> (object)](#scai-object)
   - [<code>rules</code> (array of objects)](#rules-array-of-objects)
   - [<code>cel</code> (object)](#cel-object)
 - [Verification Types](#verification-types)
@@ -37,6 +38,7 @@ patterns for the nri-supply-chain plugin.
   - [Signature Verification](#signature-verification)
   - [Notation (Notary v2) Signature Verification](#notation-notary-v2-signature-verification)
   - [SBOM Verification](#sbom-verification)
+  - [SCAI Verification](#scai-verification)
 - [Pattern Matching](#pattern-matching)
   - [<code>include</code>, <code>exclude</code>, and <code>trust.sources</code>](#include-exclude-and-trustsources)
   - [<code>trust.sanPatterns</code>](#trustsanpatterns)
@@ -244,6 +246,9 @@ nri-supply-chain json-schema policy
         "sbom": {
           "$ref": "#/$defs/SBOMPolicy"
         },
+        "scai": {
+          "$ref": "#/$defs/SCAIPolicy"
+        },
         "signatures": {
           "$ref": "#/$defs/SignaturesPolicy"
         },
@@ -382,6 +387,9 @@ nri-supply-chain json-schema policy
         "sbom": {
           "$ref": "#/$defs/SBOMPolicy"
         },
+        "scai": {
+          "$ref": "#/$defs/SCAIPolicy"
+        },
         "signatures": {
           "$ref": "#/$defs/SignaturesPolicy"
         },
@@ -475,6 +483,31 @@ nri-supply-chain json-schema policy
         "missingPolicy": {
           "enum": ["allow", "warn", "deny"],
           "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "SCAIPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "forbiddenAttributes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "missingPolicy": {
+          "enum": ["allow", "warn", "deny"],
+          "type": "string"
+        },
+        "requireEvidence": {
+          "type": "boolean"
+        },
+        "requiredAttributes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "type": "object"
@@ -817,6 +850,20 @@ still contribute to aggregate statistics for visibility in CEL rules.
 When both `maxScore` and `minSeverity` are set, a vulnerability is flagged if
 either condition is met (OR logic, not AND).
 
+### `scai` (object)
+
+SCAI (Supply Chain Attribute Integrity) attribute report verification settings.
+When configured, the plugin verifies
+[SCAI](https://github.com/in-toto/attestation/blob/main/spec/predicates/scai.md)
+attribute report attestations attached to container images.
+
+| Field                 | Type   | Default | Description                                                           |
+| --------------------- | ------ | ------- | --------------------------------------------------------------------- |
+| `missingPolicy`       | string | `allow` | Behavior when no SCAI attestation is found: `allow`, `warn`, `deny`   |
+| `requiredAttributes`  | array  | (none)  | Attribute names that must be present in the report (case-insensitive) |
+| `forbiddenAttributes` | array  | (none)  | Attribute names that must not appear in the report (case-insensitive) |
+| `requireEvidence`     | bool   | `false` | Require that every attribute includes non-empty evidence              |
+
 ### `rules` (array of objects)
 
 Per-image policy overrides. Each rule matches images by glob patterns and
@@ -933,6 +980,10 @@ Each rule is an object with:
 | `sbom.cvssCriticalCount` | int    | Number of critical-severity vulnerabilities       |
 | `sbom.cvssHighCount`     | int    | Number of high-severity vulnerabilities           |
 | `sbom.cvssMediumCount`   | int    | Number of medium-severity vulnerabilities         |
+| `scai.verified`          | bool   | Whether SCAI verification passed                  |
+| `scai.attributes`        | string | Comma-separated attribute names                   |
+| `scai.attributeCount`    | int    | Number of attributes                              |
+| `scai.hasEvidence`       | bool   | Whether all attributes have evidence              |
 
 Standard string functions are available via `ext.Strings()`: `startsWith`,
 `endsWith`, `contains`, `matches`.
@@ -1255,6 +1306,49 @@ Example configuration:
 }
 ```
 
+### SCAI Verification
+
+Verifies [SCAI](https://github.com/in-toto/attestation/blob/main/spec/predicates/scai.md)
+(Supply Chain Attribute Integrity) attribute report attestations (predicate type
+`https://in-toto.io/attestation/scai/v0.3`). SCAI reports capture structured
+evidence about build attributes, complementing SLSA provenance with
+fine-grained property assertions.
+
+Checks performed:
+
+- **Subject digest**: The in-toto `subject[].digest` must match the image digest.
+- **Required attributes**: If `scai.requiredAttributes` is configured, every
+  listed attribute name must be present in the report (case-insensitive match).
+- **Forbidden attributes**: If `scai.forbiddenAttributes` is configured, none
+  of the listed attribute names may appear in the report (case-insensitive
+  match).
+- **Evidence requirement**: If `scai.requireEvidence` is true, every attribute
+  in the report must include non-empty evidence (`null`, `{}`, and absent
+  evidence all count as missing).
+
+When multiple SCAI attestations exist, any policy violation in any document
+causes failure. Metadata from passing attestations is merged: attribute counts
+are summed, attribute name lists are concatenated (deduplicated), and the
+`hasEvidence` flag uses AND logic (all attestations must have evidence for the merged
+result to be true).
+
+If all SCAI documents fail to parse (as opposed to being absent), the check
+always fails regardless of `missingPolicy`. The `missingPolicy` setting only
+controls behavior when no SCAI attestation exists at all.
+
+Example configuration:
+
+```json
+{
+  "scai": {
+    "missingPolicy": "warn",
+    "requiredAttributes": ["PASSED_CODE_REVIEW", "PASSED_TESTS"],
+    "forbiddenAttributes": ["KNOWN_VULNERABLE"],
+    "requireEvidence": true
+  }
+}
+```
+
 ## Pattern Matching
 
 The plugin uses glob patterns in several contexts, with slightly different
@@ -1303,7 +1397,7 @@ A file named `<namespace>.json` in the policy directory overrides
 
 By default, the override is a full replacement. If a namespace policy sets
 `"inherits": true`, unset top-level fields (`trust`, `include`, `exclude`,
-`slsa`, `vex`, `vsa`, `signatures`, `notation`, `sbom`, `cel`, `rules`) are inherited from the default
+`slsa`, `vex`, `vsa`, `signatures`, `notation`, `sbom`, `scai`, `cel`, `rules`) are inherited from the default
 policy. Each top-level section that is set in the namespace policy replaces
 the default's section entirely. The default policy itself cannot set `inherits`.
 
@@ -1361,8 +1455,8 @@ Example: `default.json` requires provenance, but `dev.json` allows everything:
 ```
 
 In this example, `staging.json` inherits all remaining sections (`trust`,
-`include`, `exclude`, `slsa`, `vsa`, `signatures`, `notation`, `sbom`, `cel`,
-`rules`) from `default.json` but replaces the `vex` section.
+`include`, `exclude`, `slsa`, `vsa`, `signatures`, `notation`, `sbom`, `scai`,
+`cel`, `rules`) from `default.json` but replaces the `vex` section.
 
 ## Deployment Patterns
 

@@ -89,6 +89,17 @@ func (p *Policy) SBOMMissingPolicy() types.Action {
 	return types.ActionAllow
 }
 
+// SCAIMissingPolicy returns the effective SCAI missing policy.
+// Defaults to allow so that the plugin can be deployed in warn mode
+// without requiring SCAI attestations from the start.
+func (p *Policy) SCAIMissingPolicy() types.Action {
+	if p.SCAI != nil && p.SCAI.MissingPolicy != "" {
+		return p.SCAI.MissingPolicy
+	}
+
+	return types.ActionAllow
+}
+
 // Builders returns the trusted builders list, or nil if trust is not configured.
 func (p *Policy) Builders() []TrustedBuilder {
 	if p.Trust != nil {

@@ -191,6 +191,7 @@ func (p *Policy) validateSections() []error {
 
 	appendErr(p.validateNotation())
 	appendErr(p.validateSBOM())
+	appendErr(p.validateSCAI())
 
 	return errs
 }
@@ -1054,6 +1055,7 @@ func validateRuleSections(rulePol *Policy, idx int) []error {
 		{"vex", rulePol.validateVEX},
 		{"notation", rulePol.validateNotation},
 		{"sbom", rulePol.validateSBOM},
+		{"scai", rulePol.validateSCAI},
 	} {
 		err := validator.fn()
 		if err != nil {
@@ -1110,6 +1112,60 @@ func (p *Policy) resolveVSADuration() {
 	}
 
 	p.VSA.MaxAgeDuration = maxAge
+}
+
+func (p *Policy) validateSCAI() error {
+	if p.SCAI == nil {
+		return nil
+	}
+
+	var errs []error
+
+	if p.SCAI.MissingPolicy != "" {
+		err := types.ValidateAction(
+			"scai.missingPolicy", p.SCAI.MissingPolicy,
+		)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("validating scai policy: %w", err))
+		}
+	}
+
+	err := validateNonEmpty("scai.requiredAttributes", p.SCAI.RequiredAttributes)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	err = validateNonEmpty("scai.forbiddenAttributes", p.SCAI.ForbiddenAttributes)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	errs = append(errs, validateSCAINoOverlap(p.SCAI)...)
+
+	return errors.Join(errs...)
+}
+
+func validateSCAINoOverlap(scai *SCAIPolicy) []error {
+	if len(scai.RequiredAttributes) == 0 || len(scai.ForbiddenAttributes) == 0 {
+		return nil
+	}
+
+	forbidden := make(map[string]bool, len(scai.ForbiddenAttributes))
+	for _, attr := range scai.ForbiddenAttributes {
+		forbidden[strings.ToLower(attr)] = true
+	}
+
+	var errs []error
+
+	for _, attr := range scai.RequiredAttributes {
+		if forbidden[strings.ToLower(attr)] {
+			errs = append(errs, fmt.Errorf(
+				"%w: %q", ErrSCAIOverlappingAttributes, attr,
+			))
+		}
+	}
+
+	return errs
 }
 
 func (p *Policy) validateAndCompileCEL() error {

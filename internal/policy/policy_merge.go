@@ -23,7 +23,7 @@ import (
 // MergeWithDefault creates a new policy by starting from a copy of the default
 // policy and overriding fields that are set in the namespace policy. Each
 // top-level section (Trust, Include, Exclude, SLSA, VEX, VSA, Signatures,
-// Notation, SBOM, CEL, Rules) is replaced entirely if set in the namespace policy. The Inherits
+// Notation, SBOM, SCAI, CEL, Rules) is replaced entirely if set in the namespace policy. The Inherits
 // field is cleared on the result. Inherited structs are shallow-copied to
 // prevent mutations from affecting the default.
 func MergeWithDefault(namespace, defaultPol *Policy) *Policy {
@@ -146,6 +146,10 @@ func applySections(dst *Sections, src Sections) {
 	if src.SBOM != nil {
 		dst.SBOM = cloneSBOM(src.SBOM)
 	}
+
+	if src.SCAI != nil {
+		dst.SCAI = cloneSCAI(src.SCAI)
+	}
 }
 
 func cloneNotation(notationPolicy *NotationPolicy) *NotationPolicy {
@@ -206,6 +210,14 @@ func cloneCEL(src *celengine.Policy) *celengine.Policy {
 	copy(cloned.Rules, src.Rules)
 
 	return cloned
+}
+
+func cloneSCAI(src *SCAIPolicy) *SCAIPolicy {
+	clone := *src
+	clone.RequiredAttributes = slices.Clone(clone.RequiredAttributes)
+	clone.ForbiddenAttributes = slices.Clone(clone.ForbiddenAttributes)
+
+	return &clone
 }
 
 func cloneSBOM(src *SBOMPolicy) *SBOMPolicy {

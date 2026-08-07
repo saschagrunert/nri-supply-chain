@@ -233,6 +233,12 @@ var (
 	ErrCVSSMinSeverityInvalid = errors.New(
 		`sbom.cvss.minSeverity must be "low", "medium", "high", or "critical"`,
 	)
+
+	// ErrSCAIOverlappingAttributes indicates the same attribute appears in both
+	// requiredAttributes and forbiddenAttributes.
+	ErrSCAIOverlappingAttributes = errors.New(
+		"scai: attribute appears in both requiredAttributes and forbiddenAttributes",
+	)
 )
 
 // Sections groups the verification settings that can be overridden
@@ -254,6 +260,8 @@ type Sections struct {
 	CEL *celengine.Policy `json:"cel,omitempty"`
 	// SBOM contains SBOM attestation verification settings.
 	SBOM *SBOMPolicy `json:"sbom,omitempty"`
+	// SCAI contains SCAI attribute report verification settings.
+	SCAI *SCAIPolicy `json:"scai,omitempty"`
 }
 
 // Policy defines the trust roots and per-namespace verification settings.
@@ -466,6 +474,18 @@ type SBOMComponentPolicy struct {
 	// Allow is a list of PURLs to allow (prefix match). When non-empty,
 	// any component not matching an allow entry is denied. Deny takes precedence over allow.
 	Allow []string `json:"allow,omitempty"`
+}
+
+// SCAIPolicy contains SCAI attribute report verification settings.
+type SCAIPolicy struct {
+	// MissingPolicy controls behavior when no SCAI attestation is found.
+	MissingPolicy types.Action `json:"missingPolicy,omitempty" jsonschema:"enum=allow,enum=warn,enum=deny"`
+	// RequiredAttributes is a list of attribute names that must be present in the report.
+	RequiredAttributes []string `json:"requiredAttributes,omitempty"`
+	// ForbiddenAttributes is a list of attribute names that must not appear in the report.
+	ForbiddenAttributes []string `json:"forbiddenAttributes,omitempty"`
+	// RequireEvidence requires that every attribute includes non-empty evidence.
+	RequireEvidence bool `json:"requireEvidence,omitempty"`
 }
 
 // ImageRule defines per-image verification overrides within a namespace policy.

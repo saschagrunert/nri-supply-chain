@@ -60,6 +60,9 @@ const (
 	// PredicateCycloneDX is the in-toto predicate type for CycloneDX BOM documents.
 	PredicateCycloneDX = "https://cyclonedx.org/bom"
 
+	// PredicateSCAI is the in-toto predicate type for SCAI attribute reports.
+	PredicateSCAI = "https://in-toto.io/attestation/scai/v0.3"
+
 	// PredicateSLSAProvenanceV02 is the in-toto predicate type for SLSA provenance v0.2.
 	PredicateSLSAProvenanceV02 = "https://slsa.dev/provenance/v0.2"
 

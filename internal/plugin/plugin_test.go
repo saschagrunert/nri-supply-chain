@@ -250,7 +250,7 @@ func TestCreateContainerWarnAllow(t *testing.T) {
 		t.Errorf("mode = %q, want %q", v, testValWarn)
 	}
 
-	wantChecks := "slsa:fail,vex:pass,sbom:pass"
+	wantChecks := "slsa:fail,vex:pass,sbom:pass,scai:pass"
 	if v := annotations[plugin.AnnotationChecks]; v != wantChecks {
 		t.Errorf("checks = %q, want %q", v, wantChecks)
 	}
