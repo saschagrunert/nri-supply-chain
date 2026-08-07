@@ -43,6 +43,10 @@ type Strictness int
 // PolicySource selects where policy files are loaded from.
 type PolicySource string
 
+// LatestConfigVersion is the current config schema version.
+// Bump this when the config schema changes in a way that requires migration.
+const LatestConfigVersion = 1
+
 const (
 	// ModeDisabled disables supply chain verification.
 	ModeDisabled VerificationMode = "disabled"
@@ -258,6 +262,9 @@ func (p *PolicyConfig) SignatureVerificationRequired() bool {
 
 // Config represents the operational configuration for the NRI supply chain plugin.
 type Config struct {
+	// ConfigVersion is the schema version of this config file.
+	// When omitted (zero), it is treated as version 1 for backward compatibility.
+	ConfigVersion int `toml:"config_version"`
 	// Verification is the master toggle for supply chain verification.
 	// Valid values: "disabled" (default), "warn" (log-only), "enforce" (reject on failure).
 	Verification VerificationMode `toml:"verification"`
@@ -318,6 +325,7 @@ type Config struct {
 // DefaultConfig returns the default configuration.
 func DefaultConfig() *Config {
 	return &Config{
+		ConfigVersion:           LatestConfigVersion,
 		Verification:            ModeDisabled,
 		FetchTimeout:            Duration{Duration: defaultFetchTimeout},
 		DigestResolveTimeout:    Duration{Duration: defaultDigestResolveTimeout},
@@ -380,9 +388,14 @@ func (c *Config) Enabled() bool {
 func (c *Config) Validate() error {
 	var errs []error
 
+	err := c.validateConfigVersion()
+	if err != nil {
+		errs = append(errs, err)
+	}
+
 	errs = append(errs, c.validateModeAndLogLevel()...)
 
-	err := c.validateMetricsAddr()
+	err = c.validateMetricsAddr()
 	if err != nil {
 		errs = append(errs, err)
 	}
@@ -575,6 +588,22 @@ func (c *Config) validateRegistryCACertsRuntime() []error {
 	}
 
 	return errs
+}
+
+func (c *Config) validateConfigVersion() error {
+	// An explicit `config_version = 0` is normalized to 1 by Migrate()
+	// before validation runs. Omitted fields keep DefaultConfig's value (1).
+	switch {
+	case c.ConfigVersion < 1:
+		return fmt.Errorf("%w: got %d", ErrInvalidConfigVersion, c.ConfigVersion)
+	case c.ConfigVersion > LatestConfigVersion:
+		return fmt.Errorf(
+			"%w: got %d, max %d",
+			ErrConfigVersionTooNew, c.ConfigVersion, LatestConfigVersion,
+		)
+	default:
+		return nil
+	}
 }
 
 func (c *Config) validateModeAndLogLevel() []error {
@@ -1241,6 +1270,11 @@ func load(decode func(*Config) (toml.MetaData, error)) (*Config, error) {
 	}
 
 	cfg.ApplyModeDefaults(meta.IsDefined("fetch_failure_policy"))
+
+	err = Migrate(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("migrating config: %w", err)
+	}
 
 	err = cfg.Validate()
 	if err != nil {

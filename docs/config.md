@@ -26,6 +26,7 @@ keys from an older version or custom annotations), the plugin will refuse to
 start. Remove or comment out any unrecognized keys before upgrading.
 
 ```toml
+# config_version = 1
 verification = "warn"
 log_level = "info"
 fetch_timeout = "30s"
@@ -52,6 +53,7 @@ circuit_breaker_cooldown = "30s"
 
 | Field                       | Default                          | Description                                                                                                                                                                   |
 | --------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `config_version`            | `1`                              | Schema version of the config file. Omitting defaults to 1. The plugin rejects versions newer than it supports.                                                                |
 | `verification`              | `disabled`                       | Global mode: `disabled`, `warn` (log-only), `enforce` (reject on failure). Per-namespace overrides are set in policy files via the `mode` field (see [policy.md](policy.md)). |
 | `log_level`                 | (CLI flag)                       | Log verbosity override: `debug`, `info`, `warn`, `error`                                                                                                                      |
 | `fetch_timeout`             | `30s`                            | Per-request timeout for attestation fetches. Also used for digest resolution in the CLI `verify` command (the NRI plugin uses `digest_resolve_timeout` instead).              |

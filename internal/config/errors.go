@@ -194,4 +194,10 @@ var (
 
 	// ErrCacheMaxEntriesTooLarge indicates the cache max entries exceeds the maximum.
 	ErrCacheMaxEntriesTooLarge = errors.New("cache_max_entries must not exceed 1000000")
+
+	// ErrConfigVersionTooNew indicates the config_version is newer than the plugin supports.
+	ErrConfigVersionTooNew = errors.New("config_version is newer than this plugin supports")
+
+	// ErrInvalidConfigVersion indicates the config_version is not a valid positive integer.
+	ErrInvalidConfigVersion = errors.New("config_version must be a positive integer")
 )
