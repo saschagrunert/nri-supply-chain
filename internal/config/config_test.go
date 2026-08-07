@@ -1599,18 +1599,16 @@ tuf_root = "/etc/sigstore/root.json"
 		testutil.AssertEqual(t, testTUFRootPath, cfg.Sigstore.TUFRoot)
 	})
 
-	t.Run("tuf_root without tuf_mirror rejected", func(t *testing.T) {
+	t.Run("tuf_root without tuf_mirror accepted as pre-seeded fallback", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := config.LoadFromString(`
+		cfg, err := config.LoadFromString(`
 [sigstore]
 tuf_root = "/etc/sigstore/root.json"
 `)
-		testutil.AssertError(t, err)
-
-		if !errors.Is(err, config.ErrTUFRootRequiresMirror) {
-			t.Errorf("expected ErrTUFRootRequiresMirror, got %v", err)
-		}
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, testTUFRootPath, cfg.Sigstore.TUFRoot)
+		testutil.AssertEqual(t, "", cfg.Sigstore.TUFMirror)
 	})
 
 	t.Run("tuf_root relative path rejected", func(t *testing.T) {
@@ -1668,8 +1666,8 @@ func TestConfigValidateTUFRoot(t *testing.T) {
 			mirror: testTUFMirrorURL, wantErr: true, expectedErr: config.ErrTUFRootNotAbsolute,
 		},
 		{
-			name: "root without mirror rejected", root: testTUFRootPath,
-			mirror: "", wantErr: true, expectedErr: config.ErrTUFRootRequiresMirror,
+			name: "root without mirror accepted as pre-seeded fallback", root: testTUFRootPath,
+			mirror: "", wantErr: false, expectedErr: nil,
 		},
 	}
 
@@ -2656,6 +2654,23 @@ func TestEffectiveRoots(t *testing.T) {
 
 		testutil.AssertEqual(t, "default", roots[0].Name)
 		testutil.AssertEqual(t, testTUFMirrorURL, roots[0].TUFMirror)
+		testutil.AssertEqual(t, testTUFRootPath, roots[0].TUFRoot)
+	})
+
+	t.Run("scalar root without mirror synthesizes pre-seeded entry", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Sigstore.TUFRoot = testTUFRootPath
+
+		roots := cfg.Sigstore.EffectiveRoots()
+
+		if len(roots) != 1 {
+			t.Fatalf("expected 1 root, got %d", len(roots))
+		}
+
+		testutil.AssertEqual(t, "default", roots[0].Name)
+		testutil.AssertEqual(t, "", roots[0].TUFMirror)
 		testutil.AssertEqual(t, testTUFRootPath, roots[0].TUFRoot)
 	})
 

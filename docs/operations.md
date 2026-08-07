@@ -36,7 +36,7 @@ The plugin exposes Prometheus metrics at the configured
 | `nri_supply_chain_fetch_errors_total`             | Counter   | `type`, `registry`            | Attestation fetch errors                                                                             |
 | `nri_supply_chain_inflight_dedup_total`           | Counter   |                               | Deduplicated inflight verifications                                                                  |
 | `nri_supply_chain_circuit_breaker_trips_total`    | Counter   | `registry`                    | Circuit breaker open events                                                                          |
-| `nri_supply_chain_trusted_root_stale_total`       | Counter   |                               | Stale trusted root served from cache                                                                 |
+| `nri_supply_chain_trusted_root_fallback_total`    | Counter   |                               | Trusted root fallback events (stale cache or pre-seeded root)                                        |
 | `nri_supply_chain_cache_failure_hits_total`       | Counter   |                               | Cache hits returning a cached failure                                                                |
 | `nri_supply_chain_build_info`                     | Gauge     | `version`, `goversion`        | Build metadata (set once at startup)                                                                 |
 | `nri_supply_chain_config_reloads_total`           | Counter   |                               | Successful config reloads                                                                            |

@@ -2601,6 +2601,63 @@ func TestCreateFetcherWithRoots(t *testing.T) {
 	})
 }
 
+func TestCreateFetcherPreSeededRoot(t *testing.T) {
+	t.Parallel()
+
+	t.Run("scalar tuf_root without tuf_mirror creates pre-seeded fetcher", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		rootPath := filepath.Join(dir, "trusted_root.json")
+
+		rootJSON := `{"mediaType": "application/vnd.dev.sigstore.trustedroot+json;version=0.1"}`
+		testutil.AssertNoError(t, os.WriteFile(rootPath, []byte(rootJSON), 0o600))
+
+		cfg := config.DefaultConfig()
+		cfg.Sigstore.TUFRoot = rootPath //nolint:staticcheck // testing scalar field
+
+		fetcher, err := verifier.ExportCreateFetcher(cfg)
+		testutil.AssertNoError(t, err)
+
+		if fetcher == nil {
+			t.Fatal("expected non-nil OCIFetcher")
+		}
+
+		if fetcher.IsMultiRoot() {
+			t.Error("pre-seeded root must use single-root path, not multi-root")
+		}
+	})
+
+	t.Run("scalar tuf_root with invalid JSON fails", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		rootPath := filepath.Join(dir, "bad_root.json")
+
+		testutil.AssertNoError(t, os.WriteFile(rootPath, []byte("not valid json"), 0o600))
+
+		cfg := config.DefaultConfig()
+		cfg.Sigstore.TUFRoot = rootPath //nolint:staticcheck // testing scalar field
+
+		_, err := verifier.ExportCreateFetcher(cfg)
+		if err == nil {
+			t.Fatal("expected error from invalid trusted root JSON")
+		}
+	})
+
+	t.Run("scalar tuf_root with missing file fails", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Sigstore.TUFRoot = "/nonexistent/trusted_root.json" //nolint:staticcheck // testing scalar field
+
+		_, err := verifier.ExportCreateFetcher(cfg)
+		if err == nil {
+			t.Fatal("expected error from missing trusted root file")
+		}
+	})
+}
+
 func TestCacheAffectingFieldsChangedRoots(t *testing.T) {
 	t.Parallel()
 

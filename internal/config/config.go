@@ -177,6 +177,9 @@ type SigstoreConfig struct {
 // If Roots is non-empty, it is returned directly.
 // If Roots is empty but the scalar TUFMirror is set, a single-element slice
 // is synthesized from the legacy fields.
+// If Roots is empty and TUFMirror is empty but TUFRoot is set, a
+// single-element slice with an empty mirror is synthesized for pre-seeded
+// trusted root support (air-gapped fallback).
 // If both are empty, nil is returned, signaling that the default
 // public Sigstore trusted root should be used.
 func (s *SigstoreConfig) EffectiveRoots() []SigstoreRootSource {
@@ -191,6 +194,14 @@ func (s *SigstoreConfig) EffectiveRoots() []SigstoreRootSource {
 		return []SigstoreRootSource{{
 			Name:      "default",
 			TUFMirror: s.TUFMirror,
+			TUFRoot:   s.TUFRoot,
+		}}
+	}
+
+	if s.TUFRoot != "" {
+		return []SigstoreRootSource{{
+			Name:      "default",
+			TUFMirror: "",
 			TUFRoot:   s.TUFRoot,
 		}}
 	}
@@ -975,10 +986,6 @@ func (c *Config) validateSigstoreConfig() error {
 	if c.Sigstore.TUFRoot != "" {
 		if !filepath.IsAbs(c.Sigstore.TUFRoot) {
 			errs = append(errs, fmt.Errorf("%w: %q", ErrTUFRootNotAbsolute, c.Sigstore.TUFRoot))
-		}
-
-		if c.Sigstore.TUFMirror == "" {
-			errs = append(errs, ErrTUFRootRequiresMirror)
 		}
 	}
 

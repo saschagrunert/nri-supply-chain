@@ -2233,18 +2233,18 @@ func TestMultiRootStaleCallback(t *testing.T) {
 
 	var callCount int
 
-	fetcher.SetStaleRootCallback(func() {
+	fetcher.SetFallbackCallback(func() {
 		callCount++
 	})
 
 	caches := fetcher.ExportRootCaches()
 	for _, c := range caches {
-		staleHit := c.OnStaleHit()
-		if staleHit == nil {
-			t.Fatal("expected onStaleHit callback to be set")
+		fallback := c.OnFallback()
+		if fallback == nil {
+			t.Fatal("expected onFallback callback to be set")
 		}
 
-		staleHit()
+		fallback()
 	}
 
 	if callCount != 2 {

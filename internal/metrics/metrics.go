@@ -67,8 +67,8 @@ type Metrics struct {
 	InflightDedupTotal prometheus.Counter
 	// CircuitBreakerTripsTotal counts how many times the circuit breaker opened.
 	CircuitBreakerTripsTotal *prometheus.CounterVec
-	// TrustedRootStaleTotal counts how many times a stale trusted root was served.
-	TrustedRootStaleTotal prometheus.Counter
+	// TrustedRootFallbackTotal counts fallback events: stale cache or pre-seeded root.
+	TrustedRootFallbackTotal prometheus.Counter
 	// CacheFailureHitsTotal counts cache hits that returned a previously cached failure result.
 	CacheFailureHitsTotal prometheus.Counter
 	// CacheEvictionsTotal counts cache entry evictions by reason (expired, capacity).
@@ -127,9 +127,9 @@ func New() *Metrics {
 			"Total number of times the fetch circuit breaker opened.",
 			labelRegistry,
 		),
-		TrustedRootStaleTotal: newCounter(
-			"trusted_root_stale_total",
-			"Total number of times a stale trusted root was served from cache.",
+		TrustedRootFallbackTotal: newCounter(
+			"trusted_root_fallback_total",
+			"Total number of trusted root fallback events (stale cache or pre-seeded root).",
 		),
 		CacheFailureHitsTotal: newCounter(
 			"cache_failure_hits_total",
@@ -325,7 +325,7 @@ func (m *Metrics) register() {
 		m.FetchErrorsTotal,
 		m.InflightDedupTotal,
 		m.CircuitBreakerTripsTotal,
-		m.TrustedRootStaleTotal,
+		m.TrustedRootFallbackTotal,
 		m.CacheFailureHitsTotal,
 		m.CacheEvictionsTotal,
 		m.BuildInfo,

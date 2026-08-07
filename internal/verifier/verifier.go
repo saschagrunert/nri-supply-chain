@@ -103,7 +103,7 @@ func New(
 	cfgCopy := *cfg
 
 	if ociFetcher, ok := fetcher.(*attestation.OCIFetcher); ok && ociFetcher != nil {
-		ociFetcher.SetStaleRootCallback(met.TrustedRootStaleTotal.Inc)
+		ociFetcher.SetFallbackCallback(met.TrustedRootFallbackTotal.Inc)
 		ociFetcher.SetMirrorFallbackCallback(func(registryHost string) {
 			met.MirrorFallbackTotal.WithLabelValues(registryHost, "attestation").Inc()
 		})
@@ -809,7 +809,7 @@ func (v *Verifier) reloadFetcher( //nolint:ireturn // returns prev.fetcher which
 	}
 
 	if newFetcher != nil {
-		newFetcher.SetStaleRootCallback(prev.metrics.TrustedRootStaleTotal.Inc)
+		newFetcher.SetFallbackCallback(prev.metrics.TrustedRootFallbackTotal.Inc)
 		newFetcher.SetMirrorFallbackCallback(func(registryHost string) {
 			prev.metrics.MirrorFallbackTotal.WithLabelValues(registryHost, "attestation").Inc()
 		})
