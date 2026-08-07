@@ -56,6 +56,7 @@ const (
 	maxConcurrentCollectFetch = 5
 	trustedRootCacheTTL       = 1 * time.Hour
 	trustedRootMaxStaleness   = 24 * time.Hour
+	negativeCacheTTL          = 5 * time.Minute
 	fetchMaxRetries           = 2
 	fetchRetryBaseDelay       = 500 * time.Millisecond
 	fetchRetryJitterDivisor   = 2
@@ -64,23 +65,42 @@ const (
 type trustedRootFetchFunc func() (*root.TrustedRoot, error)
 
 type trustedRootCache struct {
-	mu         sync.RWMutex
-	root       *root.TrustedRoot
-	fetchedAt  time.Time
-	fetchRoot  trustedRootFetchFunc
-	inflight   singleflight.Group
-	onStaleHit func()
+	mu           sync.RWMutex
+	root         *root.TrustedRoot
+	fetchedAt    time.Time
+	fetchRoot    trustedRootFetchFunc
+	inflight     singleflight.Group
+	onFallback   func()
+	lastFetchErr time.Time
+	preSeeded    *root.TrustedRoot
+}
+
+// cachedHit returns a cached result without network access. It checks two
+// cases: a fresh cache hit (within TTL) and a negative cache hit (a recent CDN
+// failure with a pre-seeded root available). The caller must hold mu.RLock.
+func (c *trustedRootCache) cachedHit() (*root.TrustedRoot, bool) {
+	if c.root != nil && time.Since(c.fetchedAt) < trustedRootCacheTTL {
+		return c.root, true
+	}
+
+	// When a recent CDN failure was recorded and a pre-seeded root is
+	// available, skip the network retry to avoid repeated blocking in
+	// air-gapped environments.
+	if c.preSeeded != nil && !c.lastFetchErr.IsZero() &&
+		time.Since(c.lastFetchErr) < negativeCacheTTL {
+		return c.preSeeded, true
+	}
+
+	return nil, false
 }
 
 func (c *trustedRootCache) get(ctx context.Context) (*root.TrustedRoot, error) {
 	c.mu.RLock()
 
-	if c.root != nil && time.Since(c.fetchedAt) < trustedRootCacheTTL {
-		cachedRoot := c.root
-
+	if hit, ok := c.cachedHit(); ok {
 		c.mu.RUnlock()
 
-		return cachedRoot, nil
+		return hit, nil
 	}
 
 	c.mu.RUnlock()
@@ -133,6 +153,7 @@ func (c *trustedRootCache) refreshRoot() (any, error) {
 
 	c.root = trustedRoot
 	c.fetchedAt = time.Now()
+	c.lastFetchErr = time.Time{}
 
 	return trustedRoot, nil
 }
@@ -140,26 +161,56 @@ func (c *trustedRootCache) refreshRoot() (any, error) {
 func (c *trustedRootCache) handleRefreshError(err error) (*root.TrustedRoot, error) {
 	if c.root != nil {
 		age := time.Since(c.fetchedAt)
-		if age > trustedRootMaxStaleness {
-			return nil, fmt.Errorf(
-				"trusted root is stale (%s old, max %s) and refresh failed: %w",
-				age.Truncate(time.Second), trustedRootMaxStaleness, err,
+
+		if age <= trustedRootMaxStaleness {
+			slog.Warn("Failed to refresh trusted root, using stale cache",
+				"error", err,
+				"age", age,
 			)
+
+			c.fireFallback()
+
+			return c.root, nil
 		}
 
-		slog.Warn("Failed to refresh trusted root, using stale cache",
+		if c.preSeeded != nil {
+			slog.Warn("Cached trusted root is too stale, falling back to pre-seeded root",
+				"error", err,
+				"age", age,
+			)
+
+			c.lastFetchErr = time.Now()
+
+			c.fireFallback()
+
+			return c.preSeeded, nil
+		}
+
+		return nil, fmt.Errorf(
+			"trusted root is stale (%s old, max %s) and refresh failed: %w",
+			age.Truncate(time.Second), trustedRootMaxStaleness, err,
+		)
+	}
+
+	if c.preSeeded != nil {
+		slog.Warn("Trusted root fetch failed, falling back to pre-seeded root",
 			"error", err,
-			"age", age,
 		)
 
-		if c.onStaleHit != nil {
-			c.onStaleHit()
-		}
+		c.lastFetchErr = time.Now()
 
-		return c.root, nil
+		c.fireFallback()
+
+		return c.preSeeded, nil
 	}
 
 	return nil, fmt.Errorf("fetching sigstore trusted root: %w", err)
+}
+
+func (c *trustedRootCache) fireFallback() {
+	if c.onFallback != nil {
+		c.onFallback()
+	}
 }
 
 // ImageFetchFunc fetches an OCI image by reference.
@@ -213,12 +264,46 @@ func newBaseFetcher(verifyFn BundleVerifyFunc) *OCIFetcher {
 // NewOCIFetcher creates a new OCI-based attestation fetcher.
 func NewOCIFetcher() *OCIFetcher {
 	cachedRoot := &trustedRootCache{
-		mu:         sync.RWMutex{},
-		root:       nil,
-		fetchedAt:  time.Time{},
-		fetchRoot:  root.FetchTrustedRoot,
-		inflight:   singleflight.Group{},
-		onStaleHit: nil,
+		mu:           sync.RWMutex{},
+		root:         nil,
+		fetchedAt:    time.Time{},
+		fetchRoot:    root.FetchTrustedRoot,
+		inflight:     singleflight.Group{},
+		onFallback:   nil,
+		lastFetchErr: time.Time{},
+		preSeeded:    nil,
+	}
+
+	fetcher := newBaseFetcher(func(
+		ctx context.Context, bundleBytes []byte, opts *FetchOptions,
+	) ([]byte, error) {
+		return verifyBundleWithCache(ctx, bundleBytes, opts, cachedRoot)
+	})
+	fetcher.rootCache = cachedRoot
+
+	return fetcher
+}
+
+// NewOCIFetcherWithPreSeededRoot creates an OCI-based attestation fetcher
+// that tries the public Sigstore CDN first and falls back to a pre-seeded
+// trusted root loaded from a local JSON file when the CDN is unreachable.
+// This supports air-gapped environments where the trusted root is
+// pre-provisioned on disk.
+//
+// When the CDN fetch fails and the pre-seeded root is used, a negative
+// cache prevents repeated CDN retries for a short window
+// (negativeCacheTTL). This avoids blocking in disconnected environments
+// while still allowing recovery once the window expires.
+func NewOCIFetcherWithPreSeededRoot(preSeeded *root.TrustedRoot) *OCIFetcher {
+	cachedRoot := &trustedRootCache{
+		mu:           sync.RWMutex{},
+		root:         nil,
+		fetchedAt:    time.Time{},
+		fetchRoot:    root.FetchTrustedRoot,
+		inflight:     singleflight.Group{},
+		onFallback:   nil,
+		lastFetchErr: time.Time{},
+		preSeeded:    preSeeded,
 	}
 
 	fetcher := newBaseFetcher(func(
@@ -263,8 +348,10 @@ func NewOCIFetcherWithTUFMirror(tufMirror string, tufRootBytes []byte) *OCIFetch
 
 			return root.FetchTrustedRootWithOptions(opts)
 		},
-		inflight:   singleflight.Group{},
-		onStaleHit: nil,
+		inflight:     singleflight.Group{},
+		onFallback:   nil,
+		lastFetchErr: time.Time{},
+		preSeeded:    nil,
 	}
 
 	fetcher := newBaseFetcher(func(
@@ -290,12 +377,14 @@ func NewOCIFetcherWithMultipleRoots(sources []RootSourceConfig) *OCIFetcher {
 	for i, src := range sources {
 		fetchFn := buildFetchFunc(src)
 		caches[i] = &trustedRootCache{
-			mu:         sync.RWMutex{},
-			root:       nil,
-			fetchedAt:  time.Time{},
-			fetchRoot:  fetchFn,
-			inflight:   singleflight.Group{},
-			onStaleHit: nil,
+			mu:           sync.RWMutex{},
+			root:         nil,
+			fetchedAt:    time.Time{},
+			fetchRoot:    fetchFn,
+			inflight:     singleflight.Group{},
+			onFallback:   nil,
+			lastFetchErr: time.Time{},
+			preSeeded:    nil,
 		}
 	}
 
@@ -327,16 +416,17 @@ func buildFetchFunc(src RootSourceConfig) trustedRootFetchFunc {
 	}
 }
 
-// SetStaleRootCallback sets a function to be called each time the fetcher
-// serves a stale trusted root from cache after a refresh failure.
+// SetFallbackCallback sets a function to be called each time the fetcher
+// falls back to a non-fresh source (stale cache or pre-seeded root) after
+// a refresh failure.
 // Must be called during initialization, before any concurrent Fetch calls.
-func (f *OCIFetcher) SetStaleRootCallback(callback func()) {
+func (f *OCIFetcher) SetFallbackCallback(callback func()) {
 	if f.rootCache != nil {
-		f.rootCache.onStaleHit = callback
+		f.rootCache.onFallback = callback
 	}
 
 	for _, c := range f.rootCaches {
-		c.onStaleHit = callback
+		c.onFallback = callback
 	}
 }
 

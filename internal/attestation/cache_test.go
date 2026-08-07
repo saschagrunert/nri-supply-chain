@@ -197,12 +197,12 @@ func TestTrustedRootCacheCanceledContext(t *testing.T) {
 	}
 }
 
-func TestTrustedRootCacheStaleHitCallbackInvoked(t *testing.T) {
+func TestTrustedRootCacheFallbackCallbackInvoked(t *testing.T) {
 	t.Parallel()
 
 	staleRoot := fakeTrustedRoot()
 
-	var staleHitCount atomic.Int32
+	var fallbackCount atomic.Int32
 
 	cache := attestation.NewTestTrustedRootCacheWithRoot(
 		func() (*root.TrustedRoot, error) {
@@ -211,8 +211,8 @@ func TestTrustedRootCacheStaleHitCallbackInvoked(t *testing.T) {
 		staleRoot,
 		time.Now().Add(-2*attestation.ExportTrustedRootCacheTTL()),
 	)
-	cache.SetOnStaleHit(func() {
-		staleHitCount.Add(1)
+	cache.SetOnFallback(func() {
+		fallbackCount.Add(1)
 	})
 
 	got, err := cache.GetTrustedRoot(context.Background())
@@ -224,18 +224,18 @@ func TestTrustedRootCacheStaleHitCallbackInvoked(t *testing.T) {
 		t.Error("expected stale root as fallback")
 	}
 
-	if staleHitCount.Load() != 1 {
-		t.Errorf("expected onStaleHit to be called once, got %d", staleHitCount.Load())
+	if fallbackCount.Load() != 1 {
+		t.Errorf("expected onFallback to be called once, got %d", fallbackCount.Load())
 	}
 }
 
-func TestTrustedRootCacheStaleHitCallbackNotCalledOnSuccess(t *testing.T) {
+func TestTrustedRootCacheFallbackCallbackNotCalledOnSuccess(t *testing.T) {
 	t.Parallel()
 
 	staleRoot := fakeTrustedRoot()
 	freshRoot := fakeTrustedRoot()
 
-	var staleHitCount atomic.Int32
+	var fallbackCount atomic.Int32
 
 	cache := attestation.NewTestTrustedRootCacheWithRoot(
 		func() (*root.TrustedRoot, error) {
@@ -244,8 +244,8 @@ func TestTrustedRootCacheStaleHitCallbackNotCalledOnSuccess(t *testing.T) {
 		staleRoot,
 		time.Now().Add(-2*attestation.ExportTrustedRootCacheTTL()),
 	)
-	cache.SetOnStaleHit(func() {
-		staleHitCount.Add(1)
+	cache.SetOnFallback(func() {
+		fallbackCount.Add(1)
 	})
 
 	got, err := cache.GetTrustedRoot(context.Background())
@@ -257,17 +257,17 @@ func TestTrustedRootCacheStaleHitCallbackNotCalledOnSuccess(t *testing.T) {
 		t.Error("expected fresh root after successful refresh")
 	}
 
-	if staleHitCount.Load() != 0 {
-		t.Errorf("expected onStaleHit not to be called on success, got %d", staleHitCount.Load())
+	if fallbackCount.Load() != 0 {
+		t.Errorf("expected onFallback not to be called on success, got %d", fallbackCount.Load())
 	}
 }
 
-func TestTrustedRootCacheStaleHitCallbackNotCalledWhenTooStale(t *testing.T) {
+func TestTrustedRootCacheFallbackCallbackNotCalledWhenTooStale(t *testing.T) {
 	t.Parallel()
 
 	staleRoot := fakeTrustedRoot()
 
-	var staleHitCount atomic.Int32
+	var fallbackCount atomic.Int32
 
 	cache := attestation.NewTestTrustedRootCacheWithRoot(
 		func() (*root.TrustedRoot, error) {
@@ -276,8 +276,8 @@ func TestTrustedRootCacheStaleHitCallbackNotCalledWhenTooStale(t *testing.T) {
 		staleRoot,
 		time.Now().Add(-2*attestation.ExportTrustedRootMaxStaleness()),
 	)
-	cache.SetOnStaleHit(func() {
-		staleHitCount.Add(1)
+	cache.SetOnFallback(func() {
+		fallbackCount.Add(1)
 	})
 
 	_, err := cache.GetTrustedRoot(context.Background())
@@ -285,8 +285,245 @@ func TestTrustedRootCacheStaleHitCallbackNotCalledWhenTooStale(t *testing.T) {
 		t.Fatal("expected error for root beyond max staleness")
 	}
 
-	if staleHitCount.Load() != 0 {
-		t.Errorf("expected onStaleHit not to be called when root is too stale, got %d",
-			staleHitCount.Load())
+	if fallbackCount.Load() != 0 {
+		t.Errorf("expected onFallback not to be called when root is too stale, got %d",
+			fallbackCount.Load())
+	}
+}
+
+func TestTrustedRootCachePreSeededFallback(t *testing.T) {
+	t.Parallel()
+
+	preSeeded := fakeTrustedRoot()
+
+	cache := attestation.NewTestTrustedRootCacheWithPreSeeded(
+		func() (*root.TrustedRoot, error) {
+			return nil, errRootFetchFailed
+		},
+		preSeeded,
+	)
+
+	got, err := cache.GetTrustedRoot(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got != preSeeded {
+		t.Error("expected pre-seeded root as fallback when fetch fails")
+	}
+}
+
+func TestTrustedRootCachePreSeededNotUsedOnSuccess(t *testing.T) {
+	t.Parallel()
+
+	freshRoot := fakeTrustedRoot()
+	preSeeded := fakeTrustedRoot()
+
+	cache := attestation.NewTestTrustedRootCacheWithPreSeeded(
+		func() (*root.TrustedRoot, error) {
+			return freshRoot, nil
+		},
+		preSeeded,
+	)
+
+	got, err := cache.GetTrustedRoot(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got != freshRoot {
+		t.Error("expected fresh root when fetch succeeds, not pre-seeded")
+	}
+
+	if got == preSeeded {
+		t.Error("pre-seeded root should not be used when fetch succeeds")
+	}
+}
+
+func TestTrustedRootCacheStaleCacheFallsBackToPreSeeded(t *testing.T) {
+	t.Parallel()
+
+	staleRoot := fakeTrustedRoot()
+	preSeeded := fakeTrustedRoot()
+
+	var fallbackCount atomic.Int32
+
+	cache := attestation.NewTestTrustedRootCacheWithRootAndPreSeeded(
+		func() (*root.TrustedRoot, error) {
+			return nil, errRootFetchFailed
+		},
+		staleRoot,
+		time.Now().Add(-2*attestation.ExportTrustedRootMaxStaleness()),
+		preSeeded,
+	)
+	cache.SetOnFallback(func() {
+		fallbackCount.Add(1)
+	})
+
+	got, err := cache.GetTrustedRoot(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got != preSeeded {
+		t.Error("expected pre-seeded root when cached root is beyond max staleness")
+	}
+
+	if got == staleRoot {
+		t.Error("stale root beyond max staleness should not be returned when pre-seeded exists")
+	}
+
+	if fallbackCount.Load() != 1 {
+		t.Errorf("expected onFallback to be called once, got %d", fallbackCount.Load())
+	}
+}
+
+func TestTrustedRootCachePreSeededCallbackInvoked(t *testing.T) {
+	t.Parallel()
+
+	preSeeded := fakeTrustedRoot()
+
+	var fallbackCount atomic.Int32
+
+	cache := attestation.NewTestTrustedRootCacheWithPreSeeded(
+		func() (*root.TrustedRoot, error) {
+			return nil, errRootFetchFailed
+		},
+		preSeeded,
+	)
+	cache.SetOnFallback(func() {
+		fallbackCount.Add(1)
+	})
+
+	got, err := cache.GetTrustedRoot(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got != preSeeded {
+		t.Error("expected pre-seeded root as fallback")
+	}
+
+	if fallbackCount.Load() != 1 {
+		t.Errorf("expected onFallback to be called once for pre-seeded fallback, got %d",
+			fallbackCount.Load())
+	}
+}
+
+func TestTrustedRootCacheNegativeCacheSkipsCDN(t *testing.T) {
+	t.Parallel()
+
+	preSeeded := fakeTrustedRoot()
+
+	var fetchCount atomic.Int32
+
+	cache := attestation.NewTestTrustedRootCacheWithPreSeeded(
+		func() (*root.TrustedRoot, error) {
+			fetchCount.Add(1)
+
+			return nil, errRootFetchFailed
+		},
+		preSeeded,
+	)
+
+	// First call: hits the CDN, fails, falls back to pre-seeded root.
+	got, err := cache.GetTrustedRoot(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error on first call: %v", err)
+	}
+
+	if got != preSeeded {
+		t.Error("expected pre-seeded root on first call")
+	}
+
+	if fetchCount.Load() != 1 {
+		t.Fatalf("expected exactly 1 CDN fetch on first call, got %d", fetchCount.Load())
+	}
+
+	// Second call: within negative cache window, should skip CDN entirely.
+	got, err = cache.GetTrustedRoot(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error on second call: %v", err)
+	}
+
+	if got != preSeeded {
+		t.Error("expected pre-seeded root on second call (negative cache)")
+	}
+
+	if fetchCount.Load() != 1 {
+		t.Errorf("expected CDN fetch count to remain 1 (negative cache), got %d",
+			fetchCount.Load())
+	}
+}
+
+func TestTrustedRootCacheNegativeCacheDoesNotApplyWithoutPreSeeded(t *testing.T) {
+	t.Parallel()
+
+	var fetchCount atomic.Int32
+
+	cache := attestation.NewTestTrustedRootCache(func() (*root.TrustedRoot, error) {
+		fetchCount.Add(1)
+
+		return nil, errRootFetchFailed
+	})
+
+	// First call fails with no pre-seeded root available.
+	_, err := cache.GetTrustedRoot(context.Background())
+	if err == nil {
+		t.Fatal("expected error when no pre-seeded root and fetch fails")
+	}
+
+	// Second call should still attempt CDN (no negative cache without pre-seeded root).
+	_, err = cache.GetTrustedRoot(context.Background())
+	if err == nil {
+		t.Fatal("expected error on second call")
+	}
+
+	if fetchCount.Load() < 2 {
+		t.Errorf("expected at least 2 CDN fetches without pre-seeded root, got %d",
+			fetchCount.Load())
+	}
+}
+
+func TestTrustedRootCacheNegativeCacheServesPreSeeded(t *testing.T) {
+	t.Parallel()
+
+	preSeeded := fakeTrustedRoot()
+	freshRoot := fakeTrustedRoot()
+
+	callNum := atomic.Int32{}
+
+	cache := attestation.NewTestTrustedRootCacheWithPreSeeded(
+		func() (*root.TrustedRoot, error) {
+			n := callNum.Add(1)
+
+			if n == 1 {
+				return nil, errRootFetchFailed
+			}
+
+			return freshRoot, nil
+		},
+		preSeeded,
+	)
+
+	// First call: CDN fails, falls back to pre-seeded root.
+	got, err := cache.GetTrustedRoot(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error on first call: %v", err)
+	}
+
+	if got != preSeeded {
+		t.Error("expected pre-seeded root on first call")
+	}
+
+	// Second call within negative cache window: CDN is skipped, pre-seeded
+	// root is returned directly without a fetch attempt.
+	got, err = cache.GetTrustedRoot(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error on second call: %v", err)
+	}
+
+	if got != preSeeded {
+		t.Error("expected pre-seeded root on second call (within negative cache window)")
 	}
 }

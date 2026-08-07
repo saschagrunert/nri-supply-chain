@@ -91,7 +91,7 @@ tuf_root = "/etc/sigstore/root.json"
 The trusted root fetched from the custom TUF mirror contains the Fulcio CA
 certificates and Rekor transparency log keys for the private deployment.
 
-There are two usage patterns:
+There are three usage patterns:
 
 **CDN mirror of public Sigstore** (tuf_mirror only): When only `tuf_mirror` is
 set, the mirror is treated as a CDN replica of the public Sigstore TUF
@@ -105,6 +105,15 @@ Sigstore deployment that uses its own root keys. Without this, TUF
 verification fails because the default public Sigstore root keys do not match
 the private deployment's keys. The path must be absolute and the file must
 exist and be non-empty at startup.
+
+**Pre-seeded trusted root fallback** (tuf_root only): When only `tuf_root` is
+set without `tuf_mirror`, the plugin tries the public Sigstore CDN first for
+each verification request. If the CDN is unreachable (DNS failure, connection
+timeout, TLS error), it falls back to the pre-seeded trusted root from the
+local file. This supports air-gapped environments where the trusted root is
+pre-provisioned on disk but connectivity to the public CDN may be restored
+later. The pre-seeded root is not cached, but after a CDN failure the plugin
+skips retries for 5 minutes (negative cache) before re-attempting the CDN.
 
 The `tuf_mirror` URL must use the `https` scheme. Reachability is
 not validated at config load time; a failure to reach the mirror is handled at

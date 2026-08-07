@@ -145,12 +145,14 @@ type TrustedRootCacheForTest = trustedRootCache
 // NewTestTrustedRootCache creates a trustedRootCache with an injectable fetch function for testing.
 func NewTestTrustedRootCache(fetchFn TrustedRootFetchFunc) *trustedRootCache {
 	return &trustedRootCache{
-		mu:         sync.RWMutex{},
-		root:       nil,
-		fetchedAt:  time.Time{},
-		fetchRoot:  fetchFn,
-		inflight:   singleflight.Group{},
-		onStaleHit: nil,
+		mu:           sync.RWMutex{},
+		root:         nil,
+		fetchedAt:    time.Time{},
+		fetchRoot:    fetchFn,
+		inflight:     singleflight.Group{},
+		onFallback:   nil,
+		lastFetchErr: time.Time{},
+		preSeeded:    nil,
 	}
 }
 
@@ -159,12 +161,50 @@ func NewTestTrustedRootCacheWithRoot(
 	fetchFn TrustedRootFetchFunc, cachedRoot *root.TrustedRoot, fetchedAt time.Time,
 ) *trustedRootCache {
 	return &trustedRootCache{
-		mu:         sync.RWMutex{},
-		root:       cachedRoot,
-		fetchedAt:  fetchedAt,
-		fetchRoot:  fetchFn,
-		inflight:   singleflight.Group{},
-		onStaleHit: nil,
+		mu:           sync.RWMutex{},
+		root:         cachedRoot,
+		fetchedAt:    fetchedAt,
+		fetchRoot:    fetchFn,
+		inflight:     singleflight.Group{},
+		onFallback:   nil,
+		lastFetchErr: time.Time{},
+		preSeeded:    nil,
+	}
+}
+
+// NewTestTrustedRootCacheWithPreSeeded creates a cache with a pre-seeded fallback root for testing.
+func NewTestTrustedRootCacheWithPreSeeded(
+	fetchFn TrustedRootFetchFunc, preSeeded *root.TrustedRoot,
+) *trustedRootCache {
+	return &trustedRootCache{
+		mu:           sync.RWMutex{},
+		root:         nil,
+		fetchedAt:    time.Time{},
+		fetchRoot:    fetchFn,
+		inflight:     singleflight.Group{},
+		onFallback:   nil,
+		lastFetchErr: time.Time{},
+		preSeeded:    preSeeded,
+	}
+}
+
+// NewTestTrustedRootCacheWithRootAndPreSeeded creates a cache with both a cached root and a
+// pre-seeded fallback root for testing stale-cache-plus-pre-seeded interactions.
+func NewTestTrustedRootCacheWithRootAndPreSeeded(
+	fetchFn TrustedRootFetchFunc,
+	cachedRoot *root.TrustedRoot,
+	fetchedAt time.Time,
+	preSeeded *root.TrustedRoot,
+) *trustedRootCache {
+	return &trustedRootCache{
+		mu:           sync.RWMutex{},
+		root:         cachedRoot,
+		fetchedAt:    fetchedAt,
+		fetchRoot:    fetchFn,
+		inflight:     singleflight.Group{},
+		onFallback:   nil,
+		lastFetchErr: time.Time{},
+		preSeeded:    preSeeded,
 	}
 }
 
@@ -347,15 +387,18 @@ const ExportMaxCircuitBreakers = maxCircuitBreakers
 // ExportMaxTotalAttestationSize exposes maxTotalAttestationSize for external tests.
 const ExportMaxTotalAttestationSize = maxTotalAttestationSize
 
-// SetOnStaleHit sets the onStaleHit callback on a test cache for testing.
-func (c *trustedRootCache) SetOnStaleHit(fn func()) {
-	c.onStaleHit = fn
+// SetOnFallback sets the onFallback callback on a test cache for testing.
+func (c *trustedRootCache) SetOnFallback(fn func()) {
+	c.onFallback = fn
 }
 
-// OnStaleHit returns the onStaleHit callback for testing.
-func (c *trustedRootCache) OnStaleHit() func() {
-	return c.onStaleHit
+// OnFallback returns the onFallback callback for testing.
+func (c *trustedRootCache) OnFallback() func() {
+	return c.onFallback
 }
+
+// ExportNegativeCacheTTL returns the negative cache TTL for testing.
+func ExportNegativeCacheTTL() time.Duration { return negativeCacheTTL }
 
 // ExportExceededTotalAttestationSize exposes exceededTotalAttestationSize for external tests.
 func ExportExceededTotalAttestationSize(ctx context.Context, totalSize int64) bool {

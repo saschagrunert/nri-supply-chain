@@ -66,8 +66,8 @@ func TestNewMetrics(t *testing.T) {
 		t.Error("expected CircuitBreakerTripsTotal to be set")
 	}
 
-	if met.TrustedRootStaleTotal == nil {
-		t.Error("expected TrustedRootStaleTotal to be set")
+	if met.TrustedRootFallbackTotal == nil {
+		t.Error("expected TrustedRootFallbackTotal to be set")
 	}
 
 	if met.CacheFailureHitsTotal == nil {
@@ -168,7 +168,7 @@ func TestMetricsIncrement(t *testing.T) {
 	met.CacheMissesTotal.Inc()
 	met.CacheEntriesTotal.Set(42)
 	met.InflightDedupTotal.Inc()
-	met.TrustedRootStaleTotal.Inc()
+	met.TrustedRootFallbackTotal.Inc()
 	met.CacheFailureHitsTotal.Inc()
 	met.FetchErrorsTotal.WithLabelValues("attestation", "ghcr.io").Inc()
 	met.CircuitBreakerTripsTotal.WithLabelValues("ghcr.io").Inc()
@@ -210,7 +210,7 @@ func TestMetricsIncrement(t *testing.T) {
 		`nri_supply_chain_cache_misses_total 1`,
 		`nri_supply_chain_cache_entries 42`,
 		`nri_supply_chain_inflight_dedup_total 1`,
-		`nri_supply_chain_trusted_root_stale_total 1`,
+		`nri_supply_chain_trusted_root_fallback_total 1`,
 		`nri_supply_chain_cache_failure_hits_total 1`,
 		`nri_supply_chain_fetch_errors_total{registry="ghcr.io",type="attestation"} 1`,
 		`nri_supply_chain_circuit_breaker_trips_total{registry="ghcr.io"} 1`,

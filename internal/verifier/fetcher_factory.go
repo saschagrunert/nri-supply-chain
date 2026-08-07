@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/sigstore/sigstore-go/pkg/root"
+
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/fileutil"
@@ -67,40 +69,20 @@ func createFetcher(cfg *config.Config) (*attestation.OCIFetcher, error) {
 	}
 
 	// Legacy scalar path: when the user set tuf_mirror/tuf_root (not the
-	// roots array), preserve the old single-root behavior exactly. The
-	// public Sigstore root is NOT included, matching the pre-roots behavior
-	// where setting tuf_mirror locked verification to the private mirror.
+	// roots array), preserve the old single-root behavior exactly.
 	//nolint:staticcheck // backward compatibility: scalar TUFMirror/TUFRoot fields
 	scalarMirror := cfg.Sigstore.TUFMirror
 	//nolint:staticcheck // backward compatibility: scalar TUFMirror/TUFRoot fields
 	scalarRoot := cfg.Sigstore.TUFRoot
 
-	if len(cfg.Sigstore.Roots) == 0 && scalarMirror != "" {
-		tufRootBytes, err := readTUFRootBytes(scalarRoot)
-		if err != nil {
-			return nil, err
-		}
-
-		return attestation.NewOCIFetcherWithTUFMirror(
-			scalarMirror, tufRootBytes,
-		), nil
+	if len(cfg.Sigstore.Roots) == 0 {
+		return createScalarFetcher(scalarMirror, scalarRoot)
 	}
 
 	// New roots array path: single root without public root inclusion uses
 	// the simpler single-root constructor.
 	if len(effectiveRoots) == 1 && !cfg.Sigstore.ShouldIncludePublicRoot() {
-		if effectiveRoots[0].TUFMirror == "" {
-			return attestation.NewOCIFetcher(), nil
-		}
-
-		tufRootBytes, err := readTUFRootBytes(effectiveRoots[0].TUFRoot)
-		if err != nil {
-			return nil, err
-		}
-
-		return attestation.NewOCIFetcherWithTUFMirror(
-			effectiveRoots[0].TUFMirror, tufRootBytes,
-		), nil
+		return createSingleRootFetcher(effectiveRoots[0])
 	}
 
 	// Multiple roots or a single custom root plus the public root.
@@ -110,6 +92,52 @@ func createFetcher(cfg *config.Config) (*attestation.OCIFetcher, error) {
 	}
 
 	return attestation.NewOCIFetcherWithMultipleRoots(sources), nil
+}
+
+// createScalarFetcher handles the legacy scalar tuf_mirror/tuf_root config.
+// When tuf_mirror is set, verification is locked to that private mirror.
+// When only tuf_root is set (no mirror), the fetcher tries the public
+// Sigstore CDN first and falls back to the pre-seeded trusted root when
+// the CDN is unreachable (air-gapped environments).
+func createScalarFetcher(mirror, rootPath string) (*attestation.OCIFetcher, error) {
+	if mirror != "" {
+		tufRootBytes, err := readTUFRootBytes(rootPath)
+		if err != nil {
+			return nil, err
+		}
+
+		return attestation.NewOCIFetcherWithTUFMirror(mirror, tufRootBytes), nil
+	}
+
+	if rootPath != "" {
+		preSeeded, err := loadPreSeededTrustedRoot(rootPath)
+		if err != nil {
+			return nil, err
+		}
+
+		return attestation.NewOCIFetcherWithPreSeededRoot(preSeeded), nil
+	}
+
+	return attestation.NewOCIFetcher(), nil
+}
+
+// createSingleRootFetcher handles the roots array path when there is
+// exactly one root source and public root inclusion is disabled.
+func createSingleRootFetcher(
+	rootSource config.SigstoreRootSource,
+) (*attestation.OCIFetcher, error) {
+	if rootSource.TUFMirror == "" {
+		return attestation.NewOCIFetcher(), nil
+	}
+
+	tufRootBytes, err := readTUFRootBytes(rootSource.TUFRoot)
+	if err != nil {
+		return nil, err
+	}
+
+	return attestation.NewOCIFetcherWithTUFMirror(
+		rootSource.TUFMirror, tufRootBytes,
+	), nil
 }
 
 func buildRootSourceConfigs(
@@ -164,6 +192,20 @@ func readTUFRootBytes(path string) ([]byte, error) {
 	}
 
 	return data, nil
+}
+
+func loadPreSeededTrustedRoot(path string) (*root.TrustedRoot, error) {
+	data, err := readTUFRootBytes(path)
+	if err != nil {
+		return nil, err
+	}
+
+	trustedRoot, err := root.NewTrustedRootFromJSON(data)
+	if err != nil {
+		return nil, fmt.Errorf("parsing pre-seeded trusted root %q: %w", path, err)
+	}
+
+	return trustedRoot, nil
 }
 
 func transportCacheFromFetcher(fetcher attestation.Fetcher) *registry.TransportCache {
