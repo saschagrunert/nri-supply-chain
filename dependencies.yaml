@@ -1,6 +1,6 @@
 dependencies:
   - name: nri-supply-chain
-    version: 0.2.1
+    version: 0.3.0
     refPaths:
       - path: cmd/nri-supply-chain/main.go
         match: ^var version
@@ -8,6 +8,12 @@ dependencies:
         match: "^\\s+verify ghcr.*nri-supply-chain:"
       - path: README.md
         match: '"image".*nri-supply-chain:'
+      - path: README.md
+        match: "Image.*nri-supply-chain:"
+      - path: README.md
+        match: "NOTATION.*nri-supply-chain:"
+      - path: README.md
+        match: '"detail".*nri-supply-chain:'
       - path: deploy/kubernetes/daemonset.yaml
         match: "image.*nri-supply-chain:"
 

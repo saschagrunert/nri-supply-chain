@@ -36,7 +36,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
-var version = "v0.2.1"
+var version = "v0.3.0"
 
 var logLevelVar slog.LevelVar //nolint:gochecknoglobals // shared between initLogging and reload
 
