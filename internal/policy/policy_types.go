@@ -88,6 +88,29 @@ var (
 	// ErrDuplicateVerifierKey indicates a duplicate key path in a verifier's keys array.
 	ErrDuplicateVerifierKey = errors.New("duplicate verifier key")
 
+	// ErrDuplicateKeyAcrossVerifiers indicates the same key path appears in
+	// multiple verifiers, which would cause conflicting time bounds.
+	ErrDuplicateKeyAcrossVerifiers = errors.New(
+		"same key path used in multiple verifiers",
+	)
+
+	// ErrInvalidNotBefore indicates the notBefore field is not valid RFC 3339.
+	ErrInvalidNotBefore = errors.New("invalid notBefore, must be RFC 3339")
+
+	// ErrInvalidNotAfter indicates the notAfter field is not valid RFC 3339.
+	ErrInvalidNotAfter = errors.New("invalid notAfter, must be RFC 3339")
+
+	// ErrNotAfterBeforeNotBefore indicates notAfter is not after notBefore.
+	ErrNotAfterBeforeNotBefore = errors.New(
+		"notAfter must be after notBefore",
+	)
+
+	// ErrTimeBoundsWithoutKeys indicates notBefore/notAfter are set on a
+	// verifier that has no keys (keyless verifiers use certificate timestamps).
+	ErrTimeBoundsWithoutKeys = errors.New(
+		"notBefore/notAfter are only valid with key-based verification",
+	)
+
 	// ErrVSAMaxAgeNotPositive indicates a non-positive VSA maxAge value.
 	ErrVSAMaxAgeNotPositive = errors.New("vsa.maxAge must be positive")
 
@@ -288,6 +311,19 @@ type TrustedVerifier struct {
 	// keyless verification; when empty, trust.issuers must be configured
 	// so bundles can be verified via Fulcio/OIDC.
 	Keys []string `json:"keys,omitempty"`
+	// NotBefore is the earliest time (RFC 3339) at which this verifier's
+	// key signatures are considered valid. Signatures made before this
+	// time are rejected. Optional; when empty, no lower bound is enforced.
+	NotBefore string `json:"notBefore,omitempty" jsonschema:"format=date-time"`
+	// NotAfter is the latest time (RFC 3339) at which this verifier's
+	// key signatures are considered valid. Signatures made after this
+	// time are rejected. Use this to time-bound a compromised key.
+	// Optional; when empty, no upper bound is enforced.
+	NotAfter string `json:"notAfter,omitempty" jsonschema:"format=date-time"`
+	// NotBeforeTime is the parsed form of NotBefore, resolved after validation.
+	NotBeforeTime time.Time `json:"-"`
+	// NotAfterTime is the parsed form of NotAfter, resolved after validation.
+	NotAfterTime time.Time `json:"-"`
 }
 
 // SLSAPolicy contains SLSA provenance verification settings.

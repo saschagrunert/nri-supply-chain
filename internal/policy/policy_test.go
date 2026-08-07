@@ -42,6 +42,9 @@ const (
 	testExplicitDenyName       = "explicit deny"
 	testNonexistentKeyPath     = "/nonexistent/key.pub"
 	testRuleImagesGlob         = "ghcr.io/**"
+	testNotBefore2024          = "2024-01-01T00:00:00Z"
+	testNotAfter2025           = "2025-01-01T00:00:00Z"
+	testMidpoint2024           = "2024-06-01T00:00:00Z"
 	testBaseBuilderID          = "base-builder"
 	testRuleBuilderID          = "rule-builder"
 	testMutatedValue           = "mutated"
@@ -4899,4 +4902,312 @@ func TestMergeWithDefaultNilNotationAndSBOMPreservesDefaults(t *testing.T) {
 	if merged.SLSA.MissingPolicy != types.ActionWarn {
 		t.Errorf("expected namespace SLSA warn, got %s", merged.SLSA.MissingPolicy)
 	}
+}
+
+func TestPolicyValidateVerifierNotBeforeNotAfterValid(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{
+		Sections: policy.Sections{
+			Trust: &policy.TrustPolicy{
+				Verifiers: []policy.TrustedVerifier{
+					{
+						ID:        testVerifierID,
+						Keys:      []string{testKeyPath},
+						NotBefore: testNotBefore2024,
+						NotAfter:  testNotAfter2025,
+					},
+				},
+			},
+		},
+	}
+
+	err := pol.Validate()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	verif := pol.Trust.Verifiers[0]
+
+	expectedNB := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	if !verif.NotBeforeTime.Equal(expectedNB) {
+		t.Errorf("expected NotBeforeTime %v, got %v", expectedNB, verif.NotBeforeTime)
+	}
+
+	expectedNA := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	if !verif.NotAfterTime.Equal(expectedNA) {
+		t.Errorf("expected NotAfterTime %v, got %v", expectedNA, verif.NotAfterTime)
+	}
+}
+
+func TestPolicyValidateVerifierNotBeforeOnly(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{
+		Sections: policy.Sections{
+			Trust: &policy.TrustPolicy{
+				Verifiers: []policy.TrustedVerifier{
+					{
+						ID:        testVerifierID,
+						Keys:      []string{testKeyPath},
+						NotBefore: "2024-06-15T12:00:00Z",
+					},
+				},
+			},
+		},
+	}
+
+	err := pol.Validate()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	verif := pol.Trust.Verifiers[0]
+	if verif.NotBeforeTime.IsZero() {
+		t.Error("expected NotBeforeTime to be set")
+	}
+
+	if !verif.NotAfterTime.IsZero() {
+		t.Error("expected NotAfterTime to be zero")
+	}
+}
+
+func TestPolicyValidateVerifierNotAfterOnly(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{
+		Sections: policy.Sections{
+			Trust: &policy.TrustPolicy{
+				Verifiers: []policy.TrustedVerifier{
+					{
+						ID:       testVerifierID,
+						Keys:     []string{testKeyPath},
+						NotAfter: "2025-12-31T23:59:59Z",
+					},
+				},
+			},
+		},
+	}
+
+	err := pol.Validate()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	verif := pol.Trust.Verifiers[0]
+	if !verif.NotBeforeTime.IsZero() {
+		t.Error("expected NotBeforeTime to be zero")
+	}
+
+	if verif.NotAfterTime.IsZero() {
+		t.Error("expected NotAfterTime to be set")
+	}
+}
+
+func TestPolicyValidateVerifierInvalidNotBefore(t *testing.T) {
+	t.Parallel()
+
+	runValidateTests(t, []validateTest{
+		{
+			name: "invalid notBefore format",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Trust: &policy.TrustPolicy{
+						Verifiers: []policy.TrustedVerifier{
+							{
+								ID:        testVerifierID,
+								Keys:      []string{testKeyPath},
+								NotBefore: "not-a-date",
+							},
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrInvalidNotBefore,
+		},
+	})
+}
+
+func TestPolicyValidateVerifierInvalidNotAfter(t *testing.T) {
+	t.Parallel()
+
+	runValidateTests(t, []validateTest{
+		{
+			name: "invalid notAfter format",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Trust: &policy.TrustPolicy{
+						Verifiers: []policy.TrustedVerifier{
+							{
+								ID:       testVerifierID,
+								Keys:     []string{testKeyPath},
+								NotAfter: "2024/01/01",
+							},
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrInvalidNotAfter,
+		},
+	})
+}
+
+func TestPolicyValidateVerifierNotAfterBeforeNotBefore(t *testing.T) {
+	t.Parallel()
+
+	runValidateTests(t, []validateTest{
+		{
+			name: "notAfter before notBefore",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Trust: &policy.TrustPolicy{
+						Verifiers: []policy.TrustedVerifier{
+							{
+								ID:        testVerifierID,
+								Keys:      []string{testKeyPath},
+								NotBefore: testNotAfter2025,
+								NotAfter:  testNotBefore2024,
+							},
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrNotAfterBeforeNotBefore,
+		},
+		{
+			name: "notAfter equals notBefore",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Trust: &policy.TrustPolicy{
+						Verifiers: []policy.TrustedVerifier{
+							{
+								ID:        testVerifierID,
+								Keys:      []string{testKeyPath},
+								NotBefore: testMidpoint2024,
+								NotAfter:  testMidpoint2024,
+							},
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrNotAfterBeforeNotBefore,
+		},
+	})
+}
+
+func TestPolicyValidateVerifierTimeBoundsWithoutKeys(t *testing.T) {
+	t.Parallel()
+
+	runValidateTests(t, []validateTest{
+		{
+			name: "notBefore without keys",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Trust: &policy.TrustPolicy{
+						Verifiers: []policy.TrustedVerifier{
+							{
+								ID:        testVerifierID,
+								NotBefore: testNotBefore2024,
+							},
+						},
+						Issuers: []string{testIssuerURL},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrTimeBoundsWithoutKeys,
+		},
+		{
+			name: "notAfter without keys",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Trust: &policy.TrustPolicy{
+						Verifiers: []policy.TrustedVerifier{
+							{
+								ID:       testVerifierID,
+								NotAfter: testNotAfter2025,
+							},
+						},
+						Issuers: []string{testIssuerURL},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrTimeBoundsWithoutKeys,
+		},
+		{
+			name: "both notBefore and notAfter without keys",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Trust: &policy.TrustPolicy{
+						Verifiers: []policy.TrustedVerifier{
+							{
+								ID:        testVerifierID,
+								NotBefore: testNotBefore2024,
+								NotAfter:  testNotAfter2025,
+							},
+						},
+						Issuers: []string{testIssuerURL},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrTimeBoundsWithoutKeys,
+		},
+	})
+}
+
+func TestPolicyValidateDuplicateKeyAcrossVerifiers(t *testing.T) {
+	t.Parallel()
+
+	runValidateTests(t, []validateTest{
+		{
+			name: "same key in two verifiers is rejected",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Trust: &policy.TrustPolicy{
+						Verifiers: []policy.TrustedVerifier{
+							{
+								ID:        "verifier-a",
+								Keys:      []string{testKeyPath},
+								NotBefore: testNotBefore2024,
+								NotAfter:  testNotAfter2025,
+							},
+							{
+								ID:   "verifier-b",
+								Keys: []string{testKeyPath},
+							},
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrDuplicateKeyAcrossVerifiers,
+		},
+		{
+			name: "different keys in two verifiers is valid",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Trust: &policy.TrustPolicy{
+						Verifiers: []policy.TrustedVerifier{
+							{
+								ID:   "verifier-a",
+								Keys: []string{"/key/a.pub"},
+							},
+							{
+								ID:   "verifier-b",
+								Keys: []string{"/key/b.pub"},
+							},
+						},
+					},
+				},
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+	})
 }

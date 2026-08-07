@@ -46,6 +46,7 @@ patterns for the nri-supply-chain plugin.
   - [Per-image policy rules](#per-image-policy-rules)
   - [VSA-accelerated verification](#vsa-accelerated-verification)
   - [Key rotation](#key-rotation)
+    - [Time-bounded key rotation](#time-bounded-key-rotation)
   - [Multi-verification mode](#multi-verification-mode)
 - [Example Policy Files](#example-policy-files)
 
@@ -571,6 +572,14 @@ nri-supply-chain json-schema policy
             "type": "string"
           },
           "type": "array"
+        },
+        "notAfter": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "notBefore": {
+          "format": "date-time",
+          "type": "string"
         }
       },
       "required": ["id"],
@@ -650,14 +659,14 @@ on namespace policies; the default policy cannot set `inherits`.
 
 Trust roots for verification. All sub-fields are optional.
 
-| Field         | Type  | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| ------------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `builders`    | array | Trusted SLSA provenance builders. Each entry has `id` (URI) and `maxLevel` (0-3). Builder IDs must be unique within a policy. Note: `maxLevel` is only enforced by VSA verification (`vsa.minimumLevel`), not during SLSA provenance checks, because provenance attestations do not declare a build level.                                                                                                                                                                                    |
-| `verifiers`   | array | Trusted VSA verifiers. Each entry has `id` (URI) and an optional `keys` (array of absolute paths to PEM public keys). Verifier IDs must be unique within a policy. When `keys` is set, the keys are used for Sigstore bundle signature verification. Use `keys` for key rotation so that both old and new keys are accepted simultaneously. When `keys` is empty or omitted, bundles are verified via keyless (Fulcio/OIDC) using `issuers` and `sanPatterns`, which must be configured.      |
-| `issuers`     | array | Trusted OIDC issuers for keyless (Fulcio) verification.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `sanPatterns` | array | Accepted certificate Subject Alternative Names. Supports glob patterns: `*` matches any non-`/` sequence, `**` matches any characters including `/`, `?` matches a single non-`/` character, `[...]` matches a character class. Use `**` for GitHub Actions OIDC SANs that include workflow paths (e.g., `https://github.com/org/repo/**`). Required when `issuers` is set in `enforce` mode. In `warn` mode, omitting this field accepts any SAN from a trusted issuer (with a log warning). |
-| `sources`     | array | Allowed source repository glob patterns. Supports the same glob syntax as `sanPatterns`: `*` matches non-`/` characters, `**` matches any characters including `/`.                                                                                                                                                                                                                                                                                                                           |
-| `buildTypes`  | array | Accepted build type URIs for SLSA provenance.                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Field         | Type  | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `builders`    | array | Trusted SLSA provenance builders. Each entry has `id` (URI) and `maxLevel` (0-3). Builder IDs must be unique within a policy. Note: `maxLevel` is only enforced by VSA verification (`vsa.minimumLevel`), not during SLSA provenance checks, because provenance attestations do not declare a build level.                                                                                                                                                                                                                                                                                                                                            |
+| `verifiers`   | array | Trusted VSA verifiers. Each entry has `id` (URI) and an optional `keys` (array of absolute paths to PEM public keys). Verifier IDs must be unique within a policy. When `keys` is set, the keys are used for Sigstore bundle signature verification. Use `keys` for key rotation so that both old and new keys are accepted simultaneously. Optional `notBefore` and `notAfter` (RFC 3339 timestamps) bound the validity window for key-based verification; signatures outside this window are rejected. When `keys` is empty or omitted, bundles are verified via keyless (Fulcio/OIDC) using `issuers` and `sanPatterns`, which must be configured. |
+| `issuers`     | array | Trusted OIDC issuers for keyless (Fulcio) verification.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `sanPatterns` | array | Accepted certificate Subject Alternative Names. Supports glob patterns: `*` matches any non-`/` sequence, `**` matches any characters including `/`, `?` matches a single non-`/` character, `[...]` matches a character class. Use `**` for GitHub Actions OIDC SANs that include workflow paths (e.g., `https://github.com/org/repo/**`). Required when `issuers` is set in `enforce` mode. In `warn` mode, omitting this field accepts any SAN from a trusted issuer (with a log warning).                                                                                                                                                         |
+| `sources`     | array | Allowed source repository glob patterns. Supports the same glob syntax as `sanPatterns`: `*` matches non-`/` characters, `**` matches any characters including `/`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `buildTypes`  | array | Accepted build type URIs for SLSA provenance.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 ### `include` (array of strings)
 
@@ -1103,15 +1112,17 @@ accepts any SAN from a trusted issuer (with a log warning). Requires the
 Sigstore public-good instance (Fulcio + Rekor).
 
 **Key-based**: Uses local PEM public keys. Configure `trust.verifiers` with
-the verifier ID and `keys` paths. Does not require network access to Sigstore
-infrastructure.
+the verifier ID and `keys` paths. Optional `notBefore`/`notAfter` fields
+restrict the validity window for the verifier's keys. Does not require network
+access to Sigstore infrastructure.
 
 When `signatures.requireTransparencyLog` is true, attestations must include a
 valid Rekor transparency log entry. This is recommended for keyless
-verification and optional for key-based. In enforce mode, the plugin logs a
-warning when key-only verification is used without transparency log
-requirements, because a compromised signing key cannot be time-bounded or
-revoked without log entries.
+verification and optional for key-based. Operators can configure `notBefore`
+and `notAfter` on key-based verifiers to bound key validity, but transparency
+log entries provide cryptographic proof of signing time. In enforce mode, the
+plugin logs a warning when key-only verification is used without transparency
+log requirements.
 
 ### Notation (Notary v2) Signature Verification
 
@@ -1493,6 +1504,40 @@ keys simultaneously. Attestations signed by either key are accepted:
 
 Once all attestations have been re-signed with the new key, remove the old key
 from the `keys` list.
+
+#### Time-bounded key rotation
+
+Use `notBefore` and `notAfter` to restrict each key's validity window. Because
+time bounds apply per-verifier (not per-key), use separate verifier entries
+(with distinct IDs) when keys need different validity windows:
+
+```json
+{
+  "trust": {
+    "verifiers": [
+      {
+        "id": "https://verifier.internal/prod-2024",
+        "keys": ["/etc/nri-supply-chain/keys/verifier-2024.pub"],
+        "notBefore": "2024-01-01T00:00:00Z",
+        "notAfter": "2025-01-01T00:00:00Z"
+      },
+      {
+        "id": "https://verifier.internal/prod-2025",
+        "keys": ["/etc/nri-supply-chain/keys/verifier-2025.pub"],
+        "notBefore": "2024-12-01T00:00:00Z"
+      }
+    ]
+  },
+  "slsa": {
+    "missingPolicy": "deny"
+  }
+}
+```
+
+The overlap between `notAfter` on the old entry and `notBefore` on the new
+entry allows a smooth transition. Signatures from the old key are rejected
+after its `notAfter`, while the new key accepts signatures from its
+`notBefore` onward.
 
 ### Multi-verification mode
 

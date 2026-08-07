@@ -179,6 +179,7 @@ linters:
         - 'github\.com/olekukonko/tablewriter/tw\..*'
         - 'github\.com/prometheus/client_golang/prometheus/promhttp\..*'
         - 'github\.com/saschagrunert/nri-supply-chain/internal/attestation\.FetchOptions'
+        - 'github\.com/saschagrunert/nri-supply-chain/internal/attestation\.TrustedKeyRef'
         - 'github\.com/saschagrunert/nri-supply-chain/internal/attestation\.VerifiedAttestation'
         - 'github\.com/saschagrunert/nri-supply-chain/internal/cel\..*'
         - 'github\.com/saschagrunert/nri-supply-chain/internal/policy\..*'

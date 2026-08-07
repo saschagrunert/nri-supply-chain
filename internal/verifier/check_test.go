@@ -24,6 +24,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
 
@@ -570,5 +571,75 @@ func TestAcquireHostSemOverflow(t *testing.T) {
 	existing := acquireHostSem(hsm, "host-0.example.com")
 	if existing == nil {
 		t.Error("expected non-nil semaphore for previously stored host")
+	}
+}
+
+func TestBuildFetchOptsPropagatesTimeBounds(t *testing.T) {
+	t.Parallel()
+
+	nb := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	na := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	pol := &policy.Policy{
+		Sections: policy.Sections{
+			Trust: &policy.TrustPolicy{
+				Verifiers: []policy.TrustedVerifier{
+					{
+						ID:            "https://example.com/v",
+						Keys:          []string{"/key/a.pub", "/key/b.pub"},
+						NotBeforeTime: nb,
+						NotAfterTime:  na,
+					},
+					{
+						ID:   "https://example.com/v2",
+						Keys: []string{"/key/c.pub"},
+					},
+				},
+			},
+		},
+	}
+
+	opts := buildFetchOpts(pol, "sha256:abc", 0, nil)
+
+	if len(opts.TrustedKeys) != 3 {
+		t.Fatalf("expected 3 trusted keys, got %d", len(opts.TrustedKeys))
+	}
+
+	// Keys from verifier 0 carry time bounds.
+	for _, idx := range []int{0, 1} {
+		if !opts.TrustedKeys[idx].NotBefore.Equal(nb) {
+			t.Errorf(
+				"key[%d] NotBefore: expected %v, got %v",
+				idx, nb, opts.TrustedKeys[idx].NotBefore,
+			)
+		}
+
+		if !opts.TrustedKeys[idx].NotAfter.Equal(na) {
+			t.Errorf(
+				"key[%d] NotAfter: expected %v, got %v",
+				idx, na, opts.TrustedKeys[idx].NotAfter,
+			)
+		}
+	}
+
+	// Key from verifier 1 has zero time bounds.
+	if !opts.TrustedKeys[2].NotBefore.IsZero() {
+		t.Errorf("key[2] NotBefore: expected zero, got %v", opts.TrustedKeys[2].NotBefore)
+	}
+
+	if !opts.TrustedKeys[2].NotAfter.IsZero() {
+		t.Errorf("key[2] NotAfter: expected zero, got %v", opts.TrustedKeys[2].NotAfter)
+	}
+}
+
+func TestBuildFetchOptsNilTrustHasNoKeys(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{}
+
+	opts := buildFetchOpts(pol, "sha256:abc", 0, nil)
+
+	if len(opts.TrustedKeys) != 0 {
+		t.Fatalf("expected 0 trusted keys, got %d", len(opts.TrustedKeys))
 	}
 }

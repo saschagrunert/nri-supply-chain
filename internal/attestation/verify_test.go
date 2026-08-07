@@ -116,7 +116,7 @@ func TestDefaultVerifyBundle(t *testing.T) {
 				`{"mediaType":"` + attestation.ExportBundleMediaType + `"}`,
 			),
 			opts: &attestation.FetchOptions{
-				TrustedKeys: []string{nonexistentKey},
+				TrustedKeys: []attestation.TrustedKeyRef{{Path: nonexistentKey}},
 			},
 			wantErr:   true,
 			wantInErr: "",
@@ -413,19 +413,19 @@ func TestBuildKeyMaterial(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		keys    func(t *testing.T) []string
+		keys    func(t *testing.T) []attestation.TrustedKeyRef
 		wantErr bool
 	}{
 		{
 			name: "nonexistent key",
-			keys: func(_ *testing.T) []string {
-				return []string{nonexistentKey}
+			keys: func(_ *testing.T) []attestation.TrustedKeyRef {
+				return []attestation.TrustedKeyRef{{Path: nonexistentKey}}
 			},
 			wantErr: true,
 		},
 		{
 			name: "invalid PEM",
-			keys: func(t *testing.T) []string {
+			keys: func(t *testing.T) []attestation.TrustedKeyRef {
 				t.Helper()
 
 				tmpDir := t.TempDir()
@@ -436,16 +436,16 @@ func TestBuildKeyMaterial(t *testing.T) {
 					t.Fatalf("writing test file: %v", err)
 				}
 
-				return []string{keyPath}
+				return []attestation.TrustedKeyRef{{Path: keyPath}}
 			},
 			wantErr: true,
 		},
 		{
 			name: "valid ECDSA key",
-			keys: func(t *testing.T) []string {
+			keys: func(t *testing.T) []attestation.TrustedKeyRef {
 				t.Helper()
 
-				return []string{writeTestKey(t)}
+				return []attestation.TrustedKeyRef{{Path: writeTestKey(t)}}
 			},
 			wantErr: false,
 		},
@@ -481,7 +481,7 @@ func TestResetPEMKeyCacheClearsEntries(t *testing.T) {
 	keyPath := writeTestKey(t)
 
 	// Load the key to populate the cache.
-	_, err := attestation.ExportBuildKeyMaterial([]string{keyPath})
+	_, err := attestation.ExportBuildKeyMaterial([]attestation.TrustedKeyRef{{Path: keyPath}})
 	if err != nil {
 		t.Fatalf("initial key load: %v", err)
 	}
@@ -575,7 +575,7 @@ func TestBuildVerificationConfig(t *testing.T) {
 			name: "nonexistent key",
 			opts: func(_ *testing.T) *attestation.FetchOptions {
 				return &attestation.FetchOptions{
-					TrustedKeys: []string{nonexistentKey},
+					TrustedKeys: []attestation.TrustedKeyRef{{Path: nonexistentKey}},
 				}
 			},
 			wantErr:   nil,
@@ -587,7 +587,7 @@ func TestBuildVerificationConfig(t *testing.T) {
 				t.Helper()
 
 				return &attestation.FetchOptions{
-					TrustedKeys: []string{writeTestKey(t)},
+					TrustedKeys: []attestation.TrustedKeyRef{{Path: writeTestKey(t)}},
 				}
 			},
 			wantErr:   nil,
@@ -652,7 +652,7 @@ func TestBuildVerificationConfigWithCache(t *testing.T) {
 				t.Helper()
 
 				return &attestation.FetchOptions{
-					TrustedKeys:    []string{writeTestKey(t)},
+					TrustedKeys:    []attestation.TrustedKeyRef{{Path: writeTestKey(t)}},
 					TrustedIssuers: []string{testIssuerGoogle},
 				}
 			},

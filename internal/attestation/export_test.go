@@ -51,7 +51,7 @@ func ExportBuildCertificateID(issuers, sanPatterns []string) (verify.Certificate
 }
 
 // ExportBuildKeyMaterial exposes buildKeyMaterial for external tests.
-func ExportBuildKeyMaterial(keys []string) (*root.TrustedPublicKeyMaterial, error) {
+func ExportBuildKeyMaterial(keys []TrustedKeyRef) (*root.TrustedPublicKeyMaterial, error) {
 	return buildKeyMaterial(keys)
 }
 
