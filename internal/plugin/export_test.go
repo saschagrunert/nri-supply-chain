@@ -68,7 +68,7 @@ func ExportDefaultDigestResolver(
 		configPath:           "",
 		connected:            atomic.Bool{},
 		digestResolver:       nil,
-		fetchTimeout:         0,
+		fetchTimeout:         atomic.Int64{},
 		digestResolveTimeout: atomic.Int64{},
 		prewarmDone:          nil,
 		prewarmMu:            sync.Mutex{},
@@ -95,6 +95,16 @@ func ExportBuildVerificationAdjustment(
 	result *types.Result, mode config.VerificationMode,
 ) *api.ContainerAdjustment {
 	return buildVerificationAdjustment(result, mode)
+}
+
+// ExportFetchTimeout returns the current fetch timeout value.
+func (p *Plugin) ExportFetchTimeout() time.Duration {
+	return time.Duration(p.fetchTimeout.Load())
+}
+
+// ExportDigestResolveTimeout returns the current digest resolve timeout value.
+func (p *Plugin) ExportDigestResolveTimeout() time.Duration {
+	return time.Duration(p.digestResolveTimeout.Load())
 }
 
 // ExportStoreContainerTime stores a creation timestamp for a container ID.

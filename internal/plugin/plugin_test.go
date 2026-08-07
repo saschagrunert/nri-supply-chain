@@ -2109,3 +2109,39 @@ func TestPluginStatusReadyRequiresNRIConnection(t *testing.T) {
 		t.Error("expected nri.connected=false after SetDisconnected")
 	}
 }
+
+func TestSetFetchTimeout(t *testing.T) {
+	t.Parallel()
+
+	cv := &capturingVerifier{serviceAccount: "", mu: sync.Mutex{}}
+	met := metrics.New()
+	plug := plugin.New(cv, met, "", 30*time.Second, 1*time.Second, nil)
+
+	if got := plug.ExportFetchTimeout(); got != 30*time.Second {
+		t.Errorf("initial fetch timeout = %v, want %v", got, 30*time.Second)
+	}
+
+	plug.SetFetchTimeout(45 * time.Second)
+
+	if got := plug.ExportFetchTimeout(); got != 45*time.Second {
+		t.Errorf("updated fetch timeout = %v, want %v", got, 45*time.Second)
+	}
+}
+
+func TestSetDigestResolveTimeout(t *testing.T) {
+	t.Parallel()
+
+	cv := &capturingVerifier{serviceAccount: "", mu: sync.Mutex{}}
+	met := metrics.New()
+	plug := plugin.New(cv, met, "", 30*time.Second, 1*time.Second, nil)
+
+	if got := plug.ExportDigestResolveTimeout(); got != 1*time.Second {
+		t.Errorf("initial digest resolve timeout = %v, want %v", got, 1*time.Second)
+	}
+
+	plug.SetDigestResolveTimeout(5 * time.Second)
+
+	if got := plug.ExportDigestResolveTimeout(); got != 5*time.Second {
+		t.Errorf("updated digest resolve timeout = %v, want %v", got, 5*time.Second)
+	}
+}

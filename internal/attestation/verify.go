@@ -213,46 +213,7 @@ func buildVerificationConfig(
 	opts *FetchOptions,
 	cachedRoot *trustedRootCache,
 ) (root.TrustedMaterialCollection, []verify.VerifierOption, []verify.PolicyOption, error) {
-	var (
-		materials    root.TrustedMaterialCollection
-		verifierOpts []verify.VerifierOption
-		policyOpts   []verify.PolicyOption
-	)
-
-	if len(opts.TrustedKeys) > 0 {
-		keyMaterial, err := buildKeyMaterial(opts.TrustedKeys)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-
-		materials = append(materials, keyMaterial)
-		verifierOpts = append(
-			verifierOpts,
-			keyOnlyVerifierOpts(len(opts.TrustedIssuers) > 0, opts.RequireTransparencyLog)...,
-		)
-		policyOpts = append(policyOpts, verify.WithKey())
-	}
-
-	if len(opts.TrustedIssuers) > 0 {
-		issuerMaterial, issuerVerifierOpts, issuerPolicyOpts, err := buildKeylessConfig(
-			ctx, opts, cachedRoot,
-		)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-
-		materials = append(materials, issuerMaterial)
-		verifierOpts = append(verifierOpts, issuerVerifierOpts...)
-		policyOpts = append(policyOpts, issuerPolicyOpts...)
-	}
-
-	if len(materials) == 0 {
-		return nil, nil, nil, fmt.Errorf(
-			"%w: provide trusted keys or issuers in policy", errNoTrustedMaterial,
-		)
-	}
-
-	return materials, verifierOpts, policyOpts, nil
+	return buildVerificationConfigMultiRoot(ctx, opts, []*trustedRootCache{cachedRoot})
 }
 
 func keyOnlyVerifierOpts(hasIssuers, requireTLog bool) []verify.VerifierOption {
@@ -346,35 +307,6 @@ func computeKeyHint(pub crypto.PublicKey) (string, error) {
 	sum := sha256.Sum256(der)
 
 	return base64.StdEncoding.EncodeToString(sum[:]), nil
-}
-
-func buildKeylessConfig(
-	ctx context.Context,
-	opts *FetchOptions,
-	cachedRoot *trustedRootCache,
-) (*root.TrustedRoot, []verify.VerifierOption, []verify.PolicyOption, error) {
-	trustedRoot, err := fetchTrustedRootWithContext(ctx, cachedRoot)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("fetching sigstore trusted root: %w", err)
-	}
-
-	verifierOpts := []verify.VerifierOption{
-		verify.WithSignedCertificateTimestamps(1),
-		verify.WithObserverTimestamps(1),
-	}
-
-	if opts.RequireTransparencyLog {
-		verifierOpts = append(verifierOpts, verify.WithTransparencyLog(1))
-	}
-
-	certID, err := buildCertificateIdentity(opts.TrustedIssuers, opts.SANPatterns)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
-	policyOpts := []verify.PolicyOption{verify.WithCertificateIdentity(certID)}
-
-	return trustedRoot, verifierOpts, policyOpts, nil
 }
 
 type trustedRootResult struct {

@@ -72,7 +72,10 @@ func runVerifyTo(
 	}
 
 	if !cfg.Enabled() {
-		slog.Error("verify requires verification to be enabled")
+		slog.Error(
+			"verify requires verification to be enabled" +
+				" (set verification = \"warn\" or \"enforce\" in the config file)",
+		)
 
 		return exitError
 	}
@@ -165,7 +168,10 @@ func runVerifyBatchTo(
 	}
 
 	if !cfg.Enabled() {
-		slog.Error("verify requires verification to be enabled")
+		slog.Error(
+			"verify requires verification to be enabled" +
+				" (set verification = \"warn\" or \"enforce\" in the config file)",
+		)
 
 		return exitError
 	}

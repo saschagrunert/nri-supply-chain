@@ -23,8 +23,10 @@ import (
 
 const (
 	algoSHA256  = "sha256"
+	algoSHA384  = "sha384"
 	algoSHA512  = "sha512"
 	hexBlock64  = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+	hexBlock96  = hexBlock64 + "abcdef0123456789abcdef0123456789"
 	hexBlock128 = hexBlock64 + hexBlock64
 	zeroBlock64 = "0000000000000000000000000000000000000000000000000000000000000000"
 )
@@ -39,8 +41,16 @@ func TestParseDigest(t *testing.T) {
 		wantHash string
 	}{
 		{"valid sha256", algoSHA256 + ":" + hexBlock64, algoSHA256, hexBlock64},
+		{"valid sha384", algoSHA384 + ":" + hexBlock96, algoSHA384, hexBlock96},
 		{"valid sha512", algoSHA512 + ":" + hexBlock128, algoSHA512, hexBlock128},
 		{"valid sha3-256", "sha3-256:" + hexBlock64, "sha3-256", hexBlock64},
+		{"valid sha3-384", "sha3-384:" + hexBlock96, "sha3-384", hexBlock96},
+		{"valid sha3-512", "sha3-512:" + hexBlock128, "sha3-512", hexBlock128},
+		{"valid sha512-256", "sha512-256:" + hexBlock64, "sha512-256", hexBlock64},
+		{"sha256 wrong length rejected", algoSHA256 + ":" + hexBlock128, "", ""},
+		{"sha384 wrong length rejected", algoSHA384 + ":" + hexBlock64, "", ""},
+		{"sha512 wrong length rejected", algoSHA512 + ":" + hexBlock64, "", ""},
+		{"sha512 truncated rejected", algoSHA512 + ":" + hexBlock96, "", ""},
 		{"short hash rejected", algoSHA256 + ":abcdef0123456789", "", ""},
 		{"missing colon", "sha256abc123", "", ""},
 		{"empty string", "", "", ""},
@@ -147,6 +157,43 @@ func TestMatchDigestInMap(t *testing.T) {
 	}
 }
 
+func assertValidParsedDigest(t *testing.T, algo, hash string) {
+	t.Helper()
+
+	if hash == "" {
+		t.Error("non-empty algo with empty hash")
+	}
+
+	expected, ok := wantHexLen[algo]
+	if !ok {
+		t.Errorf("accepted unrecognized algorithm: %q", algo)
+	} else if len(hash) != expected {
+		t.Errorf("algo %q: got hash length %d, want %d", algo, len(hash), expected)
+	}
+
+	for _, c := range algo {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
+			t.Errorf("algo contains invalid character: %q", string(c))
+		}
+	}
+
+	for _, c := range hash {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			t.Errorf("hash contains invalid character: %q", string(c))
+		}
+	}
+}
+
+var wantHexLen = map[string]int{ //nolint:gochecknoglobals // mirrors expectedHexLen for fuzz assertions
+	"sha256":     64,
+	"sha384":     96,
+	"sha512":     128,
+	"sha3-256":   64,
+	"sha3-384":   96,
+	"sha3-512":   128,
+	"sha512-256": 64,
+}
+
 func FuzzParseDigest(f *testing.F) {
 	f.Add("sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2")
 	f.Add("")
@@ -156,6 +203,8 @@ func FuzzParseDigest(f *testing.F) {
 	f.Add("no-colon")
 	f.Add("sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890")
 	f.Add("sha3-256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890")
+	f.Add("sha512:" + hexBlock128)
+	f.Add("sha384:" + hexBlock96)
 
 	f.Fuzz(func(t *testing.T, input string) {
 		if !utf8.ValidString(input) {
@@ -163,22 +212,10 @@ func FuzzParseDigest(f *testing.F) {
 		}
 
 		algo, hash := types.ParseDigest(input)
-		if algo != "" {
-			if hash == "" {
-				t.Error("non-empty algo with empty hash")
-			}
-
-			for _, c := range algo {
-				if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
-					t.Errorf("algo contains invalid character: %q", string(c))
-				}
-			}
-
-			for _, c := range hash {
-				if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-					t.Errorf("hash contains invalid character: %q", string(c))
-				}
-			}
+		if algo == "" {
+			return
 		}
+
+		assertValidParsedDigest(t, algo, hash)
 	})
 }
