@@ -32,6 +32,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/notation"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/sbom"
+	"github.com/saschagrunert/nri-supply-chain/internal/scai"
 	"github.com/saschagrunert/nri-supply-chain/internal/slsa"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 	"github.com/saschagrunert/nri-supply-chain/internal/vex"
@@ -192,7 +193,12 @@ func runChecksWithoutFetcher(
 	missingChecks = append(missingChecks, struct {
 		checkType     types.CheckType
 		missingPolicy types.Action
-	}{types.CheckTypeSBOM, pol.SBOMMissingPolicy()})
+	}{types.CheckTypeSBOM, pol.SBOMMissingPolicy()},
+		struct {
+			checkType     types.CheckType
+			missingPolicy types.Action
+		}{types.CheckTypeSCAI, pol.SCAIMissingPolicy()},
+	)
 
 	results := make([]*types.CheckResult, 0, len(missingChecks))
 
@@ -428,7 +434,7 @@ func prependVSAWarning(result *types.Result, pol *policy.Policy, detail string) 
 	applyCheckResult(result, vsaCheck)
 }
 
-func runParallelChecks(
+func runParallelChecks( //nolint:funlen // parallel goroutine setup for each check type
 	ctx context.Context, bins *attestationBins,
 	pol *policy.Policy, met *metrics.Metrics,
 	imageRef, digest, namespace string,
@@ -439,6 +445,7 @@ func runParallelChecks(
 		vexResult      *types.CheckResult
 		notationResult *types.CheckResult
 		sbomResult     *types.CheckResult
+		scaiResult     *types.CheckResult
 		waitGroup      sync.WaitGroup
 	)
 
@@ -478,9 +485,18 @@ func runParallelChecks(
 		},
 	)
 
+	waitGroup.Add(1)
+
+	go runParallelCheck(
+		&waitGroup, &scaiResult, types.CheckTypeSCAI,
+		func() *types.CheckResult {
+			return runSCAICheck(ctx, bins.scai, pol, met, imageRef, digest, namespace)
+		},
+	)
+
 	waitGroup.Wait()
 
-	return combineResults(slsaResult, vexResult, notationResult, sbomResult)
+	return combineResults(slsaResult, vexResult, notationResult, sbomResult, scaiResult)
 }
 
 func runParallelCheck(
@@ -597,6 +613,29 @@ func runSBOMCheck(
 	)
 }
 
+func runSCAICheck(
+	ctx context.Context,
+	scaiAtts []attestation.VerifiedAttestation,
+	pol *policy.Policy, met *metrics.Metrics,
+	imageRef, digest, namespace string,
+) *types.CheckResult {
+	runner := &checkRunner{
+		checkType:     types.CheckTypeSCAI,
+		label:         "SCAI",
+		missingPolicy: pol.SCAIMissingPolicy(),
+		missingLog:    "No SCAI attestation found",
+		missingReason: reasonMissingAttestation,
+		missingDetail: "no SCAI attestation found for image ",
+	}
+
+	return runner.run(
+		ctx, met, namespace, imageRef, len(scaiAtts) > 0,
+		func() (*types.CheckResult, error) {
+			return scai.VerifyMultiple(ctx, extractPayloads(scaiAtts), pol, digest)
+		},
+	)
+}
+
 func runSLSACheck(
 	ctx context.Context,
 	slsaAtts []attestation.VerifiedAttestation,
@@ -681,7 +720,7 @@ func runCELCheck(
 
 	registry, repository := extractRegistryRepo(parsedRef, imageRef)
 
-	var slsaResult, vexResult, vsaResult, sbomResult, notationResult *types.CheckResult
+	var slsaResult, vexResult, vsaResult, sbomResult, notationResult, scaiResult *types.CheckResult
 
 	for idx := range result.CheckResults {
 		switch result.CheckResults[idx].Type {
@@ -695,6 +734,8 @@ func runCELCheck(
 			sbomResult = &result.CheckResults[idx]
 		case types.CheckTypeNotation:
 			notationResult = &result.CheckResults[idx]
+		case types.CheckTypeSCAI:
+			scaiResult = &result.CheckResults[idx]
 		case types.CheckTypeFetch, types.CheckTypePolicy,
 			types.CheckTypeCEL:
 		}
@@ -702,7 +743,7 @@ func runCELCheck(
 
 	vars := celengine.BuildVars(
 		imageRef, registry, repository, digest, namespace,
-		slsaResult, vexResult, vsaResult, sbomResult, notationResult,
+		slsaResult, vexResult, vsaResult, sbomResult, notationResult, scaiResult,
 	)
 
 	return celengine.Evaluate(pol.CompiledCEL, vars)
@@ -796,9 +837,10 @@ type attestationBins struct {
 	vex      []attestation.VerifiedAttestation
 	notation []attestation.VerifiedAttestation
 	sbom     []attestation.VerifiedAttestation
+	scai     []attestation.VerifiedAttestation
 }
 
-func binAttestations(
+func binAttestations( //nolint:cyclop // additional predicate type adds a branch
 	ctx context.Context, attestations []attestation.VerifiedAttestation, imageRef string,
 ) attestationBins {
 	var bins attestationBins
@@ -824,6 +866,8 @@ func binAttestations(
 			bins.sbom = append(bins.sbom, attestations[idx])
 		case attestation.PredicateSPDX:
 			bins.sbom = append(bins.sbom, attestations[idx])
+		case attestation.PredicateSCAI:
+			bins.scai = append(bins.scai, attestations[idx])
 		case attestation.PredicateCosignSignature:
 			slog.DebugContext(ctx,
 				"Skipping bare cosign signature attestation",

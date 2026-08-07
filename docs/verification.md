@@ -14,6 +14,7 @@ by the nri-supply-chain plugin.
   - [Signature Verification](#signature-verification)
   - [Notation (Notary v2)](#notation-notary-v2)
   - [SBOM (Software Bill of Materials)](#sbom-software-bill-of-materials)
+  - [SCAI (Supply Chain Attribute Integrity)](#scai-supply-chain-attribute-integrity)
 - [Other Standards](#other-standards)
 
 <!-- /toc -->
@@ -62,7 +63,7 @@ When a container is created, the plugin performs verification in this order:
 5. **Per-image rule resolution**: If the policy has `rules`, the image is
    matched against each rule's `images` patterns in order (first match
    wins). When a rule matches, its non-nil sections (trust, slsa, vex,
-   vsa, signatures, notation, sbom, cel) override the base policy for that verification.
+   vsa, signatures, notation, sbom, scai, cel) override the base policy for that verification.
 
 6. **Cache check**: If a cached result exists for this image digest and is
    within the configured TTL, returns it immediately.
@@ -82,8 +83,8 @@ When a container is created, the plugin performs verification in this order:
    - If no VSA is found, or the VSA is from an untrusted verifier or stale,
      fall through to direct verification.
 
-9. **Parallel SLSA + VEX + Notation + SBOM verification**: When VSA does not
-   short-circuit, SLSA provenance, VEX, Notation signature, and SBOM checks
+9. **Parallel SLSA + VEX + Notation + SBOM + SCAI verification**: When VSA does not
+   short-circuit, SLSA provenance, VEX, Notation signature, SBOM, and SCAI checks
    run concurrently.
 
 10. **CEL policy evaluation**: If the policy defines CEL rules, they are
@@ -98,7 +99,7 @@ When a container is created, the plugin performs verification in this order:
 Latency model:
 
 - With trusted VSA: `fetch + VSA verify`
-- Without VSA: `fetch + max(SLSA verify, VEX verify, Notation verify, SBOM verify) + CEL eval`
+- Without VSA: `fetch + max(SLSA verify, VEX verify, Notation verify, SBOM verify, SCAI verify) + CEL eval`
 
 ## Container Annotations
 
@@ -188,6 +189,16 @@ licenses and PURLs from the SBOM and checks them against configurable deny
 and allow lists. See [policy.md](policy.md#sbom-verification) for the field reference
 and configuration examples.
 
+### SCAI (Supply Chain Attribute Integrity)
+
+Verifies [SCAI](https://github.com/in-toto/attestation/blob/main/spec/predicates/scai.md)
+attribute report attestations (predicate type
+`https://in-toto.io/attestation/scai/v0.3`). SCAI reports capture
+evidence about build attributes, complementing SLSA provenance. The plugin
+checks required and forbidden attributes and optionally requires evidence
+on each attribute. See [policy.md](policy.md#scai-verification) for the
+field reference.
+
 ## Other Standards
 
 The supply chain ecosystem includes several related formats and frameworks
@@ -196,9 +207,6 @@ that the plugin does not currently support:
 - **[SARIF](https://sarifweb.azurewebsites.net/)** (Static Analysis Results
   Interchange Format): a standardized format for security scanner results that
   could complement VEX by providing detailed finding data.
-- **[SCAI](https://github.com/in-toto/attestation/blob/main/spec/predicates/scai.md)**
-  (Supply Chain Attribute Integrity): an in-toto predicate type for capturing
-  evidence about build attributes, complementing SLSA provenance.
 - **[GUAC](https://guac.sh/)** (Graph for Understanding Artifact Composition):
   a framework for aggregating and querying software supply chain metadata. Not
   an attestation format itself, but a potential integration point for policy

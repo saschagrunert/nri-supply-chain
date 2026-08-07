@@ -49,6 +49,7 @@ func FuzzCompileAndEvaluate(f *testing.F) {
 			nil,
 			types.PassResult(types.CheckTypeSBOM, "ok"),
 			nil,
+			nil,
 		)
 
 		celengine.Evaluate(compiled, vars)

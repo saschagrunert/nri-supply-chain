@@ -68,6 +68,9 @@ const (
 	testDefaultIssuer          = "default-issuer"
 	testNSBuilderID            = "ns-builder"
 	testDefaultLabel           = "default"
+	testAttrCodeReview         = "PASSED_CODE_REVIEW"
+	testAttrKnownVulnerable    = "KNOWN_VULNERABLE"
+	testAttrFuzzTested         = "FUZZ_TESTED"
 	testDefaultIncludeGlob     = "default-include/**"
 	testDefaultExcludeGlob     = "default-exclude/**"
 	testMaxAge                 = "24h"
@@ -5344,5 +5347,158 @@ func TestPolicyValidateDuplicateKeyAcrossVerifiers(t *testing.T) {
 			wantErr:     false,
 			expectedErr: nil,
 		},
+	})
+}
+
+func TestMergeWithDefaultInheritsSCAI(t *testing.T) {
+	t.Parallel()
+
+	defaultPol := &policy.Policy{
+		Sections: policy.Sections{
+			SCAI: &policy.SCAIPolicy{
+				MissingPolicy:      types.ActionDeny,
+				RequiredAttributes: []string{testAttrCodeReview},
+				RequireEvidence:    true,
+			},
+		},
+	}
+
+	nsPol := &policy.Policy{}
+	merged := policy.MergeWithDefault(nsPol, defaultPol)
+
+	if merged.SCAI == nil {
+		t.Fatal("expected SCAI to be inherited")
+	}
+
+	if merged.SCAIMissingPolicy() != types.ActionDeny {
+		t.Errorf("expected inherited SCAI deny, got %v", merged.SCAIMissingPolicy())
+	}
+
+	if len(merged.SCAI.RequiredAttributes) != 1 ||
+		merged.SCAI.RequiredAttributes[0] != testAttrCodeReview {
+		t.Errorf("expected inherited SCAI required attributes, got %v",
+			merged.SCAI.RequiredAttributes)
+	}
+
+	if !merged.SCAI.RequireEvidence {
+		t.Error("expected inherited SCAI RequireEvidence true")
+	}
+}
+
+func TestMergeWithDefaultSCAIOverride(t *testing.T) {
+	t.Parallel()
+
+	defaultPol := &policy.Policy{
+		Sections: policy.Sections{
+			SCAI: &policy.SCAIPolicy{
+				MissingPolicy:      types.ActionAllow,
+				RequiredAttributes: []string{testAttrCodeReview},
+			},
+		},
+	}
+
+	nsPol := &policy.Policy{
+		Sections: policy.Sections{
+			SCAI: &policy.SCAIPolicy{
+				MissingPolicy:       types.ActionDeny,
+				ForbiddenAttributes: []string{testAttrKnownVulnerable},
+			},
+		},
+	}
+
+	merged := policy.MergeWithDefault(nsPol, defaultPol)
+
+	if merged.SCAIMissingPolicy() != types.ActionDeny {
+		t.Errorf("expected overridden SCAI deny, got %v", merged.SCAIMissingPolicy())
+	}
+
+	if len(merged.SCAI.ForbiddenAttributes) != 1 ||
+		merged.SCAI.ForbiddenAttributes[0] != testAttrKnownVulnerable {
+		t.Errorf("expected overridden SCAI forbidden attributes, got %v",
+			merged.SCAI.ForbiddenAttributes)
+	}
+
+	// RequiredAttributes from default should be replaced (not merged).
+	if merged.SCAI.RequiredAttributes != nil {
+		t.Errorf("expected nil required attributes after override, got %v",
+			merged.SCAI.RequiredAttributes)
+	}
+}
+
+func TestPolicyValidateSCAIOverlappingAttributes(t *testing.T) {
+	t.Parallel()
+
+	t.Run("overlapping required and forbidden rejects", func(t *testing.T) {
+		t.Parallel()
+
+		pol := &policy.Policy{
+			Sections: policy.Sections{
+				SCAI: &policy.SCAIPolicy{
+					RequiredAttributes:  []string{testAttrCodeReview, testAttrFuzzTested},
+					ForbiddenAttributes: []string{testAttrCodeReview},
+				},
+			},
+		}
+
+		err := pol.Validate()
+		if !errors.Is(err, policy.ErrSCAIOverlappingAttributes) {
+			t.Errorf("expected ErrSCAIOverlappingAttributes, got %v", err)
+		}
+	})
+
+	t.Run("overlapping is case-insensitive", func(t *testing.T) {
+		t.Parallel()
+
+		pol := &policy.Policy{
+			Sections: policy.Sections{
+				SCAI: &policy.SCAIPolicy{
+					RequiredAttributes:  []string{"Passed_Code_Review"},
+					ForbiddenAttributes: []string{"passed_code_review"},
+				},
+			},
+		}
+
+		err := pol.Validate()
+		if !errors.Is(err, policy.ErrSCAIOverlappingAttributes) {
+			t.Errorf("expected ErrSCAIOverlappingAttributes, got %v", err)
+		}
+	})
+
+	t.Run("no overlap passes", func(t *testing.T) {
+		t.Parallel()
+
+		pol := &policy.Policy{
+			Sections: policy.Sections{
+				SCAI: &policy.SCAIPolicy{
+					RequiredAttributes:  []string{testAttrCodeReview},
+					ForbiddenAttributes: []string{testAttrKnownVulnerable},
+				},
+			},
+		}
+
+		testutil.AssertNoError(t, pol.Validate())
+	})
+
+	t.Run("overlapping in rules rejects", func(t *testing.T) {
+		t.Parallel()
+
+		pol := &policy.Policy{
+			Rules: []policy.ImageRule{
+				{
+					Images: []string{testRuleImagesGlob},
+					Sections: policy.Sections{
+						SCAI: &policy.SCAIPolicy{
+							RequiredAttributes:  []string{testAttrFuzzTested},
+							ForbiddenAttributes: []string{testAttrFuzzTested},
+						},
+					},
+				},
+			},
+		}
+
+		err := pol.Validate()
+		if !errors.Is(err, policy.ErrSCAIOverlappingAttributes) {
+			t.Errorf("expected ErrSCAIOverlappingAttributes, got %v", err)
+		}
 	})
 }
