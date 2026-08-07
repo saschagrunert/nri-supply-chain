@@ -1,5 +1,8 @@
 # NRI Supply Chain Verification Plugin Configuration
 #
+# Schema version of this config file. Omitting defaults to 1.
+# config_version = 1
+#
 # Master toggle: "disabled" (default), "warn" (log-only), "enforce" (reject on failure).
 verification = "warn"
 

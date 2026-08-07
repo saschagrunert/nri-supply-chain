@@ -52,6 +52,7 @@ func TestDefaultConfig(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 
+	testutil.AssertEqual(t, config.LatestConfigVersion, cfg.ConfigVersion)
 	testutil.AssertEqual(t, config.ModeDisabled, cfg.Verification)
 	testutil.AssertEqual(t, 30*time.Second, cfg.FetchTimeout.Duration)
 	testutil.AssertEqual(t, 1*time.Second, cfg.DigestResolveTimeout.Duration)
@@ -62,6 +63,44 @@ func TestDefaultConfig(t *testing.T) {
 	testutil.AssertEqual(t, "127.0.0.1:9090", cfg.MetricsAddr)
 	testutil.AssertEqual(t, int64(10<<20), cfg.MaxAttestationSize)
 	testutil.AssertEqual(t, 10_000, cfg.CacheMaxEntries)
+}
+
+func TestConfigVersionOmittedDefaultsToOne(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.LoadFromString(``)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqual(t, config.LatestConfigVersion, cfg.ConfigVersion)
+}
+
+func TestConfigVersionExplicitZero(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.LoadFromString("config_version = 0")
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqual(t, 1, cfg.ConfigVersion)
+}
+
+func TestConfigVersionExplicitOne(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.LoadFromString(`config_version = 1`)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqual(t, 1, cfg.ConfigVersion)
+}
+
+func TestConfigVersionTooNew(t *testing.T) {
+	t.Parallel()
+
+	_, err := config.LoadFromString(`config_version = 999`)
+	testutil.AssertErrorIs(t, err, config.ErrConfigVersionTooNew)
+}
+
+func TestConfigVersionNegative(t *testing.T) {
+	t.Parallel()
+
+	_, err := config.LoadFromString(`config_version = -1`)
+	testutil.AssertErrorIs(t, err, config.ErrInvalidConfigVersion)
 }
 
 func TestConfigEnabled(t *testing.T) {
