@@ -17,9 +17,6 @@ package policy
 import (
 	"context"
 	"crypto"
-	"crypto/ecdsa"
-	"crypto/ed25519"
-	"crypto/elliptic"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
@@ -43,6 +40,7 @@ import (
 
 	"github.com/saschagrunert/nri-supply-chain/internal/fileutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/glob"
+	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
 const (
@@ -576,9 +574,7 @@ func buildPolicyKeyMaterial(keyPaths []string) (*root.TrustedPublicKeyMaterial, 
 			return nil, fmt.Errorf("loading public key %q: %w", keyPath, err)
 		}
 
-		hashAlgo := hashAlgorithmForKey(pubKey)
-
-		keyVerifier, err := signature.LoadVerifier(pubKey, hashAlgo)
+		keyVerifier, err := signature.LoadVerifier(pubKey, types.HashAlgorithmForKey(pubKey))
 		if err != nil {
 			return nil, fmt.Errorf("creating verifier for %q: %w", keyPath, err)
 		}
@@ -618,22 +614,6 @@ func loadPEMPublicKey(path string) (crypto.PublicKey, error) {
 	return nil, fmt.Errorf(
 		"parsing public key (PKIX: %w, PKCS1: %w)", pkixErr, rsaErr,
 	)
-}
-
-func hashAlgorithmForKey(pub crypto.PublicKey) crypto.Hash {
-	switch k := pub.(type) {
-	case *ecdsa.PublicKey:
-		switch k.Curve {
-		case elliptic.P384():
-			return crypto.SHA384
-		case elliptic.P521():
-			return crypto.SHA512
-		}
-	case ed25519.PublicKey:
-		return crypto.SHA512
-	}
-
-	return crypto.SHA256
 }
 
 func policyKeyHint(pub crypto.PublicKey) (string, error) {

@@ -149,8 +149,8 @@ func New(
 	return plug
 }
 
-// SetFetchTimeout updates the timeout used for digest resolution
-// during cache pre-warming. Called during config reload.
+// SetFetchTimeout updates the timeout used when resolving image
+// digests via the registry. Called during config reload.
 func (p *Plugin) SetFetchTimeout(d time.Duration) {
 	p.fetchTimeout.Store(int64(d))
 }

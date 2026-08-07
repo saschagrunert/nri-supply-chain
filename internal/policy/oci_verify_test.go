@@ -613,55 +613,6 @@ func TestOCILoadPEMPublicKeyNonexistentFile(t *testing.T) {
 	testutil.AssertContains(t, err.Error(), "reading PEM file")
 }
 
-// --- HashAlgorithmForKey tests ---
-
-func TestOCIHashAlgorithmForKey(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		key      crypto.PublicKey
-		expected crypto.Hash
-	}{
-		{
-			name:     "ECDSA P-256 uses SHA256",
-			key:      generateECDSAPublicKey(t, elliptic.P256()),
-			expected: crypto.SHA256,
-		},
-		{
-			name:     "ECDSA P-384 uses SHA384",
-			key:      generateECDSAPublicKey(t, elliptic.P384()),
-			expected: crypto.SHA384,
-		},
-		{
-			name:     "ECDSA P-521 uses SHA512",
-			key:      generateECDSAPublicKey(t, elliptic.P521()),
-			expected: crypto.SHA512,
-		},
-		{
-			name:     "Ed25519 uses SHA512",
-			key:      generateEd25519PublicKey(t),
-			expected: crypto.SHA512,
-		},
-		{
-			name:     "RSA uses SHA256 default",
-			key:      generateRSAPublicKey(t),
-			expected: crypto.SHA256,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			got := policy.HashAlgorithmForKeyForTest(test.key)
-			if got != test.expected {
-				t.Errorf("expected %v, got %v", test.expected, got)
-			}
-		})
-	}
-}
-
 // --- PolicyKeyHint tests ---
 
 func TestOCIPolicyKeyHint(t *testing.T) {
@@ -915,28 +866,6 @@ func generateECDSAPublicKey(t *testing.T, curve elliptic.Curve) *ecdsa.PublicKey
 	key, err := ecdsa.GenerateKey(curve, rand.Reader)
 	if err != nil {
 		t.Fatalf("generating ECDSA key: %v", err)
-	}
-
-	return &key.PublicKey
-}
-
-func generateEd25519PublicKey(t *testing.T) ed25519.PublicKey {
-	t.Helper()
-
-	pub, _, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatalf("generating Ed25519 key: %v", err)
-	}
-
-	return pub
-}
-
-func generateRSAPublicKey(t *testing.T) *rsa.PublicKey {
-	t.Helper()
-
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("generating RSA key: %v", err)
 	}
 
 	return &key.PublicKey
