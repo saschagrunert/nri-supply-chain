@@ -436,8 +436,7 @@ func runParallelChecks(
 		waitGroup      sync.WaitGroup
 	)
 
-	const numChecks = 4
-	waitGroup.Add(numChecks)
+	waitGroup.Add(1)
 
 	go runParallelCheck(
 		&waitGroup, &slsaResult, types.CheckTypeSLSA,
@@ -446,6 +445,8 @@ func runParallelChecks(
 		},
 	)
 
+	waitGroup.Add(1)
+
 	go runParallelCheck(
 		&waitGroup, &vexResult, types.CheckTypeVEX,
 		func() *types.CheckResult {
@@ -453,12 +454,16 @@ func runParallelChecks(
 		},
 	)
 
+	waitGroup.Add(1)
+
 	go runParallelCheck(
 		&waitGroup, &notationResult, types.CheckTypeNotation,
 		func() *types.CheckResult {
 			return runNotationCheck(ctx, bins.notation, pol, met, imageRef, digest, namespace)
 		},
 	)
+
+	waitGroup.Add(1)
 
 	go runParallelCheck(
 		&waitGroup, &sbomResult, types.CheckTypeSBOM,

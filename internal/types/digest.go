@@ -19,37 +19,37 @@ import "strings"
 const (
 	digestPartCount = 2
 
-	// minDigestHexLen is the minimum hex length for a digest hash.
-	// SHA-256 produces 64 hex chars; reject anything shorter.
-	minDigestHexLen = 64
+	hexLenSHA256 = 64
+	hexLenSHA384 = 96
+	hexLenSHA512 = 128
 )
 
-func isAcceptedAlgorithm(algo string) bool {
-	switch algo {
-	case "sha256", "sha384", "sha512",
-		"sha3-256", "sha3-384", "sha3-512",
-		"sha512-256":
-		return true
-	default:
-		return false
-	}
+var expectedHexLen = map[string]int{ //nolint:gochecknoglobals // static lookup table
+	"sha256":     hexLenSHA256,
+	"sha384":     hexLenSHA384,
+	"sha512":     hexLenSHA512,
+	"sha3-256":   hexLenSHA256,
+	"sha3-384":   hexLenSHA384,
+	"sha3-512":   hexLenSHA512,
+	"sha512-256": hexLenSHA256,
 }
 
 // ParseDigest splits a digest string (e.g., "sha256:abc123def...") into algorithm and hash.
 // Returns empty strings if the format is invalid. The algorithm must be a recognized
 // cryptographically strong algorithm per the OCI image spec, and the hash must be
-// a valid hex string of at least 64 characters.
+// a valid hex string whose length matches the algorithm's expected output size.
 func ParseDigest(digest string) (algo, hash string) {
 	parts := strings.SplitN(digest, ":", digestPartCount)
 	if len(parts) != digestPartCount || parts[0] == "" || parts[1] == "" {
 		return "", ""
 	}
 
-	if !isAcceptedAlgorithm(parts[0]) {
+	expected, ok := expectedHexLen[parts[0]]
+	if !ok {
 		return "", ""
 	}
 
-	if len(parts[1]) < minDigestHexLen || !isHex(parts[1]) {
+	if len(parts[1]) != expected || !isHex(parts[1]) {
 		return "", ""
 	}
 

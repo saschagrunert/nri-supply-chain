@@ -638,12 +638,20 @@ func TestHandleReloadUpdatesPluginRegistries(t *testing.T) {
 	mock := &mockPluginReloader{
 		cancelPrewarmCalled:  false,
 		transportCache:       nil,
+		fetchTimeout:         0,
 		digestResolveTimeout: 0,
 	}
 	handleReload(context.Background(), configPath, verif, met, mock, nil)
 
 	if mock.transportCache != nil {
 		t.Error("expected nil transport cache when no registries configured")
+	}
+
+	if mock.fetchTimeout != 30*time.Second {
+		t.Errorf(
+			"expected fetch timeout 30s, got %v",
+			mock.fetchTimeout,
+		)
 	}
 
 	if mock.digestResolveTimeout != 1*time.Second {
@@ -688,6 +696,7 @@ func TestHandleReloadUpdatesPluginRegistriesNonEmpty(t *testing.T) {
 	mock := &mockPluginReloader{
 		cancelPrewarmCalled:  false,
 		transportCache:       nil,
+		fetchTimeout:         0,
 		digestResolveTimeout: 0,
 	}
 	handleReload(context.Background(), configPath, verif, met, mock, nil)
@@ -700,11 +709,16 @@ func TestHandleReloadUpdatesPluginRegistriesNonEmpty(t *testing.T) {
 type mockPluginReloader struct {
 	cancelPrewarmCalled  bool
 	transportCache       *registry.TransportCache
+	fetchTimeout         time.Duration
 	digestResolveTimeout time.Duration
 }
 
 func (m *mockPluginReloader) CancelPrewarm() {
 	m.cancelPrewarmCalled = true
+}
+
+func (m *mockPluginReloader) SetFetchTimeout(d time.Duration) {
+	m.fetchTimeout = d
 }
 
 func (m *mockPluginReloader) SetDigestResolveTimeout(d time.Duration) {
@@ -728,6 +742,7 @@ func TestUpdatePluginRegistries(t *testing.T) {
 		mock := &mockPluginReloader{
 			cancelPrewarmCalled:  false,
 			transportCache:       nil,
+			fetchTimeout:         0,
 			digestResolveTimeout: 0,
 		}
 		updatePluginRegistries(mock, []config.Registry{
@@ -754,6 +769,7 @@ func TestUpdatePluginRegistries(t *testing.T) {
 		mock := &mockPluginReloader{
 			cancelPrewarmCalled:  false,
 			transportCache:       nil,
+			fetchTimeout:         0,
 			digestResolveTimeout: 0,
 		}
 		updatePluginRegistries(mock, shared.Registries(), shared)
@@ -768,6 +784,7 @@ func TestUpdatePluginRegistries(t *testing.T) {
 
 		mock := &mockPluginReloader{
 			cancelPrewarmCalled:  false,
+			fetchTimeout:         0,
 			digestResolveTimeout: 0,
 			transportCache: registry.NewTransportCache([]config.Registry{
 				{
@@ -802,6 +819,7 @@ func TestUpdatePluginRegistries(t *testing.T) {
 		mock := &mockPluginReloader{
 			cancelPrewarmCalled:  false,
 			transportCache:       nil,
+			fetchTimeout:         0,
 			digestResolveTimeout: 0,
 		}
 		updatePluginRegistries(mock, newRegs, staleShared)
@@ -833,6 +851,7 @@ func TestUpdatePluginRegistries(t *testing.T) {
 		mock := &mockPluginReloader{
 			cancelPrewarmCalled:  false,
 			transportCache:       original,
+			fetchTimeout:         0,
 			digestResolveTimeout: 0,
 		}
 		updatePluginRegistries(mock, regs, nil)

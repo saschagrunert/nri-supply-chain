@@ -293,7 +293,7 @@ type TrustedVerifier struct {
 // SLSAPolicy contains SLSA provenance verification settings.
 type SLSAPolicy struct {
 	// MissingPolicy controls behavior when no provenance attestation is found.
-	MissingPolicy types.Action `json:"missingPolicy,omitempty"`
+	MissingPolicy types.Action `json:"missingPolicy,omitempty" jsonschema:"enum=allow,enum=warn,enum=deny"`
 	// RejectUnknownParameters rejects provenance with unrecognized externalParameters fields.
 	RejectUnknownParameters bool `json:"rejectUnknownParameters,omitempty"`
 	// KnownParameters lists recognized externalParameters keys when
@@ -309,15 +309,15 @@ type SLSAPolicy struct {
 // VEXPolicy contains VEX verification settings.
 type VEXPolicy struct {
 	// MissingPolicy controls behavior when no VEX attestation is found.
-	MissingPolicy types.Action `json:"missingPolicy,omitempty"`
+	MissingPolicy types.Action `json:"missingPolicy,omitempty" jsonschema:"enum=allow,enum=warn,enum=deny"`
 	// UnderInvestigationPolicy controls behavior for "under_investigation" status.
-	UnderInvestigationPolicy types.Action `json:"underInvestigationPolicy,omitempty"`
+	UnderInvestigationPolicy types.Action `json:"underInvestigationPolicy,omitempty" jsonschema:"enum=allow,enum=warn,enum=deny"` //nolint:lll // struct tag
 }
 
 // VSAPolicy contains Verification Summary Attestation settings.
 type VSAPolicy struct {
 	// MissingPolicy controls behavior when no VSA attestation is found.
-	MissingPolicy types.Action `json:"missingPolicy,omitempty"`
+	MissingPolicy types.Action `json:"missingPolicy,omitempty" jsonschema:"enum=allow,enum=warn,enum=deny"`
 	// MinimumLevel is the minimum SLSA level required in VSA verifiedLevels (0-3).
 	MinimumLevel int `json:"minimumLevel,omitempty"`
 	// MaxAge is the maximum age of a VSA's timeVerified before it's considered stale.
@@ -337,14 +337,14 @@ type SignaturesPolicy struct {
 // NotationPolicy contains Notation/Notary v2 signature verification settings.
 type NotationPolicy struct {
 	// MissingPolicy controls behavior when no Notation signature is found.
-	MissingPolicy types.Action `json:"missingPolicy,omitempty"`
+	MissingPolicy types.Action `json:"missingPolicy,omitempty" jsonschema:"enum=allow,enum=warn,enum=deny"`
 	// TrustStores defines the certificate trust stores for signature verification.
 	TrustStores []NotationTrustStore `json:"trustStores,omitempty"`
 	// TrustPolicy defines the trust policy rules that map registry scopes to trust stores.
 	TrustPolicy []NotationTrustPolicyRule `json:"trustPolicy,omitempty"`
 	// VerificationLevel controls how strict verification is.
 	// Valid values: "strict", "permissive", "audit", "skip". Defaults to "strict".
-	VerificationLevel string `json:"verificationLevel,omitempty"`
+	VerificationLevel string `json:"verificationLevel,omitempty" jsonschema:"enum=strict,enum=permissive,enum=audit,enum=skip"` //nolint:lll // struct tag
 }
 
 // NotationTrustStore defines a named collection of certificates used for Notation verification.
@@ -372,7 +372,7 @@ type NotationTrustPolicyRule struct {
 // SBOMPolicy contains SBOM attestation verification settings.
 type SBOMPolicy struct {
 	// MissingPolicy controls behavior when no SBOM attestation is found.
-	MissingPolicy types.Action `json:"missingPolicy,omitempty"`
+	MissingPolicy types.Action `json:"missingPolicy,omitempty" jsonschema:"enum=allow,enum=warn,enum=deny"`
 	// Formats lists accepted SBOM formats: "spdx", "cyclonedx". When empty, both are accepted.
 	Formats []string `json:"formats,omitempty"`
 	// License contains license allow/deny list settings for SBOM verification.

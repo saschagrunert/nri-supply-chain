@@ -195,10 +195,9 @@ nri-supply-chain json-schema policy
 
 ```json
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$ref": "#/$defs/Policy",
   "$defs": {
     "CELPolicy": {
+      "additionalProperties": false,
       "properties": {
         "rules": {
           "items": {
@@ -207,73 +206,68 @@ nri-supply-chain json-schema policy
           "type": "array"
         }
       },
-      "additionalProperties": false,
-      "type": "object",
-      "required": ["rules"]
+      "required": ["rules"],
+      "type": "object"
     },
     "CELRule": {
+      "additionalProperties": false,
       "properties": {
         "match": {
           "type": "string"
         },
-        "require": {
+        "message": {
           "type": "string"
         },
-        "message": {
+        "require": {
           "type": "string"
         }
       },
-      "additionalProperties": false,
-      "type": "object",
-      "required": ["require"]
+      "required": ["require"],
+      "type": "object"
     },
     "ImageRule": {
+      "additionalProperties": false,
       "properties": {
-        "trust": {
-          "$ref": "#/$defs/TrustPolicy"
-        },
-        "slsa": {
-          "$ref": "#/$defs/SLSAPolicy"
-        },
-        "vex": {
-          "$ref": "#/$defs/VEXPolicy"
-        },
-        "vsa": {
-          "$ref": "#/$defs/VSAPolicy"
-        },
-        "signatures": {
-          "$ref": "#/$defs/SignaturesPolicy"
-        },
-        "notation": {
-          "$ref": "#/$defs/NotationPolicy"
-        },
         "cel": {
           "$ref": "#/$defs/CELPolicy"
-        },
-        "sbom": {
-          "$ref": "#/$defs/SBOMPolicy"
         },
         "images": {
           "items": {
             "type": "string"
           },
           "type": "array"
+        },
+        "notation": {
+          "$ref": "#/$defs/NotationPolicy"
+        },
+        "sbom": {
+          "$ref": "#/$defs/SBOMPolicy"
+        },
+        "signatures": {
+          "$ref": "#/$defs/SignaturesPolicy"
+        },
+        "slsa": {
+          "$ref": "#/$defs/SLSAPolicy"
+        },
+        "trust": {
+          "$ref": "#/$defs/TrustPolicy"
+        },
+        "vex": {
+          "$ref": "#/$defs/VEXPolicy"
+        },
+        "vsa": {
+          "$ref": "#/$defs/VSAPolicy"
         }
       },
-      "additionalProperties": false,
-      "type": "object",
-      "required": ["images"]
+      "required": ["images"],
+      "type": "object"
     },
     "NotationPolicy": {
+      "additionalProperties": false,
       "properties": {
         "missingPolicy": {
+          "enum": ["allow", "warn", "deny"],
           "type": "string"
-        },
-        "trustStores": {
-          "items": {
-            "$ref": "#/$defs/NotationTrustStore"
-          },
-          "type": "array"
         },
         "trustPolicy": {
           "items": {
@@ -281,14 +275,21 @@ nri-supply-chain json-schema policy
           },
           "type": "array"
         },
+        "trustStores": {
+          "items": {
+            "$ref": "#/$defs/NotationTrustStore"
+          },
+          "type": "array"
+        },
         "verificationLevel": {
+          "enum": ["strict", "permissive", "audit", "skip"],
           "type": "string"
         }
       },
-      "additionalProperties": false,
       "type": "object"
     },
     "NotationTrustPolicyRule": {
+      "additionalProperties": false,
       "properties": {
         "name": {
           "type": "string"
@@ -312,67 +313,38 @@ nri-supply-chain json-schema policy
           "type": "array"
         }
       },
-      "additionalProperties": false,
-      "type": "object",
-      "required": ["name", "registryScopes", "trustStores", "trustedIdentities"]
+      "required": [
+        "name",
+        "registryScopes",
+        "trustStores",
+        "trustedIdentities"
+      ],
+      "type": "object"
     },
     "NotationTrustStore": {
+      "additionalProperties": false,
       "properties": {
-        "name": {
-          "type": "string"
-        },
-        "type": {
-          "type": "string"
-        },
         "certificates": {
           "items": {
             "type": "string"
           },
           "type": "array"
+        },
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
         }
       },
-      "additionalProperties": false,
-      "type": "object",
-      "required": ["name", "type", "certificates"]
+      "required": ["name", "type", "certificates"],
+      "type": "object"
     },
     "Policy": {
+      "additionalProperties": false,
       "properties": {
-        "trust": {
-          "$ref": "#/$defs/TrustPolicy"
-        },
-        "slsa": {
-          "$ref": "#/$defs/SLSAPolicy"
-        },
-        "vex": {
-          "$ref": "#/$defs/VEXPolicy"
-        },
-        "vsa": {
-          "$ref": "#/$defs/VSAPolicy"
-        },
-        "signatures": {
-          "$ref": "#/$defs/SignaturesPolicy"
-        },
-        "notation": {
-          "$ref": "#/$defs/NotationPolicy"
-        },
         "cel": {
           "$ref": "#/$defs/CELPolicy"
-        },
-        "sbom": {
-          "$ref": "#/$defs/SBOMPolicy"
-        },
-        "mode": {
-          "type": "string",
-          "enum": ["disabled", "warn", "enforce"]
-        },
-        "inherits": {
-          "type": "boolean"
-        },
-        "include": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
         },
         "exclude": {
           "items": {
@@ -380,74 +352,111 @@ nri-supply-chain json-schema policy
           },
           "type": "array"
         },
+        "include": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "inherits": {
+          "type": "boolean"
+        },
+        "mode": {
+          "enum": ["disabled", "warn", "enforce"],
+          "type": "string"
+        },
+        "notation": {
+          "$ref": "#/$defs/NotationPolicy"
+        },
         "rules": {
           "items": {
             "$ref": "#/$defs/ImageRule"
           },
           "type": "array"
+        },
+        "sbom": {
+          "$ref": "#/$defs/SBOMPolicy"
+        },
+        "signatures": {
+          "$ref": "#/$defs/SignaturesPolicy"
+        },
+        "slsa": {
+          "$ref": "#/$defs/SLSAPolicy"
+        },
+        "trust": {
+          "$ref": "#/$defs/TrustPolicy"
+        },
+        "vex": {
+          "$ref": "#/$defs/VEXPolicy"
+        },
+        "vsa": {
+          "$ref": "#/$defs/VSAPolicy"
         }
       },
-      "additionalProperties": false,
       "type": "object"
     },
     "SBOMCVSSPolicy": {
+      "additionalProperties": false,
       "properties": {
-        "maxScore": {
-          "type": "number"
-        },
-        "minSeverity": {
-          "type": "string"
-        },
         "ignoreCVEs": {
           "items": {
             "type": "string"
           },
           "type": "array"
+        },
+        "maxScore": {
+          "type": "number"
+        },
+        "minSeverity": {
+          "type": "string"
         }
       },
-      "additionalProperties": false,
       "type": "object"
     },
     "SBOMComponentPolicy": {
+      "additionalProperties": false,
       "properties": {
-        "deny": {
+        "allow": {
           "items": {
             "type": "string"
           },
           "type": "array"
         },
-        "allow": {
+        "deny": {
           "items": {
             "type": "string"
           },
           "type": "array"
         }
       },
-      "additionalProperties": false,
       "type": "object"
     },
     "SBOMLicensePolicy": {
+      "additionalProperties": false,
       "properties": {
-        "deny": {
+        "allow": {
           "items": {
             "type": "string"
           },
           "type": "array"
         },
-        "allow": {
+        "deny": {
           "items": {
             "type": "string"
           },
           "type": "array"
         }
       },
-      "additionalProperties": false,
       "type": "object"
     },
     "SBOMPolicy": {
+      "additionalProperties": false,
       "properties": {
-        "missingPolicy": {
-          "type": "string"
+        "component": {
+          "$ref": "#/$defs/SBOMComponentPolicy"
+        },
+        "cvss": {
+          "$ref": "#/$defs/SBOMCVSSPolicy"
         },
         "formats": {
           "items": {
@@ -458,24 +467,16 @@ nri-supply-chain json-schema policy
         "license": {
           "$ref": "#/$defs/SBOMLicensePolicy"
         },
-        "component": {
-          "$ref": "#/$defs/SBOMComponentPolicy"
-        },
-        "cvss": {
-          "$ref": "#/$defs/SBOMCVSSPolicy"
+        "missingPolicy": {
+          "enum": ["allow", "warn", "deny"],
+          "type": "string"
         }
       },
-      "additionalProperties": false,
       "type": "object"
     },
     "SLSAPolicy": {
+      "additionalProperties": false,
       "properties": {
-        "missingPolicy": {
-          "type": "string"
-        },
-        "rejectUnknownParameters": {
-          "type": "boolean"
-        },
         "knownParameters": {
           "items": {
             "type": "string"
@@ -484,31 +485,38 @@ nri-supply-chain json-schema policy
         },
         "maxAge": {
           "type": "string"
+        },
+        "missingPolicy": {
+          "enum": ["allow", "warn", "deny"],
+          "type": "string"
+        },
+        "rejectUnknownParameters": {
+          "type": "boolean"
         }
       },
-      "additionalProperties": false,
       "type": "object"
     },
     "SignaturesPolicy": {
+      "additionalProperties": false,
       "properties": {
         "requireTransparencyLog": {
           "type": "boolean"
         }
       },
-      "additionalProperties": false,
       "type": "object"
     },
     "TrustPolicy": {
+      "additionalProperties": false,
       "properties": {
-        "builders": {
+        "buildTypes": {
           "items": {
-            "$ref": "#/$defs/TrustedBuilder"
+            "type": "string"
           },
           "type": "array"
         },
-        "verifiers": {
+        "builders": {
           "items": {
-            "$ref": "#/$defs/TrustedVerifier"
+            "$ref": "#/$defs/TrustedBuilder"
           },
           "type": "array"
         },
@@ -530,17 +538,17 @@ nri-supply-chain json-schema policy
           },
           "type": "array"
         },
-        "buildTypes": {
+        "verifiers": {
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/TrustedVerifier"
           },
           "type": "array"
         }
       },
-      "additionalProperties": false,
       "type": "object"
     },
     "TrustedBuilder": {
+      "additionalProperties": false,
       "properties": {
         "id": {
           "type": "string"
@@ -549,11 +557,11 @@ nri-supply-chain json-schema policy
           "type": "integer"
         }
       },
-      "additionalProperties": false,
-      "type": "object",
-      "required": ["id", "maxLevel"]
+      "required": ["id", "maxLevel"],
+      "type": "object"
     },
     "TrustedVerifier": {
+      "additionalProperties": false,
       "properties": {
         "id": {
           "type": "string"
@@ -565,43 +573,47 @@ nri-supply-chain json-schema policy
           "type": "array"
         }
       },
-      "additionalProperties": false,
-      "type": "object",
-      "required": ["id"]
+      "required": ["id"],
+      "type": "object"
     },
     "VEXPolicy": {
+      "additionalProperties": false,
       "properties": {
         "missingPolicy": {
+          "enum": ["allow", "warn", "deny"],
           "type": "string"
         },
         "underInvestigationPolicy": {
+          "enum": ["allow", "warn", "deny"],
           "type": "string"
         }
       },
-      "additionalProperties": false,
       "type": "object"
     },
     "VSAPolicy": {
+      "additionalProperties": false,
       "properties": {
-        "missingPolicy": {
+        "maxAge": {
           "type": "string"
         },
         "minimumLevel": {
           "type": "integer"
         },
-        "maxAge": {
+        "missingPolicy": {
+          "enum": ["allow", "warn", "deny"],
           "type": "string"
         },
         "policy": {
           "type": "string"
         }
       },
-      "additionalProperties": false,
       "type": "object"
     }
   },
-  "title": "nri-supply-chain Policy",
-  "description": "Defines the trust roots and per-namespace verification settings for nri-supply-chain."
+  "$ref": "#/$defs/Policy",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Defines the trust roots and per-namespace verification settings for nri-supply-chain.",
+  "title": "nri-supply-chain Policy"
 }
 ```
 

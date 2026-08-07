@@ -107,8 +107,8 @@ type Plugin struct {
 	configPath           string
 	connected            atomic.Bool
 	digestResolver       DigestResolveFunc
-	fetchTimeout         time.Duration // immutable after construction, no sync needed
-	digestResolveTimeout atomic.Int64  // updated via SetDigestResolveTimeout on reload
+	fetchTimeout         atomic.Int64 // updated via SetFetchTimeout on reload
+	digestResolveTimeout atomic.Int64 // updated via SetDigestResolveTimeout on reload
 	prewarmDone          func()
 	prewarmMu            sync.Mutex
 	prewarmCancel        context.CancelFunc
@@ -128,7 +128,7 @@ func New(
 		configPath:           configPath,
 		connected:            atomic.Bool{},
 		digestResolver:       nil,
-		fetchTimeout:         fetchTimeout,
+		fetchTimeout:         atomic.Int64{},
 		digestResolveTimeout: atomic.Int64{},
 		prewarmDone:          nil,
 		prewarmMu:            sync.Mutex{},
@@ -137,6 +137,7 @@ func New(
 		containerTimes:       sync.Map{},
 	}
 
+	plug.fetchTimeout.Store(int64(fetchTimeout))
 	plug.digestResolveTimeout.Store(int64(digestResolveTimeout))
 
 	if cache != nil {
@@ -146,6 +147,12 @@ func New(
 	plug.digestResolver = plug.registryAwareResolver
 
 	return plug
+}
+
+// SetFetchTimeout updates the timeout used for digest resolution
+// during cache pre-warming. Called during config reload.
+func (p *Plugin) SetFetchTimeout(d time.Duration) {
+	p.fetchTimeout.Store(int64(d))
 }
 
 // SetDigestResolveTimeout updates the timeout used when resolving an image
@@ -609,7 +616,7 @@ func (p *Plugin) resolvePrewarmDigests(
 func (p *Plugin) resolveOneDigest(
 	ctx context.Context, img *prewarmImage, result *resolveResult,
 ) {
-	resolveCtx, resolveCancel := context.WithTimeout(ctx, p.fetchTimeout)
+	resolveCtx, resolveCancel := context.WithTimeout(ctx, time.Duration(p.fetchTimeout.Load()))
 	dig, idxDig, resolveErr := p.digestResolver(resolveCtx, img.imageRef)
 
 	resolveCancel()
