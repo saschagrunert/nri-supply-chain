@@ -277,6 +277,10 @@ func warnPermissiveMissingPolicies(label string, pol *policy.Policy) {
 			"VSA", "VSA attestations", "vsa_missing_policy", "vsa.missingPolicy",
 			pol.VSA != nil, pol.VSAMissingPolicy(),
 		},
+		{
+			"SCAI", "SCAI attestations", "scai_missing_policy", "scai.missingPolicy",
+			pol.SCAI != nil, pol.SCAIMissingPolicy(),
+		},
 	}
 
 	for _, chk := range checks {

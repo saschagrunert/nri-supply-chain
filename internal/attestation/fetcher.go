@@ -168,6 +168,8 @@ func (c *trustedRootCache) handleRefreshError(err error) (*root.TrustedRoot, err
 				"age", age,
 			)
 
+			c.lastFetchErr = time.Now()
+
 			c.fireFallback()
 
 			return c.root, nil

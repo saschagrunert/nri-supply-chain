@@ -28,6 +28,7 @@ EOF
 	[[ "$output" == *'"detail": "SLSA provenance verified"'* ]]
 	[[ "$output" == *'"type": "vex"'* ]]
 	[[ "$output" == *'"detail": "VEX verification passed"'* ]]
+	[[ "$output" == *'"type": "scai"'* ]]
 }
 
 @test "quickstart verification with VSA succeeds" {

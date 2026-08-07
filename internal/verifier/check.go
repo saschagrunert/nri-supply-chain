@@ -133,7 +133,7 @@ func runVSAAndParallelChecks(
 		}
 	}
 
-	result := runParallelChecks(ctx, bins, pol, met, imageRef, digest, namespace, parsedRef)
+	result := runParallelChecks(ctx, bins, pol, met, imageRef, digest, parsedRef)
 
 	if len(bins.vsa) == 0 {
 		prependVSAWarning(result, pol, "no VSA attestation found for image "+imageRef)
@@ -437,7 +437,7 @@ func prependVSAWarning(result *types.Result, pol *policy.Policy, detail string) 
 func runParallelChecks( //nolint:funlen // parallel goroutine setup for each check type
 	ctx context.Context, bins *attestationBins,
 	pol *policy.Policy, met *metrics.Metrics,
-	imageRef, digest, namespace string,
+	imageRef, digest string,
 	parsedRef name.Reference,
 ) *types.Result {
 	var (
@@ -454,7 +454,7 @@ func runParallelChecks( //nolint:funlen // parallel goroutine setup for each che
 	go runParallelCheck(
 		&waitGroup, &slsaResult, types.CheckTypeSLSA,
 		func() *types.CheckResult {
-			return runSLSACheck(ctx, bins.slsa, pol, met, imageRef, digest, namespace)
+			return runSLSACheck(ctx, bins.slsa, pol, met, imageRef, digest)
 		},
 	)
 
@@ -463,7 +463,7 @@ func runParallelChecks( //nolint:funlen // parallel goroutine setup for each che
 	go runParallelCheck(
 		&waitGroup, &vexResult, types.CheckTypeVEX,
 		func() *types.CheckResult {
-			return runVEXCheck(ctx, bins.vex, pol, met, imageRef, digest, namespace, parsedRef)
+			return runVEXCheck(ctx, bins.vex, pol, met, imageRef, digest, parsedRef)
 		},
 	)
 
@@ -472,7 +472,7 @@ func runParallelChecks( //nolint:funlen // parallel goroutine setup for each che
 	go runParallelCheck(
 		&waitGroup, &notationResult, types.CheckTypeNotation,
 		func() *types.CheckResult {
-			return runNotationCheck(ctx, bins.notation, pol, met, imageRef, digest, namespace)
+			return runNotationCheck(ctx, bins.notation, pol, met, imageRef, digest)
 		},
 	)
 
@@ -481,7 +481,7 @@ func runParallelChecks( //nolint:funlen // parallel goroutine setup for each che
 	go runParallelCheck(
 		&waitGroup, &sbomResult, types.CheckTypeSBOM,
 		func() *types.CheckResult {
-			return runSBOMCheck(ctx, bins.sbom, pol, met, imageRef, digest, namespace)
+			return runSBOMCheck(ctx, bins.sbom, pol, met, imageRef, digest)
 		},
 	)
 
@@ -490,7 +490,7 @@ func runParallelChecks( //nolint:funlen // parallel goroutine setup for each che
 	go runParallelCheck(
 		&waitGroup, &scaiResult, types.CheckTypeSCAI,
 		func() *types.CheckResult {
-			return runSCAICheck(ctx, bins.scai, pol, met, imageRef, digest, namespace)
+			return runSCAICheck(ctx, bins.scai, pol, met, imageRef, digest)
 		},
 	)
 
@@ -539,7 +539,7 @@ type checkRunner struct {
 func (cr *checkRunner) run(
 	ctx context.Context,
 	met *metrics.Metrics,
-	namespace, imageRef string,
+	imageRef string,
 	hasAttestations bool,
 	verify func() (*types.CheckResult, error),
 ) *types.CheckResult {
@@ -573,10 +573,6 @@ func (cr *checkRunner) run(
 			"image", imageRef,
 		)
 
-		met.VerificationTotal.WithLabelValues(
-			string(cr.checkType), "error", namespace,
-		).Inc()
-
 		return types.FailResult(
 			cr.checkType,
 			fmt.Sprintf(
@@ -594,7 +590,7 @@ func runSBOMCheck(
 	ctx context.Context,
 	sbomAtts []attestation.VerifiedAttestation,
 	pol *policy.Policy, met *metrics.Metrics,
-	imageRef, digest, namespace string,
+	imageRef, digest string,
 ) *types.CheckResult {
 	runner := &checkRunner{
 		checkType:     types.CheckTypeSBOM,
@@ -606,7 +602,7 @@ func runSBOMCheck(
 	}
 
 	return runner.run(
-		ctx, met, namespace, imageRef, len(sbomAtts) > 0,
+		ctx, met, imageRef, len(sbomAtts) > 0,
 		func() (*types.CheckResult, error) {
 			return sbom.VerifyMultiple(ctx, extractPayloads(sbomAtts), pol, digest)
 		},
@@ -617,7 +613,7 @@ func runSCAICheck(
 	ctx context.Context,
 	scaiAtts []attestation.VerifiedAttestation,
 	pol *policy.Policy, met *metrics.Metrics,
-	imageRef, digest, namespace string,
+	imageRef, digest string,
 ) *types.CheckResult {
 	runner := &checkRunner{
 		checkType:     types.CheckTypeSCAI,
@@ -629,7 +625,7 @@ func runSCAICheck(
 	}
 
 	return runner.run(
-		ctx, met, namespace, imageRef, len(scaiAtts) > 0,
+		ctx, met, imageRef, len(scaiAtts) > 0,
 		func() (*types.CheckResult, error) {
 			return scai.VerifyMultiple(ctx, extractPayloads(scaiAtts), pol, digest)
 		},
@@ -640,7 +636,7 @@ func runSLSACheck(
 	ctx context.Context,
 	slsaAtts []attestation.VerifiedAttestation,
 	pol *policy.Policy, met *metrics.Metrics,
-	imageRef, digest, namespace string,
+	imageRef, digest string,
 ) *types.CheckResult {
 	runner := &checkRunner{
 		checkType:     types.CheckTypeSLSA,
@@ -652,7 +648,7 @@ func runSLSACheck(
 	}
 
 	return runner.run(
-		ctx, met, namespace, imageRef, len(slsaAtts) > 0,
+		ctx, met, imageRef, len(slsaAtts) > 0,
 		func() (*types.CheckResult, error) {
 			return slsa.VerifyMultiple(ctx, slsaAtts, pol, digest)
 		},
@@ -663,7 +659,7 @@ func runVEXCheck(
 	ctx context.Context,
 	vexAtts []attestation.VerifiedAttestation,
 	pol *policy.Policy, met *metrics.Metrics,
-	imageRef, digest, namespace string,
+	imageRef, digest string,
 	parsedRef name.Reference,
 ) *types.CheckResult {
 	runner := &checkRunner{
@@ -676,7 +672,7 @@ func runVEXCheck(
 	}
 
 	return runner.run(
-		ctx, met, namespace, imageRef, len(vexAtts) > 0,
+		ctx, met, imageRef, len(vexAtts) > 0,
 		func() (*types.CheckResult, error) {
 			return vex.VerifyMultiple(
 				ctx, extractPayloads(vexAtts), pol, imageRef, digest, parsedRef,
@@ -689,7 +685,7 @@ func runNotationCheck(
 	ctx context.Context,
 	notationAtts []attestation.VerifiedAttestation,
 	pol *policy.Policy, met *metrics.Metrics,
-	imageRef, digest, namespace string,
+	imageRef, digest string,
 ) *types.CheckResult {
 	runner := &checkRunner{
 		checkType:     types.CheckTypeNotation,
@@ -701,7 +697,7 @@ func runNotationCheck(
 	}
 
 	return runner.run(
-		ctx, met, namespace, imageRef, len(notationAtts) > 0,
+		ctx, met, imageRef, len(notationAtts) > 0,
 		func() (*types.CheckResult, error) {
 			return notation.VerifyMultiple(
 				ctx, notationAtts, imageRef, digest, pol,
