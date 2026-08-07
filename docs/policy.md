@@ -269,6 +269,10 @@ nri-supply-chain json-schema policy
           "enum": ["allow", "warn", "deny"],
           "type": "string"
         },
+        "revocationMode": {
+          "enum": ["strict", "soft", "skip"],
+          "type": "string"
+        },
         "trustPolicy": {
           "items": {
             "$ref": "#/$defs/NotationTrustPolicyRule"
@@ -730,12 +734,13 @@ Notation/Notary v2 signature verification settings. When configured, the plugin
 discovers Notation signatures via the OCI Referrers API and verifies them
 against the configured trust stores and trust policy.
 
-| Field               | Type   | Default  | Description                                                                                                |
-| ------------------- | ------ | -------- | ---------------------------------------------------------------------------------------------------------- |
-| `missingPolicy`     | string | `allow`  | Behavior when no Notation signature is found: `allow`, `warn`, `deny`                                      |
-| `verificationLevel` | string | `strict` | How strict verification is: `strict`, `permissive`, `audit`, `skip`. `skip` is rejected in `enforce` mode. |
-| `trustStores`       | array  | (none)   | Named certificate trust stores for signature verification (see below)                                      |
-| `trustPolicy`       | array  | (none)   | Trust policy rules that map registry scopes to trust stores and trusted identities (see below)             |
+| Field               | Type   | Default                                   | Description                                                                                                                                                                                                                                                                                                 |
+| ------------------- | ------ | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `missingPolicy`     | string | `allow`                                   | Behavior when no Notation signature is found: `allow`, `warn`, `deny`                                                                                                                                                                                                                                       |
+| `verificationLevel` | string | `strict`                                  | How strict verification is: `strict`, `permissive`, `audit`, `skip`. `skip` is rejected in `enforce` mode.                                                                                                                                                                                                  |
+| `revocationMode`    | string | (none, inherits from `verificationLevel`) | Certificate revocation checking: `strict` (enforce OCSP/CRL), `soft` (log failures), `skip` (explicitly disable revocation checking). When omitted, no override is set and the base verification level controls revocation behavior. Cannot be set when `verificationLevel` is `skip`. Recommended: `soft`. |
+| `trustStores`       | array  | (none)                                    | Named certificate trust stores for signature verification (see below)                                                                                                                                                                                                                                       |
+| `trustPolicy`       | array  | (none)                                    | Trust policy rules that map registry scopes to trust stores and trusted identities (see below)                                                                                                                                                                                                              |
 
 Each `trustStores` entry:
 
@@ -1138,6 +1143,12 @@ Verification flow:
 When multiple Notation signatures exist, verification passes if any single
 signature is valid (any-pass semantics).
 
+Certificate revocation checking is controlled by `revocationMode`. Setting it
+to `soft` is recommended for most deployments: revocation failures are logged
+but do not block the workload, which avoids outages caused by unreachable
+OCSP/CRL endpoints. Use `strict` only when your infrastructure guarantees
+reliable access to revocation services.
+
 Notation verification runs in parallel with SLSA and VEX checks. The results
 are combined: all configured checks must pass for the overall result to pass.
 
@@ -1148,6 +1159,7 @@ Example configuration:
   "notation": {
     "missingPolicy": "deny",
     "verificationLevel": "strict",
+    "revocationMode": "soft",
     "trustStores": [
       {
         "name": "acme-ca",

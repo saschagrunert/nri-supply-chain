@@ -39,6 +39,17 @@ const (
 	// defaultVerificationLevel is the verification level used when none is configured.
 	defaultVerificationLevel = "strict"
 
+	// revocationModeStrict enforces OCSP/CRL revocation checking.
+	revocationModeStrict = "strict"
+
+	// revocationModeSoft logs revocation check failures without enforcing.
+	revocationModeSoft = "soft"
+
+	// revocationModeSkip explicitly disables revocation checking by
+	// setting ActionSkip. When revocationMode is omitted, no override
+	// is set and the base verification level controls revocation behavior.
+	revocationModeSkip = "skip"
+
 	// trustPolicyDocVersion is the trust policy document version.
 	trustPolicyDocVersion = "1.0"
 )
@@ -195,23 +206,55 @@ func buildTrustPolicyDocument(notationPolicy *policy.NotationPolicy) *trustpolic
 		level = notationPolicy.VerificationLevel
 	}
 
+	override := revocationOverride(notationPolicy.RevocationMode)
+
 	policies := make([]trustpolicy.TrustPolicy, 0, len(notationPolicy.TrustPolicy))
 
 	for _, rule := range notationPolicy.TrustPolicy {
+		sigVerification := trustpolicy.SignatureVerification{
+			VerificationLevel: level,
+		}
+
+		// Only set Override when non-nil to avoid rejection by notation-go
+		// for verificationLevel "skip" which disallows any overrides.
+		if override != nil {
+			sigVerification.Override = override
+		}
+
 		policies = append(policies, trustpolicy.TrustPolicy{
-			Name:           rule.Name,
-			RegistryScopes: rule.RegistryScopes,
-			SignatureVerification: trustpolicy.SignatureVerification{
-				VerificationLevel: level,
-			},
-			TrustStores:       rule.TrustStores,
-			TrustedIdentities: rule.TrustedIdentities,
+			Name:                  rule.Name,
+			RegistryScopes:        rule.RegistryScopes,
+			SignatureVerification: sigVerification,
+			TrustStores:           rule.TrustStores,
+			TrustedIdentities:     rule.TrustedIdentities,
 		})
 	}
 
 	return &trustpolicy.Document{
 		Version:       trustPolicyDocVersion,
 		TrustPolicies: policies,
+	}
+}
+
+// revocationOverride returns the Override map for the given revocation mode.
+// An empty mode returns nil so that notation-go's default behavior applies.
+// "skip" returns ActionSkip to explicitly disable revocation checking.
+func revocationOverride(mode string) map[trustpolicy.ValidationType]trustpolicy.ValidationAction {
+	switch mode {
+	case revocationModeStrict:
+		return map[trustpolicy.ValidationType]trustpolicy.ValidationAction{
+			trustpolicy.TypeRevocation: trustpolicy.ActionEnforce,
+		}
+	case revocationModeSoft:
+		return map[trustpolicy.ValidationType]trustpolicy.ValidationAction{
+			trustpolicy.TypeRevocation: trustpolicy.ActionLog,
+		}
+	case revocationModeSkip:
+		return map[trustpolicy.ValidationType]trustpolicy.ValidationAction{
+			trustpolicy.TypeRevocation: trustpolicy.ActionSkip,
+		}
+	default:
+		return nil
 	}
 }
 

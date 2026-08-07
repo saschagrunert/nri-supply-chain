@@ -46,6 +46,7 @@ const (
 	testRuleBuilderID          = "rule-builder"
 	testMutatedValue           = "mutated"
 	testNotationLevelStrict    = "strict"
+	testNotationLevelSkip      = "skip"
 	testNotationStoreName      = "myca"
 	testNotationStoreRef       = "ca:myca"
 	testNotationCertPath       = "/etc/certs/ca.pem"
@@ -2656,7 +2657,7 @@ func TestValidateEnforceRejectsNotationSkip(t *testing.T) {
 	pol := &policy.Policy{
 		Sections: policy.Sections{
 			Notation: &policy.NotationPolicy{
-				VerificationLevel: "skip",
+				VerificationLevel: testNotationLevelSkip,
 			},
 		},
 	}
@@ -3606,7 +3607,7 @@ func TestNotationMissingPolicy(t *testing.T) {
 func validNotationPolicy() *policy.NotationPolicy {
 	return &policy.NotationPolicy{
 		MissingPolicy:     types.ActionDeny,
-		VerificationLevel: "strict",
+		VerificationLevel: testNotationLevelStrict,
 		TrustStores: []policy.NotationTrustStore{
 			{
 				Name:         testNotationStoreName,
@@ -3645,7 +3646,7 @@ func TestPolicyValidateNotation(t *testing.T) {
 				Sections: policy.Sections{
 					Notation: &policy.NotationPolicy{
 						MissingPolicy:     types.ActionDeny,
-						VerificationLevel: "invalid",
+						VerificationLevel: testInvalidValue,
 						TrustStores: []policy.NotationTrustStore{
 							{
 								Name:         testNotationStoreName,
@@ -3685,7 +3686,7 @@ func TestPolicyValidateNotation(t *testing.T) {
 						TrustStores: []policy.NotationTrustStore{
 							{
 								Name:         testNotationStoreName,
-								Type:         "invalid",
+								Type:         testInvalidValue,
 								Certificates: []string{testNotationCertPath},
 							},
 						},
@@ -3892,6 +3893,140 @@ func TestPolicyValidateNotationMissingPolicy(t *testing.T) {
 			},
 			wantErr:     true,
 			expectedErr: types.ErrInvalidAction,
+		},
+	})
+}
+
+func TestPolicyValidateNotationRevocationMode(t *testing.T) {
+	t.Parallel()
+
+	runValidateTests(t, []validateTest{
+		{
+			name: "valid revocation mode strict",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Notation: &policy.NotationPolicy{
+						RevocationMode: "strict",
+						TrustStores: []policy.NotationTrustStore{
+							{
+								Name:         testNotationStoreName,
+								Type:         "ca",
+								Certificates: []string{testNotationCertPath},
+							},
+						},
+					},
+				},
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name: "valid revocation mode soft",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Notation: &policy.NotationPolicy{
+						RevocationMode: "soft",
+						TrustStores: []policy.NotationTrustStore{
+							{
+								Name:         testNotationStoreName,
+								Type:         "ca",
+								Certificates: []string{testNotationCertPath},
+							},
+						},
+					},
+				},
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name: "valid revocation mode skip",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Notation: &policy.NotationPolicy{
+						RevocationMode: "skip",
+						TrustStores: []policy.NotationTrustStore{
+							{
+								Name:         testNotationStoreName,
+								Type:         "ca",
+								Certificates: []string{testNotationCertPath},
+							},
+						},
+					},
+				},
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name: "empty revocation mode is valid (no override)",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Notation: &policy.NotationPolicy{
+						RevocationMode: "",
+						TrustStores: []policy.NotationTrustStore{
+							{
+								Name:         testNotationStoreName,
+								Type:         "ca",
+								Certificates: []string{testNotationCertPath},
+							},
+						},
+					},
+				},
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name: "invalid revocation mode",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Notation: &policy.NotationPolicy{
+						RevocationMode: testInvalidValue,
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrNotationRevocationModeInvalid,
+		},
+		{
+			name: "revocation mode strict rejected with verification level skip",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Notation: &policy.NotationPolicy{
+						VerificationLevel: testNotationLevelSkip,
+						RevocationMode:    "strict",
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrNotationRevocationWithSkipLevel,
+		},
+		{
+			name: "revocation mode soft rejected with verification level skip",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Notation: &policy.NotationPolicy{
+						VerificationLevel: testNotationLevelSkip,
+						RevocationMode:    "soft",
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrNotationRevocationWithSkipLevel,
+		},
+		{
+			name: "revocation mode skip rejected with verification level skip",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					Notation: &policy.NotationPolicy{
+						VerificationLevel: testNotationLevelSkip,
+						RevocationMode:    "skip",
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrNotationRevocationWithSkipLevel,
 		},
 	})
 }
