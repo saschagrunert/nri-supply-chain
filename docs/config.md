@@ -85,10 +85,10 @@ tuf_mirror = "https://tuf.internal.example.com"
 tuf_root = "/etc/sigstore/root.json"
 ```
 
-| Field                 | Default         | Description                                               |
-| --------------------- | --------------- | --------------------------------------------------------- |
-| `sigstore.tuf_mirror` | (empty, public) | URL of a custom TUF mirror for the Sigstore trusted root  |
-| `sigstore.tuf_root`   | (empty)         | Path to a custom TUF root.json for private root key trust |
+| Field                 | Default         | Description                                                                                                  |
+| --------------------- | --------------- | ------------------------------------------------------------------------------------------------------------ |
+| `sigstore.tuf_mirror` | (empty, public) | **Deprecated.** URL of a custom TUF mirror for the Sigstore trusted root. Use `[[sigstore.roots]]` instead.  |
+| `sigstore.tuf_root`   | (empty)         | **Deprecated.** Path to a custom TUF root.json for private root key trust. Use `[[sigstore.roots]]` instead. |
 
 The trusted root fetched from the custom TUF mirror contains the Fulcio CA
 certificates and Rekor transparency log keys for the private deployment.

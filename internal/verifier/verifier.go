@@ -128,6 +128,7 @@ func New(
 		}
 
 		WarnEnforceDefaults(&cfgCopy, policies)
+		WarnWarnModeDefaults(&cfgCopy, policies)
 	}
 
 	snap := newSnapshot(&cfgCopy, policies, hashes, met, fetcher)
@@ -196,6 +197,47 @@ func policyHashForNamespace(hashes map[string]string, namespace string) string {
 	}
 
 	return hashes[""]
+}
+
+// WarnWarnModeDefaults logs a warning when warn mode is used with all
+// permissive defaults, which means no enforcement happens at all.
+func WarnWarnModeDefaults(cfg *config.Config, policies map[string]*policy.Policy) {
+	for namespace, pol := range policies {
+		effectiveMode := pol.EffectiveMode(cfg.Verification)
+		if effectiveMode != config.ModeWarn {
+			continue
+		}
+
+		if !allMissingPoliciesAllow(pol) {
+			continue
+		}
+
+		if cfg.FetchFailurePolicy != types.ActionWarn &&
+			cfg.FetchFailurePolicy != types.ActionAllow {
+			continue
+		}
+
+		label := namespace
+		if label == "" {
+			label = policy.DefaultPolicyLabel
+		}
+
+		slog.Warn(
+			"warn mode with all-permissive defaults provides no enforcement;"+
+				" set missing policies to deny or switch to enforce mode",
+			"policy", label,
+			"fetch_failure_policy", cfg.FetchFailurePolicy,
+		)
+	}
+}
+
+func allMissingPoliciesAllow(pol *policy.Policy) bool {
+	return pol.SLSAMissingPolicy() == types.ActionAllow &&
+		pol.VEXMissingPolicy() == types.ActionAllow &&
+		pol.VSAMissingPolicy() == types.ActionAllow &&
+		pol.NotationMissingPolicy() == types.ActionAllow &&
+		pol.SBOMMissingPolicy() == types.ActionAllow &&
+		pol.SCAIMissingPolicy() == types.ActionAllow
 }
 
 // WarnEnforceDefaults logs warnings when enforce mode is used with
@@ -634,6 +676,7 @@ func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 
 	if cfgCopy.Enabled() {
 		WarnEnforceDefaults(&cfgCopy, policies)
+		WarnWarnModeDefaults(&cfgCopy, policies)
 	}
 
 	return nil
@@ -1041,6 +1084,7 @@ func (v *Verifier) applyPolicyUpdate(
 
 	if state.config.Enabled() {
 		WarnEnforceDefaults(state.config, policies)
+		WarnWarnModeDefaults(state.config, policies)
 	}
 
 	slog.Info(

@@ -428,12 +428,15 @@ func runValidation(cfg *config.Config) int {
 	}
 
 	if len(errs) > 0 {
-		slog.Error("Validation failed", "error", errors.Join(errs...))
+		for _, e := range errs {
+			slog.Error("Validation failed", "error", e)
+		}
 
 		return exitError
 	}
 
 	verifier.WarnEnforceDefaults(cfg, policies)
+	verifier.WarnWarnModeDefaults(cfg, policies)
 
 	slog.Info("Validation passed",
 		"mode", cfg.Verification,

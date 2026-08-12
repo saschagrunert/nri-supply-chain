@@ -38,13 +38,6 @@ const (
 	metaBuilderID = "builderID"
 	metaBuildType = "buildType"
 	metaSource    = "source"
-
-	clockSkewTolerance = 60 * time.Second
-
-	// maxReasonableAge caps the computed age to prevent time.Duration overflow
-	// on crafted timestamps (e.g., year 0001). time.Duration is int64
-	// nanoseconds, overflowing at ~292 years.
-	maxReasonableAge = 200 * 365 * 24 * time.Hour
 )
 
 var (
@@ -544,34 +537,20 @@ func verifyFreshness(buildStarted *time.Time, pol *policy.Policy) error {
 		return nil
 	}
 
-	age := time.Since(*buildStarted)
-
-	if age < -clockSkewTolerance {
-		return fmt.Errorf("%w: %s", ErrFutureTimestamp, buildStarted.Format(time.RFC3339Nano))
+	var maxAge *time.Duration
+	if maxAgeConfigured {
+		maxAge = &pol.SLSA.MaxAgeDuration
 	}
 
-	if age < 0 {
-		age = 0
-	}
-
-	if age > maxReasonableAge {
-		return fmt.Errorf(
-			"%w: timestamp %s is unreasonably old",
-			ErrStaleProvenance,
-			buildStarted.Format(time.RFC3339Nano),
-		)
-	}
-
-	if maxAgeConfigured && age > pol.SLSA.MaxAgeDuration {
-		return fmt.Errorf(
-			"%w: built %s ago, max %s",
-			ErrStaleProvenance,
-			age.Truncate(time.Second),
-			pol.SLSA.MaxAgeDuration,
-		)
-	}
-
-	return nil
+	//nolint:wrapcheck // VerifyFreshness wraps the caller's sentinel errors
+	return types.VerifyFreshness(
+		*buildStarted,
+		maxAge,
+		"built",
+		ErrFutureTimestamp,
+		ErrStaleProvenance,
+		ErrStaleProvenance,
+	)
 }
 
 func failResult(detail string) *types.CheckResult {

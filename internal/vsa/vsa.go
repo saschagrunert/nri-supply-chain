@@ -40,13 +40,6 @@ const (
 	ResultFailed = "FAILED"
 
 	minSLSAVersion = "1.0"
-
-	clockSkewTolerance = 60 * time.Second
-
-	// maxReasonableAge caps the computed age to prevent time.Duration overflow
-	// on crafted timestamps (e.g., year 0001). time.Duration is int64
-	// nanoseconds, overflowing at ~292 years.
-	maxReasonableAge = 200 * 365 * 24 * time.Hour
 )
 
 var (
@@ -355,34 +348,16 @@ func verifyFreshness(timeVerified string, pol *policy.Policy) error {
 		return fmt.Errorf("parsing time_verified %q: %w", timeVerified, err)
 	}
 
-	age := time.Since(verified)
-
-	if age < -clockSkewTolerance {
-		return fmt.Errorf("%w: %s", ErrFutureTimestamp, timeVerified)
+	var maxAge *time.Duration
+	if pol.VSA != nil && pol.VSA.MaxAge != "" {
+		maxAge = &pol.VSA.MaxAgeDuration
 	}
 
-	if age < 0 {
-		age = 0
-	}
-
-	if age > maxReasonableAge {
-		return fmt.Errorf("%w: timestamp %s is unreasonably old", ErrStaleVSA, timeVerified)
-	}
-
-	if pol.VSA == nil || pol.VSA.MaxAge == "" {
-		return nil
-	}
-
-	if age > pol.VSA.MaxAgeDuration {
-		return fmt.Errorf(
-			"%w: verified %s ago, max %s",
-			ErrStaleVSA,
-			age.Truncate(time.Second),
-			pol.VSA.MaxAgeDuration,
-		)
-	}
-
-	return nil
+	//nolint:wrapcheck // VerifyFreshness wraps the caller's sentinel errors
+	return types.VerifyFreshness(
+		verified, maxAge, "verified",
+		ErrFutureTimestamp, ErrStaleVSA, ErrStaleVSA,
+	)
 }
 
 func predicateMetadata(pred *Predicate) map[string]any {
