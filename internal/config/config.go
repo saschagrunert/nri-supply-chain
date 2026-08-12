@@ -469,6 +469,16 @@ func (c *Config) Normalize() {
 
 	c.normalizeCacheTTLs()
 
+	if c.Sigstore.TUFMirror != "" && len(c.Sigstore.Roots) == 0 {
+		slog.Warn("sigstore.tuf_mirror is deprecated, use [[sigstore.roots]] instead",
+			"tuf_mirror", c.Sigstore.TUFMirror)
+	}
+
+	if c.Sigstore.TUFRoot != "" && len(c.Sigstore.Roots) == 0 {
+		slog.Warn("sigstore.tuf_root is deprecated, use [[sigstore.roots]] instead",
+			"tuf_root", c.Sigstore.TUFRoot)
+	}
+
 	if c.Sigstore.IncludePublicRoot != nil && len(c.Sigstore.Roots) == 0 {
 		slog.Warn("include_public_root has no effect without [[sigstore.roots]]")
 	}
@@ -481,7 +491,8 @@ func (c *Config) Normalize() {
 func (c *Config) WarnInsecureRegistries() {
 	for idx := range c.Registries {
 		if c.Registries[idx].Insecure {
-			slog.Warn("Registry configured with insecure TLS (skip verify)",
+			slog.Warn("Registry configured with insecure TLS (skip verify);"+
+				" this setting will be rejected in enforce mode",
 				"prefix", c.Registries[idx].Prefix,
 				"index", idx,
 			)

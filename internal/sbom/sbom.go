@@ -131,6 +131,15 @@ type cyclonedxLicenseRef struct {
 	Name string `json:"name,omitempty"`
 }
 
+type sbomData struct {
+	licenses       []string
+	purls          []string
+	format         string
+	componentCount int
+	licenseCount   int
+	vulns          []cyclonedxVulnerability
+}
+
 // Verify checks a single SBOM attestation against the given policy.
 func Verify( //nolint:revive // ctx reserved for future context-aware logging
 	ctx context.Context,
@@ -199,26 +208,24 @@ func VerifyMultiple( //nolint:cyclop // metadata accumulation adds branches
 func verifySBOMPredicate(
 	predicate []byte, pol *policy.Policy,
 ) (*types.CheckResult, error) {
-	licenses, purls, format, componentCount, licenseCount, vulns, err := extractSBOMData(
-		predicate, pol,
-	)
+	data, err := extractSBOMData(predicate, pol)
 	if err != nil {
 		return nil, err
 	}
 
-	result := checkDenyLists(licenses, purls, pol)
+	result := checkDenyLists(data.licenses, data.purls, pol)
 	result.Metadata = map[string]any{
-		"format":         format,
-		"componentCount": int64(componentCount),
-		"licenseCount":   int64(licenseCount),
+		"format":         data.format,
+		"componentCount": int64(data.componentCount),
+		"licenseCount":   int64(data.licenseCount),
 	}
 
 	if !result.Passed {
 		return result, nil
 	}
 
-	if format == "cyclonedx" && pol.SBOM != nil && pol.SBOM.CVSS != nil {
-		cvssResult := checkCVSSThresholds(vulns, pol.SBOM.CVSS)
+	if data.format == "cyclonedx" && pol.SBOM != nil && pol.SBOM.CVSS != nil {
+		cvssResult := checkCVSSThresholds(data.vulns, pol.SBOM.CVSS)
 		if !cvssResult.Passed {
 			maps.Copy(cvssResult.Metadata, result.Metadata)
 
@@ -231,37 +238,36 @@ func verifySBOMPredicate(
 	return result, nil
 }
 
-//nolint:gocritic // returns are tightly coupled
 func extractSBOMData(
 	predicate []byte, pol *policy.Policy,
-) (
-	licenses, purls []string, format string,
-	componentCount, licenseCount int,
-	vulns []cyclonedxVulnerability, err error,
-) {
-	licenses, purls, componentCount, licenseCount, spdxErr := parseSPDX(predicate)
+) (sbomData, error) {
+	spdx, spdxErr := parseSPDX(predicate)
 	if spdxErr == nil {
 		if !formatAllowed(pol, "spdx") {
-			return nil, nil, "", 0, 0, nil, fmt.Errorf(
+			return sbomData{}, fmt.Errorf(
 				"%w: spdx not in allowed formats", ErrUnsupportedFormat,
 			)
 		}
 
-		return licenses, purls, "spdx", componentCount, licenseCount, nil, nil
+		spdx.format = "spdx"
+
+		return spdx, nil
 	}
 
-	licenses, purls, componentCount, licenseCount, vulns, cdxErr := parseCycloneDX(predicate)
+	cdx, cdxErr := parseCycloneDX(predicate)
 	if cdxErr == nil {
 		if !formatAllowed(pol, "cyclonedx") {
-			return nil, nil, "", 0, 0, nil, fmt.Errorf(
+			return sbomData{}, fmt.Errorf(
 				"%w: cyclonedx not in allowed formats", ErrUnsupportedFormat,
 			)
 		}
 
-		return licenses, purls, "cyclonedx", componentCount, licenseCount, vulns, nil
+		cdx.format = "cyclonedx"
+
+		return cdx, nil
 	}
 
-	return nil, nil, "", 0, 0, nil, fmt.Errorf(
+	return sbomData{}, fmt.Errorf(
 		"%w: not valid SPDX (%w) or CycloneDX (%w)",
 		ErrInvalidSBOM, spdxErr, cdxErr,
 	)
@@ -281,32 +287,35 @@ func formatAllowed(pol *policy.Policy, format string) bool {
 	return false
 }
 
-func parseSPDX(
-	data []byte,
-) (licenses, purls []string, componentCount, licenseCount int, err error) {
+func parseSPDX(data []byte) (sbomData, error) {
 	var doc spdxDocument
 
-	err = json.Unmarshal(data, &doc)
+	err := json.Unmarshal(data, &doc)
 	if err != nil {
-		return nil, nil, 0, 0, fmt.Errorf("parsing SPDX: %w", err)
+		return sbomData{}, fmt.Errorf("parsing SPDX: %w", err)
 	}
 
 	if doc.SPDXVersion == "" || len(doc.Packages) == 0 {
-		return nil, nil, 0, 0, errNotSPDX
+		return sbomData{}, errNotSPDX
 	}
+
+	var result sbomData
 
 	for idx := range doc.Packages {
 		pkg := &doc.Packages[idx]
-		licenses = appendSPDXLicenses(licenses, pkg)
-		purls = appendSPDXPURLs(purls, pkg)
+		result.licenses = appendSPDXLicenses(result.licenses, pkg)
+		result.purls = appendSPDXPURLs(result.purls, pkg)
 	}
 
-	uniqueLicenses := make(map[string]struct{}, len(licenses))
-	for _, lic := range licenses {
+	uniqueLicenses := make(map[string]struct{}, len(result.licenses))
+	for _, lic := range result.licenses {
 		uniqueLicenses[lic] = struct{}{}
 	}
 
-	return licenses, purls, len(doc.Packages), len(uniqueLicenses), nil
+	result.componentCount = len(doc.Packages)
+	result.licenseCount = len(uniqueLicenses)
+
+	return result, nil
 }
 
 func appendSPDXLicenses(licenses []string, pkg *spdxPackage) []string {
@@ -333,19 +342,19 @@ func appendSPDXPURLs(purls []string, pkg *spdxPackage) []string {
 	return purls
 }
 
-func parseCycloneDX( //nolint:gocritic // tightly coupled returns
-	data []byte,
-) (licenses, purls []string, componentCount, licenseCount int, vulns []cyclonedxVulnerability, err error) {
+func parseCycloneDX(data []byte) (sbomData, error) {
 	var bom cyclonedxBOM
 
-	err = json.Unmarshal(data, &bom)
+	err := json.Unmarshal(data, &bom)
 	if err != nil {
-		return nil, nil, 0, 0, nil, fmt.Errorf("parsing CycloneDX: %w", err)
+		return sbomData{}, fmt.Errorf("parsing CycloneDX: %w", err)
 	}
 
 	if len(bom.Components) == 0 {
-		return nil, nil, 0, 0, nil, errNotCycloneDX
+		return sbomData{}, errNotCycloneDX
 	}
+
+	var result sbomData
 
 	uniqueLicenses := make(map[string]struct{})
 
@@ -359,20 +368,24 @@ func parseCycloneDX( //nolint:gocritic // tightly coupled returns
 			}
 
 			if lic.License.ID != "" {
-				licenses = append(licenses, lic.License.ID)
+				result.licenses = append(result.licenses, lic.License.ID)
 				uniqueLicenses[lic.License.ID] = struct{}{}
 			} else if lic.License.Name != "" {
-				licenses = append(licenses, lic.License.Name)
+				result.licenses = append(result.licenses, lic.License.Name)
 				uniqueLicenses[lic.License.Name] = struct{}{}
 			}
 		}
 
 		if comp.PURL != "" {
-			purls = append(purls, comp.PURL)
+			result.purls = append(result.purls, comp.PURL)
 		}
 	}
 
-	return licenses, purls, len(bom.Components), len(uniqueLicenses), bom.Vulnerabilities, nil
+	result.componentCount = len(bom.Components)
+	result.licenseCount = len(uniqueLicenses)
+	result.vulns = bom.Vulnerabilities
+
+	return result, nil
 }
 
 func checkDenyLists(
@@ -592,19 +605,30 @@ type vulnAggregate struct {
 	maxSeverity string
 }
 
-func checkCVSSThresholds( //nolint:cyclop,funlen // two-pass design requires branches
+func checkCVSSThresholds(
 	vulns []cyclonedxVulnerability, cvssPolicy *policy.SBOMCVSSPolicy,
 ) *types.CheckResult {
-	ignoredCVEs := make(map[string]bool, len(cvssPolicy.IgnoreCVEs))
-	for _, cve := range cvssPolicy.IgnoreCVEs {
-		ignoredCVEs[cve] = true
+	cached, meta := computeVulnAggregates(vulns)
+
+	violation := findThresholdViolation(vulns, cached, cvssPolicy)
+	if violation != "" {
+		result := failResult(violation)
+		result.Metadata = meta
+
+		return result
 	}
 
-	minSeverityRank := 0
-	if cvssPolicy.MinSeverity != "" {
-		minSeverityRank = severityRank[strings.ToLower(cvssPolicy.MinSeverity)]
-	}
+	result := passResult()
+	result.Metadata = meta
 
+	return result
+}
+
+// computeVulnAggregates computes statistics across ALL vulnerabilities,
+// including ignored CVEs, so they remain visible in CEL rules.
+func computeVulnAggregates(
+	vulns []cyclonedxVulnerability,
+) (cached []vulnAggregate, meta map[string]any) {
 	var (
 		globalMaxScore float64
 		criticalCount  int64
@@ -612,11 +636,8 @@ func checkCVSSThresholds( //nolint:cyclop,funlen // two-pass design requires bra
 		mediumCount    int64
 	)
 
-	cached := make([]vulnAggregate, len(vulns))
+	cached = make([]vulnAggregate, len(vulns))
 
-	// First pass: compute aggregate statistics across ALL vulnerabilities.
-	// Ignored CVEs still contribute to aggregate statistics for visibility
-	// in CEL rules.
 	for idx := range vulns {
 		score, sev := aggregateRatings(vulns[idx].Ratings)
 		cached[idx] = vulnAggregate{maxScore: score, maxSeverity: sev}
@@ -635,15 +656,31 @@ func checkCVSSThresholds( //nolint:cyclop,funlen // two-pass design requires bra
 		}
 	}
 
-	meta := map[string]any{
+	meta = map[string]any{
 		"cvssMax":           globalMaxScore,
 		"cvssCriticalCount": criticalCount,
 		"cvssHighCount":     highCount,
 		"cvssMediumCount":   mediumCount,
 	}
 
-	// Second pass: check each non-ignored vulnerability against thresholds,
-	// using cached aggregates from the first pass.
+	return cached, meta
+}
+
+func findThresholdViolation(
+	vulns []cyclonedxVulnerability,
+	cached []vulnAggregate,
+	cvssPolicy *policy.SBOMCVSSPolicy,
+) string {
+	ignoredCVEs := make(map[string]bool, len(cvssPolicy.IgnoreCVEs))
+	for _, cve := range cvssPolicy.IgnoreCVEs {
+		ignoredCVEs[cve] = true
+	}
+
+	minSeverityRank := 0
+	if cvssPolicy.MinSeverity != "" {
+		minSeverityRank = severityRank[strings.ToLower(cvssPolicy.MinSeverity)]
+	}
+
 	for idx := range vulns {
 		if ignoredCVEs[vulns[idx].ID] {
 			continue
@@ -662,22 +699,14 @@ func checkCVSSThresholds( //nolint:cyclop,funlen // two-pass design requires bra
 		}
 
 		if exceeded {
-			detail := fmt.Sprintf(
+			return fmt.Sprintf(
 				"CVSS threshold exceeded: %s (score %.1f, severity %s)",
 				vulns[idx].ID, agg.maxScore, strings.ToLower(agg.maxSeverity),
 			)
-
-			result := failResult(detail)
-			result.Metadata = meta
-
-			return result
 		}
 	}
 
-	result := passResult()
-	result.Metadata = meta
-
-	return result
+	return ""
 }
 
 func aggregateRatings(ratings []cyclonedxRating) (maxScore float64, maxSeverity string) {

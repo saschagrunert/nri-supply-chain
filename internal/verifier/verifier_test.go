@@ -15,13 +15,16 @@
 package verifier_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -2914,6 +2917,137 @@ func TestNewOCIUnreachableAllowsInWarnMode(t *testing.T) {
 
 	if !result.Allowed {
 		t.Errorf("expected allowed=true in warn mode, got reason: %s", result.Reason)
+	}
+}
+
+//nolint:paralleltest // mutates slog.SetDefault
+func TestWarnWarnModeDefaultsEmitsForPermissiveDefaults(t *testing.T) {
+	var buf bytes.Buffer
+
+	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
+	prev := slog.Default()
+
+	slog.SetDefault(slog.New(handler))
+
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.FetchFailurePolicy = types.ActionAllow
+
+	policies := map[string]*policy.Policy{
+		"": {},
+	}
+
+	verifier.WarnWarnModeDefaults(cfg, policies)
+
+	output := buf.String()
+	if !strings.Contains(output, "warn mode with all-permissive defaults") {
+		t.Errorf("expected warning about permissive defaults, got: %s", output)
+	}
+}
+
+//nolint:paralleltest // mutates slog.SetDefault
+func TestWarnWarnModeDefaultsEmitsForWarnFetchPolicy(t *testing.T) {
+	var buf bytes.Buffer
+
+	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
+	prev := slog.Default()
+
+	slog.SetDefault(slog.New(handler))
+
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.FetchFailurePolicy = types.ActionWarn
+
+	policies := map[string]*policy.Policy{
+		"": {},
+	}
+
+	verifier.WarnWarnModeDefaults(cfg, policies)
+
+	output := buf.String()
+	if !strings.Contains(output, "warn mode with all-permissive defaults") {
+		t.Errorf("expected warning for ActionWarn fetch policy, got: %s", output)
+	}
+}
+
+//nolint:paralleltest // mutates slog.SetDefault
+func TestWarnWarnModeDefaultsSkipsEnforceMode(t *testing.T) {
+	var buf bytes.Buffer
+
+	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
+	prev := slog.Default()
+
+	slog.SetDefault(slog.New(handler))
+
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+
+	policies := map[string]*policy.Policy{
+		"": {},
+	}
+
+	verifier.WarnWarnModeDefaults(cfg, policies)
+
+	if buf.Len() != 0 {
+		t.Errorf("expected no warning for enforce mode, got: %s", buf.String())
+	}
+}
+
+//nolint:paralleltest // mutates slog.SetDefault
+func TestWarnWarnModeDefaultsSkipsWhenMissingPolicyDeny(t *testing.T) {
+	var buf bytes.Buffer
+
+	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
+	prev := slog.Default()
+
+	slog.SetDefault(slog.New(handler))
+
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.FetchFailurePolicy = types.ActionAllow
+
+	policies := map[string]*policy.Policy{
+		"": {Sections: policy.Sections{SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionDeny}}},
+	}
+
+	verifier.WarnWarnModeDefaults(cfg, policies)
+
+	if buf.Len() != 0 {
+		t.Errorf("expected no warning when SLSA deny policy set, got: %s", buf.String())
+	}
+}
+
+//nolint:paralleltest // mutates slog.SetDefault
+func TestWarnWarnModeDefaultsSkipsStrictFetchPolicy(t *testing.T) {
+	var buf bytes.Buffer
+
+	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
+	prev := slog.Default()
+
+	slog.SetDefault(slog.New(handler))
+
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.FetchFailurePolicy = types.ActionDeny
+
+	policies := map[string]*policy.Policy{
+		"": {},
+	}
+
+	verifier.WarnWarnModeDefaults(cfg, policies)
+
+	if buf.Len() != 0 {
+		t.Errorf("expected no warning with deny fetch policy, got: %s", buf.String())
 	}
 }
 

@@ -434,69 +434,46 @@ func prependVSAWarning(result *types.Result, pol *policy.Policy, detail string) 
 	applyCheckResult(result, vsaCheck)
 }
 
-func runParallelChecks( //nolint:funlen // parallel goroutine setup for each check type
+func runParallelChecks(
 	ctx context.Context, bins *attestationBins,
 	pol *policy.Policy, met *metrics.Metrics,
 	imageRef, digest string,
 	parsedRef name.Reference,
 ) *types.Result {
-	var (
-		slsaResult     *types.CheckResult
-		vexResult      *types.CheckResult
-		notationResult *types.CheckResult
-		sbomResult     *types.CheckResult
-		scaiResult     *types.CheckResult
-		waitGroup      sync.WaitGroup
-	)
-
-	waitGroup.Add(1)
-
-	go runParallelCheck(
-		&waitGroup, &slsaResult, types.CheckTypeSLSA,
-		func() *types.CheckResult {
+	checks := []struct {
+		checkType types.CheckType
+		fn        func() *types.CheckResult
+	}{
+		{types.CheckTypeSLSA, func() *types.CheckResult {
 			return runSLSACheck(ctx, bins.slsa, pol, met, imageRef, digest)
-		},
-	)
-
-	waitGroup.Add(1)
-
-	go runParallelCheck(
-		&waitGroup, &vexResult, types.CheckTypeVEX,
-		func() *types.CheckResult {
+		}},
+		{types.CheckTypeVEX, func() *types.CheckResult {
 			return runVEXCheck(ctx, bins.vex, pol, met, imageRef, digest, parsedRef)
-		},
-	)
-
-	waitGroup.Add(1)
-
-	go runParallelCheck(
-		&waitGroup, &notationResult, types.CheckTypeNotation,
-		func() *types.CheckResult {
+		}},
+		{types.CheckTypeNotation, func() *types.CheckResult {
 			return runNotationCheck(ctx, bins.notation, pol, met, imageRef, digest)
-		},
-	)
-
-	waitGroup.Add(1)
-
-	go runParallelCheck(
-		&waitGroup, &sbomResult, types.CheckTypeSBOM,
-		func() *types.CheckResult {
+		}},
+		{types.CheckTypeSBOM, func() *types.CheckResult {
 			return runSBOMCheck(ctx, bins.sbom, pol, met, imageRef, digest)
-		},
-	)
-
-	waitGroup.Add(1)
-
-	go runParallelCheck(
-		&waitGroup, &scaiResult, types.CheckTypeSCAI,
-		func() *types.CheckResult {
+		}},
+		{types.CheckTypeSCAI, func() *types.CheckResult {
 			return runSCAICheck(ctx, bins.scai, pol, met, imageRef, digest)
-		},
-	)
+		}},
+	}
+
+	results := make([]*types.CheckResult, len(checks))
+
+	var waitGroup sync.WaitGroup
+
+	for idx, chk := range checks {
+		waitGroup.Add(1)
+
+		go runParallelCheck(&waitGroup, &results[idx], chk.checkType, chk.fn)
+	}
 
 	waitGroup.Wait()
 
-	return combineResults(slsaResult, vexResult, notationResult, sbomResult, scaiResult)
+	return combineResults(results...)
 }
 
 func runParallelCheck(
