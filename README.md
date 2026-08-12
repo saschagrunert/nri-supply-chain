@@ -328,7 +328,10 @@ To verify a release:
 1. Verify the checksum file signature with cosign:
 
    ```console
-   cosign verify-blob --bundle checksums.txt.sigstore.json checksums.txt
+   cosign verify-blob --bundle checksums.txt.sigstore.json \
+     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+     --certificate-identity-regexp 'https://github.com/saschagrunert/nri-supply-chain/' \
+     checksums.txt
    ```
 
 2. Verify the binary against the checksum file:
@@ -351,10 +354,12 @@ To verify a release:
    [slsa-verifier](https://github.com/slsa-framework/slsa-verifier):
 
    ```console
-   slsa-verifier verify-image ghcr.io/saschagrunert/nri-supply-chain:<version> \
+   slsa-verifier verify-image ghcr.io/saschagrunert/nri-supply-chain@sha256:<digest> \
      --source-uri github.com/saschagrunert/nri-supply-chain \
      --source-tag v<version>
    ```
+
+   The digest can be obtained via `crane digest ghcr.io/saschagrunert/nri-supply-chain:<version>`.
 
 5. Verify the container image signature:
 
