@@ -1151,8 +1151,16 @@ func TestResultShouldUseShorterTTL(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // mutates slog.SetDefault
 func TestWarnEnforceDefaultsDoesNotPanicForWarnMode(t *testing.T) {
-	t.Parallel()
+	var buf bytes.Buffer
+
+	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
+	prev := slog.Default()
+
+	slog.SetDefault(slog.New(handler))
+
+	t.Cleanup(func() { slog.SetDefault(prev) })
 
 	cfg := config.DefaultConfig()
 	cfg.Verification = config.ModeWarn
@@ -1161,12 +1169,23 @@ func TestWarnEnforceDefaultsDoesNotPanicForWarnMode(t *testing.T) {
 		"": {},
 	}
 
-	// Should not panic; no warnings emitted for non-enforce mode.
 	verifier.WarnEnforceDefaults(cfg, policies)
+
+	if buf.Len() != 0 {
+		t.Errorf("expected no warning for warn mode, got: %s", buf.String())
+	}
 }
 
+//nolint:paralleltest // mutates slog.SetDefault
 func TestWarnEnforceDefaultsEmitsForEnforceMode(t *testing.T) {
-	t.Parallel()
+	var buf bytes.Buffer
+
+	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
+	prev := slog.Default()
+
+	slog.SetDefault(slog.New(handler))
+
+	t.Cleanup(func() { slog.SetDefault(prev) })
 
 	cfg := config.DefaultConfig()
 	cfg.Verification = config.ModeEnforce
@@ -1175,8 +1194,12 @@ func TestWarnEnforceDefaultsEmitsForEnforceMode(t *testing.T) {
 		"": {},
 	}
 
-	// Should not panic; warnings are emitted but we just verify it runs.
 	verifier.WarnEnforceDefaults(cfg, policies)
+
+	output := buf.String()
+	if !strings.Contains(output, "enforce mode") {
+		t.Errorf("expected warning about enforce mode, got: %s", output)
+	}
 }
 
 func TestEnforcing(t *testing.T) {
@@ -1811,8 +1834,16 @@ func TestEffectiveModeForNamespace(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // mutates slog.SetDefault
 func TestWarnEnforceDefaultsPerNamespaceMode(t *testing.T) {
-	t.Parallel()
+	var buf bytes.Buffer
+
+	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
+	prev := slog.Default()
+
+	slog.SetDefault(slog.New(handler))
+
+	t.Cleanup(func() { slog.SetDefault(prev) })
 
 	cfg := config.DefaultConfig()
 	cfg.Verification = config.ModeWarn
@@ -1822,8 +1853,12 @@ func TestWarnEnforceDefaultsPerNamespaceMode(t *testing.T) {
 		testNsProduction: {Mode: config.ModeEnforce},
 	}
 
-	// Should not panic; warnings for production enforce mode should be emitted.
 	verifier.WarnEnforceDefaults(cfg, policies)
+
+	output := buf.String()
+	if !strings.Contains(output, "enforce mode") {
+		t.Errorf("expected warning for per-namespace enforce mode, got: %s", output)
+	}
 }
 
 func TestVerifyPerNamespaceEnforceCacheHit(t *testing.T) {

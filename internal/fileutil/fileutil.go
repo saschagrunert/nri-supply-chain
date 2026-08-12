@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 )
 
 const (
@@ -36,7 +37,9 @@ var ErrFileTooLarge = errors.New("file exceeds maximum allowed size")
 // ReadLimited reads a file up to maxSize bytes. Returns ErrFileTooLarge if the
 // file exceeds the limit.
 func ReadLimited(path string, maxSize int64) ([]byte, error) {
-	file, err := os.Open(path) //nolint:gosec // paths are validated by config/policy at load time
+	path = filepath.Clean(path)
+
+	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("opening %q: %w", path, err)
 	}

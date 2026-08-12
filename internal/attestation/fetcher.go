@@ -1174,13 +1174,8 @@ func (f *OCIFetcher) collectAttestations(
 			predicateType := desc.Annotations[annotationPredicateType]
 
 			att, valid := f.processDescriptor(
-				groupCtx,
-				desc,
-				ref,
-				digest,
-				predicateType,
-				remoteOpts,
-				fetchOpts,
+				groupCtx, desc, ref, digest,
+				predicateType, remoteOpts, fetchOpts,
 			)
 			if !valid {
 				return nil
@@ -1203,7 +1198,11 @@ func (f *OCIFetcher) collectAttestations(
 		})
 	}
 
-	_ = group.Wait()
+	// errAggregateSizeExceeded cancels the group context; log unexpected errors.
+	err := group.Wait()
+	if err != nil && !errors.Is(err, errAggregateSizeExceeded) {
+		slog.WarnContext(ctx, "Unexpected error during attestation collection", "error", err)
+	}
 
 	return attestations, true
 }

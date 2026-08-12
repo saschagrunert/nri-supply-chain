@@ -77,8 +77,13 @@ const (
 	defaultCircuitBreakerCooldown  = 30 * time.Second
 	maxFetchRateLimit              = 10000.0
 
+	maxFetchTimeout = 5 * time.Minute
+	maxCacheTTL     = 7 * 24 * time.Hour // 7 days
+	maxCacheFailTTL = 1 * time.Hour
+
 	defaultVerificationTimeout = 5 * time.Minute
 	maxVerificationTimeout     = 30 * time.Minute
+	maxCircuitBreakerCooldown  = 10 * time.Minute
 
 	// PolicySourceLocal loads policies from the local filesystem (default).
 	PolicySourceLocal PolicySource = "local"
@@ -870,26 +875,7 @@ func (c *Config) validateFetchAndCache() error {
 		errs = append(errs, fmt.Errorf("validating config: %w", err))
 	}
 
-	if c.FetchTimeout.Duration <= 0 {
-		errs = append(errs, fmt.Errorf(
-			"%w: got %s", ErrFetchTimeoutNotPositive, c.FetchTimeout.Duration,
-		))
-	}
-
-	if c.DigestResolveTimeout.Duration <= 0 {
-		errs = append(errs, fmt.Errorf(
-			"%w: got %s", ErrDigestResolveTimeoutNotPositive, c.DigestResolveTimeout.Duration,
-		))
-	}
-
-	if c.DigestResolveTimeout.Duration > maxDigestResolveTimeout {
-		errs = append(errs, fmt.Errorf(
-			"%w: got %s, max %s",
-			ErrDigestResolveTimeoutTooHigh,
-			c.DigestResolveTimeout.Duration,
-			maxDigestResolveTimeout,
-		))
-	}
+	errs = append(errs, c.validateTimeoutFields()...)
 
 	err = c.validateCacheFields()
 	if err != nil {
@@ -909,6 +895,40 @@ func (c *Config) validateFetchAndCache() error {
 	return errors.Join(errs...)
 }
 
+func (c *Config) validateTimeoutFields() []error {
+	var errs []error
+
+	if c.FetchTimeout.Duration <= 0 {
+		errs = append(errs, fmt.Errorf(
+			"%w: got %s", ErrFetchTimeoutNotPositive, c.FetchTimeout.Duration,
+		))
+	}
+
+	if c.FetchTimeout.Duration > maxFetchTimeout {
+		errs = append(errs, fmt.Errorf(
+			"%w: got %s, max %s",
+			ErrFetchTimeoutTooHigh, c.FetchTimeout.Duration, maxFetchTimeout,
+		))
+	}
+
+	if c.DigestResolveTimeout.Duration <= 0 {
+		errs = append(errs, fmt.Errorf(
+			"%w: got %s", ErrDigestResolveTimeoutNotPositive, c.DigestResolveTimeout.Duration,
+		))
+	}
+
+	if c.DigestResolveTimeout.Duration > maxDigestResolveTimeout {
+		errs = append(errs, fmt.Errorf(
+			"%w: got %s, max %s",
+			ErrDigestResolveTimeoutTooHigh,
+			c.DigestResolveTimeout.Duration,
+			maxDigestResolveTimeout,
+		))
+	}
+
+	return errs
+}
+
 func (c *Config) validateCacheFields() error {
 	var errs []error
 
@@ -918,9 +938,23 @@ func (c *Config) validateCacheFields() error {
 		))
 	}
 
+	if c.CacheTTL.Duration > maxCacheTTL {
+		errs = append(errs, fmt.Errorf(
+			"%w: got %s, max %s",
+			ErrCacheTTLTooHigh, c.CacheTTL.Duration, maxCacheTTL,
+		))
+	}
+
 	if c.CacheFailureTTL.Duration < 0 {
 		errs = append(errs, fmt.Errorf(
 			"%w: got %s", ErrCacheFailureTTLNegative, c.CacheFailureTTL.Duration,
+		))
+	}
+
+	if c.CacheFailureTTL.Duration > maxCacheFailTTL {
+		errs = append(errs, fmt.Errorf(
+			"%w: got %s, max %s",
+			ErrCacheFailureTTLTooHigh, c.CacheFailureTTL.Duration, maxCacheFailTTL,
 		))
 	}
 
@@ -939,6 +973,15 @@ func (c *Config) validateResilienceFields() error {
 	if c.CircuitBreakerCooldown.Duration <= 0 {
 		errs = append(errs, fmt.Errorf(
 			"%w: got %s", ErrCircuitBreakerCooldown, c.CircuitBreakerCooldown.Duration,
+		))
+	}
+
+	if c.CircuitBreakerCooldown.Duration > maxCircuitBreakerCooldown {
+		errs = append(errs, fmt.Errorf(
+			"%w: got %s, max %s",
+			ErrCircuitBreakerCooldownTooHigh,
+			c.CircuitBreakerCooldown.Duration,
+			maxCircuitBreakerCooldown,
 		))
 	}
 

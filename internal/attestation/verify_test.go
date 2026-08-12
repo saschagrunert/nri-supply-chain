@@ -33,12 +33,19 @@ import (
 	ociV1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/sigstore/sigstore-go/pkg/root"
+	"github.com/sigstore/sigstore-go/pkg/verify"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 )
 
-const nonexistentKey = "/nonexistent/key.pub"
+const (
+	nonexistentKey            = "/nonexistent/key.pub"
+	wantRootFetchFailed       = "root fetch failed"
+	wantParsingSigstoreBundle = "parsing sigstore bundle"
+)
+
+var errConfigError = errors.New("config error")
 
 func writeTestKey(t *testing.T) string {
 	t.Helper()
@@ -689,7 +696,7 @@ func TestBuildVerificationConfigWithCache(t *testing.T) {
 				}
 			},
 			wantErr:   true,
-			wantInErr: "root fetch failed",
+			wantInErr: wantRootFetchFailed,
 		},
 	}
 
@@ -1018,7 +1025,7 @@ func TestNewOCIFetcherWithCacheInvalidBundle(t *testing.T) {
 		t.Fatal("expected error for invalid bundle")
 	}
 
-	if !strings.Contains(err.Error(), "parsing sigstore bundle") {
+	if !strings.Contains(err.Error(), wantParsingSigstoreBundle) {
 		t.Errorf("expected parsing error, got: %v", err)
 	}
 }
@@ -1202,8 +1209,354 @@ func TestBuildVerificationConfigMultiRoot(t *testing.T) {
 			t.Fatal("expected error for failed cache fetch")
 		}
 
-		if !strings.Contains(err.Error(), "root fetch failed") {
+		if !strings.Contains(err.Error(), wantRootFetchFailed) {
 			t.Errorf("expected error containing 'root fetch failed', got: %v", err)
 		}
 	})
+}
+
+func TestVerifyBundleWithMultipleRoots(t *testing.T) {
+	t.Parallel()
+
+	t.Cleanup(attestation.ResetSANPatternWarnings)
+
+	tests := []struct {
+		name      string
+		ctx       func() context.Context
+		bundle    []byte
+		opts      *attestation.FetchOptions
+		caches    []*attestation.TrustedRootCacheForTest
+		wantErr   bool
+		wantInErr string
+	}{
+		{
+			name: "canceled context before verification",
+			ctx: func() context.Context {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+
+				return ctx
+			},
+			bundle: []byte(`{}`),
+			opts:   &attestation.FetchOptions{},
+			caches: []*attestation.TrustedRootCacheForTest{
+				attestation.NewTestTrustedRootCacheWithRoot(
+					func() (*root.TrustedRoot, error) {
+						return fakeTrustedRoot(), nil
+					},
+					fakeTrustedRoot(),
+					time.Now(),
+				),
+			},
+			wantErr:   true,
+			wantInErr: "context canceled",
+		},
+		{
+			name:   "invalid JSON bundle",
+			ctx:    context.Background,
+			bundle: []byte(`not json`),
+			opts: &attestation.FetchOptions{
+				TrustedIssuers: []string{testIssuerGoogle},
+			},
+			caches: []*attestation.TrustedRootCacheForTest{
+				attestation.NewTestTrustedRootCacheWithRoot(
+					func() (*root.TrustedRoot, error) {
+						return fakeTrustedRoot(), nil
+					},
+					fakeTrustedRoot(),
+					time.Now(),
+				),
+			},
+			wantErr:   true,
+			wantInErr: wantParsingSigstoreBundle,
+		},
+		{
+			name: "empty root caches with no trusted material",
+			ctx:  context.Background,
+			bundle: []byte(
+				`{"mediaType":"` + attestation.ExportBundleMediaType + `"}`,
+			),
+			opts:      &attestation.FetchOptions{},
+			caches:    []*attestation.TrustedRootCacheForTest{},
+			wantErr:   true,
+			wantInErr: wantParsingSigstoreBundle,
+		},
+		{
+			name: "cache fetch error propagates",
+			ctx:  context.Background,
+			bundle: func() []byte {
+				bndl := attestation.NewTestBundle(
+					attestation.ExportDSSEPayloadType,
+					`{"test": true}`,
+				)
+				data, _ := bndl.MarshalJSON()
+
+				return data
+			}(),
+			opts: &attestation.FetchOptions{
+				TrustedIssuers: []string{testIssuerGoogle},
+				Digest:         testDigest,
+			},
+			caches: []*attestation.TrustedRootCacheForTest{
+				attestation.NewTestTrustedRootCache(func() (*root.TrustedRoot, error) {
+					return nil, errRootFetchFailed
+				}),
+			},
+			wantErr:   true,
+			wantInErr: wantRootFetchFailed,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := attestation.ExportVerifyBundleWithMultipleRoots(
+				test.ctx(), test.bundle, test.opts, test.caches,
+			)
+
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+
+				if test.wantInErr != "" && !strings.Contains(err.Error(), test.wantInErr) {
+					t.Errorf("expected error containing %q, got: %v", test.wantInErr, err)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestVerifyBundleCommon(t *testing.T) {
+	t.Parallel()
+
+	t.Cleanup(attestation.ResetSANPatternWarnings)
+
+	tests := []struct {
+		name      string
+		ctx       func() context.Context
+		bundle    []byte
+		opts      *attestation.FetchOptions
+		buildCfg  attestation.BuildConfigFunc
+		wantErr   bool
+		wantInErr string
+	}{
+		{
+			name: "context canceled before verification",
+			ctx: func() context.Context {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+
+				return ctx
+			},
+			bundle: []byte(`{}`),
+			opts:   &attestation.FetchOptions{},
+			buildCfg: func() (
+				root.TrustedMaterialCollection, []verify.VerifierOption, []verify.PolicyOption, error,
+			) {
+				return nil, nil, nil, nil
+			},
+			wantErr:   true,
+			wantInErr: "context canceled before bundle verification",
+		},
+		{
+			name:   "invalid JSON bundle",
+			ctx:    context.Background,
+			bundle: []byte(`not json`),
+			opts:   &attestation.FetchOptions{},
+			buildCfg: func() (
+				root.TrustedMaterialCollection, []verify.VerifierOption, []verify.PolicyOption, error,
+			) {
+				return nil, nil, nil, nil
+			},
+			wantErr:   true,
+			wantInErr: wantParsingSigstoreBundle,
+		},
+		{
+			name: "buildConfig returns error",
+			ctx:  context.Background,
+			bundle: func() []byte {
+				bndl := attestation.NewTestBundle(
+					attestation.ExportDSSEPayloadType,
+					`{"test": true}`,
+				)
+				data, _ := bndl.MarshalJSON()
+
+				return data
+			}(),
+			opts: &attestation.FetchOptions{},
+			buildCfg: func() (
+				root.TrustedMaterialCollection, []verify.VerifierOption, []verify.PolicyOption, error,
+			) {
+				return nil, nil, nil, errConfigError
+			},
+			wantErr:   true,
+			wantInErr: "config error",
+		},
+		{
+			name: "empty digest in options",
+			ctx:  context.Background,
+			bundle: func() []byte {
+				bndl := attestation.NewTestBundle(
+					attestation.ExportDSSEPayloadType,
+					`{"test": true}`,
+				)
+				data, _ := bndl.MarshalJSON()
+
+				return data
+			}(),
+			opts: &attestation.FetchOptions{
+				Digest: "",
+			},
+			buildCfg: func() (
+				root.TrustedMaterialCollection, []verify.VerifierOption, []verify.PolicyOption, error,
+			) {
+				keyMaterial := root.NewTrustedPublicKeyMaterialFromMapping(nil)
+				verifierOpts := []verify.VerifierOption{verify.WithNoObserverTimestamps()}
+
+				return root.TrustedMaterialCollection{keyMaterial}, verifierOpts, nil, nil
+			},
+			wantErr:   true,
+			wantInErr: "empty digest",
+		},
+		{
+			name: "malformed digest in options",
+			ctx:  context.Background,
+			bundle: func() []byte {
+				bndl := attestation.NewTestBundle(
+					attestation.ExportDSSEPayloadType,
+					`{"test": true}`,
+				)
+				data, _ := bndl.MarshalJSON()
+
+				return data
+			}(),
+			opts: &attestation.FetchOptions{
+				Digest: "not-a-digest",
+			},
+			buildCfg: func() (
+				root.TrustedMaterialCollection, []verify.VerifierOption, []verify.PolicyOption, error,
+			) {
+				keyMaterial := root.NewTrustedPublicKeyMaterialFromMapping(nil)
+				verifierOpts := []verify.VerifierOption{verify.WithNoObserverTimestamps()}
+
+				return root.TrustedMaterialCollection{keyMaterial}, verifierOpts, nil, nil
+			},
+			wantErr:   true,
+			wantInErr: "malformed digest",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := attestation.ExportVerifyBundleCommon(
+				test.ctx(), test.bundle, test.opts, test.buildCfg,
+			)
+
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+
+				if test.wantInErr != "" && !strings.Contains(err.Error(), test.wantInErr) {
+					t.Errorf("expected error containing %q, got: %v", test.wantInErr, err)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestFetchTrustedRootWithContext(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		ctx       func() context.Context
+		cache     *attestation.TrustedRootCacheForTest
+		wantErr   bool
+		wantInErr string
+	}{
+		{
+			name: "cache hit returns cached root",
+			ctx:  context.Background,
+			cache: attestation.NewTestTrustedRootCacheWithRoot(
+				func() (*root.TrustedRoot, error) {
+					return fakeTrustedRoot(), nil
+				},
+				fakeTrustedRoot(),
+				time.Now(),
+			),
+			wantErr:   false,
+			wantInErr: "",
+		},
+		{
+			name: "cache miss fetches fresh root",
+			ctx:  context.Background,
+			cache: attestation.NewTestTrustedRootCache(func() (*root.TrustedRoot, error) {
+				return fakeTrustedRoot(), nil
+			}),
+			wantErr:   false,
+			wantInErr: "",
+		},
+		{
+			name: "cache fetch error propagates",
+			ctx:  context.Background,
+			cache: attestation.NewTestTrustedRootCache(func() (*root.TrustedRoot, error) {
+				return nil, errRootFetchFailed
+			}),
+			wantErr:   true,
+			wantInErr: wantRootFetchFailed,
+		},
+		{
+			name: "nil cache with canceled context returns early",
+			ctx: func() context.Context {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+
+				return ctx
+			},
+			cache:     nil,
+			wantErr:   true,
+			wantInErr: "context canceled before fetching trusted root",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := attestation.ExportFetchTrustedRootWithContext(test.ctx(), test.cache)
+
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+
+				if test.wantInErr != "" && !strings.Contains(err.Error(), test.wantInErr) {
+					t.Errorf("expected error containing %q, got: %v", test.wantInErr, err)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
 }

@@ -38,6 +38,8 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/fake"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	ociTypes "github.com/google/go-containerregistry/pkg/v1/types"
+	"github.com/sigstore/sigstore-go/pkg/root"
+	"github.com/sigstore/sigstore-go/pkg/verify"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
@@ -48,14 +50,19 @@ const (
 	testBundleArtifact   = "application/vnd.dev.sigstore.bundle.v0.3+json"
 	testOCIEmptyArtifact = "application/vnd.oci.empty.v1+json"
 	testHashAlgoSHA256   = "sha256"
+	testDigestHex        = "abc123"
+	testSigDigestHex     = "sig1"
 )
 
 var (
 	errSigVerificationFailed = errors.New("signature verification failed")
 	errRegistryUnavailable   = errors.New("registry unavailable")
+	errManifestError         = errors.New("manifest error")
+	errLayerError            = errors.New("layer error")
+	errMockTrustedRootError  = errors.New("mock trusted root error")
+	errDigestError           = errors.New("digest error")
+	errTrustedRootError      = errors.New("trusted root error")
 )
-
-// --- NewSignatureVerifyFunc tests ---
 
 func TestOCINewSignatureVerifyFuncNilConfig(t *testing.T) {
 	t.Parallel()
@@ -971,3 +978,550 @@ func (l *staticOCIVerifyLayer) MediaType() (ociTypes.MediaType, error) {
 
 // Verify the layer implements the interface at compile time.
 var _ ociV1.Layer = (*staticOCIVerifyLayer)(nil)
+
+func TestFindSignatureCandidatesSuccess(t *testing.T) {
+	t.Parallel()
+
+	ref := mustParseRef(t, "example.com/policy:v1")
+	digest := ociV1.Hash{Algorithm: testHashAlgoSHA256, Hex: testDigestHex}
+
+	referrers := func(_ name.Digest, _ ...remote.Option) (ociV1.ImageIndex, error) {
+		idx := &fake.FakeImageIndex{}
+		idx.IndexManifestReturns(&ociV1.IndexManifest{
+			Manifests: []ociV1.Descriptor{
+				{
+					ArtifactType: testBundleArtifact,
+					Digest:       ociV1.Hash{Algorithm: testHashAlgoSHA256, Hex: testSigDigestHex},
+				},
+			},
+		}, nil)
+
+		return idx, nil
+	}
+
+	candidates, err := policy.FindSignatureCandidatesForTest(ref, digest, nil, referrers)
+	testutil.AssertNoError(t, err)
+
+	if len(candidates) != 1 {
+		t.Fatalf("expected 1 candidate, got %d", len(candidates))
+	}
+}
+
+func TestFindSignatureCandidatesNoCandidates(t *testing.T) {
+	t.Parallel()
+
+	ref := mustParseRef(t, "example.com/policy:v1")
+	digest := ociV1.Hash{Algorithm: testHashAlgoSHA256, Hex: testDigestHex}
+
+	referrers := func(_ name.Digest, _ ...remote.Option) (ociV1.ImageIndex, error) {
+		idx := &fake.FakeImageIndex{}
+		idx.IndexManifestReturns(&ociV1.IndexManifest{
+			Manifests: []ociV1.Descriptor{
+				{
+					ArtifactType: "application/vnd.unknown",
+					Digest:       ociV1.Hash{Algorithm: testHashAlgoSHA256, Hex: testSigDigestHex},
+				},
+			},
+		}, nil)
+
+		return idx, nil
+	}
+
+	_, err := policy.FindSignatureCandidatesForTest(ref, digest, nil, referrers)
+	testutil.AssertError(t, err)
+
+	if !errors.Is(err, policy.ErrNoPolicySignature) {
+		t.Errorf("expected ErrNoPolicySignature, got %v", err)
+	}
+}
+
+func TestFindSignatureCandidatesReferrersError(t *testing.T) {
+	t.Parallel()
+
+	ref := mustParseRef(t, "example.com/policy:v1")
+	digest := ociV1.Hash{Algorithm: testHashAlgoSHA256, Hex: testDigestHex}
+
+	referrers := func(_ name.Digest, _ ...remote.Option) (ociV1.ImageIndex, error) {
+		return nil, errRegistryUnavailable
+	}
+
+	_, err := policy.FindSignatureCandidatesForTest(ref, digest, nil, referrers)
+	testutil.AssertError(t, err)
+	testutil.AssertContains(t, err.Error(), "listing referrers")
+}
+
+func TestFindSignatureCandidatesIndexManifestError(t *testing.T) {
+	t.Parallel()
+
+	ref := mustParseRef(t, "example.com/policy:v1")
+	digest := ociV1.Hash{Algorithm: testHashAlgoSHA256, Hex: testDigestHex}
+
+	referrers := func(_ name.Digest, _ ...remote.Option) (ociV1.ImageIndex, error) {
+		idx := &fake.FakeImageIndex{}
+		idx.IndexManifestReturns(nil, errManifestError)
+
+		return idx, nil
+	}
+
+	_, err := policy.FindSignatureCandidatesForTest(ref, digest, nil, referrers)
+	testutil.AssertError(t, err)
+	testutil.AssertContains(t, err.Error(), "reading referrers index")
+}
+
+func TestTryCandidatesSingleInvalidBundle(t *testing.T) {
+	t.Parallel()
+
+	ref := mustParseRef(t, "example.com/policy:v1")
+	digest := ociV1.Hash{Algorithm: testHashAlgoSHA256, Hex: testDigestHex}
+
+	candidates := []*ociV1.Descriptor{
+		{
+			ArtifactType: testBundleArtifact,
+			Digest:       ociV1.Hash{Algorithm: testHashAlgoSHA256, Hex: testSigDigestHex},
+		},
+	}
+
+	keyPath := writeECDSAKeyFile(t, elliptic.P256())
+	km, err := policy.BuildPolicyKeyMaterialForTest([]string{keyPath})
+	testutil.AssertNoError(t, err)
+
+	fetchImage := func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+		return &fake.FakeImage{
+			LayersStub: func() ([]ociV1.Layer, error) {
+				return []ociV1.Layer{newStaticOCILayer(t, []byte("not a valid bundle"))}, nil
+			},
+		}, nil
+	}
+
+	err = policy.TryCandidatesForTest(
+		context.Background(), ref, digest, candidates, nil,
+		root.TrustedMaterialCollection{km},
+		[]verify.VerifierOption{verify.WithNoObserverTimestamps()},
+		[]verify.PolicyOption{verify.WithKey()},
+		fetchImage,
+	)
+	testutil.AssertError(t, err)
+	testutil.AssertContains(t, err.Error(), "no valid signature")
+}
+
+func TestTryCandidatesAllFail(t *testing.T) {
+	t.Parallel()
+
+	ref := mustParseRef(t, "example.com/policy:v1")
+	digest := ociV1.Hash{Algorithm: testHashAlgoSHA256, Hex: testDigestHex}
+
+	candidates := []*ociV1.Descriptor{
+		{
+			ArtifactType: testBundleArtifact,
+			Digest:       ociV1.Hash{Algorithm: testHashAlgoSHA256, Hex: testSigDigestHex},
+		},
+		{
+			ArtifactType: testBundleArtifact,
+			Digest:       ociV1.Hash{Algorithm: testHashAlgoSHA256, Hex: "sig2"},
+		},
+	}
+
+	keyPath := writeECDSAKeyFile(t, elliptic.P256())
+	km, err := policy.BuildPolicyKeyMaterialForTest([]string{keyPath})
+	testutil.AssertNoError(t, err)
+
+	fetchImage := func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+		return &fake.FakeImage{
+			LayersStub: func() ([]ociV1.Layer, error) {
+				return []ociV1.Layer{newStaticOCILayer(t, []byte("invalid"))}, nil
+			},
+		}, nil
+	}
+
+	err = policy.TryCandidatesForTest(
+		context.Background(), ref, digest, candidates, nil,
+		root.TrustedMaterialCollection{km},
+		[]verify.VerifierOption{verify.WithNoObserverTimestamps()},
+		[]verify.PolicyOption{verify.WithKey()},
+		fetchImage,
+	)
+	testutil.AssertError(t, err)
+
+	if !errors.Is(err, policy.ErrNoPolicySignature) {
+		t.Errorf("expected ErrNoPolicySignature, got %v", err)
+	}
+}
+
+func TestTryCandidatesContextCanceled(t *testing.T) {
+	t.Parallel()
+
+	ref := mustParseRef(t, "example.com/policy:v1")
+	digest := ociV1.Hash{Algorithm: testHashAlgoSHA256, Hex: testDigestHex}
+
+	candidates := []*ociV1.Descriptor{
+		{
+			ArtifactType: testBundleArtifact,
+			Digest:       ociV1.Hash{Algorithm: testHashAlgoSHA256, Hex: testSigDigestHex},
+		},
+	}
+
+	keyPath := writeECDSAKeyFile(t, elliptic.P256())
+	km, err := policy.BuildPolicyKeyMaterialForTest([]string{keyPath})
+	testutil.AssertNoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err = policy.TryCandidatesForTest(
+		ctx, ref, digest, candidates, nil,
+		root.TrustedMaterialCollection{km},
+		[]verify.VerifierOption{verify.WithNoObserverTimestamps()},
+		[]verify.PolicyOption{verify.WithKey()},
+		nil,
+	)
+	testutil.AssertError(t, err)
+	testutil.AssertContains(t, err.Error(), "context canceled")
+}
+
+func TestTryCandidatesVerifierCreationFails(t *testing.T) {
+	t.Parallel()
+
+	ref := mustParseRef(t, "example.com/policy:v1")
+	digest := ociV1.Hash{Algorithm: testHashAlgoSHA256, Hex: testDigestHex}
+
+	candidates := []*ociV1.Descriptor{
+		{
+			ArtifactType: testBundleArtifact,
+			Digest:       ociV1.Hash{Algorithm: testHashAlgoSHA256, Hex: testSigDigestHex},
+		},
+	}
+
+	err := policy.TryCandidatesForTest(
+		context.Background(), ref, digest, candidates, nil,
+		root.TrustedMaterialCollection{},
+		[]verify.VerifierOption{},
+		[]verify.PolicyOption{},
+		nil,
+	)
+	testutil.AssertError(t, err)
+	testutil.AssertContains(t, err.Error(), "creating sigstore verifier")
+}
+
+func TestVerifyCandidateFetchImageError(t *testing.T) {
+	t.Parallel()
+
+	ref := mustParseRef(t, "example.com/policy:v1")
+	desc := &ociV1.Descriptor{
+		ArtifactType: testBundleArtifact,
+		Digest:       ociV1.Hash{Algorithm: testHashAlgoSHA256, Hex: testSigDigestHex},
+	}
+
+	fetchImage := func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+		return nil, errRegistryUnavailable
+	}
+
+	keyPath := writeECDSAKeyFile(t, elliptic.P256())
+	km, err := policy.BuildPolicyKeyMaterialForTest([]string{keyPath})
+	testutil.AssertNoError(t, err)
+
+	verifier, err := verify.NewVerifier(
+		root.TrustedMaterialCollection{km},
+		verify.WithNoObserverTimestamps(),
+	)
+	testutil.AssertNoError(t, err)
+
+	err = policy.VerifyCandidateForTest(
+		context.Background(), ref, desc, testHashAlgoSHA256, testDigestHex,
+		nil, verifier, []verify.PolicyOption{verify.WithKey()}, fetchImage,
+	)
+	testutil.AssertError(t, err)
+	testutil.AssertContains(t, err.Error(), "fetching signature image")
+}
+
+func TestVerifyCandidateExtractLayerError(t *testing.T) {
+	t.Parallel()
+
+	ref := mustParseRef(t, "example.com/policy:v1")
+	desc := &ociV1.Descriptor{
+		ArtifactType: testBundleArtifact,
+		Digest:       ociV1.Hash{Algorithm: testHashAlgoSHA256, Hex: testSigDigestHex},
+	}
+
+	fetchImage := func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+		img := &fake.FakeImage{}
+		img.LayersReturns(nil, errLayerError)
+
+		return img, nil
+	}
+
+	keyPath := writeECDSAKeyFile(t, elliptic.P256())
+	km, err := policy.BuildPolicyKeyMaterialForTest([]string{keyPath})
+	testutil.AssertNoError(t, err)
+
+	verifier, err := verify.NewVerifier(
+		root.TrustedMaterialCollection{km},
+		verify.WithNoObserverTimestamps(),
+	)
+	testutil.AssertNoError(t, err)
+
+	err = policy.VerifyCandidateForTest(
+		context.Background(), ref, desc, testHashAlgoSHA256, testDigestHex,
+		nil, verifier, []verify.PolicyOption{verify.WithKey()}, fetchImage,
+	)
+	testutil.AssertError(t, err)
+	testutil.AssertContains(t, err.Error(), "extracting signature bundle")
+}
+
+func TestVerifyCandidateBundleUnmarshalError(t *testing.T) {
+	t.Parallel()
+
+	ref := mustParseRef(t, "example.com/policy:v1")
+	desc := &ociV1.Descriptor{
+		ArtifactType: testBundleArtifact,
+		Digest:       ociV1.Hash{Algorithm: testHashAlgoSHA256, Hex: testSigDigestHex},
+	}
+
+	fetchImage := func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+		img := &fake.FakeImage{}
+		img.LayersReturns([]ociV1.Layer{
+			newStaticOCILayer(t, []byte("not valid JSON")),
+		}, nil)
+
+		return img, nil
+	}
+
+	keyPath := writeECDSAKeyFile(t, elliptic.P256())
+	km, err := policy.BuildPolicyKeyMaterialForTest([]string{keyPath})
+	testutil.AssertNoError(t, err)
+
+	verifier, err := verify.NewVerifier(
+		root.TrustedMaterialCollection{km},
+		verify.WithNoObserverTimestamps(),
+	)
+	testutil.AssertNoError(t, err)
+
+	err = policy.VerifyCandidateForTest(
+		context.Background(), ref, desc, testHashAlgoSHA256, testDigestHex,
+		nil, verifier, []verify.PolicyOption{verify.WithKey()}, fetchImage,
+	)
+	testutil.AssertError(t, err)
+	testutil.AssertContains(t, err.Error(), "parsing sigstore bundle")
+}
+
+func TestBuildPolicyVerificationConfigWithKeyMaterial(t *testing.T) {
+	t.Parallel()
+
+	keyPath := writeECDSAKeyFile(t, elliptic.P256())
+	cfg := &policy.SignatureConfig{
+		Keys: []string{keyPath},
+	}
+
+	prebuilt, err := policy.PrebuildVerificationConfigForTest(cfg)
+	testutil.AssertNoError(t, err)
+
+	materials, policyOpts, err := policy.BuildPolicyVerificationConfigForTest(
+		context.Background(), prebuilt, nil,
+	)
+	testutil.AssertNoError(t, err)
+
+	if len(materials) != 1 {
+		t.Fatalf("expected 1 material, got %d", len(materials))
+	}
+
+	if len(policyOpts) == 0 {
+		t.Error("expected non-empty policy options")
+	}
+}
+
+func TestBuildPolicyVerificationConfigWithCertID(t *testing.T) {
+	t.Parallel()
+
+	cfg := &policy.SignatureConfig{
+		Issuers: []string{testIssuerURL},
+	}
+
+	prebuilt, err := policy.PrebuildVerificationConfigForTest(cfg)
+	testutil.AssertNoError(t, err)
+
+	fetchTrustedRoot := func(_ context.Context) (*root.TrustedRoot, error) {
+		return nil, errMockTrustedRootError
+	}
+
+	_, _, err = policy.BuildPolicyVerificationConfigForTest(
+		context.Background(), prebuilt, fetchTrustedRoot,
+	)
+	testutil.AssertError(t, err)
+	testutil.AssertContains(t, err.Error(), "fetching trusted root")
+}
+
+func TestBuildPolicyVerificationConfigEmptyPrebuilt(t *testing.T) {
+	t.Parallel()
+
+	prebuilt := &policy.PrebuiltVerification{}
+
+	materials, policyOpts, err := policy.BuildPolicyVerificationConfigForTest(
+		context.Background(), prebuilt, nil,
+	)
+	testutil.AssertNoError(t, err)
+
+	if len(materials) != 0 {
+		t.Fatalf("expected 0 materials, got %d", len(materials))
+	}
+
+	if len(policyOpts) != 0 {
+		t.Fatalf("expected 0 policy options, got %d", len(policyOpts))
+	}
+}
+
+func TestVerifyPolicySignatureDigestError(t *testing.T) {
+	t.Parallel()
+
+	ref := mustParseRef(t, "example.com/policy:v1")
+	img := &fake.FakeImage{}
+	img.DigestReturns(ociV1.Hash{}, errDigestError)
+
+	keyPath := writeECDSAKeyFile(t, elliptic.P256())
+	cfg := &policy.SignatureConfig{
+		Keys: []string{keyPath},
+	}
+
+	prebuilt, err := policy.PrebuildVerificationConfigForTest(cfg)
+	testutil.AssertNoError(t, err)
+
+	err = policy.VerifyPolicySignatureForTest(
+		context.Background(), ref, img, nil,
+		prebuilt, nil, nil, nil,
+	)
+	testutil.AssertError(t, err)
+	testutil.AssertContains(t, err.Error(), "computing policy image digest")
+}
+
+func TestVerifyPolicySignatureFindCandidatesError(t *testing.T) {
+	t.Parallel()
+
+	ref := mustParseRef(t, "example.com/policy:v1")
+	img := &fake.FakeImage{}
+	img.DigestReturns(ociV1.Hash{Algorithm: testHashAlgoSHA256, Hex: testDigestHex}, nil)
+
+	referrers := func(_ name.Digest, _ ...remote.Option) (ociV1.ImageIndex, error) {
+		return nil, errRegistryUnavailable
+	}
+
+	keyPath := writeECDSAKeyFile(t, elliptic.P256())
+	cfg := &policy.SignatureConfig{
+		Keys: []string{keyPath},
+	}
+
+	prebuilt, err := policy.PrebuildVerificationConfigForTest(cfg)
+	testutil.AssertNoError(t, err)
+
+	fetchImage := func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+		return nil, nil
+	}
+
+	err = policy.VerifyPolicySignatureForTest(
+		context.Background(), ref, img, nil,
+		prebuilt, nil, fetchImage, referrers,
+	)
+	testutil.AssertError(t, err)
+	testutil.AssertContains(t, err.Error(), "listing referrers")
+}
+
+func TestVerifyPolicySignatureBuildConfigError(t *testing.T) {
+	t.Parallel()
+
+	ref := mustParseRef(t, "example.com/policy:v1")
+	img := &fake.FakeImage{}
+	img.DigestReturns(ociV1.Hash{Algorithm: testHashAlgoSHA256, Hex: testDigestHex}, nil)
+
+	referrers := func(_ name.Digest, _ ...remote.Option) (ociV1.ImageIndex, error) {
+		idx := &fake.FakeImageIndex{}
+		idx.IndexManifestReturns(&ociV1.IndexManifest{
+			Manifests: []ociV1.Descriptor{
+				{
+					ArtifactType: testBundleArtifact,
+					Digest:       ociV1.Hash{Algorithm: testHashAlgoSHA256, Hex: testSigDigestHex},
+				},
+			},
+		}, nil)
+
+		return idx, nil
+	}
+
+	cfg := &policy.SignatureConfig{
+		Issuers: []string{testIssuerURL},
+	}
+
+	prebuilt, err := policy.PrebuildVerificationConfigForTest(cfg)
+	testutil.AssertNoError(t, err)
+
+	fetchTrustedRoot := func(_ context.Context) (*root.TrustedRoot, error) {
+		return nil, errTrustedRootError
+	}
+
+	fetchImage := func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+		return nil, nil
+	}
+
+	err = policy.VerifyPolicySignatureForTest(
+		context.Background(), ref, img, nil,
+		prebuilt, fetchTrustedRoot, fetchImage, referrers,
+	)
+	testutil.AssertError(t, err)
+	testutil.AssertContains(t, err.Error(), "fetching trusted root")
+}
+
+func TestVerifyPolicySignatureTryCandidatesFails(t *testing.T) {
+	t.Parallel()
+
+	ref := mustParseRef(t, "example.com/policy:v1")
+	img := &fake.FakeImage{}
+	img.DigestReturns(ociV1.Hash{Algorithm: testHashAlgoSHA256, Hex: testDigestHex}, nil)
+
+	referrers := func(_ name.Digest, _ ...remote.Option) (ociV1.ImageIndex, error) {
+		idx := &fake.FakeImageIndex{}
+		idx.IndexManifestReturns(&ociV1.IndexManifest{
+			Manifests: []ociV1.Descriptor{
+				{
+					ArtifactType: testBundleArtifact,
+					Digest:       ociV1.Hash{Algorithm: testHashAlgoSHA256, Hex: testSigDigestHex},
+				},
+			},
+		}, nil)
+
+		return idx, nil
+	}
+
+	keyPath := writeECDSAKeyFile(t, elliptic.P256())
+	cfg := &policy.SignatureConfig{
+		Keys: []string{keyPath},
+	}
+
+	prebuilt, err := policy.PrebuildVerificationConfigForTest(cfg)
+	testutil.AssertNoError(t, err)
+
+	fetchImage := func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+		img := &fake.FakeImage{}
+		img.LayersReturns([]ociV1.Layer{
+			newStaticOCILayer(t, []byte("invalid bundle")),
+		}, nil)
+
+		return img, nil
+	}
+
+	err = policy.VerifyPolicySignatureForTest(
+		context.Background(), ref, img, nil,
+		prebuilt, nil, fetchImage, referrers,
+	)
+	testutil.AssertError(t, err)
+
+	if !errors.Is(err, policy.ErrNoPolicySignature) {
+		t.Errorf("expected ErrNoPolicySignature, got %v", err)
+	}
+}
+
+func mustParseRef(t *testing.T, ref string) name.Reference {
+	t.Helper()
+
+	parsed, err := name.ParseReference(ref)
+	if err != nil {
+		t.Fatalf("parsing reference %q: %v", ref, err)
+	}
+
+	return parsed
+}
