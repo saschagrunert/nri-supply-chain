@@ -56,6 +56,18 @@ var (
 	// ErrCacheFailureTTLNegative indicates a negative cache failure TTL.
 	ErrCacheFailureTTLNegative = errors.New("cache_failure_ttl must be non-negative")
 
+	// ErrFetchTimeoutTooHigh indicates the fetch timeout exceeds the maximum.
+	ErrFetchTimeoutTooHigh = errors.New("fetch_timeout exceeds maximum")
+
+	// ErrCacheTTLTooHigh indicates the cache TTL exceeds the maximum.
+	ErrCacheTTLTooHigh = errors.New("cache_ttl exceeds maximum")
+
+	// ErrCacheFailureTTLTooHigh indicates the cache failure TTL exceeds the maximum.
+	ErrCacheFailureTTLTooHigh = errors.New("cache_failure_ttl exceeds maximum")
+
+	// ErrCircuitBreakerCooldownTooHigh indicates the circuit breaker cooldown exceeds the maximum.
+	ErrCircuitBreakerCooldownTooHigh = errors.New("circuit_breaker_cooldown exceeds maximum")
+
 	// ErrInvalidMetricsAddr indicates the metrics address is not a valid host:port.
 	ErrInvalidMetricsAddr = errors.New("invalid metrics_addr")
 

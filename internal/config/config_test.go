@@ -739,14 +739,66 @@ func TestConfigValidateCacheFailureTTL(t *testing.T) {
 
 		testutil.AssertNoError(t, cfg.Validate())
 	})
+
+	t.Run("exceeds maximum", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.CacheFailureTTL = config.Duration{Duration: 2 * time.Hour}
+
+		err := cfg.Validate()
+		if !errors.Is(err, config.ErrCacheFailureTTLTooHigh) {
+			t.Errorf("expected ErrCacheFailureTTLTooHigh, got %v", err)
+		}
+	})
+}
+
+func TestConfigValidateFetchTimeoutTooHigh(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.FetchTimeout = config.Duration{Duration: 10 * time.Minute}
+
+	err := cfg.Validate()
+	if !errors.Is(err, config.ErrFetchTimeoutTooHigh) {
+		t.Errorf("expected ErrFetchTimeoutTooHigh, got %v", err)
+	}
+}
+
+func TestConfigValidateCacheTTLTooHigh(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.CacheTTL = config.Duration{Duration: 8 * 24 * time.Hour}
+
+	err := cfg.Validate()
+	if !errors.Is(err, config.ErrCacheTTLTooHigh) {
+		t.Errorf("expected ErrCacheTTLTooHigh, got %v", err)
+	}
+}
+
+func TestConfigValidateCircuitBreakerCooldownTooHigh(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.CircuitBreakerCooldown = config.Duration{Duration: 15 * time.Minute}
+
+	err := cfg.Validate()
+	if !errors.Is(err, config.ErrCircuitBreakerCooldownTooHigh) {
+		t.Errorf("expected ErrCircuitBreakerCooldownTooHigh, got %v", err)
+	}
 }
 
 func TestConfigNormalizeClampsFailureTTL(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.DefaultConfig()
-	cfg.CacheTTL = config.Duration{Duration: 1 * time.Hour}
-	cfg.CacheFailureTTL = config.Duration{Duration: 2 * time.Hour}
+	cfg.CacheTTL = config.Duration{Duration: 30 * time.Minute}
+	cfg.CacheFailureTTL = config.Duration{Duration: 45 * time.Minute}
 
 	testutil.AssertNoError(t, cfg.Validate())
 
@@ -784,17 +836,17 @@ func TestConfigValidateIdempotent(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.CacheTTL = config.Duration{Duration: 1 * time.Hour}
-	cfg.CacheFailureTTL = config.Duration{Duration: 2 * time.Hour}
+	cfg.CacheFailureTTL = config.Duration{Duration: 45 * time.Minute}
 
 	testutil.AssertNoError(t, cfg.Validate())
 
-	if cfg.CacheFailureTTL.Duration != 2*time.Hour {
+	if cfg.CacheFailureTTL.Duration != 45*time.Minute {
 		t.Error("Validate() should not mutate CacheFailureTTL")
 	}
 
 	testutil.AssertNoError(t, cfg.Validate())
 
-	if cfg.CacheFailureTTL.Duration != 2*time.Hour {
+	if cfg.CacheFailureTTL.Duration != 45*time.Minute {
 		t.Error("second Validate() call should not mutate CacheFailureTTL")
 	}
 }

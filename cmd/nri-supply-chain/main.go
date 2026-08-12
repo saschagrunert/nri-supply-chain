@@ -64,6 +64,7 @@ const (
 var (
 	errExitNonZero       = errors.New("non-zero exit")
 	errMissingSchemaType = errors.New("requires a schema type: policy, result")
+	errTooManyArgs       = errors.New("accepts 1 arg")
 )
 
 func main() {
@@ -255,8 +256,7 @@ func newJSONSchemaCmd() *cobra.Command {
 			}
 
 			if len(args) > 1 {
-				//nolint:err113 // dynamic arg count
-				return fmt.Errorf("accepts 1 arg, received %d", len(args))
+				return fmt.Errorf("%w, received %d", errTooManyArgs, len(args))
 			}
 
 			return nil

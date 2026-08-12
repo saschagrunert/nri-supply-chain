@@ -454,6 +454,37 @@ func ExportBuildVerificationCfgMultiRoot(
 	return err
 }
 
+// ExportVerifyBundleWithMultipleRoots exposes verifyBundleWithMultipleRoots for external tests.
+func ExportVerifyBundleWithMultipleRoots(
+	ctx context.Context,
+	bundleBytes []byte,
+	opts *FetchOptions,
+	rootCaches []*trustedRootCache,
+) ([]byte, error) {
+	return verifyBundleWithMultipleRoots(ctx, bundleBytes, opts, rootCaches)
+}
+
+// ExportVerifyBundleCommon exposes verifyBundleCommon for external tests.
+func ExportVerifyBundleCommon(
+	ctx context.Context,
+	bundleBytes []byte,
+	opts *FetchOptions,
+	buildConfig buildConfigFunc,
+) ([]byte, error) {
+	return verifyBundleCommon(ctx, bundleBytes, opts, buildConfig)
+}
+
+// ExportFetchTrustedRootWithContext exposes fetchTrustedRootWithContext for external tests.
+func ExportFetchTrustedRootWithContext(
+	ctx context.Context,
+	cachedRoot *trustedRootCache,
+) (*root.TrustedRoot, error) {
+	return fetchTrustedRootWithContext(ctx, cachedRoot)
+}
+
+// BuildConfigFunc is the type alias for buildConfigFunc.
+type BuildConfigFunc = buildConfigFunc
+
 // ExportFetchWithFallback exposes fetchWithFallback for external tests.
 func (f *OCIFetcher) ExportFetchWithFallback(
 	ctx context.Context,
