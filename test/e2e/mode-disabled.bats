@@ -7,8 +7,6 @@ setup_file() {
 	echo '{}' >"$POLICY_DIR/default.json"
 
 	start_kubernix_with_retry
-	write_nri_dropin
-	reload_runtime
 
 	write_plugin_config "disabled"
 	start_plugin

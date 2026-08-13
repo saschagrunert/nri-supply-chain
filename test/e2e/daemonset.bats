@@ -21,8 +21,6 @@ setup_file() {
 	configure_insecure_registry
 
 	start_kubernix_with_retry
-	write_nri_dropin
-	reload_runtime
 
 	# Symlink /var/run/nri to the kubernix NRI socket directory so the
 	# DaemonSet hostPath volume mount finds the socket.

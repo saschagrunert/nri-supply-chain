@@ -87,7 +87,7 @@ _patch_containerd_registry_config() {
 
 export NODE_READY_TIMEOUT=120
 export POD_TIMEOUT=60
-KUBERNIX_MAX_RETRIES=2
+KUBERNIX_MAX_RETRIES=3
 KUBERNIX_RETRY_BUDGET=300
 
 wait_for_apiserver_ready() {
@@ -139,7 +139,11 @@ start_kubernix_with_retry() {
 		start_kubernix "$@"
 
 		if wait_for_node_ready && wait_for_apiserver_ready && wait_for_controller_manager; then
-			return 0
+			sleep 3
+			if wait_for_apiserver_ready 10 && write_nri_dropin && reload_runtime; then
+				return 0
+			fi
+			echo "Cluster became unstable after passing health checks, retrying..." >&2
 		fi
 	done
 
@@ -153,9 +157,6 @@ setup_file() {
 	echo '{}' >"$POLICY_DIR/default.json"
 
 	start_kubernix_with_retry --log-level debug
-
-	write_nri_dropin
-	reload_runtime
 
 	write_plugin_config "warn"
 	start_plugin
@@ -282,10 +283,15 @@ reload_runtime() {
 
 	local crio_pid
 	crio_pid=$(pgrep -f "crio.*--root.*${KUBERNIX_ROOT}" || true)
-	if [[ -n "$crio_pid" ]]; then
-		kill -HUP "$crio_pid"
-		sleep 2
+	if [[ -z "$crio_pid" ]]; then
+		echo "ERROR: CRI-O process not found for ${KUBERNIX_ROOT}" >&2
+		return 1
 	fi
+	if ! kill -HUP "$crio_pid" 2>/dev/null; then
+		echo "ERROR: Failed to send SIGHUP to CRI-O (PID $crio_pid)" >&2
+		return 1
+	fi
+	sleep 2
 }
 
 write_plugin_config() {

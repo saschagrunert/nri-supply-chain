@@ -27,8 +27,6 @@ setup_file() {
 	export OCI_POLICY_REF OCI_POLICY_DIR
 
 	start_kubernix_with_retry
-	write_nri_dropin
-	reload_runtime
 
 	POLICY_IMAGE=$(push_test_image "oci-policy-test:v1")
 	export POLICY_IMAGE

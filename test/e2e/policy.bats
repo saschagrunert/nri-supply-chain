@@ -21,8 +21,6 @@ setup_file() {
 	configure_insecure_registry
 
 	start_kubernix_with_retry
-	write_nri_dropin
-	reload_runtime
 
 	POLICY_IMAGE=$(push_test_image "policy-test:v1")
 	export POLICY_IMAGE

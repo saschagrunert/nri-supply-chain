@@ -22,8 +22,6 @@ setup_file() {
 	configure_insecure_registry
 
 	start_kubernix_with_retry
-	write_nri_dropin
-	reload_runtime
 
 	create_enforce_images
 

@@ -21,8 +21,6 @@ setup_file() {
 	configure_insecure_registry
 
 	start_kubernix_with_retry --log-level debug
-	write_nri_dropin
-	reload_runtime
 
 	FETCH_IMAGE=$(push_test_image "fetch-test:v1")
 	FETCH_DIGEST=$(get_image_digest "$FETCH_IMAGE")
