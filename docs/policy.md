@@ -1675,11 +1675,20 @@ The plugin tries both modes; either can satisfy the policy:
 ## Example Policy Files
 
 Ready-to-use policy files are available in
-[`deploy/examples/policies/`](../deploy/examples/policies/), including:
+[`deploy/examples/policies/`](../deploy/examples/policies/):
 
+- `default.json`: Minimal default policy with trusted builders and keyless verification
+- `keyless.json`: Keyless (Fulcio/OIDC) verification with GitHub Actions
 - `keybased.json`: Key-based verification with PEM public keys
-- `cel-rules.json`: CEL policy expressions for custom verification logic
-- `sbom-deny-list.json`: SBOM component deny-list for license or package control
+- `key-rotation.json`: Dual-key setup for rolling key rotation
+- `github-attestations.json`: GitHub Actions `attest-build-provenance` with GitHub OIDC issuer
+- `custom-build-system.json`: Custom build system (Tekton) with explicit known parameters
+- `production.json`: Strict production policy with provenance freshness and VSA requirements
+- `gradual-rollout.json`: Gradual rollout from warn to enforce mode
+- `namespace-override.json`: Namespace override with `inherits: true`
 - `vex-strict.json`: Strict VEX verification requiring all images to have VEX attestations
 - `vsa-accelerated.json`: VSA-first verification that short-circuits direct checks
-- `gradual-rollout.json`: Gradual rollout from warn to enforce mode
+- `sbom-deny-list.json`: SBOM component and license deny-list
+- `cel-rules.json`: CEL policy expressions for custom verification logic
+- `notation.json`: Notation (Notary v2) signature verification with CA trust store
+- `scai.json`: SCAI attribute report verification with required and forbidden attributes

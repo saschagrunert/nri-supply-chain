@@ -1,0 +1,14 @@
+{
+  "scai": {
+    "missingPolicy": "warn",
+    "requiredAttributes": ["PASSED_CODE_REVIEW", "PASSED_TESTS"],
+    "forbiddenAttributes": ["KNOWN_VULNERABLE"],
+    "requireEvidence": true
+  },
+  "slsa": {
+    "missingPolicy": "allow"
+  },
+  "vex": {
+    "missingPolicy": "allow"
+  }
+}

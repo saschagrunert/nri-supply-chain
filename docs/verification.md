@@ -78,7 +78,8 @@ When a container is created, the plugin performs verification in this order:
    attestations.
 
 8. **VSA-first evaluation**:
-   - If a trusted PASSED VSA is found, skip SLSA and VEX checks entirely.
+   - If a trusted PASSED VSA is found, skip all parallel checks (SLSA, VEX,
+     Notation, SBOM, SCAI) and CEL evaluation entirely.
    - If a trusted FAILED VSA is found, hard reject immediately (no fallback).
    - If no VSA is found, or the VSA is from an untrusted verifier or stale,
      fall through to direct verification.
@@ -127,10 +128,11 @@ aspects of the supply chain:
   build provenance against trusted builders and sources.
 - **VEX** answers "is this artifact affected by known vulnerabilities?" by
   evaluating vulnerability exploitability statements.
-- **VSA** is a meta-attestation that records the outcome of a prior SLSA and
-  VEX verification performed by a trusted verifier. It is not a replacement for
-  SLSA or VEX, but a delegation mechanism: when a trusted VSA with result
-  PASSED exists, the plugin skips re-verifying SLSA and VEX individually.
+- **VSA** is a meta-attestation that records the outcome of a prior
+  verification performed by a trusted verifier. It is not a replacement for
+  the individual checks, but a delegation mechanism: when a trusted VSA with
+  result PASSED exists, the plugin skips all parallel checks (SLSA, VEX,
+  Notation, SBOM, SCAI) and CEL evaluation.
 
 ### SLSA Provenance
 

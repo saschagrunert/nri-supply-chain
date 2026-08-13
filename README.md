@@ -9,8 +9,8 @@
 An [NRI](https://github.com/containerd/nri) plugin for supply chain attestation
 verification at the container runtime level. It intercepts container creation
 events on [CRI-O](https://cri-o.io) or [containerd](https://containerd.io) and
-verifies SLSA provenance, VEX, VSA, Notation signatures, SBOM attestations,
-and CEL policy expressions before a container is allowed to run.
+verifies SLSA provenance, VEX, VSA, Notation signatures, SBOM, SCAI
+attestations, and CEL policy expressions before a container is allowed to run.
 
 Runtime-level enforcement cannot be bypassed by misconfigured admission
 webhooks, disabled policy controllers, or direct kubelet API calls. The plugin
@@ -131,7 +131,7 @@ must pass verification.
    ```
 
    To enable VSA-accelerated verification, add a `trust.verifiers` entry.
-   A trusted VSA short-circuits SLSA and VEX checks:
+   A trusted VSA short-circuits all other checks:
 
    <!-- quickstart-policy-vsa -->
 
@@ -210,20 +210,24 @@ flowchart TD
     Plugin["nri-supply-chain"]
     Extract["Extract image ref + digest"]
     Policy["Policy lookup\n(namespace or default)"]
-    Exclude{"Excluded?"}
+    Include{"Matches include\npattern?"}
+    Exclude{"Matches exclude\npattern?"}
+    Rules["Per-image rule\nresolution"]
     Cache{"Cache hit?"}
     Fetch["Fetch attestations\n(OCI Referrers API +\ncosign tag fallback)"]
     VSA{"Trusted VSA?"}
-    Parallel["SLSA + VEX + Notation + SBOM\n(parallel)"]
+    Parallel["SLSA + VEX + Notation + SBOM + SCAI\n(parallel)"]
     CEL["CEL policy evaluation"]
     Enforce{"Enforce / Warn"}
     Allow["Allow container"]
     Reject["Reject container"]
     Registry["OCI Registry"]
 
-    Runtime --> NRI --> Plugin --> Extract --> Policy --> Exclude
+    Runtime --> NRI --> Plugin --> Extract --> Policy --> Include
+    Include -- no --> Allow
+    Include -- yes --> Exclude
     Exclude -- yes --> Allow
-    Exclude -- no --> Cache
+    Exclude -- no --> Rules --> Cache
     Cache -- hit --> Enforce
     Cache -- miss --> Fetch
     Fetch <--> Registry
@@ -254,8 +258,8 @@ restarted, avoiding a cold-cache fetch penalty.
 
 ## Verification
 
-The plugin verifies SLSA provenance, VEX, VSA, Notation, and SBOM attestations
-with optional CEL policy expressions. It extracts
+The plugin verifies SLSA provenance, VEX, VSA, Notation, SBOM, and SCAI
+attestations with optional CEL policy expressions. It extracts
 image references and digests from CRI-O or containerd NRI annotations,
 resolves missing digests via registry HEAD requests, and applies per-namespace
 policies. VSA from a trusted verifier can short-circuit all other checks.
@@ -281,8 +285,8 @@ See [docs/deployment.md](docs/deployment.md) for all deployment options
 example configurations (gradual rollout, strict production, VSA-accelerated).
 
 See [`deploy/examples/policies/`](deploy/examples/policies/) for ready-to-use
-policy files covering keyless, key-based, VEX-strict, VSA-accelerated, and
-other scenarios.
+policy files covering keyless, key-based, Notation, SBOM, SCAI, VEX-strict,
+VSA-accelerated, CEL, and other scenarios.
 
 ## Operations
 

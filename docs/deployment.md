@@ -124,8 +124,8 @@ inline NRI configuration is ignored.
 ## Examples
 
 See [`deploy/examples/policies/`](../deploy/examples/policies/) for
-ready-to-use policy files covering keyless, key-based, VEX-strict,
-VSA-accelerated, and other scenarios.
+ready-to-use policy files covering keyless, key-based, Notation, SBOM, SCAI,
+VEX-strict, VSA-accelerated, CEL, and other scenarios.
 
 ### Gradual Rollout
 
