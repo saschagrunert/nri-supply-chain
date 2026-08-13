@@ -239,6 +239,36 @@ var (
 	ErrSCAIOverlappingAttributes = errors.New(
 		"scai: attribute appears in both requiredAttributes and forbiddenAttributes",
 	)
+
+	// ErrInvalidSourceLevel indicates an invalid source level value.
+	ErrInvalidSourceLevel = errors.New(
+		"invalid source level, must be 0-3",
+	)
+
+	// ErrSourceMaxAgeNotPositive indicates a non-positive source maxAge value.
+	ErrSourceMaxAgeNotPositive = errors.New("source.maxAge must be positive")
+
+	// ErrBuildEnvOverlappingProperties indicates the same property appears in both
+	// requiredProperties and forbiddenProperties.
+	ErrBuildEnvOverlappingProperties = errors.New(
+		"buildEnv: property appears in both requiredProperties and forbiddenProperties",
+	)
+
+	// ErrVulnScanMaxScoreRange indicates maxScore is outside the valid range.
+	ErrVulnScanMaxScoreRange = errors.New(
+		"vulnScan.maxScore must be between 0.0 and 10.0",
+	)
+
+	// ErrVulnScanMinSeverityInvalid indicates an unrecognized minSeverity value.
+	ErrVulnScanMinSeverityInvalid = errors.New(
+		`vulnScan.minSeverity must be "low", "medium", "high", or "critical"`,
+	)
+
+	// ErrVulnScanMaxAgeNotPositive indicates a non-positive vulnScan maxAge value.
+	ErrVulnScanMaxAgeNotPositive = errors.New("vulnScan.maxAge must be positive")
+
+	// ErrTestResultMaxAgeNotPositive indicates a non-positive testResult maxAge value.
+	ErrTestResultMaxAgeNotPositive = errors.New("testResult.maxAge must be positive")
 )
 
 // Sections groups the verification settings that can be overridden
@@ -262,6 +292,14 @@ type Sections struct {
 	SBOM *SBOMPolicy `json:"sbom,omitempty"`
 	// SCAI contains SCAI attribute report verification settings.
 	SCAI *SCAIPolicy `json:"scai,omitempty"`
+	// Source contains SLSA source track verification settings.
+	Source *SourcePolicy `json:"source,omitempty"`
+	// BuildEnv contains build environment verification settings.
+	BuildEnv *BuildEnvPolicy `json:"buildEnv,omitempty"`
+	// VulnScan contains vulnerability scan verification settings.
+	VulnScan *VulnScanPolicy `json:"vulnScan,omitempty"`
+	// TestResult contains test result verification settings.
+	TestResult *TestResultPolicy `json:"testResult,omitempty"`
 }
 
 // Policy defines the trust roots and per-namespace verification settings.
@@ -486,6 +524,57 @@ type SCAIPolicy struct {
 	ForbiddenAttributes []string `json:"forbiddenAttributes,omitempty"`
 	// RequireEvidence requires that every attribute includes non-empty evidence.
 	RequireEvidence bool `json:"requireEvidence,omitempty"`
+}
+
+// SourcePolicy contains SLSA source track verification settings.
+type SourcePolicy struct {
+	// MissingPolicy controls behavior when no source attestation is found.
+	MissingPolicy types.Action `json:"missingPolicy,omitempty" jsonschema:"enum=allow,enum=warn,enum=deny"`
+	// MinimumLevel is the minimum source level required (0-3).
+	MinimumLevel int `json:"minimumLevel,omitempty"`
+	// MaxAge is the maximum age of a source attestation before it is considered stale.
+	MaxAge string `json:"maxAge,omitempty"`
+	// MaxAgeDuration is the parsed form of MaxAge, resolved after validation.
+	MaxAgeDuration time.Duration `json:"-"`
+}
+
+// BuildEnvPolicy contains build environment verification settings.
+type BuildEnvPolicy struct {
+	// MissingPolicy controls behavior when no build environment attestation is found.
+	MissingPolicy types.Action `json:"missingPolicy,omitempty" jsonschema:"enum=allow,enum=warn,enum=deny"`
+	// RequiredProperties is a list of environment property names that must be present.
+	RequiredProperties []string `json:"requiredProperties,omitempty"`
+	// ForbiddenProperties is a list of environment property names that must not appear.
+	ForbiddenProperties []string `json:"forbiddenProperties,omitempty"`
+}
+
+// VulnScanPolicy contains vulnerability scan verification settings.
+type VulnScanPolicy struct {
+	// MissingPolicy controls behavior when no vulnerability scan attestation is found.
+	MissingPolicy types.Action `json:"missingPolicy,omitempty" jsonschema:"enum=allow,enum=warn,enum=deny"`
+	// MaxScore is the maximum allowed CVSS score (0.0-10.0) across scan findings.
+	MaxScore *float64 `json:"maxScore,omitempty"`
+	// MinSeverity is the minimum severity level that triggers a violation.
+	// Valid values: "low", "medium", "high", "critical".
+	MinSeverity string `json:"minSeverity,omitempty"`
+	// IgnoreCVEs is a list of CVE IDs to exclude from threshold checks.
+	IgnoreCVEs []string `json:"ignoreCVEs,omitempty"` //nolint:tagliatelle // CVEs is an acronym
+	// MaxAge is the maximum age of a scan before it is considered stale.
+	MaxAge string `json:"maxAge,omitempty"`
+	// MaxAgeDuration is the parsed form of MaxAge, resolved after validation.
+	MaxAgeDuration time.Duration `json:"-"`
+}
+
+// TestResultPolicy contains test result verification settings.
+type TestResultPolicy struct {
+	// MissingPolicy controls behavior when no test result attestation is found.
+	MissingPolicy types.Action `json:"missingPolicy,omitempty" jsonschema:"enum=allow,enum=warn,enum=deny"`
+	// RequiredSuites is a list of test suite names that must be present and passed.
+	RequiredSuites []string `json:"requiredSuites,omitempty"`
+	// MaxAge is the maximum age of a test result before it is considered stale.
+	MaxAge string `json:"maxAge,omitempty"`
+	// MaxAgeDuration is the parsed form of MaxAge, resolved after validation.
+	MaxAgeDuration time.Duration `json:"-"`
 }
 
 // ImageRule defines per-image verification overrides within a namespace policy.

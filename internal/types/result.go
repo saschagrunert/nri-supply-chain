@@ -15,7 +15,10 @@
 // Package types provides shared data types for supply chain verification results.
 package types
 
-import "maps"
+import (
+	"maps"
+	"strings"
+)
 
 // CheckStatus represents the outcome status of a verification check.
 type CheckStatus string
@@ -51,6 +54,14 @@ const (
 	CheckTypeSBOM CheckType = "sbom"
 	// CheckTypeSCAI is the SCAI attestation check type.
 	CheckTypeSCAI CheckType = "scai"
+	// CheckTypeSource is the SLSA source track check type.
+	CheckTypeSource CheckType = "source"
+	// CheckTypeBuildEnv is the build environment check type.
+	CheckTypeBuildEnv CheckType = "buildenv"
+	// CheckTypeVulnScan is the vulnerability scan check type.
+	CheckTypeVulnScan CheckType = "vulnscan"
+	// CheckTypeTestResult is the test result check type.
+	CheckTypeTestResult CheckType = "testresult"
 )
 
 // Result represents the outcome of a supply chain verification.
@@ -157,4 +168,39 @@ func SoftFailResult(checkType CheckType, detail string, err error) *CheckResult 
 		Err:      err,
 		Metadata: nil,
 	}
+}
+
+// MergeCommaSeparated merges two comma-separated lists, deduplicating entries
+// case-insensitively while preserving the original casing of the first
+// occurrence.
+func MergeCommaSeparated(existing, incoming string) string {
+	if existing == "" {
+		return incoming
+	}
+
+	if incoming == "" {
+		return existing
+	}
+
+	seen := make(map[string]struct{})
+	result := make([]string, 0)
+
+	addUnique := func(s string) {
+		lower := strings.ToLower(s)
+		if _, exists := seen[lower]; !exists {
+			seen[lower] = struct{}{}
+
+			result = append(result, s)
+		}
+	}
+
+	for s := range strings.SplitSeq(existing, ",") {
+		addUnique(s)
+	}
+
+	for s := range strings.SplitSeq(incoming, ",") {
+		addUnique(s)
+	}
+
+	return strings.Join(result, ",")
 }

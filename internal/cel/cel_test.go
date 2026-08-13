@@ -57,6 +57,28 @@ const (
 	testTwoAttrs       = "PASSED_CODE_REVIEW,PASSED_TESTS"
 	testOneAttr        = "PASSED_CODE_REVIEW"
 
+	metaResult        = "result"
+	metaLevel         = "level"
+	metaBranch        = "branch"
+	metaProperties    = "properties"
+	metaPropertyCount = "propertyCount"
+	metaScanner       = "scanner"
+	metaVulnCount     = "vulnCount"
+	metaMaxScore      = "maxScore"
+	metaMaxSeverity   = "maxSeverity"
+	metaCriticalCount = "criticalCount"
+	metaHighCount     = "highCount"
+	metaSuiteCount    = "suiteCount"
+	metaSuites        = "suites"
+	metaPassed        = "passed"
+	metaFailed        = "failed"
+
+	testScannerURI = "https://scanner.example.com"
+	testSourceURI  = "https://github.com/example/repo"
+	testBranchMain = "main"
+	testSevHigh    = "high"
+	testResultPass = "pass"
+
 	exprMatchGHCR        = "image.registry == 'ghcr.io'"
 	exprSLSAVerified     = "slsa.verified == true"
 	exprVEXVerified      = "vex.verified == true"
@@ -78,6 +100,7 @@ func defaultVars() map[string]any {
 		types.PassResult(types.CheckTypeSBOM, "ok"),
 		nil,
 		nil,
+		nil, nil, nil, nil,
 	)
 }
 
@@ -420,6 +443,7 @@ func TestEvaluateSLSAVariables(t *testing.T) {
 		types.PassResult(types.CheckTypeSBOM, "ok"),
 		nil,
 		nil,
+		nil, nil, nil, nil,
 	)
 
 	result = celengine.Evaluate(compiled, varsUnverified)
@@ -450,6 +474,7 @@ func TestEvaluateVEXVariables(t *testing.T) {
 		types.PassResult(types.CheckTypeSBOM, "ok"),
 		nil,
 		nil,
+		nil, nil, nil, nil,
 	)
 
 	result := celengine.Evaluate(compiled, vars)
@@ -507,6 +532,7 @@ func TestEvaluateSBOMVariables(t *testing.T) {
 		types.FailResult(types.CheckTypeSBOM, "fail", nil),
 		nil,
 		nil,
+		nil, nil, nil, nil,
 	)
 
 	result = celengine.Evaluate(compiled, varsUnverified)
@@ -534,6 +560,7 @@ func TestEvaluateNilResults(t *testing.T) {
 	vars := celengine.BuildVars(
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
 		nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil,
 	)
 
 	result := celengine.Evaluate(compiled, vars)
@@ -716,13 +743,14 @@ func TestBuildVarsPopulatesMetadata(t *testing.T) {
 	vsa := types.PassResult(types.CheckTypeVSA, "ok")
 	vsa.Metadata = map[string]any{
 		"verifierID": "https://verifier.example.com",
-		"result":     "PASSED",
-		"level":      int64(3),
+		metaResult:   "PASSED",
+		metaLevel:    int64(3),
 	}
 
 	vars := celengine.BuildVars(
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
 		slsa, vex, vsa, types.PassResult(types.CheckTypeSBOM, "ok"), nil, nil,
+		nil, nil, nil, nil,
 	)
 
 	slsaVars, ok := vars["slsa"].(map[string]any)
@@ -760,8 +788,8 @@ func TestBuildVarsPopulatesMetadata(t *testing.T) {
 		t.Errorf("vsa.verifierID = %q", vsaVars["verifierID"])
 	}
 
-	if vsaVars["result"] != "PASSED" {
-		t.Errorf("vsa.result = %q", vsaVars["result"])
+	if vsaVars[metaResult] != "PASSED" {
+		t.Errorf("vsa.result = %q", vsaVars[metaResult])
 	}
 
 	if vsaVars["level"] != int64(3) {
@@ -796,6 +824,7 @@ func TestEvaluateMetadataInCELExpression(t *testing.T) {
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
 		slsa, types.PassResult(types.CheckTypeVEX, "ok"),
 		nil, types.PassResult(types.CheckTypeSBOM, "ok"), nil, nil,
+		nil, nil, nil, nil,
 	)
 
 	result := celengine.Evaluate(compiled, vars)
@@ -814,6 +843,7 @@ func TestEvaluateMetadataInCELExpression(t *testing.T) {
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
 		slsaWrong, types.PassResult(types.CheckTypeVEX, "ok"),
 		nil, types.PassResult(types.CheckTypeSBOM, "ok"), nil, nil,
+		nil, nil, nil, nil,
 	)
 
 	result = celengine.Evaluate(compiled, varsWrong)
@@ -976,6 +1006,7 @@ func TestEvaluateNotationVariables(t *testing.T) {
 				types.PassResult(types.CheckTypeSBOM, "ok"),
 				test.result,
 				nil,
+				nil, nil, nil, nil,
 			)
 
 			result := celengine.Evaluate(compiled, vars)
@@ -1109,6 +1140,7 @@ func TestEvaluateExtendedSBOMVariables(t *testing.T) {
 				test.result,
 				nil,
 				nil,
+				nil, nil, nil, nil,
 			)
 
 			result := celengine.Evaluate(compiled, vars)
@@ -1217,6 +1249,7 @@ func TestEvaluateSBOMCVSSVariables(t *testing.T) {
 			sbomResult,
 			nil,
 			nil,
+			nil, nil, nil, nil,
 		)
 
 		result := celengine.Evaluate(compiled, vars)
@@ -1256,6 +1289,7 @@ func TestEvaluateSBOMCVSSVariables(t *testing.T) {
 			sbomResult,
 			nil,
 			nil,
+			nil, nil, nil, nil,
 		)
 
 		result := celengine.Evaluate(compiled, vars)
@@ -1287,6 +1321,7 @@ func TestEvaluateSBOMCVSSVariables(t *testing.T) {
 			types.PassResult(types.CheckTypeSBOM, "ok"),
 			nil,
 			nil,
+			nil, nil, nil, nil,
 		)
 
 		result := celengine.Evaluate(compiled, vars)
@@ -1395,6 +1430,7 @@ func TestEvaluateSCAIVariables(t *testing.T) {
 				types.PassResult(types.CheckTypeSBOM, "ok"),
 				nil,
 				test.result,
+				nil, nil, nil, nil,
 			)
 
 			result := celengine.Evaluate(compiled, vars)
@@ -1455,6 +1491,494 @@ func TestIsCostError(t *testing.T) {
 
 			if got := celengine.ExportIsCostError(tc.err); got != tc.want {
 				t.Errorf("isCostError(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEvaluateSourceVariables(t *testing.T) {
+	t.Parallel()
+
+	celengine.ResetEnvironmentForTest()
+
+	tests := []struct {
+		name    string
+		require string
+		result  *types.CheckResult
+		pass    bool
+	}{
+		{
+			name:    "source.verified true",
+			require: "source.verified == true",
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeSource, "ok")
+				r.Metadata = map[string]any{
+					metaSource: testSourceURI,
+					metaBranch: testBranchMain,
+					metaLevel:  int64(2),
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name:    "source.source match",
+			require: `source.source == "https://github.com/example/repo"`,
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeSource, "ok")
+				r.Metadata = map[string]any{
+					metaSource: testSourceURI,
+					metaBranch: testBranchMain,
+					metaLevel:  int64(2),
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name:    "source.branch match",
+			require: `source.branch == "main"`,
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeSource, "ok")
+				r.Metadata = map[string]any{
+					metaSource: testSourceURI,
+					metaBranch: testBranchMain,
+					metaLevel:  int64(2),
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name:    "source.level check",
+			require: "source.level >= 2",
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeSource, "ok")
+				r.Metadata = map[string]any{
+					metaSource: testSourceURI,
+					metaBranch: testBranchMain,
+					metaLevel:  int64(2),
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name: "source defaults with nil result",
+			require: `source.verified == false && source.source == "" ` +
+				`&& source.branch == "" && source.level == 0`,
+			result: nil,
+			pass:   true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			rules := []celengine.Rule{{Require: test.require}}
+
+			compiled, err := celengine.Compile(rules)
+			if err != nil {
+				t.Fatalf("compile error: %v", err)
+			}
+
+			vars := celengine.BuildVars(
+				testImageRef, testRegistry, testRepository, testDigest, testNamespace,
+				types.PassResult(types.CheckTypeSLSA, "ok"),
+				types.PassResult(types.CheckTypeVEX, "ok"),
+				nil,
+				types.PassResult(types.CheckTypeSBOM, "ok"),
+				nil,
+				nil,
+				test.result, nil, nil, nil,
+			)
+
+			result := celengine.Evaluate(compiled, vars)
+
+			if result.Passed != test.pass {
+				t.Errorf("expected passed=%v, got passed=%v: %s",
+					test.pass, result.Passed, result.Detail)
+			}
+		})
+	}
+}
+
+func TestEvaluateBuildEnvVariables(t *testing.T) {
+	t.Parallel()
+
+	celengine.ResetEnvironmentForTest()
+
+	tests := []struct {
+		name    string
+		require string
+		result  *types.CheckResult
+		pass    bool
+	}{
+		{
+			name:    "buildenv.verified true",
+			require: "buildenv.verified == true",
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeBuildEnv, "ok")
+				r.Metadata = map[string]any{
+					metaProperties:    "os,arch",
+					metaPropertyCount: int64(2),
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name:    "buildenv.properties contains",
+			require: `buildenv.properties.contains("os")`,
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeBuildEnv, "ok")
+				r.Metadata = map[string]any{
+					metaProperties:    "os,arch",
+					metaPropertyCount: int64(2),
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name:    "buildenv.propertyCount greater than",
+			require: "buildenv.propertyCount > 0",
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeBuildEnv, "ok")
+				r.Metadata = map[string]any{
+					metaProperties:    "os",
+					metaPropertyCount: int64(1),
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name: "buildenv defaults with nil result",
+			require: `buildenv.verified == false && buildenv.properties == "" ` +
+				`&& buildenv.propertyCount == 0`,
+			result: nil,
+			pass:   true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			rules := []celengine.Rule{{Require: test.require}}
+
+			compiled, err := celengine.Compile(rules)
+			if err != nil {
+				t.Fatalf("compile error: %v", err)
+			}
+
+			vars := celengine.BuildVars(
+				testImageRef, testRegistry, testRepository, testDigest, testNamespace,
+				types.PassResult(types.CheckTypeSLSA, "ok"),
+				types.PassResult(types.CheckTypeVEX, "ok"),
+				nil,
+				types.PassResult(types.CheckTypeSBOM, "ok"),
+				nil,
+				nil,
+				nil, test.result, nil, nil,
+			)
+
+			result := celengine.Evaluate(compiled, vars)
+
+			if result.Passed != test.pass {
+				t.Errorf("expected passed=%v, got passed=%v: %s",
+					test.pass, result.Passed, result.Detail)
+			}
+		})
+	}
+}
+
+func TestEvaluateVulnScanVariables(t *testing.T) {
+	t.Parallel()
+
+	celengine.ResetEnvironmentForTest()
+
+	tests := []struct {
+		name    string
+		require string
+		result  *types.CheckResult
+		pass    bool
+	}{
+		{
+			name:    "vulnscan.verified true",
+			require: "vulnscan.verified == true",
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeVulnScan, "ok")
+				r.Metadata = map[string]any{
+					metaScanner:       testScannerURI,
+					metaVulnCount:     int64(3),
+					metaMaxScore:      float64(5.5),
+					metaMaxSeverity:   testSevHigh,
+					metaCriticalCount: int64(0),
+					metaHighCount:     int64(1),
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name:    "vulnscan.scanner match",
+			require: `vulnscan.scanner == "https://scanner.example.com"`,
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeVulnScan, "ok")
+				r.Metadata = map[string]any{
+					metaScanner:       testScannerURI,
+					metaVulnCount:     int64(3),
+					metaMaxScore:      float64(5.5),
+					metaMaxSeverity:   testSevHigh,
+					metaCriticalCount: int64(0),
+					metaHighCount:     int64(1),
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name:    "vulnscan.maxScore threshold",
+			require: "vulnscan.maxScore <= 7.0",
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeVulnScan, "ok")
+				r.Metadata = map[string]any{
+					metaScanner:       testScannerURI,
+					metaVulnCount:     int64(1),
+					metaMaxScore:      float64(5.5),
+					metaMaxSeverity:   "medium",
+					metaCriticalCount: int64(0),
+					metaHighCount:     int64(0),
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name:    "vulnscan.maxSeverity check",
+			require: `vulnscan.maxSeverity == "high"`,
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeVulnScan, "ok")
+				r.Metadata = map[string]any{
+					metaScanner:       testScannerURI,
+					metaVulnCount:     int64(2),
+					metaMaxScore:      float64(7.5),
+					metaMaxSeverity:   testSevHigh,
+					metaCriticalCount: int64(0),
+					metaHighCount:     int64(1),
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name:    "vulnscan.criticalCount zero",
+			require: "vulnscan.criticalCount == 0",
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeVulnScan, "ok")
+				r.Metadata = map[string]any{
+					metaScanner:       testScannerURI,
+					metaVulnCount:     int64(1),
+					metaMaxScore:      float64(5.0),
+					metaMaxSeverity:   "medium",
+					metaCriticalCount: int64(0),
+					metaHighCount:     int64(0),
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name: "vulnscan defaults with nil result",
+			require: `vulnscan.verified == false && vulnscan.scanner == "" ` +
+				`&& vulnscan.vulnCount == 0 && vulnscan.maxScore == 0.0 ` +
+				`&& vulnscan.maxSeverity == "" && vulnscan.criticalCount == 0 ` +
+				`&& vulnscan.highCount == 0`,
+			result: nil,
+			pass:   true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			rules := []celengine.Rule{{Require: test.require}}
+
+			compiled, err := celengine.Compile(rules)
+			if err != nil {
+				t.Fatalf("compile error: %v", err)
+			}
+
+			vars := celengine.BuildVars(
+				testImageRef, testRegistry, testRepository, testDigest, testNamespace,
+				types.PassResult(types.CheckTypeSLSA, "ok"),
+				types.PassResult(types.CheckTypeVEX, "ok"),
+				nil,
+				types.PassResult(types.CheckTypeSBOM, "ok"),
+				nil,
+				nil,
+				nil, nil, test.result, nil,
+			)
+
+			result := celengine.Evaluate(compiled, vars)
+
+			if result.Passed != test.pass {
+				t.Errorf("expected passed=%v, got passed=%v: %s",
+					test.pass, result.Passed, result.Detail)
+			}
+		})
+	}
+}
+
+func TestEvaluateTestResultVariables(t *testing.T) {
+	t.Parallel()
+
+	celengine.ResetEnvironmentForTest()
+
+	tests := []struct {
+		name    string
+		require string
+		result  *types.CheckResult
+		pass    bool
+	}{
+		{
+			name:    "testresult.verified true",
+			require: "testresult.verified == true",
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeTestResult, "ok")
+				r.Metadata = map[string]any{
+					metaResult:     testResultPass,
+					metaSuiteCount: int64(2),
+					metaSuites:     "unit,integration",
+					metaPassed:     int64(42),
+					metaFailed:     int64(0),
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name:    "testresult.result pass",
+			require: `testresult.result == "pass"`,
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeTestResult, "ok")
+				r.Metadata = map[string]any{
+					metaResult:     testResultPass,
+					metaSuiteCount: int64(1),
+					metaSuites:     "unit",
+					metaPassed:     int64(10),
+					metaFailed:     int64(0),
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name:    "testresult.suiteCount check",
+			require: "testresult.suiteCount >= 2",
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeTestResult, "ok")
+				r.Metadata = map[string]any{
+					metaResult:     testResultPass,
+					metaSuiteCount: int64(3),
+					metaSuites:     "unit,integration,e2e",
+					metaPassed:     int64(100),
+					metaFailed:     int64(0),
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name:    "testresult.suites contains",
+			require: `testresult.suites.contains("unit")`,
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeTestResult, "ok")
+				r.Metadata = map[string]any{
+					metaResult:     testResultPass,
+					metaSuiteCount: int64(2),
+					metaSuites:     "unit,integration",
+					metaPassed:     int64(50),
+					metaFailed:     int64(0),
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name:    "testresult.passed count",
+			require: "testresult.passed > 0",
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeTestResult, "ok")
+				r.Metadata = map[string]any{
+					metaResult:     testResultPass,
+					metaSuiteCount: int64(1),
+					metaSuites:     "unit",
+					metaPassed:     int64(25),
+					metaFailed:     int64(0),
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name: "testresult defaults with nil result",
+			require: `testresult.verified == false && testresult.result == "" ` +
+				`&& testresult.suiteCount == 0 && testresult.suites == "" ` +
+				`&& testresult.passed == 0 && testresult.failed == 0`,
+			result: nil,
+			pass:   true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			rules := []celengine.Rule{{Require: test.require}}
+
+			compiled, err := celengine.Compile(rules)
+			if err != nil {
+				t.Fatalf("compile error: %v", err)
+			}
+
+			vars := celengine.BuildVars(
+				testImageRef, testRegistry, testRepository, testDigest, testNamespace,
+				types.PassResult(types.CheckTypeSLSA, "ok"),
+				types.PassResult(types.CheckTypeVEX, "ok"),
+				nil,
+				types.PassResult(types.CheckTypeSBOM, "ok"),
+				nil,
+				nil,
+				nil, nil, nil, test.result,
+			)
+
+			result := celengine.Evaluate(compiled, vars)
+
+			if result.Passed != test.pass {
+				t.Errorf("expected passed=%v, got passed=%v: %s",
+					test.pass, result.Passed, result.Detail)
 			}
 		})
 	}

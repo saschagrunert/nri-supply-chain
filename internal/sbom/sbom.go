@@ -31,6 +31,8 @@ import (
 
 const checkType = types.CheckTypeSBOM
 
+const noAssertionLicense = "NOASSERTION"
+
 const (
 	severityRankMedium   = 2
 	severityRankHigh     = 3
@@ -56,8 +58,11 @@ var (
 	// ErrComponentNotAllowed indicates the SBOM contains a component not in the allow list.
 	ErrComponentNotAllowed = errors.New("component not in allow list")
 
-	// errNotSPDX indicates the document is not a valid SPDX document.
+	// errNotSPDX indicates the document is not a valid SPDX 2.x document.
 	errNotSPDX = errors.New("no packages found, not a valid SPDX document")
+
+	// errNotSPDX3 indicates the document is not a valid SPDX 3.0 document.
+	errNotSPDX3 = errors.New("not a valid SPDX 3.0 document")
 
 	// errNotCycloneDX indicates the document is not a valid CycloneDX document.
 	errNotCycloneDX = errors.New("no components found, not a valid CycloneDX document")
@@ -241,6 +246,19 @@ func verifySBOMPredicate(
 func extractSBOMData(
 	predicate []byte, pol *policy.Policy,
 ) (sbomData, error) {
+	spdx3, spdx3Err := parseSPDX3(predicate)
+	if spdx3Err == nil {
+		if !formatAllowed(pol, "spdx") {
+			return sbomData{}, fmt.Errorf(
+				"%w: spdx not in allowed formats", ErrUnsupportedFormat,
+			)
+		}
+
+		spdx3.format = "spdx"
+
+		return spdx3, nil
+	}
+
 	spdx, spdxErr := parseSPDX(predicate)
 	if spdxErr == nil {
 		if !formatAllowed(pol, "spdx") {
@@ -268,8 +286,8 @@ func extractSBOMData(
 	}
 
 	return sbomData{}, fmt.Errorf(
-		"%w: not valid SPDX (%w) or CycloneDX (%w)",
-		ErrInvalidSBOM, spdxErr, cdxErr,
+		"%w: not valid SPDX 3.0 (%w), SPDX 2.x (%w), or CycloneDX (%w)",
+		ErrInvalidSBOM, spdx3Err, spdxErr, cdxErr,
 	)
 }
 
@@ -319,11 +337,11 @@ func parseSPDX(data []byte) (sbomData, error) {
 }
 
 func appendSPDXLicenses(licenses []string, pkg *spdxPackage) []string {
-	if pkg.LicenseConcluded != "" && pkg.LicenseConcluded != "NOASSERTION" {
+	if pkg.LicenseConcluded != "" && pkg.LicenseConcluded != noAssertionLicense {
 		licenses = append(licenses, pkg.LicenseConcluded)
 	}
 
-	if pkg.LicenseDeclared != "" && pkg.LicenseDeclared != "NOASSERTION" {
+	if pkg.LicenseDeclared != "" && pkg.LicenseDeclared != noAssertionLicense {
 		licenses = append(licenses, pkg.LicenseDeclared)
 	}
 
@@ -386,6 +404,107 @@ func parseCycloneDX(data []byte) (sbomData, error) {
 	result.vulns = bom.Vulnerabilities
 
 	return result, nil
+}
+
+// spdx3Document represents an SPDX 3.0 JSON-LD document. SPDX 3.0 uses
+// a flat element graph with typed entries instead of nested packages.
+type spdx3Document struct {
+	Context  string         `json:"@context,omitempty"`
+	Type     string         `json:"@type,omitempty"`
+	SpdxID   string         `json:"spdxId,omitempty"` //nolint:tagliatelle // SPDX spec field name
+	SpecVer  string         `json:"specVersion,omitempty"`
+	Elements []spdx3Element `json:"@graph,omitempty"`
+}
+
+type spdx3Element struct {
+	Type                string               `json:"@type,omitempty"`
+	Name                string               `json:"name,omitempty"`
+	ExternalIdentifiers []spdx3ExtIdentifier `json:"externalIdentifier,omitempty"`
+	DeclaredLicense     string               `json:"declaredLicense,omitempty"`
+	ConcludedLicense    string               `json:"concludedLicense,omitempty"`
+}
+
+type spdx3ExtIdentifier struct {
+	Type       string `json:"@type,omitempty"`
+	IDType     string `json:"externalIdentifierType,omitempty"`
+	Identifier string `json:"identifier,omitempty"`
+}
+
+func parseSPDX3(data []byte) (sbomData, error) { //nolint:cyclop // iterates element types
+	var doc spdx3Document
+
+	err := json.Unmarshal(data, &doc)
+	if err != nil {
+		return sbomData{}, fmt.Errorf("parsing SPDX 3.0: %w", err)
+	}
+
+	if !isSPDX3(&doc) {
+		return sbomData{}, errNotSPDX3
+	}
+
+	var result sbomData
+
+	uniqueLicenses := make(map[string]struct{})
+	packageCount := 0
+
+	for idx := range doc.Elements {
+		elem := &doc.Elements[idx]
+
+		if !isSPDX3Package(elem.Type) {
+			continue
+		}
+
+		packageCount++
+
+		if elem.ConcludedLicense != "" && elem.ConcludedLicense != noAssertionLicense {
+			result.licenses = append(result.licenses, elem.ConcludedLicense)
+			uniqueLicenses[elem.ConcludedLicense] = struct{}{}
+		}
+
+		if elem.DeclaredLicense != "" && elem.DeclaredLicense != noAssertionLicense {
+			result.licenses = append(result.licenses, elem.DeclaredLicense)
+			uniqueLicenses[elem.DeclaredLicense] = struct{}{}
+		}
+
+		for eidx := range elem.ExternalIdentifiers {
+			eid := &elem.ExternalIdentifiers[eidx]
+			if isSPDX3PURL(eid) && eid.Identifier != "" {
+				result.purls = append(result.purls, eid.Identifier)
+			}
+		}
+	}
+
+	if packageCount == 0 {
+		return sbomData{}, errNotSPDX3
+	}
+
+	result.componentCount = packageCount
+	result.licenseCount = len(uniqueLicenses)
+
+	return result, nil
+}
+
+func isSPDX3(doc *spdx3Document) bool {
+	if strings.HasPrefix(doc.SpecVer, "3.") {
+		return true
+	}
+
+	if strings.Contains(doc.Context, "spdx.org") && len(doc.Elements) > 0 {
+		return true
+	}
+
+	return false
+}
+
+func isSPDX3Package(elemType string) bool {
+	return strings.EqualFold(elemType, "software_SoftwarePackage") ||
+		strings.EqualFold(elemType, "SoftwarePackage") ||
+		strings.EqualFold(elemType, "software:SoftwarePackage")
+}
+
+func isSPDX3PURL(eid *spdx3ExtIdentifier) bool {
+	return strings.EqualFold(eid.IDType, "packageUrl") ||
+		strings.EqualFold(eid.IDType, "purl")
 }
 
 func checkDenyLists(

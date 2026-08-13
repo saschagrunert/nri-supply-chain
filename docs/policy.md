@@ -28,6 +28,10 @@ patterns for the nri-supply-chain plugin.
     - [<code>sbom.component</code> (object)](#sbomcomponent-object)
     - [<code>sbom.cvss</code> (object)](#sbomcvss-object)
   - [<code>scai</code> (object)](#scai-object)
+  - [<code>source</code> (object)](#source-object)
+  - [<code>buildEnv</code> (object)](#buildenv-object)
+  - [<code>vulnScan</code> (object)](#vulnscan-object)
+  - [<code>testResult</code> (object)](#testresult-object)
   - [<code>rules</code> (array of objects)](#rules-array-of-objects)
   - [<code>cel</code> (object)](#cel-object)
 - [Verification Types](#verification-types)
@@ -39,6 +43,10 @@ patterns for the nri-supply-chain plugin.
   - [Notation (Notary v2) Signature Verification](#notation-notary-v2-signature-verification)
   - [SBOM Verification](#sbom-verification)
   - [SCAI Verification](#scai-verification)
+  - [Source Track Verification](#source-track-verification)
+  - [Build Environment Verification](#build-environment-verification)
+  - [Vulnerability Scan Verification](#vulnerability-scan-verification)
+  - [Test Result Verification](#test-result-verification)
 - [Pattern Matching](#pattern-matching)
   - [<code>include</code>, <code>exclude</code>, and <code>trust.sources</code>](#include-exclude-and-trustsources)
   - [<code>trust.sanPatterns</code>](#trustsanpatterns)
@@ -198,9 +206,32 @@ nri-supply-chain json-schema policy
 
 ```json
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$ref": "#/$defs/Policy",
   "$defs": {
-    "CELPolicy": {
+    "BuildEnvPolicy": {
+      "properties": {
+        "missingPolicy": {
+          "type": "string",
+          "enum": ["allow", "warn", "deny"]
+        },
+        "requiredProperties": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "forbiddenProperties": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
       "additionalProperties": false,
+      "type": "object"
+    },
+    "CELPolicy": {
       "properties": {
         "rules": {
           "items": {
@@ -209,39 +240,48 @@ nri-supply-chain json-schema policy
           "type": "array"
         }
       },
-      "required": ["rules"],
-      "type": "object"
+      "additionalProperties": false,
+      "type": "object",
+      "required": ["rules"]
     },
     "CELRule": {
-      "additionalProperties": false,
       "properties": {
         "match": {
           "type": "string"
         },
-        "message": {
+        "require": {
           "type": "string"
         },
-        "require": {
+        "message": {
           "type": "string"
         }
       },
-      "required": ["require"],
-      "type": "object"
+      "additionalProperties": false,
+      "type": "object",
+      "required": ["require"]
     },
     "ImageRule": {
-      "additionalProperties": false,
       "properties": {
-        "cel": {
-          "$ref": "#/$defs/CELPolicy"
+        "trust": {
+          "$ref": "#/$defs/TrustPolicy"
         },
-        "images": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
+        "slsa": {
+          "$ref": "#/$defs/SLSAPolicy"
+        },
+        "vex": {
+          "$ref": "#/$defs/VEXPolicy"
+        },
+        "vsa": {
+          "$ref": "#/$defs/VSAPolicy"
+        },
+        "signatures": {
+          "$ref": "#/$defs/SignaturesPolicy"
         },
         "notation": {
           "$ref": "#/$defs/NotationPolicy"
+        },
+        "cel": {
+          "$ref": "#/$defs/CELPolicy"
         },
         "sbom": {
           "$ref": "#/$defs/SBOMPolicy"
@@ -249,41 +289,34 @@ nri-supply-chain json-schema policy
         "scai": {
           "$ref": "#/$defs/SCAIPolicy"
         },
-        "signatures": {
-          "$ref": "#/$defs/SignaturesPolicy"
+        "source": {
+          "$ref": "#/$defs/SourcePolicy"
         },
-        "slsa": {
-          "$ref": "#/$defs/SLSAPolicy"
+        "buildEnv": {
+          "$ref": "#/$defs/BuildEnvPolicy"
         },
-        "trust": {
-          "$ref": "#/$defs/TrustPolicy"
+        "vulnScan": {
+          "$ref": "#/$defs/VulnScanPolicy"
         },
-        "vex": {
-          "$ref": "#/$defs/VEXPolicy"
+        "testResult": {
+          "$ref": "#/$defs/TestResultPolicy"
         },
-        "vsa": {
-          "$ref": "#/$defs/VSAPolicy"
-        }
-      },
-      "required": ["images"],
-      "type": "object"
-    },
-    "NotationPolicy": {
-      "additionalProperties": false,
-      "properties": {
-        "missingPolicy": {
-          "enum": ["allow", "warn", "deny"],
-          "type": "string"
-        },
-        "revocationMode": {
-          "enum": ["strict", "soft", "skip"],
-          "type": "string"
-        },
-        "trustPolicy": {
+        "images": {
           "items": {
-            "$ref": "#/$defs/NotationTrustPolicyRule"
+            "type": "string"
           },
           "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": ["images"]
+    },
+    "NotationPolicy": {
+      "properties": {
+        "missingPolicy": {
+          "type": "string",
+          "enum": ["allow", "warn", "deny"]
         },
         "trustStores": {
           "items": {
@@ -291,15 +324,25 @@ nri-supply-chain json-schema policy
           },
           "type": "array"
         },
+        "trustPolicy": {
+          "items": {
+            "$ref": "#/$defs/NotationTrustPolicyRule"
+          },
+          "type": "array"
+        },
         "verificationLevel": {
-          "enum": ["strict", "permissive", "audit", "skip"],
-          "type": "string"
+          "type": "string",
+          "enum": ["strict", "permissive", "audit", "skip"]
+        },
+        "revocationMode": {
+          "type": "string",
+          "enum": ["strict", "soft", "skip"]
         }
       },
+      "additionalProperties": false,
       "type": "object"
     },
     "NotationTrustPolicyRule": {
-      "additionalProperties": false,
       "properties": {
         "name": {
           "type": "string"
@@ -323,66 +366,51 @@ nri-supply-chain json-schema policy
           "type": "array"
         }
       },
-      "required": [
-        "name",
-        "registryScopes",
-        "trustStores",
-        "trustedIdentities"
-      ],
-      "type": "object"
+      "additionalProperties": false,
+      "type": "object",
+      "required": ["name", "registryScopes", "trustStores", "trustedIdentities"]
     },
     "NotationTrustStore": {
-      "additionalProperties": false,
       "properties": {
-        "certificates": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
         "name": {
           "type": "string"
         },
         "type": {
           "type": "string"
+        },
+        "certificates": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
-      "required": ["name", "type", "certificates"],
-      "type": "object"
+      "additionalProperties": false,
+      "type": "object",
+      "required": ["name", "type", "certificates"]
     },
     "Policy": {
-      "additionalProperties": false,
       "properties": {
-        "cel": {
-          "$ref": "#/$defs/CELPolicy"
+        "trust": {
+          "$ref": "#/$defs/TrustPolicy"
         },
-        "exclude": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
+        "slsa": {
+          "$ref": "#/$defs/SLSAPolicy"
         },
-        "include": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
+        "vex": {
+          "$ref": "#/$defs/VEXPolicy"
         },
-        "inherits": {
-          "type": "boolean"
+        "vsa": {
+          "$ref": "#/$defs/VSAPolicy"
         },
-        "mode": {
-          "enum": ["disabled", "warn", "enforce"],
-          "type": "string"
+        "signatures": {
+          "$ref": "#/$defs/SignaturesPolicy"
         },
         "notation": {
           "$ref": "#/$defs/NotationPolicy"
         },
-        "rules": {
-          "items": {
-            "$ref": "#/$defs/ImageRule"
-          },
-          "type": "array"
+        "cel": {
+          "$ref": "#/$defs/CELPolicy"
         },
         "sbom": {
           "$ref": "#/$defs/SBOMPolicy"
@@ -390,86 +418,106 @@ nri-supply-chain json-schema policy
         "scai": {
           "$ref": "#/$defs/SCAIPolicy"
         },
-        "signatures": {
-          "$ref": "#/$defs/SignaturesPolicy"
+        "source": {
+          "$ref": "#/$defs/SourcePolicy"
         },
-        "slsa": {
-          "$ref": "#/$defs/SLSAPolicy"
+        "buildEnv": {
+          "$ref": "#/$defs/BuildEnvPolicy"
         },
-        "trust": {
-          "$ref": "#/$defs/TrustPolicy"
+        "vulnScan": {
+          "$ref": "#/$defs/VulnScanPolicy"
         },
-        "vex": {
-          "$ref": "#/$defs/VEXPolicy"
+        "testResult": {
+          "$ref": "#/$defs/TestResultPolicy"
         },
-        "vsa": {
-          "$ref": "#/$defs/VSAPolicy"
-        }
-      },
-      "type": "object"
-    },
-    "SBOMCVSSPolicy": {
-      "additionalProperties": false,
-      "properties": {
-        "ignoreCVEs": {
+        "mode": {
+          "type": "string",
+          "enum": ["disabled", "warn", "enforce"]
+        },
+        "inherits": {
+          "type": "boolean"
+        },
+        "include": {
           "items": {
             "type": "string"
           },
           "type": "array"
         },
+        "exclude": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "rules": {
+          "items": {
+            "$ref": "#/$defs/ImageRule"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "SBOMCVSSPolicy": {
+      "properties": {
         "maxScore": {
           "type": "number"
         },
         "minSeverity": {
           "type": "string"
+        },
+        "ignoreCVEs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
+      "additionalProperties": false,
       "type": "object"
     },
     "SBOMComponentPolicy": {
-      "additionalProperties": false,
       "properties": {
-        "allow": {
+        "deny": {
           "items": {
             "type": "string"
           },
           "type": "array"
         },
-        "deny": {
+        "allow": {
           "items": {
             "type": "string"
           },
           "type": "array"
         }
       },
+      "additionalProperties": false,
       "type": "object"
     },
     "SBOMLicensePolicy": {
-      "additionalProperties": false,
       "properties": {
-        "allow": {
+        "deny": {
           "items": {
             "type": "string"
           },
           "type": "array"
         },
-        "deny": {
+        "allow": {
           "items": {
             "type": "string"
           },
           "type": "array"
         }
       },
+      "additionalProperties": false,
       "type": "object"
     },
     "SBOMPolicy": {
-      "additionalProperties": false,
       "properties": {
-        "component": {
-          "$ref": "#/$defs/SBOMComponentPolicy"
-        },
-        "cvss": {
-          "$ref": "#/$defs/SBOMCVSSPolicy"
+        "missingPolicy": {
+          "type": "string",
+          "enum": ["allow", "warn", "deny"]
         },
         "formats": {
           "items": {
@@ -480,41 +528,50 @@ nri-supply-chain json-schema policy
         "license": {
           "$ref": "#/$defs/SBOMLicensePolicy"
         },
-        "missingPolicy": {
-          "enum": ["allow", "warn", "deny"],
-          "type": "string"
+        "component": {
+          "$ref": "#/$defs/SBOMComponentPolicy"
+        },
+        "cvss": {
+          "$ref": "#/$defs/SBOMCVSSPolicy"
         }
       },
+      "additionalProperties": false,
       "type": "object"
     },
     "SCAIPolicy": {
-      "additionalProperties": false,
       "properties": {
-        "forbiddenAttributes": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
         "missingPolicy": {
-          "enum": ["allow", "warn", "deny"],
-          "type": "string"
-        },
-        "requireEvidence": {
-          "type": "boolean"
+          "type": "string",
+          "enum": ["allow", "warn", "deny"]
         },
         "requiredAttributes": {
           "items": {
             "type": "string"
           },
           "type": "array"
+        },
+        "forbiddenAttributes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "requireEvidence": {
+          "type": "boolean"
         }
       },
+      "additionalProperties": false,
       "type": "object"
     },
     "SLSAPolicy": {
-      "additionalProperties": false,
       "properties": {
+        "missingPolicy": {
+          "type": "string",
+          "enum": ["allow", "warn", "deny"]
+        },
+        "rejectUnknownParameters": {
+          "type": "boolean"
+        },
         "knownParameters": {
           "items": {
             "type": "string"
@@ -523,38 +580,66 @@ nri-supply-chain json-schema policy
         },
         "maxAge": {
           "type": "string"
-        },
-        "missingPolicy": {
-          "enum": ["allow", "warn", "deny"],
-          "type": "string"
-        },
-        "rejectUnknownParameters": {
-          "type": "boolean"
         }
       },
+      "additionalProperties": false,
       "type": "object"
     },
     "SignaturesPolicy": {
-      "additionalProperties": false,
       "properties": {
         "requireTransparencyLog": {
           "type": "boolean"
         }
       },
+      "additionalProperties": false,
       "type": "object"
     },
-    "TrustPolicy": {
-      "additionalProperties": false,
+    "SourcePolicy": {
       "properties": {
-        "buildTypes": {
+        "missingPolicy": {
+          "type": "string",
+          "enum": ["allow", "warn", "deny"]
+        },
+        "minimumLevel": {
+          "type": "integer"
+        },
+        "maxAge": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "TestResultPolicy": {
+      "properties": {
+        "missingPolicy": {
+          "type": "string",
+          "enum": ["allow", "warn", "deny"]
+        },
+        "requiredSuites": {
           "items": {
             "type": "string"
           },
           "type": "array"
         },
+        "maxAge": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "TrustPolicy": {
+      "properties": {
         "builders": {
           "items": {
             "$ref": "#/$defs/TrustedBuilder"
+          },
+          "type": "array"
+        },
+        "verifiers": {
+          "items": {
+            "$ref": "#/$defs/TrustedVerifier"
           },
           "type": "array"
         },
@@ -576,17 +661,17 @@ nri-supply-chain json-schema policy
           },
           "type": "array"
         },
-        "verifiers": {
+        "buildTypes": {
           "items": {
-            "$ref": "#/$defs/TrustedVerifier"
+            "type": "string"
           },
           "type": "array"
         }
       },
+      "additionalProperties": false,
       "type": "object"
     },
     "TrustedBuilder": {
-      "additionalProperties": false,
       "properties": {
         "id": {
           "type": "string"
@@ -595,11 +680,11 @@ nri-supply-chain json-schema policy
           "type": "integer"
         }
       },
-      "required": ["id", "maxLevel"],
-      "type": "object"
+      "additionalProperties": false,
+      "type": "object",
+      "required": ["id", "maxLevel"]
     },
     "TrustedVerifier": {
-      "additionalProperties": false,
       "properties": {
         "id": {
           "type": "string"
@@ -610,56 +695,80 @@ nri-supply-chain json-schema policy
           },
           "type": "array"
         },
-        "notAfter": {
-          "format": "date-time",
-          "type": "string"
-        },
         "notBefore": {
-          "format": "date-time",
-          "type": "string"
+          "type": "string",
+          "format": "date-time"
+        },
+        "notAfter": {
+          "type": "string",
+          "format": "date-time"
         }
       },
-      "required": ["id"],
-      "type": "object"
+      "additionalProperties": false,
+      "type": "object",
+      "required": ["id"]
     },
     "VEXPolicy": {
-      "additionalProperties": false,
       "properties": {
         "missingPolicy": {
-          "enum": ["allow", "warn", "deny"],
-          "type": "string"
+          "type": "string",
+          "enum": ["allow", "warn", "deny"]
         },
         "underInvestigationPolicy": {
-          "enum": ["allow", "warn", "deny"],
-          "type": "string"
+          "type": "string",
+          "enum": ["allow", "warn", "deny"]
         }
       },
+      "additionalProperties": false,
       "type": "object"
     },
     "VSAPolicy": {
-      "additionalProperties": false,
       "properties": {
-        "maxAge": {
-          "type": "string"
+        "missingPolicy": {
+          "type": "string",
+          "enum": ["allow", "warn", "deny"]
         },
         "minimumLevel": {
           "type": "integer"
         },
-        "missingPolicy": {
-          "enum": ["allow", "warn", "deny"],
+        "maxAge": {
           "type": "string"
         },
         "policy": {
           "type": "string"
         }
       },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "VulnScanPolicy": {
+      "properties": {
+        "missingPolicy": {
+          "type": "string",
+          "enum": ["allow", "warn", "deny"]
+        },
+        "maxScore": {
+          "type": "number"
+        },
+        "minSeverity": {
+          "type": "string"
+        },
+        "ignoreCVEs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "maxAge": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
       "type": "object"
     }
   },
-  "$ref": "#/$defs/Policy",
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Defines the trust roots and per-namespace verification settings for nri-supply-chain.",
-  "title": "nri-supply-chain Policy"
+  "title": "nri-supply-chain Policy",
+  "description": "Defines the trust roots and per-namespace verification settings for nri-supply-chain."
 }
 ```
 
@@ -864,6 +973,76 @@ attribute report attestations attached to container images.
 | `forbiddenAttributes` | array  | (none)  | Attribute names that must not appear in the report (case-insensitive) |
 | `requireEvidence`     | bool   | `false` | Require that every attribute includes non-empty evidence              |
 
+### `source` (object)
+
+SLSA Source Track verification settings. When configured, the plugin verifies
+[SLSA Source Track v1](https://slsa.dev/spec/v1.0/source-requirements)
+attestations (predicate type `https://slsa.dev/source/v1`) attached to
+container images.
+
+| Field           | Type   | Default | Description                                                               |
+| --------------- | ------ | ------- | ------------------------------------------------------------------------- |
+| `missingPolicy` | string | `allow` | Behavior when no source attestation is found: `allow`, `warn`, `deny`     |
+| `minimumLevel`  | int    | 0       | Minimum SLSA source level required (0-3)                                  |
+| `maxAge`        | string | (none)  | Maximum age of the attestation (e.g. `24h`, `168h`); older ones are stale |
+
+The source verification checks that the source repository listed in the
+attestation matches one of the trusted `trust.sources` glob patterns configured
+in the policy.
+
+### `buildEnv` (object)
+
+Build environment attestation verification settings. When configured, the
+plugin verifies
+[build-env v1](https://github.com/in-toto/attestation/blob/main/spec/predicates/build-env.md)
+attestations (predicate type `https://in-toto.io/attestation/build-env/v1`)
+attached to container images.
+
+| Field                 | Type   | Default | Description                                                               |
+| --------------------- | ------ | ------- | ------------------------------------------------------------------------- |
+| `missingPolicy`       | string | `allow` | Behavior when no build env attestation is found: `allow`, `warn`, `deny`  |
+| `requiredProperties`  | array  | (none)  | Property names that must be present in the environment (case-insensitive) |
+| `forbiddenProperties` | array  | (none)  | Property names that must not appear in the environment (case-insensitive) |
+
+The `requiredProperties` and `forbiddenProperties` lists must not overlap; the
+policy is rejected at load time if they do.
+
+### `vulnScan` (object)
+
+Vulnerability scan attestation verification settings. When configured, the
+plugin verifies
+[vulns v0.1](https://github.com/in-toto/attestation/blob/main/spec/predicates/vulns.md)
+attestations (predicate type `https://in-toto.io/attestation/vulns/v0.1`)
+attached to container images.
+
+| Field           | Type   | Default | Description                                                                         |
+| --------------- | ------ | ------- | ----------------------------------------------------------------------------------- |
+| `missingPolicy` | string | `allow` | Behavior when no vuln scan attestation is found: `allow`, `warn`, `deny`            |
+| `maxScore`      | float  | (none)  | Maximum allowed CVSS score (0.0-10.0); any vulnerability above this threshold fails |
+| `minSeverity`   | string | (none)  | Minimum severity that triggers a violation: `low`, `medium`, `high`, `critical`     |
+| `ignoreCVEs`    | array  | (none)  | CVE IDs to exclude from threshold checks (exact match)                              |
+| `maxAge`        | string | (none)  | Maximum age of the scan (e.g. `24h`, `168h`); older scans are considered stale      |
+
+When both `maxScore` and `minSeverity` are set, a vulnerability is flagged if
+either condition is met (OR logic).
+
+### `testResult` (object)
+
+Test result attestation verification settings. When configured, the plugin
+verifies
+[test-result v0.1](https://github.com/in-toto/attestation/blob/main/spec/predicates/test-result.md)
+attestations (predicate type `https://in-toto.io/attestation/test-result/v0.1`)
+attached to container images.
+
+| Field            | Type   | Default | Description                                                                  |
+| ---------------- | ------ | ------- | ---------------------------------------------------------------------------- |
+| `missingPolicy`  | string | `allow` | Behavior when no test result attestation is found: `allow`, `warn`, `deny`   |
+| `requiredSuites` | array  | (none)  | Test suite names that must be present and passing                            |
+| `maxAge`         | string | (none)  | Maximum age of the test result (e.g. `24h`, `168h`); older results are stale |
+
+The overall test result must be `pass` or `passed` (case-insensitive). If any
+required suite is missing or has a non-passing result, verification fails.
+
 ### `rules` (array of objects)
 
 Per-image policy overrides. Each rule matches images by glob patterns and
@@ -872,17 +1051,22 @@ rule wins; images that do not match any rule use the base policy.
 
 Each rule is an object with:
 
-| Field        | Type   | Required | Description                                               |
-| ------------ | ------ | -------- | --------------------------------------------------------- |
-| `images`     | array  | yes      | Glob patterns to match against image references           |
-| `trust`      | object | no       | Override trust roots (same schema as top-level `trust`)   |
-| `slsa`       | object | no       | Override SLSA settings (same schema as top-level `slsa`)  |
-| `vex`        | object | no       | Override VEX settings (same schema as top-level `vex`)    |
-| `vsa`        | object | no       | Override VSA settings (same schema as top-level `vsa`)    |
-| `signatures` | object | no       | Override signature settings (same schema as `signatures`) |
-| `notation`   | object | no       | Override Notation settings (same schema as `notation`)    |
-| `cel`        | object | no       | Override CEL rules (same schema as top-level `cel`)       |
-| `sbom`       | object | no       | Override SBOM settings (same schema as `sbom`)            |
+| Field        | Type   | Required | Description                                                 |
+| ------------ | ------ | -------- | ----------------------------------------------------------- |
+| `images`     | array  | yes      | Glob patterns to match against image references             |
+| `trust`      | object | no       | Override trust roots (same schema as top-level `trust`)     |
+| `slsa`       | object | no       | Override SLSA settings (same schema as top-level `slsa`)    |
+| `vex`        | object | no       | Override VEX settings (same schema as top-level `vex`)      |
+| `vsa`        | object | no       | Override VSA settings (same schema as top-level `vsa`)      |
+| `signatures` | object | no       | Override signature settings (same schema as `signatures`)   |
+| `notation`   | object | no       | Override Notation settings (same schema as `notation`)      |
+| `cel`        | object | no       | Override CEL rules (same schema as top-level `cel`)         |
+| `sbom`       | object | no       | Override SBOM settings (same schema as `sbom`)              |
+| `scai`       | object | no       | Override SCAI settings (same schema as `scai`)              |
+| `source`     | object | no       | Override source settings (same schema as `source`)          |
+| `buildEnv`   | object | no       | Override build env settings (same schema as `buildEnv`)     |
+| `vulnScan`   | object | no       | Override vuln scan settings (same schema as `vulnScan`)     |
+| `testResult` | object | no       | Override test result settings (same schema as `testResult`) |
 
 Fields not set in a rule are inherited from the base policy. The `images`
 patterns use the same glob syntax as `include` and `exclude`.
@@ -932,7 +1116,7 @@ All other images use the base policy (`warn` on missing provenance).
 ### `cel` (object)
 
 Custom verification rules using [CEL (Common Expression Language)](https://github.com/google/cel-go).
-CEL rules run after all standard checks (SLSA, VEX, VSA) complete and can
+CEL rules run after all standard checks complete and can
 reference their results. All rules must pass (all-must-pass semantics).
 Expressions are compiled at policy load time, so syntax errors are caught
 early. CEL rules are not evaluated when a trusted VSA short-circuits
@@ -984,6 +1168,26 @@ Each rule is an object with:
 | `scai.attributes`        | string | Comma-separated attribute names                   |
 | `scai.attributeCount`    | int    | Number of attributes                              |
 | `scai.hasEvidence`       | bool   | Whether all attributes have evidence              |
+| `source.verified`        | bool   | Whether source verification passed                |
+| `source.source`          | string | Source repository URI                             |
+| `source.branch`          | string | Source branch                                     |
+| `source.level`           | int    | SLSA source level                                 |
+| `buildenv.verified`      | bool   | Whether build environment verification passed     |
+| `buildenv.properties`    | string | Comma-separated property names                    |
+| `buildenv.propertyCount` | int    | Number of environment properties                  |
+| `vulnscan.verified`      | bool   | Whether vulnerability scan verification passed    |
+| `vulnscan.scanner`       | string | Scanner URI                                       |
+| `vulnscan.vulnCount`     | int    | Number of vulnerabilities found                   |
+| `vulnscan.maxScore`      | float  | Highest CVSS score across all vulnerabilities     |
+| `vulnscan.maxSeverity`   | string | Highest severity across all vulnerabilities       |
+| `vulnscan.criticalCount` | int    | Number of critical-severity vulnerabilities       |
+| `vulnscan.highCount`     | int    | Number of high-severity vulnerabilities           |
+| `testresult.verified`    | bool   | Whether test result verification passed           |
+| `testresult.result`      | string | Overall test result (e.g. `pass`, `fail`)         |
+| `testresult.suiteCount`  | int    | Number of test suites                             |
+| `testresult.suites`      | string | Comma-separated suite names                       |
+| `testresult.passed`      | int    | Total passed tests across all suites              |
+| `testresult.failed`      | int    | Total failed tests across all suites              |
 
 Standard string functions are available via `ext.Strings()`: `startsWith`,
 `endsWith`, `contains`, `matches`.
@@ -1349,6 +1553,143 @@ Example configuration:
 }
 ```
 
+### Source Track Verification
+
+Verifies [SLSA Source Track v1](https://slsa.dev/spec/v1.0/source-requirements)
+attestations (predicate type `https://slsa.dev/source/v1`). Source attestations
+capture the origin repository, branch, and source level of the code used to
+build the image.
+
+Checks performed:
+
+- **Subject digest**: The in-toto `subject[].digest` must match the image digest.
+- **Trusted source**: The source repository in the attestation must match one of
+  the `trust.sources` glob patterns.
+- **Minimum level**: If `source.minimumLevel` is configured, the source level in
+  the attestation must meet or exceed it.
+- **Freshness**: If `source.maxAge` is configured, the attestation timestamp
+  must be within the specified duration.
+
+When multiple source attestations exist, any single valid attestation that
+passes all checks is sufficient. Metadata from the first passing attestation is
+used for CEL evaluation.
+
+Example configuration:
+
+```json
+{
+  "trust": {
+    "sources": ["https://github.com/myorg/**"]
+  },
+  "source": {
+    "missingPolicy": "warn",
+    "minimumLevel": 2,
+    "maxAge": "168h"
+  }
+}
+```
+
+### Build Environment Verification
+
+Verifies [build-env v1](https://github.com/in-toto/attestation/blob/main/spec/predicates/build-env.md)
+attestations (predicate type `https://in-toto.io/attestation/build-env/v1`).
+Build environment attestations describe the properties and configuration of the
+environment in which an artifact was built.
+
+Checks performed:
+
+- **Subject digest**: The in-toto `subject[].digest` must match the image digest.
+- **Required properties**: If `buildEnv.requiredProperties` is configured, every
+  listed property name must be present in the environment (case-insensitive match).
+- **Forbidden properties**: If `buildEnv.forbiddenProperties` is configured, none
+  of the listed property names may appear in the environment (case-insensitive
+  match).
+
+When multiple build environment attestations exist, any policy violation in any
+document causes failure. Metadata from passing attestations is merged: property
+counts are summed and property name lists are concatenated (deduplicated).
+
+Example configuration:
+
+```json
+{
+  "buildEnv": {
+    "missingPolicy": "warn",
+    "requiredProperties": ["HERMETIC", "REPRODUCIBLE"],
+    "forbiddenProperties": ["ALLOW_NETWORK"]
+  }
+}
+```
+
+### Vulnerability Scan Verification
+
+Verifies [vulns v0.1](https://github.com/in-toto/attestation/blob/main/spec/predicates/vulns.md)
+attestations (predicate type `https://in-toto.io/attestation/vulns/v0.1`).
+Vulnerability scan attestations capture the results of automated vulnerability
+scanning of container images.
+
+Checks performed:
+
+- **Subject digest**: The in-toto `subject[].digest` must match the image digest.
+- **CVSS threshold**: If `vulnScan.maxScore` is configured, no vulnerability may
+  have a CVSS score exceeding the threshold (after filtering `ignoreCVEs`).
+- **Severity threshold**: If `vulnScan.minSeverity` is configured, no
+  vulnerability may have a severity at or above the threshold (after filtering
+  `ignoreCVEs`).
+- **Freshness**: If `vulnScan.maxAge` is configured, the scan timestamp must be
+  within the specified duration.
+
+When both `maxScore` and `minSeverity` are set, a vulnerability is flagged if
+either condition is met (OR logic). When multiple scan attestations exist, any
+policy violation in any document causes failure.
+
+Example configuration:
+
+```json
+{
+  "vulnScan": {
+    "missingPolicy": "deny",
+    "maxScore": 7.0,
+    "minSeverity": "critical",
+    "ignoreCVEs": ["CVE-2024-0001"],
+    "maxAge": "24h"
+  }
+}
+```
+
+### Test Result Verification
+
+Verifies [test-result v0.1](https://github.com/in-toto/attestation/blob/main/spec/predicates/test-result.md)
+attestations (predicate type `https://in-toto.io/attestation/test-result/v0.1`).
+Test result attestations capture the outcome of automated test suites run
+against an artifact.
+
+Checks performed:
+
+- **Subject digest**: The in-toto `subject[].digest` must match the image digest.
+- **Overall result**: The top-level `result` must be `pass` or `passed`
+  (case-insensitive).
+- **Required suites**: If `testResult.requiredSuites` is configured, every
+  listed suite name must be present and have a passing result.
+- **Freshness**: If `testResult.maxAge` is configured, the test result timestamp
+  must be within the specified duration.
+
+When multiple test result attestations exist, any policy violation in any
+document causes failure. Metadata from passing attestations is merged: suite
+counts, pass/fail totals, and suite name lists are aggregated.
+
+Example configuration:
+
+```json
+{
+  "testResult": {
+    "missingPolicy": "deny",
+    "requiredSuites": ["unit", "integration", "e2e"],
+    "maxAge": "168h"
+  }
+}
+```
+
 ## Pattern Matching
 
 The plugin uses glob patterns in several contexts, with slightly different
@@ -1397,7 +1738,8 @@ A file named `<namespace>.json` in the policy directory overrides
 
 By default, the override is a full replacement. If a namespace policy sets
 `"inherits": true`, unset top-level fields (`trust`, `include`, `exclude`,
-`slsa`, `vex`, `vsa`, `signatures`, `notation`, `sbom`, `scai`, `cel`, `rules`) are inherited from the default
+`slsa`, `vex`, `vsa`, `signatures`, `notation`, `sbom`, `scai`, `source`,
+`buildEnv`, `vulnScan`, `testResult`, `cel`, `rules`) are inherited from the default
 policy. Each top-level section that is set in the namespace policy replaces
 the default's section entirely. The default policy itself cannot set `inherits`.
 
@@ -1456,7 +1798,8 @@ Example: `default.json` requires provenance, but `dev.json` allows everything:
 
 In this example, `staging.json` inherits all remaining sections (`trust`,
 `include`, `exclude`, `slsa`, `vsa`, `signatures`, `notation`, `sbom`, `scai`,
-`cel`, `rules`) from `default.json` but replaces the `vex` section.
+`source`, `buildEnv`, `vulnScan`, `testResult`, `cel`, `rules`) from
+`default.json` but replaces the `vex` section.
 
 ## Deployment Patterns
 
@@ -1692,3 +2035,7 @@ Ready-to-use policy files are available in
 - `cel-rules.json`: CEL policy expressions for custom verification logic
 - `notation.json`: Notation (Notary v2) signature verification with CA trust store
 - `scai.json`: SCAI attribute report verification with required and forbidden attributes
+- `source-track.json`: SLSA Source Track verification with trusted sources and minimum level
+- `build-env.json`: Build environment verification with required and forbidden properties
+- `vuln-scan.json`: Vulnerability scan verification with CVSS thresholds and CVE ignore list
+- `test-result.json`: Test result verification with required test suites

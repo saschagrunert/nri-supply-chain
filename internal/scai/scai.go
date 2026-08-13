@@ -258,7 +258,7 @@ func mergeStringAttrs(existing, incoming any) (any, bool) {
 		return nil, false
 	}
 
-	return mergeCommaSeparated(dstAttrs, srcAttrs), true
+	return types.MergeCommaSeparated(dstAttrs, srcAttrs), true
 }
 
 func mergeBoolAND(existing, incoming any) (any, bool) {
@@ -270,38 +270,6 @@ func mergeBoolAND(existing, incoming any) (any, bool) {
 	}
 
 	return dstEvidence && srcEvidence, true
-}
-
-func mergeCommaSeparated(existing, incoming string) string {
-	if existing == "" {
-		return incoming
-	}
-
-	if incoming == "" {
-		return existing
-	}
-
-	seen := make(map[string]struct{})
-	result := make([]string, 0)
-
-	addUnique := func(s string) {
-		lower := strings.ToLower(s)
-		if _, exists := seen[lower]; !exists {
-			seen[lower] = struct{}{}
-
-			result = append(result, s)
-		}
-	}
-
-	for s := range strings.SplitSeq(existing, ",") {
-		addUnique(s)
-	}
-
-	for s := range strings.SplitSeq(incoming, ",") {
-		addUnique(s)
-	}
-
-	return strings.Join(result, ",")
 }
 
 func passResult() *types.CheckResult {

@@ -1188,3 +1188,258 @@ push_policy_to_registry() {
 	rm -rf "$layout_dir"
 	echo "$ref"
 }
+
+# --- Source track predicate helpers ---
+
+write_source_predicate() {
+	local file="$1"
+	local source_uri="$2"
+	local branch="${3:-main}"
+	local level="${4:-2}"
+
+	cat >"$file" <<-EOF
+		{
+		  "sourceLocations": [
+		    {
+		      "uri": "${source_uri}",
+		      "branch": "${branch}",
+		      "digest": {"sha256": "abc123"}
+		    }
+		  ],
+		  "sourceMetadata": {
+		    "sourceLevel": ${level},
+		    "verifiedOn": "$(date -u -d '1 hour ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v-1H '+%Y-%m-%dT%H:%M:%SZ')"
+		  }
+		}
+	EOF
+}
+
+create_source_images() {
+	local pred_dir="${BATS_FILE_TMPDIR}/predicates"
+	mkdir -p "$pred_dir"
+
+	# Image with trusted source (matches trust.sources glob)
+	SOURCE_TRUSTED_IMAGE=$(push_test_image "source-trusted:v1")
+	write_slsa_predicate "${pred_dir}/source-trusted-slsa.json" \
+		"https://test-builder.example.com" \
+		"https://github.com/testorg/repo" \
+		""
+	attest_image "$SOURCE_TRUSTED_IMAGE" "https://slsa.dev/provenance/v1" "${pred_dir}/source-trusted-slsa.json"
+	write_source_predicate "${pred_dir}/source-trusted.json" "https://github.com/testorg/repo" "main" "3"
+	attest_image "$SOURCE_TRUSTED_IMAGE" "https://slsa.dev/source/v1" "${pred_dir}/source-trusted.json"
+
+	# Image with untrusted source (does not match trust.sources glob)
+	SOURCE_UNTRUSTED_IMAGE=$(push_test_image "source-untrusted:v1")
+	write_slsa_predicate "${pred_dir}/source-untrusted-slsa.json" \
+		"https://test-builder.example.com" \
+		"https://github.com/testorg/repo" \
+		""
+	attest_image "$SOURCE_UNTRUSTED_IMAGE" "https://slsa.dev/provenance/v1" "${pred_dir}/source-untrusted-slsa.json"
+	write_source_predicate "${pred_dir}/source-untrusted.json" "https://github.com/evilorg/malicious" "main" "3"
+	attest_image "$SOURCE_UNTRUSTED_IMAGE" "https://slsa.dev/source/v1" "${pred_dir}/source-untrusted.json"
+
+	# Image with no source attestation
+	SOURCE_MISSING_IMAGE=$(push_test_image "source-missing:v1")
+	write_slsa_predicate "${pred_dir}/source-missing-slsa.json" \
+		"https://test-builder.example.com" \
+		"https://github.com/testorg/repo" \
+		""
+	attest_image "$SOURCE_MISSING_IMAGE" "https://slsa.dev/provenance/v1" "${pred_dir}/source-missing-slsa.json"
+
+	# Image with low source level
+	SOURCE_LOW_LEVEL_IMAGE=$(push_test_image "source-low-level:v1")
+	write_slsa_predicate "${pred_dir}/source-low-level-slsa.json" \
+		"https://test-builder.example.com" \
+		"https://github.com/testorg/repo" \
+		""
+	attest_image "$SOURCE_LOW_LEVEL_IMAGE" "https://slsa.dev/provenance/v1" "${pred_dir}/source-low-level-slsa.json"
+	write_source_predicate "${pred_dir}/source-low-level.json" "https://github.com/testorg/repo" "main" "1"
+	attest_image "$SOURCE_LOW_LEVEL_IMAGE" "https://slsa.dev/source/v1" "${pred_dir}/source-low-level.json"
+
+	export SOURCE_TRUSTED_IMAGE SOURCE_UNTRUSTED_IMAGE SOURCE_MISSING_IMAGE SOURCE_LOW_LEVEL_IMAGE
+}
+
+# --- Build environment predicate helpers ---
+
+write_buildenv_predicate() {
+	local file="$1"
+	shift
+	local props=""
+	local sep=""
+	for prop in "$@"; do
+		local name="${prop%%=*}"
+		local value="${prop#*=}"
+		props="${props}${sep}{\"name\": \"${name}\", \"value\": \"${value}\"}"
+		sep=", "
+	done
+
+	cat >"$file" <<-EOF
+		{
+		  "environment": [${props}]
+		}
+	EOF
+}
+
+create_buildenv_images() {
+	local pred_dir="${BATS_FILE_TMPDIR}/predicates"
+	mkdir -p "$pred_dir"
+
+	# Image with required properties present
+	BUILDENV_PASS_IMAGE=$(push_test_image "buildenv-pass:v1")
+	write_slsa_predicate "${pred_dir}/buildenv-pass-slsa.json" \
+		"https://test-builder.example.com" \
+		"https://github.com/testorg/repo" \
+		""
+	attest_image "$BUILDENV_PASS_IMAGE" "https://slsa.dev/provenance/v1" "${pred_dir}/buildenv-pass-slsa.json"
+	write_buildenv_predicate "${pred_dir}/buildenv-pass.json" "HERMETIC=true" "REPRODUCIBLE=true"
+	attest_image "$BUILDENV_PASS_IMAGE" "https://in-toto.io/attestation/build-env/v1" "${pred_dir}/buildenv-pass.json"
+
+	# Image with forbidden property present
+	BUILDENV_FORBIDDEN_IMAGE=$(push_test_image "buildenv-forbidden:v1")
+	write_slsa_predicate "${pred_dir}/buildenv-forbidden-slsa.json" \
+		"https://test-builder.example.com" \
+		"https://github.com/testorg/repo" \
+		""
+	attest_image "$BUILDENV_FORBIDDEN_IMAGE" "https://slsa.dev/provenance/v1" "${pred_dir}/buildenv-forbidden-slsa.json"
+	write_buildenv_predicate "${pred_dir}/buildenv-forbidden.json" "HERMETIC=true" "ALLOW_NETWORK=true"
+	attest_image "$BUILDENV_FORBIDDEN_IMAGE" "https://in-toto.io/attestation/build-env/v1" "${pred_dir}/buildenv-forbidden.json"
+
+	# Image with no build env attestation
+	BUILDENV_MISSING_IMAGE=$(push_test_image "buildenv-missing:v1")
+	write_slsa_predicate "${pred_dir}/buildenv-missing-slsa.json" \
+		"https://test-builder.example.com" \
+		"https://github.com/testorg/repo" \
+		""
+	attest_image "$BUILDENV_MISSING_IMAGE" "https://slsa.dev/provenance/v1" "${pred_dir}/buildenv-missing-slsa.json"
+
+	export BUILDENV_PASS_IMAGE BUILDENV_FORBIDDEN_IMAGE BUILDENV_MISSING_IMAGE
+}
+
+# --- Vulnerability scan predicate helpers ---
+
+write_vulnscan_predicate() {
+	local file="$1"
+	local scanner_uri="$2"
+	shift 2
+	local vulns=""
+	local sep=""
+	for vuln in "$@"; do
+		local id="${vuln%%:*}"
+		local rest="${vuln#*:}"
+		local score="${rest%%:*}"
+		local severity="${rest#*:}"
+		vulns="${vulns}${sep}{\"id\": \"${id}\", \"score\": ${score}, \"severity\": \"${severity}\"}"
+		sep=", "
+	done
+
+	cat >"$file" <<-EOF
+		{
+		  "scanner": {
+		    "uri": "${scanner_uri}",
+		    "version": "1.0.0"
+		  },
+		  "metadata": {
+		    "scannedOn": "$(date -u -d '1 hour ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v-1H '+%Y-%m-%dT%H:%M:%SZ')"
+		  },
+		  "result": {
+		    "vulnerabilities": [${vulns}]
+		  }
+		}
+	EOF
+}
+
+create_vulnscan_images() {
+	local pred_dir="${BATS_FILE_TMPDIR}/predicates"
+	mkdir -p "$pred_dir"
+
+	# Image with low-severity vulnerabilities (passes threshold)
+	VULNSCAN_PASS_IMAGE=$(push_test_image "vulnscan-pass:v1")
+	write_slsa_predicate "${pred_dir}/vulnscan-pass-slsa.json" \
+		"https://test-builder.example.com" \
+		"https://github.com/testorg/repo" \
+		""
+	attest_image "$VULNSCAN_PASS_IMAGE" "https://slsa.dev/provenance/v1" "${pred_dir}/vulnscan-pass-slsa.json"
+	write_vulnscan_predicate "${pred_dir}/vulnscan-pass.json" "https://trivy.dev" "CVE-2024-0001:3.5:low"
+	attest_image "$VULNSCAN_PASS_IMAGE" "https://in-toto.io/attestation/vulns/v0.1" "${pred_dir}/vulnscan-pass.json"
+
+	# Image with critical vulnerability (exceeds threshold)
+	VULNSCAN_CRITICAL_IMAGE=$(push_test_image "vulnscan-critical:v1")
+	write_slsa_predicate "${pred_dir}/vulnscan-critical-slsa.json" \
+		"https://test-builder.example.com" \
+		"https://github.com/testorg/repo" \
+		""
+	attest_image "$VULNSCAN_CRITICAL_IMAGE" "https://slsa.dev/provenance/v1" "${pred_dir}/vulnscan-critical-slsa.json"
+	write_vulnscan_predicate "${pred_dir}/vulnscan-critical.json" "https://trivy.dev" "CVE-2024-9999:9.8:critical"
+	attest_image "$VULNSCAN_CRITICAL_IMAGE" "https://in-toto.io/attestation/vulns/v0.1" "${pred_dir}/vulnscan-critical.json"
+
+	# Image with no vuln scan attestation
+	VULNSCAN_MISSING_IMAGE=$(push_test_image "vulnscan-missing:v1")
+	write_slsa_predicate "${pred_dir}/vulnscan-missing-slsa.json" \
+		"https://test-builder.example.com" \
+		"https://github.com/testorg/repo" \
+		""
+	attest_image "$VULNSCAN_MISSING_IMAGE" "https://slsa.dev/provenance/v1" "${pred_dir}/vulnscan-missing-slsa.json"
+
+	export VULNSCAN_PASS_IMAGE VULNSCAN_CRITICAL_IMAGE VULNSCAN_MISSING_IMAGE
+}
+
+# --- Test result predicate helpers ---
+
+write_testresult_predicate() {
+	local file="$1"
+	local result="$2"
+	shift 2
+	local suites=""
+	local sep=""
+	for suite in "$@"; do
+		local name="${suite%%:*}"
+		local sresult="${suite#*:}"
+		suites="${suites}${sep}{\"name\": \"${name}\", \"result\": \"${sresult}\", \"count\": 10, \"passed\": 10, \"failed\": 0}"
+		sep=", "
+	done
+
+	cat >"$file" <<-EOF
+		{
+		  "result": "${result}",
+		  "suites": [${suites}],
+		  "metadata": {
+		    "finishedOn": "$(date -u -d '1 hour ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v-1H '+%Y-%m-%dT%H:%M:%SZ')"
+		  }
+		}
+	EOF
+}
+
+create_testresult_images() {
+	local pred_dir="${BATS_FILE_TMPDIR}/predicates"
+	mkdir -p "$pred_dir"
+
+	# Image with passing test results
+	TESTRESULT_PASS_IMAGE=$(push_test_image "testresult-pass:v1")
+	write_slsa_predicate "${pred_dir}/testresult-pass-slsa.json" \
+		"https://test-builder.example.com" \
+		"https://github.com/testorg/repo" \
+		""
+	attest_image "$TESTRESULT_PASS_IMAGE" "https://slsa.dev/provenance/v1" "${pred_dir}/testresult-pass-slsa.json"
+	write_testresult_predicate "${pred_dir}/testresult-pass.json" "pass" "unit:pass" "integration:pass"
+	attest_image "$TESTRESULT_PASS_IMAGE" "https://in-toto.io/attestation/test-result/v0.1" "${pred_dir}/testresult-pass.json"
+
+	# Image with failing test result
+	TESTRESULT_FAIL_IMAGE=$(push_test_image "testresult-fail:v1")
+	write_slsa_predicate "${pred_dir}/testresult-fail-slsa.json" \
+		"https://test-builder.example.com" \
+		"https://github.com/testorg/repo" \
+		""
+	attest_image "$TESTRESULT_FAIL_IMAGE" "https://slsa.dev/provenance/v1" "${pred_dir}/testresult-fail-slsa.json"
+	write_testresult_predicate "${pred_dir}/testresult-fail.json" "fail" "unit:pass" "integration:fail"
+	attest_image "$TESTRESULT_FAIL_IMAGE" "https://in-toto.io/attestation/test-result/v0.1" "${pred_dir}/testresult-fail.json"
+
+	# Image with no test result attestation
+	TESTRESULT_MISSING_IMAGE=$(push_test_image "testresult-missing:v1")
+	write_slsa_predicate "${pred_dir}/testresult-missing-slsa.json" \
+		"https://test-builder.example.com" \
+		"https://github.com/testorg/repo" \
+		""
+	attest_image "$TESTRESULT_MISSING_IMAGE" "https://slsa.dev/provenance/v1" "${pred_dir}/testresult-missing-slsa.json"
+
+	export TESTRESULT_PASS_IMAGE TESTRESULT_FAIL_IMAGE TESTRESULT_MISSING_IMAGE
+}

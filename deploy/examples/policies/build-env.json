@@ -1,0 +1,13 @@
+{
+  "buildEnv": {
+    "missingPolicy": "warn",
+    "requiredProperties": ["HERMETIC", "REPRODUCIBLE"],
+    "forbiddenProperties": ["ALLOW_NETWORK"]
+  },
+  "slsa": {
+    "missingPolicy": "allow"
+  },
+  "vex": {
+    "missingPolicy": "allow"
+  }
+}

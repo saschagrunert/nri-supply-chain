@@ -109,6 +109,10 @@ func initEnvironment() (*cel.Env, error) {
 			cel.Variable("sbom", cel.MapType(cel.StringType, cel.DynType)),
 			cel.Variable("notation", cel.MapType(cel.StringType, cel.DynType)),
 			cel.Variable("scai", cel.MapType(cel.StringType, cel.DynType)),
+			cel.Variable("source", cel.MapType(cel.StringType, cel.DynType)),
+			cel.Variable("buildenv", cel.MapType(cel.StringType, cel.DynType)),
+			cel.Variable("vulnscan", cel.MapType(cel.StringType, cel.DynType)),
+			cel.Variable("testresult", cel.MapType(cel.StringType, cel.DynType)),
 			ext.Strings(),
 		)
 	})
@@ -314,6 +318,7 @@ func isCostError(err error) bool {
 func BuildVars(
 	imageRef, registry, repository, digest, namespace string,
 	slsaResult, vexResult, vsaResult, sbomResult, notationResult, scaiResult *types.CheckResult,
+	sourceResult, buildenvResult, vulnscanResult, testresultResult *types.CheckResult,
 ) map[string]any {
 	imageVars := map[string]any{
 		"ref":        imageRef,
@@ -323,21 +328,18 @@ func BuildVars(
 		"namespace":  namespace,
 	}
 
-	slsaVars := buildSLSAVars(slsaResult)
-	vexVars := buildVEXVars(vexResult)
-	vsaVars := buildVSAVars(vsaResult)
-	sbomVars := buildSBOMVars(sbomResult)
-	notationVars := buildNotationVars(notationResult)
-	scaiVars := buildSCAIVars(scaiResult)
-
 	return map[string]any{
-		"image":    imageVars,
-		"slsa":     slsaVars,
-		"vex":      vexVars,
-		"vsa":      vsaVars,
-		"sbom":     sbomVars,
-		"notation": notationVars,
-		"scai":     scaiVars,
+		"image":      imageVars,
+		"slsa":       buildSLSAVars(slsaResult),
+		"vex":        buildVEXVars(vexResult),
+		"vsa":        buildVSAVars(vsaResult),
+		"sbom":       buildSBOMVars(sbomResult),
+		"notation":   buildNotationVars(notationResult),
+		"scai":       buildSCAIVars(scaiResult),
+		"source":     buildSourceVars(sourceResult), //nolint:goconst // map key
+		"buildenv":   buildBuildEnvVars(buildenvResult),
+		"vulnscan":   buildVulnScanVars(vulnscanResult),
+		"testresult": buildTestResultVars(testresultResult),
 	}
 }
 
@@ -490,4 +492,77 @@ func extractBoolMeta(meta, vars map[string]any, keys ...string) {
 			vars[key] = v
 		}
 	}
+}
+
+func buildSourceVars(result *types.CheckResult) map[string]any {
+	vars := map[string]any{
+		varVerified: false,
+		"source":    "",
+		"branch":    "",
+		"level":     int64(0),
+	}
+
+	if result != nil {
+		vars[varVerified] = result.Passed
+		extractStringMeta(result.Metadata, vars, "source", "branch")
+		extractInt64Meta(result.Metadata, vars, "level")
+	}
+
+	return vars
+}
+
+func buildBuildEnvVars(result *types.CheckResult) map[string]any {
+	vars := map[string]any{
+		varVerified:     false,
+		"properties":    "",
+		"propertyCount": int64(0),
+	}
+
+	if result != nil {
+		vars[varVerified] = result.Passed
+		extractStringMeta(result.Metadata, vars, "properties")
+		extractInt64Meta(result.Metadata, vars, "propertyCount")
+	}
+
+	return vars
+}
+
+func buildVulnScanVars(result *types.CheckResult) map[string]any {
+	vars := map[string]any{
+		varVerified:     false,
+		"scanner":       "",
+		"vulnCount":     int64(0),
+		"maxScore":      float64(0),
+		"maxSeverity":   "",
+		"criticalCount": int64(0),
+		"highCount":     int64(0),
+	}
+
+	if result != nil {
+		vars[varVerified] = result.Passed
+		extractStringMeta(result.Metadata, vars, "scanner", "maxSeverity")
+		extractInt64Meta(result.Metadata, vars, "vulnCount", "criticalCount", "highCount")
+		extractFloat64Meta(result.Metadata, vars, "maxScore")
+	}
+
+	return vars
+}
+
+func buildTestResultVars(result *types.CheckResult) map[string]any {
+	vars := map[string]any{
+		varVerified:  false,
+		"result":     "",
+		"suiteCount": int64(0),
+		"suites":     "",
+		"passed":     int64(0),
+		"failed":     int64(0),
+	}
+
+	if result != nil {
+		vars[varVerified] = result.Passed
+		extractStringMeta(result.Metadata, vars, "result", "suites")
+		extractInt64Meta(result.Metadata, vars, "suiteCount", "passed", "failed")
+	}
+
+	return vars
 }

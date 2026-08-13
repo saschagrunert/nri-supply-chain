@@ -15,6 +15,10 @@ by the nri-supply-chain plugin.
   - [Notation (Notary v2)](#notation-notary-v2)
   - [SBOM (Software Bill of Materials)](#sbom-software-bill-of-materials)
   - [SCAI (Supply Chain Attribute Integrity)](#scai-supply-chain-attribute-integrity)
+  - [SLSA Source Track](#slsa-source-track)
+  - [Build Environment](#build-environment)
+  - [Vulnerability Scan](#vulnerability-scan)
+  - [Test Result](#test-result)
 - [Other Standards](#other-standards)
 
 <!-- /toc -->
@@ -63,7 +67,8 @@ When a container is created, the plugin performs verification in this order:
 5. **Per-image rule resolution**: If the policy has `rules`, the image is
    matched against each rule's `images` patterns in order (first match
    wins). When a rule matches, its non-nil sections (trust, slsa, vex,
-   vsa, signatures, notation, sbom, scai, cel) override the base policy for that verification.
+   vsa, signatures, notation, sbom, scai, source, buildEnv, vulnScan,
+   testResult, cel) override the base policy for that verification.
 
 6. **Cache check**: If a cached result exists for this image digest and is
    within the configured TTL, returns it immediately.
@@ -79,14 +84,15 @@ When a container is created, the plugin performs verification in this order:
 
 8. **VSA-first evaluation**:
    - If a trusted PASSED VSA is found, skip all parallel checks (SLSA, VEX,
-     Notation, SBOM, SCAI) and CEL evaluation entirely.
+     Notation, SBOM, SCAI, Source, BuildEnv, VulnScan, TestResult) and CEL
+     evaluation entirely.
    - If a trusted FAILED VSA is found, hard reject immediately (no fallback).
    - If no VSA is found, or the VSA is from an untrusted verifier or stale,
      fall through to direct verification.
 
-9. **Parallel SLSA + VEX + Notation + SBOM + SCAI verification**: When VSA does not
-   short-circuit, SLSA provenance, VEX, Notation signature, SBOM, and SCAI checks
-   run concurrently.
+9. **Parallel verification**: When VSA does not short-circuit, SLSA provenance,
+   VEX, Notation signature, SBOM, SCAI, Source Track, Build Environment,
+   Vulnerability Scan, and Test Result checks run concurrently.
 
 10. **CEL policy evaluation**: If the policy defines CEL rules, they are
     evaluated against the combined check results. CEL rules can enforce
@@ -100,7 +106,7 @@ When a container is created, the plugin performs verification in this order:
 Latency model:
 
 - With trusted VSA: `fetch + VSA verify`
-- Without VSA: `fetch + max(SLSA verify, VEX verify, Notation verify, SBOM verify, SCAI verify) + CEL eval`
+- Without VSA: `fetch + max(SLSA, VEX, Notation, SBOM, SCAI, Source, BuildEnv, VulnScan, TestResult) + CEL eval`
 
 ## Container Annotations
 
@@ -122,7 +128,7 @@ are added.
 ## Verification Types
 
 The plugin supports several complementary attestation types that cover different
-aspects of the supply chain:
+aspects of the supply chain. The three core types are:
 
 - **SLSA provenance** answers "who built this artifact and how?" by verifying
   build provenance against trusted builders and sources.
@@ -131,8 +137,7 @@ aspects of the supply chain:
 - **VSA** is a meta-attestation that records the outcome of a prior
   verification performed by a trusted verifier. It is not a replacement for
   the individual checks, but a delegation mechanism: when a trusted VSA with
-  result PASSED exists, the plugin skips all parallel checks (SLSA, VEX,
-  Notation, SBOM, SCAI) and CEL evaluation.
+  result PASSED exists, the plugin skips all parallel checks and CEL evaluation.
 
 ### SLSA Provenance
 
@@ -200,6 +205,42 @@ evidence about build attributes, complementing SLSA provenance. The plugin
 checks required and forbidden attributes and optionally requires evidence
 on each attribute. See [policy.md](policy.md#scai-verification) for the
 field reference.
+
+### SLSA Source Track
+
+Verifies [SLSA Source Track v1](https://slsa.dev/spec/v1.0/source-requirements)
+attestations (predicate type `https://slsa.dev/source/v1`). Source attestations
+capture the origin repository, branch, and source level of the code used to
+build the image. The plugin checks the source against trusted repositories
+and enforces minimum source level requirements. See
+[policy.md](policy.md#source-track-verification) for the field reference.
+
+### Build Environment
+
+Verifies [build-env v1](https://github.com/in-toto/attestation/blob/main/spec/predicates/build-env.md)
+attestations (predicate type `https://in-toto.io/attestation/build-env/v1`).
+Build environment attestations describe the properties of the build
+environment, such as whether the build was hermetic or reproducible. The
+plugin checks required and forbidden properties. See
+[policy.md](policy.md#build-environment-verification) for the field reference.
+
+### Vulnerability Scan
+
+Verifies [vulns v0.1](https://github.com/in-toto/attestation/blob/main/spec/predicates/vulns.md)
+attestations (predicate type `https://in-toto.io/attestation/vulns/v0.1`).
+Vulnerability scan attestations capture automated scanner results. The
+plugin enforces CVSS score and severity thresholds with an optional CVE
+ignore list. See [policy.md](policy.md#vulnerability-scan-verification) for
+the field reference.
+
+### Test Result
+
+Verifies [test-result v0.1](https://github.com/in-toto/attestation/blob/main/spec/predicates/test-result.md)
+attestations (predicate type `https://in-toto.io/attestation/test-result/v0.1`).
+Test result attestations capture the outcome of automated test suites. The
+plugin verifies the overall result is passing and can enforce that specific
+suites are present and passing. See
+[policy.md](policy.md#test-result-verification) for the field reference.
 
 ## Other Standards
 

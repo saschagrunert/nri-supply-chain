@@ -100,6 +100,42 @@ func (p *Policy) SCAIMissingPolicy() types.Action {
 	return types.ActionAllow
 }
 
+// SourceMissingPolicy returns the effective source track missing policy.
+func (p *Policy) SourceMissingPolicy() types.Action {
+	if p.Source != nil && p.Source.MissingPolicy != "" {
+		return p.Source.MissingPolicy
+	}
+
+	return types.ActionAllow
+}
+
+// BuildEnvMissingPolicy returns the effective build environment missing policy.
+func (p *Policy) BuildEnvMissingPolicy() types.Action {
+	if p.BuildEnv != nil && p.BuildEnv.MissingPolicy != "" {
+		return p.BuildEnv.MissingPolicy
+	}
+
+	return types.ActionAllow
+}
+
+// VulnScanMissingPolicy returns the effective vulnerability scan missing policy.
+func (p *Policy) VulnScanMissingPolicy() types.Action {
+	if p.VulnScan != nil && p.VulnScan.MissingPolicy != "" {
+		return p.VulnScan.MissingPolicy
+	}
+
+	return types.ActionAllow
+}
+
+// TestResultMissingPolicy returns the effective test result missing policy.
+func (p *Policy) TestResultMissingPolicy() types.Action {
+	if p.TestResult != nil && p.TestResult.MissingPolicy != "" {
+		return p.TestResult.MissingPolicy
+	}
+
+	return types.ActionAllow
+}
+
 // Builders returns the trusted builders list, or nil if trust is not configured.
 func (p *Policy) Builders() []TrustedBuilder {
 	if p.Trust != nil {

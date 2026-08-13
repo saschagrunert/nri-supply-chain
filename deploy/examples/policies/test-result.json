@@ -1,0 +1,13 @@
+{
+  "testResult": {
+    "missingPolicy": "deny",
+    "requiredSuites": ["unit", "integration"],
+    "maxAge": "168h"
+  },
+  "slsa": {
+    "missingPolicy": "allow"
+  },
+  "vex": {
+    "missingPolicy": "allow"
+  }
+}

@@ -193,14 +193,14 @@ func resolveImagePolicy(
 		return pol, -1
 	}
 
-	for idx, rule := range pol.Rules {
-		if matchesImageRule(ctx, rule.Images, imageRef) {
+	for idx := range pol.Rules {
+		if matchesImageRule(ctx, pol.Rules[idx].Images, imageRef) {
 			slog.DebugContext(ctx, "Image matched policy rule",
 				"image", imageRef,
 				"ruleIndex", idx,
 			)
 
-			return policy.ApplyRule(pol, &rule), idx
+			return policy.ApplyRule(pol, &pol.Rules[idx]), idx
 		}
 	}
 

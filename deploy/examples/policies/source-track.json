@@ -1,0 +1,16 @@
+{
+  "trust": {
+    "sources": ["https://github.com/myorg/**"]
+  },
+  "source": {
+    "missingPolicy": "warn",
+    "minimumLevel": 2,
+    "maxAge": "168h"
+  },
+  "slsa": {
+    "missingPolicy": "allow"
+  },
+  "vex": {
+    "missingPolicy": "allow"
+  }
+}
