@@ -17,6 +17,8 @@ webhooks, disabled policy controllers, or direct kubelet API calls. The plugin
 operates below the Kubernetes API layer, so every container that runs on a node
 must pass verification.
 
+For a detailed introduction, see the [CNCF blog post](https://www.cncf.io/blog/2026/07/30/runtime-supply-chain-verification-using-the-node-resource-interface-nri/).
+
 <!-- toc -->
 
 - [Quickstart](#quickstart)
