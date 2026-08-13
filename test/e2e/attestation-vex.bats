@@ -11,9 +11,6 @@ setup_file() {
 
 	start_kubernix_with_retry
 
-	write_nri_dropin
-	reload_runtime
-
 	create_vex_images
 
 	restore_default_keybased_policy

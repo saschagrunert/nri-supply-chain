@@ -13,8 +13,6 @@ setup_file() {
 	EOF
 
 	start_kubernix_with_retry
-	write_nri_dropin
-	reload_runtime
 
 	write_plugin_config "warn"
 	start_plugin
