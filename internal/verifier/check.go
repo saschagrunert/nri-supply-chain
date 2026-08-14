@@ -33,6 +33,8 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/notation"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
+	"github.com/saschagrunert/nri-supply-chain/internal/release"
+	"github.com/saschagrunert/nri-supply-chain/internal/runtimetrace"
 	"github.com/saschagrunert/nri-supply-chain/internal/sbom"
 	"github.com/saschagrunert/nri-supply-chain/internal/scai"
 	"github.com/saschagrunert/nri-supply-chain/internal/slsa"
@@ -91,14 +93,14 @@ func runChecks(
 	}
 
 	if state.fetchSem != nil {
-		release, semErr := acquireFetchSlots(ctx, state, host)
+		releaseSlots, semErr := acquireFetchSlots(ctx, state, host)
 		if semErr != nil {
 			recordBreakerFailure(ctx, breaker, state.metrics, host, state.config.FetchFailurePolicy)
 
 			return handleFetchError(ctx, state.config, state.metrics, semErr, imageRef, host)
 		}
 
-		defer release()
+		defer releaseSlots()
 	}
 
 	attestations, attestDigest, fetchErr := timedFetchAttestations(
@@ -203,6 +205,8 @@ func runChecksWithoutFetcher(
 		missingCheck{types.CheckTypeBuildEnv, pol.BuildEnvMissingPolicy()},
 		missingCheck{types.CheckTypeVulnScan, pol.VulnScanMissingPolicy()},
 		missingCheck{types.CheckTypeTestResult, pol.TestResultMissingPolicy()},
+		missingCheck{types.CheckTypeRelease, pol.ReleaseMissingPolicy()},
+		missingCheck{types.CheckTypeRuntimeTrace, pol.RuntimeTraceMissingPolicy()},
 	)
 
 	results := make([]*types.CheckResult, 0, len(missingChecks))
@@ -475,6 +479,12 @@ func runParallelChecks(
 		}},
 		{types.CheckTypeTestResult, func() *types.CheckResult {
 			return runTestResultCheck(ctx, bins.testresult, pol, met, imageRef, digest)
+		}},
+		{types.CheckTypeRelease, func() *types.CheckResult {
+			return runReleaseCheck(ctx, bins.release, pol, met, imageRef, digest)
+		}},
+		{types.CheckTypeRuntimeTrace, func() *types.CheckResult {
+			return runRuntimeTraceCheck(ctx, bins.runtimetrace, pol, met, imageRef, digest)
 		}},
 	}
 
@@ -792,6 +802,52 @@ func runTestResultCheck(
 	)
 }
 
+func runReleaseCheck(
+	ctx context.Context,
+	releaseAtts []attestation.VerifiedAttestation,
+	pol *policy.Policy, met *metrics.Metrics,
+	imageRef, digest string,
+) *types.CheckResult {
+	runner := &checkRunner{
+		checkType:     types.CheckTypeRelease,
+		label:         "Release",
+		missingPolicy: pol.ReleaseMissingPolicy(),
+		missingLog:    "No release attestation found",
+		missingReason: reasonMissingAttestation,
+		missingDetail: "no release attestation found for image ",
+	}
+
+	return runner.run(
+		ctx, met, imageRef, len(releaseAtts) > 0,
+		func() (*types.CheckResult, error) {
+			return release.VerifyMultiple(ctx, extractPayloads(releaseAtts), pol, digest)
+		},
+	)
+}
+
+func runRuntimeTraceCheck(
+	ctx context.Context,
+	runtimetraceAtts []attestation.VerifiedAttestation,
+	pol *policy.Policy, met *metrics.Metrics,
+	imageRef, digest string,
+) *types.CheckResult {
+	runner := &checkRunner{
+		checkType:     types.CheckTypeRuntimeTrace,
+		label:         "RuntimeTrace",
+		missingPolicy: pol.RuntimeTraceMissingPolicy(),
+		missingLog:    "No runtime trace attestation found",
+		missingReason: reasonMissingAttestation,
+		missingDetail: "no runtime trace attestation found for image ",
+	}
+
+	return runner.run(
+		ctx, met, imageRef, len(runtimetraceAtts) > 0,
+		func() (*types.CheckResult, error) {
+			return runtimetrace.VerifyMultiple(ctx, extractPayloads(runtimetraceAtts), pol, digest)
+		},
+	)
+}
+
 func runCELCheck(
 	pol *policy.Policy, met *metrics.Metrics,
 	imageRef, digest, namespace string,
@@ -821,6 +877,8 @@ func runCELCheck(
 		checkResults[types.CheckTypeBuildEnv],
 		checkResults[types.CheckTypeVulnScan],
 		checkResults[types.CheckTypeTestResult],
+		checkResults[types.CheckTypeRelease],
+		checkResults[types.CheckTypeRuntimeTrace],
 	)
 
 	timer := prometheus.NewTimer(met.CELEvaluationDuration)
@@ -912,16 +970,18 @@ func appendReason(result *types.Result, detail string) {
 }
 
 type attestationBins struct {
-	vsa        []attestation.VerifiedAttestation
-	slsa       []attestation.VerifiedAttestation
-	vex        []attestation.VerifiedAttestation
-	notation   []attestation.VerifiedAttestation
-	sbom       []attestation.VerifiedAttestation
-	scai       []attestation.VerifiedAttestation
-	source     []attestation.VerifiedAttestation
-	buildenv   []attestation.VerifiedAttestation
-	vulnscan   []attestation.VerifiedAttestation
-	testresult []attestation.VerifiedAttestation
+	vsa          []attestation.VerifiedAttestation
+	slsa         []attestation.VerifiedAttestation
+	vex          []attestation.VerifiedAttestation
+	notation     []attestation.VerifiedAttestation
+	sbom         []attestation.VerifiedAttestation
+	scai         []attestation.VerifiedAttestation
+	source       []attestation.VerifiedAttestation
+	buildenv     []attestation.VerifiedAttestation
+	vulnscan     []attestation.VerifiedAttestation
+	testresult   []attestation.VerifiedAttestation
+	release      []attestation.VerifiedAttestation
+	runtimetrace []attestation.VerifiedAttestation
 }
 
 func binAttestations( //nolint:cyclop // additional predicate type adds a branch
@@ -956,10 +1016,14 @@ func binAttestations( //nolint:cyclop // additional predicate type adds a branch
 			bins.source = append(bins.source, attestations[idx])
 		case attestation.PredicateBuildEnv:
 			bins.buildenv = append(bins.buildenv, attestations[idx])
-		case attestation.PredicateVulnScan:
+		case attestation.PredicateVulnScan, attestation.PredicateVulnScanV02:
 			bins.vulnscan = append(bins.vulnscan, attestations[idx])
 		case attestation.PredicateTestResult:
 			bins.testresult = append(bins.testresult, attestations[idx])
+		case attestation.PredicateRelease:
+			bins.release = append(bins.release, attestations[idx])
+		case attestation.PredicateRuntimeTrace:
+			bins.runtimetrace = append(bins.runtimetrace, attestations[idx])
 		case attestation.PredicateCosignSignature:
 			slog.DebugContext(ctx,
 				"Skipping bare cosign signature attestation",

@@ -113,6 +113,8 @@ func initEnvironment() (*cel.Env, error) {
 			cel.Variable("buildenv", cel.MapType(cel.StringType, cel.DynType)),
 			cel.Variable("vulnscan", cel.MapType(cel.StringType, cel.DynType)),
 			cel.Variable("testresult", cel.MapType(cel.StringType, cel.DynType)),
+			cel.Variable("release", cel.MapType(cel.StringType, cel.DynType)),
+			cel.Variable("runtimetrace", cel.MapType(cel.StringType, cel.DynType)),
 			ext.Strings(),
 		)
 	})
@@ -319,6 +321,7 @@ func BuildVars(
 	imageRef, registry, repository, digest, namespace string,
 	slsaResult, vexResult, vsaResult, sbomResult, notationResult, scaiResult *types.CheckResult,
 	sourceResult, buildenvResult, vulnscanResult, testresultResult *types.CheckResult,
+	releaseResult, runtimetraceResult *types.CheckResult,
 ) map[string]any {
 	imageVars := map[string]any{
 		"ref":        imageRef,
@@ -329,17 +332,19 @@ func BuildVars(
 	}
 
 	return map[string]any{
-		"image":      imageVars,
-		"slsa":       buildSLSAVars(slsaResult),
-		"vex":        buildVEXVars(vexResult),
-		"vsa":        buildVSAVars(vsaResult),
-		"sbom":       buildSBOMVars(sbomResult),
-		"notation":   buildNotationVars(notationResult),
-		"scai":       buildSCAIVars(scaiResult),
-		"source":     buildSourceVars(sourceResult), //nolint:goconst // map key
-		"buildenv":   buildBuildEnvVars(buildenvResult),
-		"vulnscan":   buildVulnScanVars(vulnscanResult),
-		"testresult": buildTestResultVars(testresultResult),
+		"image":        imageVars,
+		"slsa":         buildSLSAVars(slsaResult),
+		"vex":          buildVEXVars(vexResult),
+		"vsa":          buildVSAVars(vsaResult),
+		"sbom":         buildSBOMVars(sbomResult),
+		"notation":     buildNotationVars(notationResult),
+		"scai":         buildSCAIVars(scaiResult),
+		"source":       buildSourceVars(sourceResult), //nolint:goconst // map key
+		"buildenv":     buildBuildEnvVars(buildenvResult),
+		"vulnscan":     buildVulnScanVars(vulnscanResult),
+		"testresult":   buildTestResultVars(testresultResult),
+		"release":      buildReleaseVars(releaseResult),
+		"runtimetrace": buildRuntimeTraceVars(runtimetraceResult),
 	}
 }
 
@@ -562,6 +567,40 @@ func buildTestResultVars(result *types.CheckResult) map[string]any {
 		vars[varVerified] = result.Passed
 		extractStringMeta(result.Metadata, vars, "result", "suites")
 		extractInt64Meta(result.Metadata, vars, "suiteCount", "passed", "failed")
+	}
+
+	return vars
+}
+
+func buildReleaseVars(result *types.CheckResult) map[string]any {
+	vars := map[string]any{
+		varVerified: false,
+		"purl":      "",
+		"packageId": "",
+	}
+
+	if result != nil {
+		vars[varVerified] = result.Passed
+		extractStringMeta(result.Metadata, vars, "purl", "packageId")
+	}
+
+	return vars
+}
+
+func buildRuntimeTraceVars(result *types.CheckResult) map[string]any {
+	vars := map[string]any{
+		varVerified:       false,
+		"monitorType":     "",
+		"processCount":    int64(0),
+		"networkCount":    int64(0),
+		"fileAccessCount": int64(0),
+		"fileNames":       "",
+	}
+
+	if result != nil {
+		vars[varVerified] = result.Passed
+		extractStringMeta(result.Metadata, vars, "monitorType", "fileNames")
+		extractInt64Meta(result.Metadata, vars, "processCount", "networkCount", "fileAccessCount")
 	}
 
 	return vars

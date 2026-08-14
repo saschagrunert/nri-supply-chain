@@ -71,6 +71,7 @@ func BenchmarkEvaluate(b *testing.B) {
 		nil,
 		nil,
 		nil, nil, nil, nil,
+		nil, nil,
 	)
 
 	b.ResetTimer()
@@ -106,6 +107,7 @@ func BenchmarkEvaluateWithMatch(b *testing.B) {
 		nil,
 		nil,
 		nil, nil, nil, nil,
+		nil, nil,
 	)
 
 	b.ResetTimer()

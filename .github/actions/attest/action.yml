@@ -1,5 +1,5 @@
 name: Attest container image
-description: Scan, attest VEX/SBOM/VulnScan/TestResult/Source/BuildEnv, verify, and issue VSA
+description: Scan, attest VEX/SBOM/VulnScan/TestResult/Source/BuildEnv/Release, verify, and issue VSA
 
 inputs:
   digest:
@@ -166,7 +166,7 @@ runs:
         }
         EOF
         cosign attest --predicate /tmp/vulnscan-predicate.json \
-          --type https://in-toto.io/attestation/vulns/v0.1 \
+          --type https://in-toto.io/attestation/vulns/v0.2 \
           --yes \
           "${IMAGE}@${{ inputs.digest }}"
 
@@ -234,6 +234,23 @@ runs:
           --yes \
           "${IMAGE}@${{ inputs.digest }}"
 
+    - name: Attest release
+      shell: bash
+      run: |
+        TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        cat > /tmp/release-predicate.json <<EOF
+        {
+          "purl": "pkg:oci/${{ github.event.repository.name }}@${{ inputs.digest }}?repository_url=ghcr.io/${{ github.repository_owner }}",
+          "metadata": {
+            "publishedOn": "${TIMESTAMP}"
+          }
+        }
+        EOF
+        cosign attest --predicate /tmp/release-predicate.json \
+          --type https://in-toto.io/attestation/release/v0.1 \
+          --yes \
+          "${IMAGE}@${{ inputs.digest }}"
+
     - name: Verify container image
       shell: bash
       run: |
@@ -254,7 +271,8 @@ runs:
           "vulnScan": { "missingPolicy": "warn" },
           "testResult": { "missingPolicy": "warn" },
           "source": { "missingPolicy": "warn" },
-          "buildEnv": { "missingPolicy": "warn" }
+          "buildEnv": { "missingPolicy": "warn" },
+          "release": { "missingPolicy": "warn" }
         }
         EOF
         cat > /tmp/verify-config.toml <<EOF

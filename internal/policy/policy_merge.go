@@ -23,7 +23,8 @@ import (
 // MergeWithDefault creates a new policy by starting from a copy of the default
 // policy and overriding fields that are set in the namespace policy. Each
 // top-level section (Trust, Include, Exclude, SLSA, VEX, VSA, Signatures,
-// Notation, SBOM, SCAI, Source, BuildEnv, VulnScan, TestResult, CEL, Rules) is
+// Notation, SBOM, SCAI, Source, BuildEnv, VulnScan, TestResult, Release,
+// RuntimeTrace, CEL, Rules) is
 // replaced entirely if set in the namespace policy. The Inherits field is
 // cleared on the result. Inherited structs are shallow-copied to prevent
 // mutations from affecting the default.
@@ -110,7 +111,7 @@ func cloneSections(src *Sections) Sections {
 	return dst
 }
 
-//nolint:cyclop // one branch per section type
+//nolint:cyclop,funlen // one branch per section type
 func applySections(dst *Sections, src Sections) { //nolint:gocritic // value param avoids nil checks
 	if src.Trust != nil {
 		dst.Trust = cloneTrust(src.Trust)
@@ -168,6 +169,14 @@ func applySections(dst *Sections, src Sections) { //nolint:gocritic // value par
 
 	if src.TestResult != nil {
 		dst.TestResult = cloneTestResult(src.TestResult)
+	}
+
+	if src.Release != nil {
+		dst.Release = cloneRelease(src.Release)
+	}
+
+	if src.RuntimeTrace != nil {
+		dst.RuntimeTrace = cloneRuntimeTrace(src.RuntimeTrace)
 	}
 }
 
@@ -295,6 +304,21 @@ func cloneVulnScan(src *VulnScanPolicy) *VulnScanPolicy {
 func cloneTestResult(src *TestResultPolicy) *TestResultPolicy {
 	clone := *src
 	clone.RequiredSuites = slices.Clone(clone.RequiredSuites)
+
+	return &clone
+}
+
+func cloneRelease(src *ReleasePolicy) *ReleasePolicy {
+	clone := *src
+	clone.TrustedRegistries = slices.Clone(clone.TrustedRegistries)
+
+	return &clone
+}
+
+func cloneRuntimeTrace(src *RuntimeTracePolicy) *RuntimeTracePolicy {
+	clone := *src
+	clone.TrustedMonitors = slices.Clone(clone.TrustedMonitors)
+	clone.ForbiddenFilePatterns = slices.Clone(clone.ForbiddenFilePatterns)
 
 	return &clone
 }

@@ -79,6 +79,16 @@ const (
 	testSevHigh    = "high"
 	testResultPass = "pass"
 
+	metaPurl            = "purl"
+	metaPackageID       = "packageId"
+	metaMonitorType     = "monitorType"
+	metaProcessCount    = "processCount"
+	metaNetworkCount    = "networkCount"
+	metaFileAccessCount = "fileAccessCount"
+	metaFileNames       = "fileNames"
+	testPurl            = "pkg:oci/ghcr.io/myorg/myapp@sha256:abc123"
+	testMonitorFalco    = "falco"
+
 	exprMatchGHCR        = "image.registry == 'ghcr.io'"
 	exprSLSAVerified     = "slsa.verified == true"
 	exprVEXVerified      = "vex.verified == true"
@@ -101,6 +111,7 @@ func defaultVars() map[string]any {
 		nil,
 		nil,
 		nil, nil, nil, nil,
+		nil, nil,
 	)
 }
 
@@ -444,6 +455,7 @@ func TestEvaluateSLSAVariables(t *testing.T) {
 		nil,
 		nil,
 		nil, nil, nil, nil,
+		nil, nil,
 	)
 
 	result = celengine.Evaluate(compiled, varsUnverified)
@@ -475,6 +487,7 @@ func TestEvaluateVEXVariables(t *testing.T) {
 		nil,
 		nil,
 		nil, nil, nil, nil,
+		nil, nil,
 	)
 
 	result := celengine.Evaluate(compiled, vars)
@@ -533,6 +546,7 @@ func TestEvaluateSBOMVariables(t *testing.T) {
 		nil,
 		nil,
 		nil, nil, nil, nil,
+		nil, nil,
 	)
 
 	result = celengine.Evaluate(compiled, varsUnverified)
@@ -561,6 +575,7 @@ func TestEvaluateNilResults(t *testing.T) {
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
 		nil, nil, nil, nil, nil, nil,
 		nil, nil, nil, nil,
+		nil, nil,
 	)
 
 	result := celengine.Evaluate(compiled, vars)
@@ -751,6 +766,7 @@ func TestBuildVarsPopulatesMetadata(t *testing.T) {
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
 		slsa, vex, vsa, types.PassResult(types.CheckTypeSBOM, "ok"), nil, nil,
 		nil, nil, nil, nil,
+		nil, nil,
 	)
 
 	slsaVars, ok := vars["slsa"].(map[string]any)
@@ -825,6 +841,7 @@ func TestEvaluateMetadataInCELExpression(t *testing.T) {
 		slsa, types.PassResult(types.CheckTypeVEX, "ok"),
 		nil, types.PassResult(types.CheckTypeSBOM, "ok"), nil, nil,
 		nil, nil, nil, nil,
+		nil, nil,
 	)
 
 	result := celengine.Evaluate(compiled, vars)
@@ -844,6 +861,7 @@ func TestEvaluateMetadataInCELExpression(t *testing.T) {
 		slsaWrong, types.PassResult(types.CheckTypeVEX, "ok"),
 		nil, types.PassResult(types.CheckTypeSBOM, "ok"), nil, nil,
 		nil, nil, nil, nil,
+		nil, nil,
 	)
 
 	result = celengine.Evaluate(compiled, varsWrong)
@@ -1007,6 +1025,7 @@ func TestEvaluateNotationVariables(t *testing.T) {
 				test.result,
 				nil,
 				nil, nil, nil, nil,
+				nil, nil,
 			)
 
 			result := celengine.Evaluate(compiled, vars)
@@ -1141,6 +1160,7 @@ func TestEvaluateExtendedSBOMVariables(t *testing.T) {
 				nil,
 				nil,
 				nil, nil, nil, nil,
+				nil, nil,
 			)
 
 			result := celengine.Evaluate(compiled, vars)
@@ -1250,6 +1270,7 @@ func TestEvaluateSBOMCVSSVariables(t *testing.T) {
 			nil,
 			nil,
 			nil, nil, nil, nil,
+			nil, nil,
 		)
 
 		result := celengine.Evaluate(compiled, vars)
@@ -1290,6 +1311,7 @@ func TestEvaluateSBOMCVSSVariables(t *testing.T) {
 			nil,
 			nil,
 			nil, nil, nil, nil,
+			nil, nil,
 		)
 
 		result := celengine.Evaluate(compiled, vars)
@@ -1322,6 +1344,7 @@ func TestEvaluateSBOMCVSSVariables(t *testing.T) {
 			nil,
 			nil,
 			nil, nil, nil, nil,
+			nil, nil,
 		)
 
 		result := celengine.Evaluate(compiled, vars)
@@ -1431,6 +1454,7 @@ func TestEvaluateSCAIVariables(t *testing.T) {
 				nil,
 				test.result,
 				nil, nil, nil, nil,
+				nil, nil,
 			)
 
 			result := celengine.Evaluate(compiled, vars)
@@ -1596,6 +1620,7 @@ func TestEvaluateSourceVariables(t *testing.T) {
 				nil,
 				nil,
 				test.result, nil, nil, nil,
+				nil, nil,
 			)
 
 			result := celengine.Evaluate(compiled, vars)
@@ -1690,6 +1715,7 @@ func TestEvaluateBuildEnvVariables(t *testing.T) {
 				nil,
 				nil,
 				nil, test.result, nil, nil,
+				nil, nil,
 			)
 
 			result := celengine.Evaluate(compiled, vars)
@@ -1834,6 +1860,7 @@ func TestEvaluateVulnScanVariables(t *testing.T) {
 				nil,
 				nil,
 				nil, nil, test.result, nil,
+				nil, nil,
 			)
 
 			result := celengine.Evaluate(compiled, vars)
@@ -1972,6 +1999,224 @@ func TestEvaluateTestResultVariables(t *testing.T) {
 				nil,
 				nil,
 				nil, nil, nil, test.result,
+				nil, nil,
+			)
+
+			result := celengine.Evaluate(compiled, vars)
+
+			if result.Passed != test.pass {
+				t.Errorf("expected passed=%v, got passed=%v: %s",
+					test.pass, result.Passed, result.Detail)
+			}
+		})
+	}
+}
+
+func TestEvaluateReleaseVariables(t *testing.T) {
+	t.Parallel()
+
+	celengine.ResetEnvironmentForTest()
+
+	tests := []struct {
+		name    string
+		require string
+		result  *types.CheckResult
+		pass    bool
+	}{
+		{
+			name:    "release.verified true",
+			require: "release.verified == true",
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeRelease, "ok")
+				r.Metadata = map[string]any{
+					metaPurl:      testPurl,
+					metaPackageID: "myapp-1.0.0",
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name:    "release.purl check",
+			require: `release.purl.contains("ghcr.io")`,
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeRelease, "ok")
+				r.Metadata = map[string]any{
+					metaPurl:      testPurl,
+					metaPackageID: "",
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name:    "release.packageId check",
+			require: `release.packageId == "myapp-1.0.0"`,
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeRelease, "ok")
+				r.Metadata = map[string]any{
+					metaPurl:      testPurl,
+					metaPackageID: "myapp-1.0.0",
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name: "release defaults with nil result",
+			require: `release.verified == false && release.purl == "" ` +
+				`&& release.packageId == ""`,
+			result: nil,
+			pass:   true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			rules := []celengine.Rule{{Require: test.require}}
+
+			compiled, err := celengine.Compile(rules)
+			if err != nil {
+				t.Fatalf("compile error: %v", err)
+			}
+
+			vars := celengine.BuildVars(
+				testImageRef, testRegistry, testRepository, testDigest, testNamespace,
+				types.PassResult(types.CheckTypeSLSA, "ok"),
+				types.PassResult(types.CheckTypeVEX, "ok"),
+				nil,
+				types.PassResult(types.CheckTypeSBOM, "ok"),
+				nil,
+				nil,
+				nil, nil, nil, nil,
+				test.result, nil,
+			)
+
+			result := celengine.Evaluate(compiled, vars)
+
+			if result.Passed != test.pass {
+				t.Errorf("expected passed=%v, got passed=%v: %s",
+					test.pass, result.Passed, result.Detail)
+			}
+		})
+	}
+}
+
+func TestEvaluateRuntimeTraceVariables(t *testing.T) {
+	t.Parallel()
+
+	celengine.ResetEnvironmentForTest()
+
+	tests := []struct {
+		name    string
+		require string
+		result  *types.CheckResult
+		pass    bool
+	}{
+		{
+			name:    "runtimetrace.verified true",
+			require: "runtimetrace.verified == true",
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeRuntimeTrace, "ok")
+				r.Metadata = map[string]any{
+					metaMonitorType:     testMonitorFalco,
+					metaProcessCount:    int64(10),
+					metaNetworkCount:    int64(5),
+					metaFileAccessCount: int64(3),
+					metaFileNames:       "/usr/bin/gcc,/tmp/build.o",
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name:    "runtimetrace.monitorType check",
+			require: `runtimetrace.monitorType == "falco"`,
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeRuntimeTrace, "ok")
+				r.Metadata = map[string]any{
+					metaMonitorType:     testMonitorFalco,
+					metaProcessCount:    int64(0),
+					metaNetworkCount:    int64(0),
+					metaFileAccessCount: int64(0),
+					metaFileNames:       "",
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name:    "runtimetrace.processCount check",
+			require: "runtimetrace.processCount > 5",
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeRuntimeTrace, "ok")
+				r.Metadata = map[string]any{
+					metaMonitorType:     "tetragon",
+					metaProcessCount:    int64(10),
+					metaNetworkCount:    int64(0),
+					metaFileAccessCount: int64(0),
+					metaFileNames:       "",
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name:    "runtimetrace.fileNames contains",
+			require: `runtimetrace.fileNames.contains("/usr/bin/gcc")`,
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeRuntimeTrace, "ok")
+				r.Metadata = map[string]any{
+					metaMonitorType:     testMonitorFalco,
+					metaProcessCount:    int64(0),
+					metaNetworkCount:    int64(0),
+					metaFileAccessCount: int64(1),
+					metaFileNames:       "/usr/bin/gcc",
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name: "runtimetrace defaults with nil result",
+			require: `runtimetrace.verified == false && runtimetrace.monitorType == "" ` +
+				`&& runtimetrace.processCount == 0 && runtimetrace.networkCount == 0 ` +
+				`&& runtimetrace.fileAccessCount == 0 && runtimetrace.fileNames == ""`,
+			result: nil,
+			pass:   true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			rules := []celengine.Rule{{Require: test.require}}
+
+			compiled, err := celengine.Compile(rules)
+			if err != nil {
+				t.Fatalf("compile error: %v", err)
+			}
+
+			vars := celengine.BuildVars(
+				testImageRef, testRegistry, testRepository, testDigest, testNamespace,
+				types.PassResult(types.CheckTypeSLSA, "ok"),
+				types.PassResult(types.CheckTypeVEX, "ok"),
+				nil,
+				types.PassResult(types.CheckTypeSBOM, "ok"),
+				nil,
+				nil,
+				nil, nil, nil, nil,
+				nil, test.result,
 			)
 
 			result := celengine.Evaluate(compiled, vars)

@@ -69,11 +69,20 @@ const (
 	// PredicateBuildEnv is the in-toto predicate type for build environment attestations.
 	PredicateBuildEnv = "https://in-toto.io/attestation/build-env/v1"
 
-	// PredicateVulnScan is the in-toto predicate type for vulnerability scan attestations.
+	// PredicateVulnScan is the in-toto predicate type for vulnerability scan v0.1 attestations.
 	PredicateVulnScan = "https://in-toto.io/attestation/vulns/v0.1"
+
+	// PredicateVulnScanV02 is the in-toto predicate type for vulnerability scan v0.2 attestations.
+	PredicateVulnScanV02 = "https://in-toto.io/attestation/vulns/v0.2"
 
 	// PredicateTestResult is the in-toto predicate type for test result attestations.
 	PredicateTestResult = "https://in-toto.io/attestation/test-result/v0.1"
+
+	// PredicateRelease is the in-toto predicate type for release attestations.
+	PredicateRelease = "https://in-toto.io/attestation/release/v0.1"
+
+	// PredicateRuntimeTrace is the in-toto predicate type for runtime trace attestations.
+	PredicateRuntimeTrace = "https://in-toto.io/attestation/runtime-trace/v0.1"
 
 	// PredicateSLSAProvenanceV02 is the in-toto predicate type for SLSA provenance v0.2.
 	PredicateSLSAProvenanceV02 = "https://slsa.dev/provenance/v0.2"

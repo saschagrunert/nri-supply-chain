@@ -19,6 +19,8 @@ by the nri-supply-chain plugin.
   - [Build Environment](#build-environment)
   - [Vulnerability Scan](#vulnerability-scan)
   - [Test Result](#test-result)
+  - [Release](#release)
+  - [Runtime Trace](#runtime-trace)
 - [Other Standards](#other-standards)
 
 <!-- /toc -->
@@ -68,7 +70,7 @@ When a container is created, the plugin performs verification in this order:
    matched against each rule's `images` patterns in order (first match
    wins). When a rule matches, its non-nil sections (trust, slsa, vex,
    vsa, signatures, notation, sbom, scai, source, buildEnv, vulnScan,
-   testResult, cel) override the base policy for that verification.
+   testResult, release, runtimeTrace, cel) override the base policy for that verification.
 
 6. **Cache check**: If a cached result exists for this image digest and is
    within the configured TTL, returns it immediately.
@@ -84,15 +86,17 @@ When a container is created, the plugin performs verification in this order:
 
 8. **VSA-first evaluation**:
    - If a trusted PASSED VSA is found, skip all parallel checks (SLSA, VEX,
-     Notation, SBOM, SCAI, Source, BuildEnv, VulnScan, TestResult) and CEL
-     evaluation entirely.
+     Notation, SBOM, SCAI, Source, BuildEnv, VulnScan, TestResult, Release,
+     RuntimeTrace) and
+     CEL evaluation entirely.
    - If a trusted FAILED VSA is found, hard reject immediately (no fallback).
    - If no VSA is found, or the VSA is from an untrusted verifier or stale,
      fall through to direct verification.
 
 9. **Parallel verification**: When VSA does not short-circuit, SLSA provenance,
    VEX, Notation signature, SBOM, SCAI, Source Track, Build Environment,
-   Vulnerability Scan, and Test Result checks run concurrently.
+   Vulnerability Scan, Test Result, Release, and Runtime Trace checks run
+   concurrently.
 
 10. **CEL policy evaluation**: If the policy defines CEL rules, they are
     evaluated against the combined check results. CEL rules can enforce
@@ -106,7 +110,7 @@ When a container is created, the plugin performs verification in this order:
 Latency model:
 
 - With trusted VSA: `fetch + VSA verify`
-- Without VSA: `fetch + max(SLSA, VEX, Notation, SBOM, SCAI, Source, BuildEnv, VulnScan, TestResult) + CEL eval`
+- Without VSA: `fetch + max(SLSA, VEX, Notation, SBOM, SCAI, Source, BuildEnv, VulnScan, TestResult, Release, RuntimeTrace) + CEL eval`
 
 ## Container Annotations
 
@@ -226,8 +230,9 @@ plugin checks required and forbidden properties. See
 
 ### Vulnerability Scan
 
-Verifies [vulns v0.1](https://github.com/in-toto/attestation/blob/main/spec/predicates/vulns.md)
-attestations (predicate type `https://in-toto.io/attestation/vulns/v0.1`).
+Verifies [vulns](https://github.com/in-toto/attestation/blob/main/spec/predicates/vulns.md)
+attestations (predicate types `https://in-toto.io/attestation/vulns/v0.1` and
+`https://in-toto.io/attestation/vulns/v0.2`).
 Vulnerability scan attestations capture automated scanner results. The
 plugin enforces CVSS score and severity thresholds with an optional CVE
 ignore list. See [policy.md](policy.md#vulnerability-scan-verification) for
@@ -241,6 +246,29 @@ Test result attestations capture the outcome of automated test suites. The
 plugin verifies the overall result is passing and can enforce that specific
 suites are present and passing. See
 [policy.md](policy.md#test-result-verification) for the field reference.
+
+### Release
+
+Verifies [release v0.1](https://github.com/in-toto/attestation/blob/main/spec/predicates/release.md)
+attestations (predicate type `https://in-toto.io/attestation/release/v0.1`).
+Release attestations record the publication of an artifact to a package
+repository, capturing the package URL (purl) and optional package identifier.
+The plugin checks the purl against trusted registry patterns and can require
+a package identifier to be present. When multiple release attestations exist,
+any single valid one is sufficient (any-pass semantics). See
+[policy.md](policy.md#release-verification) for the field reference.
+
+### Runtime Trace
+
+Verifies [runtime-trace v0.1](https://github.com/in-toto/attestation/blob/main/spec/predicates/runtime-trace.md)
+attestations (predicate type `https://in-toto.io/attestation/runtime-trace/v0.1`).
+Runtime trace attestations capture build-time runtime observations from a
+monitor, including process activity, network connections, and file accesses.
+The plugin checks the monitor type against trusted patterns and validates that
+no forbidden file access patterns appear in the trace. When multiple runtime
+trace attestations exist, all must pass (all-must-pass semantics) and metadata
+is merged across documents. See
+[policy.md](policy.md#runtime-trace-verification) for the field reference.
 
 ## Other Standards
 
