@@ -35,9 +35,9 @@ const (
 	testBuilderID        = "https://github.com/actions/runner"
 	testUntrustedBuilder = "https://untrusted.example.com"
 	testBuildType        = "https://actions.github.io/buildtypes/workflow/v1"
-	testSource           = "github.com/example/repo"
+	testSource           = "https://github.com/example/repo"
 	testWorkflow         = ".github/workflows/release.yml"
-	testSourceGlob       = "github.com/example/*"
+	testSourceGlob       = "https://github.com/example/*"
 	testKeySource        = "source"
 	testKeyWorkflow      = "workflow"
 	testPlaceholder      = "test"
@@ -224,7 +224,7 @@ func TestVerify(t *testing.T) {
 			policy: &policy.Policy{
 				Sections: policy.Sections{
 					Trust: &policy.TrustPolicy{
-						Sources: []string{"github.com/other-org/*"},
+						Sources: []string{"https://github.com/other-org/*"},
 					},
 				},
 			},
@@ -388,7 +388,7 @@ func TestVerify(t *testing.T) {
 						Builders: []policy.TrustedBuilder{
 							{ID: testBuilderID, MaxLevel: 2},
 						},
-						Sources: []string{"github.com/other-org/*"},
+						Sources: []string{"https://github.com/other-org/*"},
 					},
 				},
 			},
@@ -1214,7 +1214,7 @@ func TestVerifyEdgeCases(t *testing.T) {
 		t.Parallel()
 
 		stmt := validStatement()
-		stmt.Predicate.BuildDefinition.ExternalParameters[testKeySource] = "github.com/example/repo/subdir"
+		stmt.Predicate.BuildDefinition.ExternalParameters[testKeySource] = "https://github.com/example/repo/subdir"
 
 		result, err := slsa.Verify(context.Background(),
 			testutil.MustMarshal(t, stmt),
@@ -1357,12 +1357,11 @@ func TestVerifyV02SourceNormalization(t *testing.T) {
 
 	t.Cleanup(slsa.ResetWarnings)
 
-	sourcePattern := "github.com/example/*"
 	pol := &policy.Policy{
 		Sections: policy.Sections{
 			Trust: &policy.TrustPolicy{
 				Builders: []policy.TrustedBuilder{{ID: testBuilderID}},
-				Sources:  []string{sourcePattern},
+				Sources:  []string{testSourceGlob},
 			},
 		},
 	}
@@ -1374,10 +1373,10 @@ func TestVerifyV02SourceNormalization(t *testing.T) {
 	}{
 		{"git+https with ref", "git+https://github.com/example/repo@refs/heads/main", true},
 		{"git+https without ref", "git+https://github.com/example/repo", true},
-		{"git+http with ref", "git+http://github.com/example/repo@refs/tags/v1.0", true},
+		{"git+http with ref", "git+http://github.com/example/repo@refs/tags/v1.0", false},
 		{"plain https with ref", "https://github.com/example/repo@refs/heads/main", true},
 		{"plain https without ref", "https://github.com/example/repo", true},
-		{"bare path", "github.com/example/repo", true},
+		{"bare path no scheme", "github.com/example/repo", false},
 		{"wrong org normalized", "git+https://github.com/other/repo@refs/heads/main", false},
 		{"empty URI", "", false},
 	}

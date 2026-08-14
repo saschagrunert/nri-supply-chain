@@ -226,20 +226,14 @@ func WarnWarnModeDefaults(cfg *config.Config, policies map[string]*policy.Policy
 	}
 }
 
-//nolint:cyclop // one condition per check type
 func allMissingPoliciesAllow(pol *policy.Policy) bool {
-	return pol.SLSAMissingPolicy() == types.ActionAllow &&
-		pol.VEXMissingPolicy() == types.ActionAllow &&
-		pol.VSAMissingPolicy() == types.ActionAllow &&
-		pol.NotationMissingPolicy() == types.ActionAllow &&
-		pol.SBOMMissingPolicy() == types.ActionAllow &&
-		pol.SCAIMissingPolicy() == types.ActionAllow &&
-		pol.SourceMissingPolicy() == types.ActionAllow &&
-		pol.BuildEnvMissingPolicy() == types.ActionAllow &&
-		pol.VulnScanMissingPolicy() == types.ActionAllow &&
-		pol.TestResultMissingPolicy() == types.ActionAllow &&
-		pol.ReleaseMissingPolicy() == types.ActionAllow &&
-		pol.RuntimeTraceMissingPolicy() == types.ActionAllow
+	for _, ct := range types.AttestationCheckTypes {
+		if pol.MissingPolicyFor(ct) != types.ActionAllow {
+			return false
+		}
+	}
+
+	return true
 }
 
 // WarnEnforceDefaults logs warnings when enforce mode is used with

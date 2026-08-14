@@ -2,7 +2,7 @@
   "trust": {
     "issuers": ["https://token.actions.githubusercontent.com"],
     "sanPatterns": ["https://github.com/myorg/**"],
-    "sources": ["github.com/myorg/*"]
+    "sources": ["https://github.com/myorg/*"]
   },
   "slsa": { "missingPolicy": "deny" }
 }

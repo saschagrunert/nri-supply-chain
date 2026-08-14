@@ -263,7 +263,7 @@ runs:
               "https://github.com/${{ github.repository }}/**",
               "https://github.com/slsa-framework/slsa-github-generator/**"
             ],
-            "sources": ["github.com/${{ github.repository_owner }}/*"]
+            "sources": ["https://github.com/${{ github.repository_owner }}/*"]
           },
           "slsa": { "missingPolicy": "deny" },
           "vex": { "missingPolicy": "deny" },

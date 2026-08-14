@@ -117,7 +117,7 @@ Define which builders and issuers you trust. For GitHub Actions with keyless
     ],
     "issuers": ["https://token.actions.githubusercontent.com"],
     "sanPatterns": ["https://github.com/myorg/*"],
-    "sources": ["github.com/myorg/*"]
+    "sources": ["https://github.com/myorg/*"]
   }
 }
 ```
@@ -871,7 +871,7 @@ Trust roots for verification. All sub-fields are optional.
 | `verifiers`   | array | Trusted VSA verifiers. Each entry has `id` (URI) and an optional `keys` (array of absolute paths to PEM public keys). Verifier IDs must be unique within a policy. When `keys` is set, the keys are used for Sigstore bundle signature verification. Use `keys` for key rotation so that both old and new keys are accepted simultaneously. Optional `notBefore` and `notAfter` (RFC 3339 timestamps) bound the validity window for key-based verification; signatures outside this window are rejected. When `keys` is empty or omitted, bundles are verified via keyless (Fulcio/OIDC) using `issuers` and `sanPatterns`, which must be configured. |
 | `issuers`     | array | Trusted OIDC issuers for keyless (Fulcio) verification.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `sanPatterns` | array | Accepted certificate Subject Alternative Names. Supports glob patterns: `*` matches any non-`/` sequence, `**` matches any characters including `/`, `?` matches a single non-`/` character, `[...]` matches a character class. Use `**` for GitHub Actions OIDC SANs that include workflow paths (e.g., `https://github.com/org/repo/**`). Required when `issuers` is set in `enforce` mode. In `warn` mode, omitting this field accepts any SAN from a trusted issuer (with a log warning).                                                                                                                                                         |
-| `sources`     | array | Allowed source repository glob patterns. Supports the same glob syntax as `sanPatterns`: `*` matches non-`/` characters, `**` matches any characters including `/`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `sources`     | array | Allowed source repository glob patterns matched against the full URI from source attestations (e.g., `https://github.com/myorg/*`). Supports the same glob syntax as `sanPatterns`: `*` matches non-`/` characters, `**` matches any characters including `/`.                                                                                                                                                                                                                                                                                                                                                                                        |
 | `buildTypes`  | array | Accepted build type URIs for SLSA provenance.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 ### `include` (array of strings)
@@ -2173,7 +2173,7 @@ The plugin tries both modes; either can satisfy the policy:
     ],
     "issuers": ["https://token.actions.githubusercontent.com"],
     "sanPatterns": ["https://github.com/myorg/*"],
-    "sources": ["github.com/myorg/*"]
+    "sources": ["https://github.com/myorg/*"]
   },
   "slsa": {
     "missingPolicy": "deny"

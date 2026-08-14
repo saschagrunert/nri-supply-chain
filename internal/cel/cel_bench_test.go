@@ -64,14 +64,11 @@ func BenchmarkEvaluate(b *testing.B) {
 
 	vars := celengine.BuildVars(
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
-		types.PassResult(types.CheckTypeSLSA, "ok"),
-		types.PassResult(types.CheckTypeVEX, "ok"),
-		nil,
-		types.PassResult(types.CheckTypeSBOM, "ok"),
-		nil,
-		nil,
-		nil, nil, nil, nil,
-		nil, nil,
+		map[types.CheckType]*types.CheckResult{
+			types.CheckTypeSLSA: types.PassResult(types.CheckTypeSLSA, "ok"),
+			types.CheckTypeVEX:  types.PassResult(types.CheckTypeVEX, "ok"),
+			types.CheckTypeSBOM: types.PassResult(types.CheckTypeSBOM, "ok"),
+		},
 	)
 
 	b.ResetTimer()
@@ -100,14 +97,11 @@ func BenchmarkEvaluateWithMatch(b *testing.B) {
 
 	vars := celengine.BuildVars(
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
-		types.PassResult(types.CheckTypeSLSA, "ok"),
-		types.PassResult(types.CheckTypeVEX, "ok"),
-		nil,
-		types.PassResult(types.CheckTypeSBOM, "ok"),
-		nil,
-		nil,
-		nil, nil, nil, nil,
-		nil, nil,
+		map[types.CheckType]*types.CheckResult{
+			types.CheckTypeSLSA: types.PassResult(types.CheckTypeSLSA, "ok"),
+			types.CheckTypeVEX:  types.PassResult(types.CheckTypeVEX, "ok"),
+			types.CheckTypeSBOM: types.PassResult(types.CheckTypeSBOM, "ok"),
+		},
 	)
 
 	b.ResetTimer()

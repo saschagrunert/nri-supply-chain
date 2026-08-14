@@ -319,9 +319,7 @@ func isCostError(err error) bool {
 // BuildVars constructs the CEL variable map from check results and image context.
 func BuildVars(
 	imageRef, registry, repository, digest, namespace string,
-	slsaResult, vexResult, vsaResult, sbomResult, notationResult, scaiResult *types.CheckResult,
-	sourceResult, buildenvResult, vulnscanResult, testresultResult *types.CheckResult,
-	releaseResult, runtimetraceResult *types.CheckResult,
+	results map[types.CheckType]*types.CheckResult,
 ) map[string]any {
 	imageVars := map[string]any{
 		"ref":        imageRef,
@@ -333,18 +331,18 @@ func BuildVars(
 
 	return map[string]any{
 		"image":        imageVars,
-		"slsa":         buildSLSAVars(slsaResult),
-		"vex":          buildVEXVars(vexResult),
-		"vsa":          buildVSAVars(vsaResult),
-		"sbom":         buildSBOMVars(sbomResult),
-		"notation":     buildNotationVars(notationResult),
-		"scai":         buildSCAIVars(scaiResult),
-		"source":       buildSourceVars(sourceResult), //nolint:goconst // map key
-		"buildenv":     buildBuildEnvVars(buildenvResult),
-		"vulnscan":     buildVulnScanVars(vulnscanResult),
-		"testresult":   buildTestResultVars(testresultResult),
-		"release":      buildReleaseVars(releaseResult),
-		"runtimetrace": buildRuntimeTraceVars(runtimetraceResult),
+		"slsa":         buildSLSAVars(results[types.CheckTypeSLSA]),
+		"vex":          buildVEXVars(results[types.CheckTypeVEX]),
+		"vsa":          buildVSAVars(results[types.CheckTypeVSA]),
+		"sbom":         buildSBOMVars(results[types.CheckTypeSBOM]),
+		"notation":     buildNotationVars(results[types.CheckTypeNotation]),
+		"scai":         buildSCAIVars(results[types.CheckTypeSCAI]),
+		"source":       buildSourceVars(results[types.CheckTypeSource]), //nolint:goconst // map key
+		"buildenv":     buildBuildEnvVars(results[types.CheckTypeBuildEnv]),
+		"vulnscan":     buildVulnScanVars(results[types.CheckTypeVulnScan]),
+		"testresult":   buildTestResultVars(results[types.CheckTypeTestResult]),
+		"release":      buildReleaseVars(results[types.CheckTypeRelease]),
+		"runtimetrace": buildRuntimeTraceVars(results[types.CheckTypeRuntimeTrace]),
 	}
 }
 

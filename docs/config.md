@@ -391,7 +391,7 @@ default for that namespace. By default this is a full replacement; set
     ],
     "issuers": ["https://accounts.google.com"],
     "sanPatterns": ["*@myorg.com", "https://github.com/myorg/*"],
-    "sources": ["github.com/myorg/*"],
+    "sources": ["https://github.com/myorg/*"],
     "buildTypes": ["https://actions.github.io/buildtypes/workflow/v1"]
   },
   "exclude": ["test-*", "registry.k8s.io/**"],

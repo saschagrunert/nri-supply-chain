@@ -14,7 +14,7 @@
     ],
     "issuers": ["https://token.actions.githubusercontent.com"],
     "sanPatterns": ["*@myorg.com", "https://github.com/myorg/*"],
-    "sources": ["github.com/myorg/production-*"]
+    "sources": ["https://github.com/myorg/production-*"]
   },
   "slsa": {
     "missingPolicy": "deny",

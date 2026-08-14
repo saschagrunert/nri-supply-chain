@@ -37,7 +37,7 @@ func FuzzVerify(f *testing.F) {
 		Predicate: slsa.ProvenancePredicate{
 			BuildDefinition: slsa.BuildDefinition{
 				BuildType:          "https://actions.github.io/buildtypes/workflow/v1",
-				ExternalParameters: map[string]any{"source": "github.com/example/repo"},
+				ExternalParameters: map[string]any{"source": "https://github.com/example/repo"},
 				InternalParameters: map[string]any{},
 			},
 			RunDetails: slsa.RunDetails{
@@ -64,7 +64,7 @@ func FuzzVerify(f *testing.F) {
 		`ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}}],` +
 		`"predicateType":"https://slsa.dev/provenance/v1",` +
 		`"predicate":{"buildDefinition":{"buildType":"https://actions.github.io/buildtypes/workflow/v1",` +
-		`"externalParameters":{"source":"github.com/example/repo"},` +
+		`"externalParameters":{"source":"https://github.com/example/repo"},` +
 		`"internalParameters":{}},"runDetails":{"builder":{"id":"https://github.com/actions/runner"},` +
 		`"metadata":{"invocationId":"run-1"}}}` +
 		`}`))
@@ -89,7 +89,7 @@ func FuzzVerify(f *testing.F) {
 		testDigestHash + `"}}],` +
 		`"predicateType":"https://slsa.dev/provenance/v1",` +
 		`"predicate":{"buildDefinition":{"buildType":"https://actions.github.io/buildtypes/workflow/v1",` +
-		`"externalParameters":{"source":"github.com/example/repo","workflow":".github/workflows/ci.yml"},` +
+		`"externalParameters":{"source":"https://github.com/example/repo","workflow":".github/workflows/ci.yml"},` +
 		`"internalParameters":{}},"runDetails":{"builder":{"id":"https://github.com/actions/runner"},` +
 		`"metadata":{"invocationId":"run-42"}}}` +
 		`}`))
@@ -102,7 +102,8 @@ func FuzzVerify(f *testing.F) {
 		testDigestHash + `"}}],` +
 		`"predicateType":"https://slsa.dev/provenance/v1",` +
 		`"predicate":{"buildDefinition":{"buildType":"https://custom.example.com/build/v2",` +
-		`"externalParameters":{"source":"github.com/other-org/other-repo","custom-key":"custom-value","extra":"data"},` +
+		`"externalParameters":{"source":"https://github.com/other-org/other-repo",` +
+		`"custom-key":"custom-value","extra":"data"},` +
 		`"internalParameters":{"internal":"param"}},"runDetails":{"builder":{"id":"https://custom-builder.example.com"},` +
 		`"metadata":{"invocationId":"run-999"}}}` +
 		`}`))
@@ -115,7 +116,7 @@ func FuzzVerify(f *testing.F) {
 		testDigestHash + `"}}],` +
 		`"predicateType":"https://slsa.dev/provenance/v1",` +
 		`"predicate":{"buildDefinition":{"buildType":"https://actions.github.io/buildtypes/workflow/v1",` +
-		`"externalParameters":{"source":"github.com/example/repo"},` +
+		`"externalParameters":{"source":"https://github.com/example/repo"},` +
 		`"internalParameters":{}},"runDetails":{"builder":{"id":"https://github.com/actions/runner"},` +
 		`"metadata":{"invocationId":"run-1","startedOn":"2025-01-15T10:30:00Z"}}}` +
 		`}`))

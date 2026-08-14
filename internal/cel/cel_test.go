@@ -104,15 +104,55 @@ const (
 func defaultVars() map[string]any {
 	return celengine.BuildVars(
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
-		types.PassResult(types.CheckTypeSLSA, "ok"),
-		types.PassResult(types.CheckTypeVEX, "ok"),
-		nil,
-		types.PassResult(types.CheckTypeSBOM, "ok"),
-		nil,
-		nil,
-		nil, nil, nil, nil,
-		nil, nil,
+		map[types.CheckType]*types.CheckResult{
+			types.CheckTypeSLSA: types.PassResult(types.CheckTypeSLSA, "ok"),
+			types.CheckTypeVEX:  types.PassResult(types.CheckTypeVEX, "ok"),
+			types.CheckTypeSBOM: types.PassResult(types.CheckTypeSBOM, "ok"),
+		},
 	)
+}
+
+type celVarTest struct {
+	name    string
+	require string
+	result  *types.CheckResult
+	pass    bool
+}
+
+func runCELVarTests(t *testing.T, checkType types.CheckType, tests []celVarTest) {
+	t.Helper()
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			rules := []celengine.Rule{{Require: test.require}}
+
+			compiled, err := celengine.Compile(rules)
+			if err != nil {
+				t.Fatalf("compile error: %v", err)
+			}
+
+			results := map[types.CheckType]*types.CheckResult{
+				types.CheckTypeSLSA: types.PassResult(types.CheckTypeSLSA, "ok"),
+				types.CheckTypeVEX:  types.PassResult(types.CheckTypeVEX, "ok"),
+				types.CheckTypeSBOM: types.PassResult(types.CheckTypeSBOM, "ok"),
+			}
+			results[checkType] = test.result
+
+			vars := celengine.BuildVars(
+				testImageRef, testRegistry, testRepository, testDigest, testNamespace,
+				results,
+			)
+
+			result := celengine.Evaluate(compiled, vars)
+
+			if result.Passed != test.pass {
+				t.Errorf("expected passed=%v, got passed=%v: %s",
+					test.pass, result.Passed, result.Detail)
+			}
+		})
+	}
 }
 
 func TestCompileValidExpressions(t *testing.T) {
@@ -448,14 +488,11 @@ func TestEvaluateSLSAVariables(t *testing.T) {
 	// Test with unverified SLSA.
 	varsUnverified := celengine.BuildVars(
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
-		types.FailResult(types.CheckTypeSLSA, "fail", nil),
-		types.PassResult(types.CheckTypeVEX, "ok"),
-		nil,
-		types.PassResult(types.CheckTypeSBOM, "ok"),
-		nil,
-		nil,
-		nil, nil, nil, nil,
-		nil, nil,
+		map[types.CheckType]*types.CheckResult{
+			types.CheckTypeSLSA: types.FailResult(types.CheckTypeSLSA, "fail", nil),
+			types.CheckTypeVEX:  types.PassResult(types.CheckTypeVEX, "ok"),
+			types.CheckTypeSBOM: types.PassResult(types.CheckTypeSBOM, "ok"),
+		},
 	)
 
 	result = celengine.Evaluate(compiled, varsUnverified)
@@ -480,14 +517,11 @@ func TestEvaluateVEXVariables(t *testing.T) {
 	// Test with unverified VEX.
 	vars := celengine.BuildVars(
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
-		types.PassResult(types.CheckTypeSLSA, "ok"),
-		types.FailResult(types.CheckTypeVEX, "fail", nil),
-		nil,
-		types.PassResult(types.CheckTypeSBOM, "ok"),
-		nil,
-		nil,
-		nil, nil, nil, nil,
-		nil, nil,
+		map[types.CheckType]*types.CheckResult{
+			types.CheckTypeSLSA: types.PassResult(types.CheckTypeSLSA, "ok"),
+			types.CheckTypeVEX:  types.FailResult(types.CheckTypeVEX, "fail", nil),
+			types.CheckTypeSBOM: types.PassResult(types.CheckTypeSBOM, "ok"),
+		},
 	)
 
 	result := celengine.Evaluate(compiled, vars)
@@ -539,14 +573,11 @@ func TestEvaluateSBOMVariables(t *testing.T) {
 	// Test with unverified SBOM.
 	varsUnverified := celengine.BuildVars(
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
-		types.PassResult(types.CheckTypeSLSA, "ok"),
-		types.PassResult(types.CheckTypeVEX, "ok"),
-		nil,
-		types.FailResult(types.CheckTypeSBOM, "fail", nil),
-		nil,
-		nil,
-		nil, nil, nil, nil,
-		nil, nil,
+		map[types.CheckType]*types.CheckResult{
+			types.CheckTypeSLSA: types.PassResult(types.CheckTypeSLSA, "ok"),
+			types.CheckTypeVEX:  types.PassResult(types.CheckTypeVEX, "ok"),
+			types.CheckTypeSBOM: types.FailResult(types.CheckTypeSBOM, "fail", nil),
+		},
 	)
 
 	result = celengine.Evaluate(compiled, varsUnverified)
@@ -573,9 +604,7 @@ func TestEvaluateNilResults(t *testing.T) {
 
 	vars := celengine.BuildVars(
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
-		nil, nil, nil, nil, nil, nil,
-		nil, nil, nil, nil,
-		nil, nil,
+		nil,
 	)
 
 	result := celengine.Evaluate(compiled, vars)
@@ -764,9 +793,12 @@ func TestBuildVarsPopulatesMetadata(t *testing.T) {
 
 	vars := celengine.BuildVars(
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
-		slsa, vex, vsa, types.PassResult(types.CheckTypeSBOM, "ok"), nil, nil,
-		nil, nil, nil, nil,
-		nil, nil,
+		map[types.CheckType]*types.CheckResult{
+			types.CheckTypeSLSA: slsa,
+			types.CheckTypeVEX:  vex,
+			types.CheckTypeVSA:  vsa,
+			types.CheckTypeSBOM: types.PassResult(types.CheckTypeSBOM, "ok"),
+		},
 	)
 
 	slsaVars, ok := vars["slsa"].(map[string]any)
@@ -838,10 +870,11 @@ func TestEvaluateMetadataInCELExpression(t *testing.T) {
 
 	vars := celengine.BuildVars(
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
-		slsa, types.PassResult(types.CheckTypeVEX, "ok"),
-		nil, types.PassResult(types.CheckTypeSBOM, "ok"), nil, nil,
-		nil, nil, nil, nil,
-		nil, nil,
+		map[types.CheckType]*types.CheckResult{
+			types.CheckTypeSLSA: slsa,
+			types.CheckTypeVEX:  types.PassResult(types.CheckTypeVEX, "ok"),
+			types.CheckTypeSBOM: types.PassResult(types.CheckTypeSBOM, "ok"),
+		},
 	)
 
 	result := celengine.Evaluate(compiled, vars)
@@ -858,10 +891,11 @@ func TestEvaluateMetadataInCELExpression(t *testing.T) {
 
 	varsWrong := celengine.BuildVars(
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
-		slsaWrong, types.PassResult(types.CheckTypeVEX, "ok"),
-		nil, types.PassResult(types.CheckTypeSBOM, "ok"), nil, nil,
-		nil, nil, nil, nil,
-		nil, nil,
+		map[types.CheckType]*types.CheckResult{
+			types.CheckTypeSLSA: slsaWrong,
+			types.CheckTypeVEX:  types.PassResult(types.CheckTypeVEX, "ok"),
+			types.CheckTypeSBOM: types.PassResult(types.CheckTypeSBOM, "ok"),
+		},
 	)
 
 	result = celengine.Evaluate(compiled, varsWrong)
@@ -949,12 +983,7 @@ func TestEvaluateNotationVariables(t *testing.T) {
 
 	celengine.ResetEnvironmentForTest()
 
-	tests := []struct {
-		name    string
-		require string
-		result  *types.CheckResult
-		pass    bool
-	}{
+	tests := []celVarTest{
 		{
 			name:    "notation.verified true",
 			require: exprNotationVerified,
@@ -1005,37 +1034,7 @@ func TestEvaluateNotationVariables(t *testing.T) {
 		},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			rules := []celengine.Rule{{Require: test.require}}
-
-			compiled, err := celengine.Compile(rules)
-			if err != nil {
-				t.Fatalf("compile error: %v", err)
-			}
-
-			vars := celengine.BuildVars(
-				testImageRef, testRegistry, testRepository, testDigest, testNamespace,
-				types.PassResult(types.CheckTypeSLSA, "ok"),
-				types.PassResult(types.CheckTypeVEX, "ok"),
-				nil,
-				types.PassResult(types.CheckTypeSBOM, "ok"),
-				test.result,
-				nil,
-				nil, nil, nil, nil,
-				nil, nil,
-			)
-
-			result := celengine.Evaluate(compiled, vars)
-
-			if result.Passed != test.pass {
-				t.Errorf("expected passed=%v, got passed=%v: %s",
-					test.pass, result.Passed, result.Detail)
-			}
-		})
-	}
+	runCELVarTests(t, types.CheckTypeNotation, tests)
 }
 
 func TestEvaluateExtendedSBOMVariables(t *testing.T) {
@@ -1153,14 +1152,11 @@ func TestEvaluateExtendedSBOMVariables(t *testing.T) {
 
 			vars := celengine.BuildVars(
 				testImageRef, testRegistry, testRepository, testDigest, testNamespace,
-				types.PassResult(types.CheckTypeSLSA, "ok"),
-				types.PassResult(types.CheckTypeVEX, "ok"),
-				nil,
-				test.result,
-				nil,
-				nil,
-				nil, nil, nil, nil,
-				nil, nil,
+				map[types.CheckType]*types.CheckResult{
+					types.CheckTypeSLSA: types.PassResult(types.CheckTypeSLSA, "ok"),
+					types.CheckTypeVEX:  types.PassResult(types.CheckTypeVEX, "ok"),
+					types.CheckTypeSBOM: test.result,
+				},
 			)
 
 			result := celengine.Evaluate(compiled, vars)
@@ -1263,14 +1259,11 @@ func TestEvaluateSBOMCVSSVariables(t *testing.T) {
 
 		vars := celengine.BuildVars(
 			testImageRef, testRegistry, testRepository, testDigest, testNamespace,
-			types.PassResult(types.CheckTypeSLSA, "ok"),
-			types.PassResult(types.CheckTypeVEX, "ok"),
-			nil,
-			sbomResult,
-			nil,
-			nil,
-			nil, nil, nil, nil,
-			nil, nil,
+			map[types.CheckType]*types.CheckResult{
+				types.CheckTypeSLSA: types.PassResult(types.CheckTypeSLSA, "ok"),
+				types.CheckTypeVEX:  types.PassResult(types.CheckTypeVEX, "ok"),
+				types.CheckTypeSBOM: sbomResult,
+			},
 		)
 
 		result := celengine.Evaluate(compiled, vars)
@@ -1304,14 +1297,11 @@ func TestEvaluateSBOMCVSSVariables(t *testing.T) {
 
 		vars := celengine.BuildVars(
 			testImageRef, testRegistry, testRepository, testDigest, testNamespace,
-			types.PassResult(types.CheckTypeSLSA, "ok"),
-			types.PassResult(types.CheckTypeVEX, "ok"),
-			nil,
-			sbomResult,
-			nil,
-			nil,
-			nil, nil, nil, nil,
-			nil, nil,
+			map[types.CheckType]*types.CheckResult{
+				types.CheckTypeSLSA: types.PassResult(types.CheckTypeSLSA, "ok"),
+				types.CheckTypeVEX:  types.PassResult(types.CheckTypeVEX, "ok"),
+				types.CheckTypeSBOM: sbomResult,
+			},
 		)
 
 		result := celengine.Evaluate(compiled, vars)
@@ -1337,14 +1327,11 @@ func TestEvaluateSBOMCVSSVariables(t *testing.T) {
 
 		vars := celengine.BuildVars(
 			testImageRef, testRegistry, testRepository, testDigest, testNamespace,
-			types.PassResult(types.CheckTypeSLSA, "ok"),
-			types.PassResult(types.CheckTypeVEX, "ok"),
-			nil,
-			types.PassResult(types.CheckTypeSBOM, "ok"),
-			nil,
-			nil,
-			nil, nil, nil, nil,
-			nil, nil,
+			map[types.CheckType]*types.CheckResult{
+				types.CheckTypeSLSA: types.PassResult(types.CheckTypeSLSA, "ok"),
+				types.CheckTypeVEX:  types.PassResult(types.CheckTypeVEX, "ok"),
+				types.CheckTypeSBOM: types.PassResult(types.CheckTypeSBOM, "ok"),
+			},
 		)
 
 		result := celengine.Evaluate(compiled, vars)
@@ -1359,12 +1346,7 @@ func TestEvaluateSCAIVariables(t *testing.T) {
 
 	celengine.ResetEnvironmentForTest()
 
-	tests := []struct {
-		name    string
-		require string
-		result  *types.CheckResult
-		pass    bool
-	}{
+	tests := []celVarTest{
 		{
 			name:    "scai.verified true",
 			require: "scai.verified == true",
@@ -1434,37 +1416,7 @@ func TestEvaluateSCAIVariables(t *testing.T) {
 		},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			rules := []celengine.Rule{{Require: test.require}}
-
-			compiled, err := celengine.Compile(rules)
-			if err != nil {
-				t.Fatalf("compile error: %v", err)
-			}
-
-			vars := celengine.BuildVars(
-				testImageRef, testRegistry, testRepository, testDigest, testNamespace,
-				types.PassResult(types.CheckTypeSLSA, "ok"),
-				types.PassResult(types.CheckTypeVEX, "ok"),
-				nil,
-				types.PassResult(types.CheckTypeSBOM, "ok"),
-				nil,
-				test.result,
-				nil, nil, nil, nil,
-				nil, nil,
-			)
-
-			result := celengine.Evaluate(compiled, vars)
-
-			if result.Passed != test.pass {
-				t.Errorf("expected passed=%v, got passed=%v: %s",
-					test.pass, result.Passed, result.Detail)
-			}
-		})
-	}
+	runCELVarTests(t, types.CheckTypeSCAI, tests)
 }
 
 var (
@@ -1525,12 +1477,7 @@ func TestEvaluateSourceVariables(t *testing.T) {
 
 	celengine.ResetEnvironmentForTest()
 
-	tests := []struct {
-		name    string
-		require string
-		result  *types.CheckResult
-		pass    bool
-	}{
+	tests := []celVarTest{
 		{
 			name:    "source.verified true",
 			require: "source.verified == true",
@@ -1600,37 +1547,7 @@ func TestEvaluateSourceVariables(t *testing.T) {
 		},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			rules := []celengine.Rule{{Require: test.require}}
-
-			compiled, err := celengine.Compile(rules)
-			if err != nil {
-				t.Fatalf("compile error: %v", err)
-			}
-
-			vars := celengine.BuildVars(
-				testImageRef, testRegistry, testRepository, testDigest, testNamespace,
-				types.PassResult(types.CheckTypeSLSA, "ok"),
-				types.PassResult(types.CheckTypeVEX, "ok"),
-				nil,
-				types.PassResult(types.CheckTypeSBOM, "ok"),
-				nil,
-				nil,
-				test.result, nil, nil, nil,
-				nil, nil,
-			)
-
-			result := celengine.Evaluate(compiled, vars)
-
-			if result.Passed != test.pass {
-				t.Errorf("expected passed=%v, got passed=%v: %s",
-					test.pass, result.Passed, result.Detail)
-			}
-		})
-	}
+	runCELVarTests(t, types.CheckTypeSource, tests)
 }
 
 func TestEvaluateBuildEnvVariables(t *testing.T) {
@@ -1638,12 +1555,7 @@ func TestEvaluateBuildEnvVariables(t *testing.T) {
 
 	celengine.ResetEnvironmentForTest()
 
-	tests := []struct {
-		name    string
-		require string
-		result  *types.CheckResult
-		pass    bool
-	}{
+	tests := []celVarTest{
 		{
 			name:    "buildenv.verified true",
 			require: "buildenv.verified == true",
@@ -1695,37 +1607,7 @@ func TestEvaluateBuildEnvVariables(t *testing.T) {
 		},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			rules := []celengine.Rule{{Require: test.require}}
-
-			compiled, err := celengine.Compile(rules)
-			if err != nil {
-				t.Fatalf("compile error: %v", err)
-			}
-
-			vars := celengine.BuildVars(
-				testImageRef, testRegistry, testRepository, testDigest, testNamespace,
-				types.PassResult(types.CheckTypeSLSA, "ok"),
-				types.PassResult(types.CheckTypeVEX, "ok"),
-				nil,
-				types.PassResult(types.CheckTypeSBOM, "ok"),
-				nil,
-				nil,
-				nil, test.result, nil, nil,
-				nil, nil,
-			)
-
-			result := celengine.Evaluate(compiled, vars)
-
-			if result.Passed != test.pass {
-				t.Errorf("expected passed=%v, got passed=%v: %s",
-					test.pass, result.Passed, result.Detail)
-			}
-		})
-	}
+	runCELVarTests(t, types.CheckTypeBuildEnv, tests)
 }
 
 func TestEvaluateVulnScanVariables(t *testing.T) {
@@ -1733,12 +1615,7 @@ func TestEvaluateVulnScanVariables(t *testing.T) {
 
 	celengine.ResetEnvironmentForTest()
 
-	tests := []struct {
-		name    string
-		require string
-		result  *types.CheckResult
-		pass    bool
-	}{
+	tests := []celVarTest{
 		{
 			name:    "vulnscan.verified true",
 			require: "vulnscan.verified == true",
@@ -1840,37 +1717,7 @@ func TestEvaluateVulnScanVariables(t *testing.T) {
 		},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			rules := []celengine.Rule{{Require: test.require}}
-
-			compiled, err := celengine.Compile(rules)
-			if err != nil {
-				t.Fatalf("compile error: %v", err)
-			}
-
-			vars := celengine.BuildVars(
-				testImageRef, testRegistry, testRepository, testDigest, testNamespace,
-				types.PassResult(types.CheckTypeSLSA, "ok"),
-				types.PassResult(types.CheckTypeVEX, "ok"),
-				nil,
-				types.PassResult(types.CheckTypeSBOM, "ok"),
-				nil,
-				nil,
-				nil, nil, test.result, nil,
-				nil, nil,
-			)
-
-			result := celengine.Evaluate(compiled, vars)
-
-			if result.Passed != test.pass {
-				t.Errorf("expected passed=%v, got passed=%v: %s",
-					test.pass, result.Passed, result.Detail)
-			}
-		})
-	}
+	runCELVarTests(t, types.CheckTypeVulnScan, tests)
 }
 
 func TestEvaluateTestResultVariables(t *testing.T) {
@@ -1878,12 +1725,7 @@ func TestEvaluateTestResultVariables(t *testing.T) {
 
 	celengine.ResetEnvironmentForTest()
 
-	tests := []struct {
-		name    string
-		require string
-		result  *types.CheckResult
-		pass    bool
-	}{
+	tests := []celVarTest{
 		{
 			name:    "testresult.verified true",
 			require: "testresult.verified == true",
@@ -1979,37 +1821,7 @@ func TestEvaluateTestResultVariables(t *testing.T) {
 		},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			rules := []celengine.Rule{{Require: test.require}}
-
-			compiled, err := celengine.Compile(rules)
-			if err != nil {
-				t.Fatalf("compile error: %v", err)
-			}
-
-			vars := celengine.BuildVars(
-				testImageRef, testRegistry, testRepository, testDigest, testNamespace,
-				types.PassResult(types.CheckTypeSLSA, "ok"),
-				types.PassResult(types.CheckTypeVEX, "ok"),
-				nil,
-				types.PassResult(types.CheckTypeSBOM, "ok"),
-				nil,
-				nil,
-				nil, nil, nil, test.result,
-				nil, nil,
-			)
-
-			result := celengine.Evaluate(compiled, vars)
-
-			if result.Passed != test.pass {
-				t.Errorf("expected passed=%v, got passed=%v: %s",
-					test.pass, result.Passed, result.Detail)
-			}
-		})
-	}
+	runCELVarTests(t, types.CheckTypeTestResult, tests)
 }
 
 func TestEvaluateReleaseVariables(t *testing.T) {
@@ -2017,12 +1829,7 @@ func TestEvaluateReleaseVariables(t *testing.T) {
 
 	celengine.ResetEnvironmentForTest()
 
-	tests := []struct {
-		name    string
-		require string
-		result  *types.CheckResult
-		pass    bool
-	}{
+	tests := []celVarTest{
 		{
 			name:    "release.verified true",
 			require: "release.verified == true",
@@ -2074,37 +1881,7 @@ func TestEvaluateReleaseVariables(t *testing.T) {
 		},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			rules := []celengine.Rule{{Require: test.require}}
-
-			compiled, err := celengine.Compile(rules)
-			if err != nil {
-				t.Fatalf("compile error: %v", err)
-			}
-
-			vars := celengine.BuildVars(
-				testImageRef, testRegistry, testRepository, testDigest, testNamespace,
-				types.PassResult(types.CheckTypeSLSA, "ok"),
-				types.PassResult(types.CheckTypeVEX, "ok"),
-				nil,
-				types.PassResult(types.CheckTypeSBOM, "ok"),
-				nil,
-				nil,
-				nil, nil, nil, nil,
-				test.result, nil,
-			)
-
-			result := celengine.Evaluate(compiled, vars)
-
-			if result.Passed != test.pass {
-				t.Errorf("expected passed=%v, got passed=%v: %s",
-					test.pass, result.Passed, result.Detail)
-			}
-		})
-	}
+	runCELVarTests(t, types.CheckTypeRelease, tests)
 }
 
 func TestEvaluateRuntimeTraceVariables(t *testing.T) {
@@ -2112,12 +1889,7 @@ func TestEvaluateRuntimeTraceVariables(t *testing.T) {
 
 	celengine.ResetEnvironmentForTest()
 
-	tests := []struct {
-		name    string
-		require string
-		result  *types.CheckResult
-		pass    bool
-	}{
+	tests := []celVarTest{
 		{
 			name:    "runtimetrace.verified true",
 			require: "runtimetrace.verified == true",
@@ -2196,35 +1968,5 @@ func TestEvaluateRuntimeTraceVariables(t *testing.T) {
 		},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			rules := []celengine.Rule{{Require: test.require}}
-
-			compiled, err := celengine.Compile(rules)
-			if err != nil {
-				t.Fatalf("compile error: %v", err)
-			}
-
-			vars := celengine.BuildVars(
-				testImageRef, testRegistry, testRepository, testDigest, testNamespace,
-				types.PassResult(types.CheckTypeSLSA, "ok"),
-				types.PassResult(types.CheckTypeVEX, "ok"),
-				nil,
-				types.PassResult(types.CheckTypeSBOM, "ok"),
-				nil,
-				nil,
-				nil, nil, nil, nil,
-				nil, test.result,
-			)
-
-			result := celengine.Evaluate(compiled, vars)
-
-			if result.Passed != test.pass {
-				t.Errorf("expected passed=%v, got passed=%v: %s",
-					test.pass, result.Passed, result.Detail)
-			}
-		})
-	}
+	runCELVarTests(t, types.CheckTypeRuntimeTrace, tests)
 }

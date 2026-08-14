@@ -28,7 +28,7 @@ EOF
     "trust": {
         "builders": [{"id": "https://github.com/actions/runner", "maxLevel": 3}],
         "verifiers": [{"id": "https://example.com/verifier", "keys": ["$TEST_DIR/keys/v.pub"]}],
-        "sources": ["github.com/myorg/*"],
+        "sources": ["https://github.com/myorg/*"],
         "buildTypes": ["https://actions.github.io/buildtypes/workflow/v1"]
     },
     "slsa": {
