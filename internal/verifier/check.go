@@ -987,7 +987,7 @@ func binAttestations( //nolint:cyclop // additional predicate type adds a branch
 			bins.source = append(bins.source, attestations[idx])
 		case attestation.PredicateBuildEnv:
 			bins.buildenv = append(bins.buildenv, attestations[idx])
-		case attestation.PredicateVulnScan:
+		case attestation.PredicateVulnScan, attestation.PredicateVulnScanV02:
 			bins.vulnscan = append(bins.vulnscan, attestations[idx])
 		case attestation.PredicateTestResult:
 			bins.testresult = append(bins.testresult, attestations[idx])

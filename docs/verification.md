@@ -226,8 +226,9 @@ plugin checks required and forbidden properties. See
 
 ### Vulnerability Scan
 
-Verifies [vulns v0.1](https://github.com/in-toto/attestation/blob/main/spec/predicates/vulns.md)
-attestations (predicate type `https://in-toto.io/attestation/vulns/v0.1`).
+Verifies [vulns](https://github.com/in-toto/attestation/blob/main/spec/predicates/vulns.md)
+attestations (predicate types `https://in-toto.io/attestation/vulns/v0.1`
+and `https://in-toto.io/attestation/vulns/v0.2`).
 Vulnerability scan attestations capture automated scanner results. The
 plugin enforces CVSS score and severity thresholds with an optional CVE
 ignore list. See [policy.md](policy.md#vulnerability-scan-verification) for
