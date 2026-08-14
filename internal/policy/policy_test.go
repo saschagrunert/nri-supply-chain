@@ -1786,7 +1786,7 @@ func TestValidateVSAMaxAgeNegative(t *testing.T) {
 
 	pol := policy.Policy{
 		Sections: policy.Sections{
-			VSA: &policy.VSAPolicy{MaxAge: "-1h"},
+			VSA: &policy.VSAPolicy{MaxAge: "-1h"}, //nolint:goconst // test input
 		},
 	}
 

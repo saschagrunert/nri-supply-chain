@@ -23,9 +23,10 @@ import (
 // MergeWithDefault creates a new policy by starting from a copy of the default
 // policy and overriding fields that are set in the namespace policy. Each
 // top-level section (Trust, Include, Exclude, SLSA, VEX, VSA, Signatures,
-// Notation, SBOM, SCAI, CEL, Rules) is replaced entirely if set in the namespace policy. The Inherits
-// field is cleared on the result. Inherited structs are shallow-copied to
-// prevent mutations from affecting the default.
+// Notation, SBOM, SCAI, Source, BuildEnv, VulnScan, TestResult, CEL, Rules) is
+// replaced entirely if set in the namespace policy. The Inherits field is
+// cleared on the result. Inherited structs are shallow-copied to prevent
+// mutations from affecting the default.
 func MergeWithDefault(namespace, defaultPol *Policy) *Policy {
 	merged := clonePolicy(defaultPol)
 
@@ -61,7 +62,7 @@ func clonePolicy(pol *Policy) *Policy {
 		Mode:        pol.Mode,
 		Include:     slices.Clone(pol.Include),
 		Exclude:     slices.Clone(pol.Exclude),
-		Sections:    cloneSections(pol.Sections),
+		Sections:    cloneSections(&pol.Sections),
 		CompiledCEL: pol.CompiledCEL, // compiled programs are read-only, safe to share
 	}
 
@@ -91,25 +92,26 @@ func ApplyRule(base *Policy, rule *ImageRule) *Policy {
 func cloneRules(rules []ImageRule) []ImageRule {
 	cloned := make([]ImageRule, len(rules))
 
-	for idx, rule := range rules {
+	for idx := range rules {
 		cloned[idx] = ImageRule{
-			Images:      slices.Clone(rule.Images),
-			Sections:    cloneSections(rule.Sections),
-			CompiledCEL: rule.CompiledCEL, // compiled programs are read-only, safe to share
+			Images:      slices.Clone(rules[idx].Images),
+			Sections:    cloneSections(&rules[idx].Sections),
+			CompiledCEL: rules[idx].CompiledCEL, // compiled programs are read-only, safe to share
 		}
 	}
 
 	return cloned
 }
 
-func cloneSections(src Sections) Sections {
+func cloneSections(src *Sections) Sections {
 	var dst Sections
-	applySections(&dst, src)
+	applySections(&dst, *src)
 
 	return dst
 }
 
-func applySections(dst *Sections, src Sections) {
+//nolint:cyclop // one branch per section type
+func applySections(dst *Sections, src Sections) { //nolint:gocritic // value param avoids nil checks
 	if src.Trust != nil {
 		dst.Trust = cloneTrust(src.Trust)
 	}
@@ -149,6 +151,23 @@ func applySections(dst *Sections, src Sections) {
 
 	if src.SCAI != nil {
 		dst.SCAI = cloneSCAI(src.SCAI)
+	}
+
+	if src.Source != nil {
+		s := *src.Source
+		dst.Source = &s
+	}
+
+	if src.BuildEnv != nil {
+		dst.BuildEnv = cloneBuildEnv(src.BuildEnv)
+	}
+
+	if src.VulnScan != nil {
+		dst.VulnScan = cloneVulnScan(src.VulnScan)
+	}
+
+	if src.TestResult != nil {
+		dst.TestResult = cloneTestResult(src.TestResult)
 	}
 }
 
@@ -249,6 +268,33 @@ func cloneSBOM(src *SBOMPolicy) *SBOMPolicy {
 
 		clone.CVSS = &cvss
 	}
+
+	return &clone
+}
+
+func cloneBuildEnv(src *BuildEnvPolicy) *BuildEnvPolicy {
+	clone := *src
+	clone.RequiredProperties = slices.Clone(clone.RequiredProperties)
+	clone.ForbiddenProperties = slices.Clone(clone.ForbiddenProperties)
+
+	return &clone
+}
+
+func cloneVulnScan(src *VulnScanPolicy) *VulnScanPolicy {
+	clone := *src
+	clone.IgnoreCVEs = slices.Clone(clone.IgnoreCVEs)
+
+	if clone.MaxScore != nil {
+		score := *clone.MaxScore
+		clone.MaxScore = &score
+	}
+
+	return &clone
+}
+
+func cloneTestResult(src *TestResultPolicy) *TestResultPolicy {
+	clone := *src
+	clone.RequiredSuites = slices.Clone(clone.RequiredSuites)
 
 	return &clone
 }

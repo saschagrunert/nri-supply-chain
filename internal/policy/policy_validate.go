@@ -98,16 +98,17 @@ func (p *Policy) ValidateEnforce() error {
 }
 
 func (p *Policy) validateRulesEnforce() error {
-	for idx, rule := range p.Rules {
-		if rule.Notation != nil && rule.Notation.VerificationLevel == notationLevelSkip {
+	for idx := range p.Rules {
+		if p.Rules[idx].Notation != nil &&
+			p.Rules[idx].Notation.VerificationLevel == notationLevelSkip {
 			return fmt.Errorf("rules[%d]: %w", idx, ErrNotationSkipInEnforceMode)
 		}
 
-		if rule.Trust == nil {
+		if p.Rules[idx].Trust == nil {
 			continue
 		}
 
-		if len(rule.Trust.Issuers) > 0 && len(rule.Trust.SANPatterns) == 0 {
+		if len(p.Rules[idx].Trust.Issuers) > 0 && len(p.Rules[idx].Trust.SANPatterns) == 0 {
 			return fmt.Errorf("rules[%d]: %w", idx, ErrSANPatternsRequired)
 		}
 	}
@@ -138,9 +139,9 @@ func (p *Policy) ValidateRuntime() error {
 
 	errs = append(errs, validateNotationCertFiles("", p.Notation)...)
 
-	for rIdx, rule := range p.Rules {
-		if rule.Trust != nil {
-			for idx, verif := range rule.Trust.Verifiers {
+	for rIdx := range p.Rules {
+		if p.Rules[rIdx].Trust != nil {
+			for idx, verif := range p.Rules[rIdx].Trust.Verifiers {
 				for kidx, key := range verif.Keys {
 					prefix := fmt.Sprintf("rules[%d].trust.verifiers[%d]", rIdx, idx)
 
@@ -153,7 +154,7 @@ func (p *Policy) ValidateRuntime() error {
 		}
 
 		errs = append(errs, validateNotationCertFiles(
-			fmt.Sprintf("rules[%d].", rIdx), rule.Notation,
+			fmt.Sprintf("rules[%d].", rIdx), p.Rules[rIdx].Notation,
 		)...)
 	}
 
@@ -192,6 +193,29 @@ func (p *Policy) validateSections() []error {
 	appendErr(p.validateNotation())
 	appendErr(p.validateSBOM())
 	appendErr(p.validateSCAI())
+
+	sourceErr := p.validateSource()
+	if sourceErr != nil {
+		errs = append(errs, sourceErr)
+	} else {
+		p.resolveSourceDuration()
+	}
+
+	appendErr(p.validateBuildEnv())
+
+	vulnErr := p.validateVulnScan()
+	if vulnErr != nil {
+		errs = append(errs, vulnErr)
+	} else {
+		p.resolveVulnScanDuration()
+	}
+
+	testErr := p.validateTestResult()
+	if testErr != nil {
+		errs = append(errs, testErr)
+	} else {
+		p.resolveTestResultDuration()
+	}
 
 	return errs
 }
@@ -560,6 +584,7 @@ func (p *Policy) validateExclude() error {
 	return validateGlobPatterns("exclude", p.Exclude)
 }
 
+//nolint:dupl // validation functions share structure but differ in field names
 func (p *Policy) validateSLSA() error {
 	if p.SLSA == nil {
 		return nil
@@ -626,6 +651,7 @@ func (p *Policy) validateVEX() error {
 	return errors.Join(errs...)
 }
 
+//nolint:dupl // validation functions share structure but differ in field names
 func (p *Policy) validateVSA() error {
 	if p.VSA == nil {
 		return nil
@@ -1056,6 +1082,7 @@ func validateRuleSections(rulePol *Policy, idx int) []error {
 		{"notation", rulePol.validateNotation},
 		{"sbom", rulePol.validateSBOM},
 		{"scai", rulePol.validateSCAI},
+		{"buildEnv", rulePol.validateBuildEnv},
 	} {
 		err := validator.fn()
 		if err != nil {
@@ -1076,9 +1103,28 @@ func validateRuleSections(rulePol *Policy, idx int) []error {
 	if err != nil {
 		errs = append(errs, fmt.Errorf("rules[%d]: %w", idx, err))
 	} else {
-		// resolveVSADuration mutates rulePol.VSA.MaxAgeDuration, which
-		// is the same pointer as the rule's VSA, so no copy-back needed.
 		rulePol.resolveVSADuration()
+	}
+
+	sourceErr := rulePol.validateSource()
+	if sourceErr != nil {
+		errs = append(errs, fmt.Errorf("rules[%d]: %w", idx, sourceErr))
+	} else {
+		rulePol.resolveSourceDuration()
+	}
+
+	vulnErr := rulePol.validateVulnScan()
+	if vulnErr != nil {
+		errs = append(errs, fmt.Errorf("rules[%d]: %w", idx, vulnErr))
+	} else {
+		rulePol.resolveVulnScanDuration()
+	}
+
+	testErr := rulePol.validateTestResult()
+	if testErr != nil {
+		errs = append(errs, fmt.Errorf("rules[%d]: %w", idx, testErr))
+	} else {
+		rulePol.resolveTestResultDuration()
 	}
 
 	return errs
@@ -1166,6 +1212,232 @@ func validateSCAINoOverlap(scai *SCAIPolicy) []error {
 	}
 
 	return errs
+}
+
+//nolint:dupl // validation functions share structure but differ in field names
+func (p *Policy) validateSource() error {
+	if p.Source == nil {
+		return nil
+	}
+
+	var errs []error
+
+	if p.Source.MissingPolicy != "" {
+		err := types.ValidateAction(
+			"source.missingPolicy", p.Source.MissingPolicy,
+		)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("validating source policy: %w", err))
+		}
+	}
+
+	if p.Source.MinimumLevel < 0 || p.Source.MinimumLevel > maxSLSALevel {
+		errs = append(errs, fmt.Errorf(
+			"%w: got %d", ErrInvalidSourceLevel, p.Source.MinimumLevel,
+		))
+	}
+
+	if p.Source.MaxAge != "" {
+		maxAge, parseErr := time.ParseDuration(p.Source.MaxAge)
+		if parseErr != nil {
+			errs = append(errs, fmt.Errorf(
+				"invalid source.maxAge %q: %w", p.Source.MaxAge, parseErr,
+			))
+		} else if maxAge <= 0 {
+			errs = append(
+				errs,
+				fmt.Errorf("%w, got %q", ErrSourceMaxAgeNotPositive, p.Source.MaxAge),
+			)
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+func (p *Policy) resolveSourceDuration() {
+	if p.Source == nil || p.Source.MaxAge == "" {
+		return
+	}
+
+	maxAge, err := time.ParseDuration(p.Source.MaxAge)
+	if err != nil {
+		return
+	}
+
+	p.Source.MaxAgeDuration = maxAge
+}
+
+func (p *Policy) validateBuildEnv() error {
+	if p.BuildEnv == nil {
+		return nil
+	}
+
+	var errs []error
+
+	if p.BuildEnv.MissingPolicy != "" {
+		err := types.ValidateAction(
+			"buildEnv.missingPolicy", p.BuildEnv.MissingPolicy,
+		)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("validating buildEnv policy: %w", err))
+		}
+	}
+
+	err := validateNonEmpty("buildEnv.requiredProperties", p.BuildEnv.RequiredProperties)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	err = validateNonEmpty("buildEnv.forbiddenProperties", p.BuildEnv.ForbiddenProperties)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	errs = append(errs, validateBuildEnvNoOverlap(p.BuildEnv)...)
+
+	return errors.Join(errs...)
+}
+
+func validateBuildEnvNoOverlap(buildEnv *BuildEnvPolicy) []error {
+	if len(buildEnv.RequiredProperties) == 0 || len(buildEnv.ForbiddenProperties) == 0 {
+		return nil
+	}
+
+	forbidden := make(map[string]bool, len(buildEnv.ForbiddenProperties))
+	for _, prop := range buildEnv.ForbiddenProperties {
+		forbidden[strings.ToLower(prop)] = true
+	}
+
+	var errs []error
+
+	for _, prop := range buildEnv.RequiredProperties {
+		if forbidden[strings.ToLower(prop)] {
+			errs = append(errs, fmt.Errorf(
+				"%w: %q", ErrBuildEnvOverlappingProperties, prop,
+			))
+		}
+	}
+
+	return errs
+}
+
+func (p *Policy) validateVulnScan() error { //nolint:cyclop // sequential validation steps
+	if p.VulnScan == nil {
+		return nil
+	}
+
+	var errs []error
+
+	if p.VulnScan.MissingPolicy != "" {
+		err := types.ValidateAction(
+			"vulnScan.missingPolicy", p.VulnScan.MissingPolicy,
+		)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("validating vulnScan policy: %w", err))
+		}
+	}
+
+	if p.VulnScan.MaxScore != nil {
+		if *p.VulnScan.MaxScore < 0 || *p.VulnScan.MaxScore > cvssMaxScoreUpper {
+			errs = append(errs, ErrVulnScanMaxScoreRange)
+		}
+	}
+
+	if p.VulnScan.MinSeverity != "" {
+		switch strings.ToLower(p.VulnScan.MinSeverity) {
+		case "low", "medium", "high", "critical":
+		default:
+			errs = append(errs, ErrVulnScanMinSeverityInvalid)
+		}
+	}
+
+	err := validateNonEmpty("vulnScan.ignoreCVEs", p.VulnScan.IgnoreCVEs)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	if p.VulnScan.MaxAge != "" {
+		maxAge, parseErr := time.ParseDuration(p.VulnScan.MaxAge)
+		if parseErr != nil {
+			errs = append(
+				errs,
+				fmt.Errorf("invalid vulnScan.maxAge %q: %w", p.VulnScan.MaxAge, parseErr),
+			)
+		} else if maxAge <= 0 {
+			errs = append(
+				errs,
+				fmt.Errorf("%w, got %q", ErrVulnScanMaxAgeNotPositive, p.VulnScan.MaxAge),
+			)
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+func (p *Policy) resolveVulnScanDuration() {
+	if p.VulnScan == nil || p.VulnScan.MaxAge == "" {
+		return
+	}
+
+	maxAge, err := time.ParseDuration(p.VulnScan.MaxAge)
+	if err != nil {
+		return
+	}
+
+	p.VulnScan.MaxAgeDuration = maxAge
+}
+
+//nolint:dupl // validation functions share structure but differ in field names
+func (p *Policy) validateTestResult() error {
+	if p.TestResult == nil {
+		return nil
+	}
+
+	var errs []error
+
+	if p.TestResult.MissingPolicy != "" {
+		err := types.ValidateAction(
+			"testResult.missingPolicy", p.TestResult.MissingPolicy,
+		)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("validating testResult policy: %w", err))
+		}
+	}
+
+	err := validateNonEmpty("testResult.requiredSuites", p.TestResult.RequiredSuites)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	if p.TestResult.MaxAge != "" {
+		maxAge, parseErr := time.ParseDuration(p.TestResult.MaxAge)
+		if parseErr != nil {
+			errs = append(
+				errs,
+				fmt.Errorf("invalid testResult.maxAge %q: %w", p.TestResult.MaxAge, parseErr),
+			)
+		} else if maxAge <= 0 {
+			errs = append(
+				errs,
+				fmt.Errorf("%w, got %q", ErrTestResultMaxAgeNotPositive, p.TestResult.MaxAge),
+			)
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+func (p *Policy) resolveTestResultDuration() {
+	if p.TestResult == nil || p.TestResult.MaxAge == "" {
+		return
+	}
+
+	maxAge, err := time.ParseDuration(p.TestResult.MaxAge)
+	if err != nil {
+		return
+	}
+
+	p.TestResult.MaxAgeDuration = maxAge
 }
 
 func (p *Policy) validateAndCompileCEL() error {

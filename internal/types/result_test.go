@@ -22,7 +22,10 @@ import (
 
 var errTest = types.ErrInvalidAction
 
-const testDetail = "verified"
+const (
+	testDetail = "verified"
+	testAB     = "a,b"
+)
 
 func TestCloneDeepCopiesMetadata(t *testing.T) {
 	t.Parallel()
@@ -163,6 +166,84 @@ func TestCheckResultConstructors(t *testing.T) {
 
 			if !test.wantErr && result.Err != nil {
 				t.Errorf("expected nil Err, got %v", result.Err)
+			}
+		})
+	}
+}
+
+func TestMergeCommaSeparated(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		existing string
+		incoming string
+		want     string
+	}{
+		{
+			name:     "both empty",
+			existing: "",
+			incoming: "",
+			want:     "",
+		},
+		{
+			name:     "existing empty",
+			existing: "",
+			incoming: testAB,
+			want:     testAB,
+		},
+		{
+			name:     "incoming empty",
+			existing: testAB,
+			incoming: "",
+			want:     testAB,
+		},
+		{
+			name:     "no overlap",
+			existing: testAB,
+			incoming: "c,d",
+			want:     "a,b,c,d",
+		},
+		{
+			name:     "full overlap",
+			existing: testAB,
+			incoming: testAB,
+			want:     testAB,
+		},
+		{
+			name:     "partial overlap",
+			existing: testAB,
+			incoming: "b,c",
+			want:     "a,b,c",
+		},
+		{
+			name:     "case insensitive dedup",
+			existing: "Foo,Bar",
+			incoming: "foo,baz",
+			want:     "Foo,Bar,baz",
+		},
+		{
+			name:     "single items",
+			existing: "x",
+			incoming: "x",
+			want:     "x",
+		},
+		{
+			name:     "single items no overlap",
+			existing: "x",
+			incoming: "y",
+			want:     "x,y",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := types.MergeCommaSeparated(test.existing, test.incoming)
+			if got != test.want {
+				t.Errorf("MergeCommaSeparated(%q, %q) = %q, want %q",
+					test.existing, test.incoming, got, test.want)
 			}
 		})
 	}

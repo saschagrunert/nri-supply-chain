@@ -70,6 +70,7 @@ func BenchmarkEvaluate(b *testing.B) {
 		types.PassResult(types.CheckTypeSBOM, "ok"),
 		nil,
 		nil,
+		nil, nil, nil, nil,
 	)
 
 	b.ResetTimer()
@@ -104,6 +105,7 @@ func BenchmarkEvaluateWithMatch(b *testing.B) {
 		types.PassResult(types.CheckTypeSBOM, "ok"),
 		nil,
 		nil,
+		nil, nil, nil, nil,
 	)
 
 	b.ResetTimer()

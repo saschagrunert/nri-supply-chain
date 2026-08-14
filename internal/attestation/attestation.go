@@ -63,6 +63,18 @@ const (
 	// PredicateSCAI is the in-toto predicate type for SCAI attribute reports.
 	PredicateSCAI = "https://in-toto.io/attestation/scai/v0.3"
 
+	// PredicateSLSASourceV1 is the in-toto predicate type for SLSA source track v1.
+	PredicateSLSASourceV1 = "https://slsa.dev/source/v1"
+
+	// PredicateBuildEnv is the in-toto predicate type for build environment attestations.
+	PredicateBuildEnv = "https://in-toto.io/attestation/build-env/v1"
+
+	// PredicateVulnScan is the in-toto predicate type for vulnerability scan attestations.
+	PredicateVulnScan = "https://in-toto.io/attestation/vulns/v0.1"
+
+	// PredicateTestResult is the in-toto predicate type for test result attestations.
+	PredicateTestResult = "https://in-toto.io/attestation/test-result/v0.1"
+
 	// PredicateSLSAProvenanceV02 is the in-toto predicate type for SLSA provenance v0.2.
 	PredicateSLSAProvenanceV02 = "https://slsa.dev/provenance/v0.2"
 

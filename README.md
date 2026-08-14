@@ -9,7 +9,8 @@
 An [NRI](https://github.com/containerd/nri) plugin for supply chain attestation
 verification at the container runtime level. It intercepts container creation
 events on [CRI-O](https://cri-o.io) or [containerd](https://containerd.io) and
-verifies SLSA provenance, VEX, VSA, Notation signatures, SBOM, SCAI
+verifies SLSA provenance, VEX, VSA, Notation signatures, SBOM, SCAI,
+Source Track, Build Environment, Vulnerability Scan, and Test Result
 attestations, and CEL policy expressions before a container is allowed to run.
 
 Runtime-level enforcement cannot be bypassed by misconfigured admission
@@ -87,6 +88,10 @@ For a detailed introduction, see the [CNCF blog post](https://www.cncf.io/blog/2
    NOTATION   pass     no Notation signature found for image ghcr.io/saschagrunert/nri-supply-chain:0.3.0
    SBOM       pass     SBOM verification passed
    SCAI       pass     no SCAI attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.3.0
+   SOURCE     pass     no source attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.3.0
+   BUILDENV   pass     no build environment attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.3.0
+   VULNSCAN   pass     no vulnerability scan attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.3.0
+   TESTRESULT pass     no test result attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.3.0
    ```
 
    Use `--output json` for machine-readable output:
@@ -127,6 +132,30 @@ For a detailed introduction, see the [CNCF blog post](https://www.cncf.io/blog/2
          "passed": true,
          "status": "pass",
          "detail": "no SCAI attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.3.0"
+       },
+       {
+         "type": "source",
+         "passed": true,
+         "status": "pass",
+         "detail": "no source attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.3.0"
+       },
+       {
+         "type": "buildenv",
+         "passed": true,
+         "status": "pass",
+         "detail": "no build environment attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.3.0"
+       },
+       {
+         "type": "vulnscan",
+         "passed": true,
+         "status": "pass",
+         "detail": "no vulnerability scan attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.3.0"
+       },
+       {
+         "type": "testresult",
+         "passed": true,
+         "status": "pass",
+         "detail": "no test result attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.3.0"
        }
      ]
    }
@@ -218,7 +247,7 @@ flowchart TD
     Cache{"Cache hit?"}
     Fetch["Fetch attestations\n(OCI Referrers API +\ncosign tag fallback)"]
     VSA{"Trusted VSA?"}
-    Parallel["SLSA + VEX + Notation + SBOM + SCAI\n(parallel)"]
+    Parallel["SLSA + VEX + Notation + SBOM + SCAI\n+ Source + BuildEnv + VulnScan\n+ TestResult (parallel)"]
     CEL["CEL policy evaluation"]
     Enforce{"Enforce / Warn"}
     Allow["Allow container"]
@@ -260,8 +289,9 @@ restarted, avoiding a cold-cache fetch penalty.
 
 ## Verification
 
-The plugin verifies SLSA provenance, VEX, VSA, Notation, SBOM, and SCAI
-attestations with optional CEL policy expressions. It extracts
+The plugin verifies SLSA provenance, VEX, VSA, Notation, SBOM, SCAI, Source
+Track, Build Environment, Vulnerability Scan, and Test Result attestations
+with optional CEL policy expressions. It extracts
 image references and digests from CRI-O or containerd NRI annotations,
 resolves missing digests via registry HEAD requests, and applies per-namespace
 policies. VSA from a trusted verifier can short-circuit all other checks.
@@ -287,7 +317,8 @@ See [docs/deployment.md](docs/deployment.md) for all deployment options
 example configurations (gradual rollout, strict production, VSA-accelerated).
 
 See [`deploy/examples/policies/`](deploy/examples/policies/) for ready-to-use
-policy files covering keyless, key-based, Notation, SBOM, SCAI, VEX-strict,
+policy files covering keyless, key-based, Notation, SBOM, SCAI, Source Track,
+Build Environment, Vulnerability Scan, Test Result, VEX-strict,
 VSA-accelerated, CEL, and other scenarios.
 
 ## Operations

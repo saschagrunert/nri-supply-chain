@@ -237,7 +237,11 @@ func allMissingPoliciesAllow(pol *policy.Policy) bool {
 		pol.VSAMissingPolicy() == types.ActionAllow &&
 		pol.NotationMissingPolicy() == types.ActionAllow &&
 		pol.SBOMMissingPolicy() == types.ActionAllow &&
-		pol.SCAIMissingPolicy() == types.ActionAllow
+		pol.SCAIMissingPolicy() == types.ActionAllow &&
+		pol.SourceMissingPolicy() == types.ActionAllow &&
+		pol.BuildEnvMissingPolicy() == types.ActionAllow &&
+		pol.VulnScanMissingPolicy() == types.ActionAllow &&
+		pol.TestResultMissingPolicy() == types.ActionAllow
 }
 
 // WarnEnforceDefaults logs warnings when enforce mode is used with
@@ -293,6 +297,7 @@ func warnPermissiveFetchPolicy(cfg *config.Config) {
 	}
 }
 
+//nolint:funlen // one entry per check type
 func warnPermissiveMissingPolicies(label string, pol *policy.Policy) {
 	checks := []struct {
 		name, artifact, logKey, setting string
@@ -322,6 +327,34 @@ func warnPermissiveMissingPolicies(label string, pol *policy.Policy) {
 		{
 			"SCAI", "SCAI attestations", "scai_missing_policy", "scai.missingPolicy",
 			pol.SCAI != nil, pol.SCAIMissingPolicy(),
+		},
+		{
+			"Source", "source attestations", "source_missing_policy", "source.missingPolicy",
+			pol.Source != nil, pol.SourceMissingPolicy(),
+		},
+		{
+			"BuildEnv",
+			"build environment attestations",
+			"buildenv_missing_policy",
+			"buildEnv.missingPolicy",
+			pol.BuildEnv != nil,
+			pol.BuildEnvMissingPolicy(),
+		},
+		{
+			"VulnScan",
+			"vulnerability scan attestations",
+			"vulnscan_missing_policy",
+			"vulnScan.missingPolicy",
+			pol.VulnScan != nil,
+			pol.VulnScanMissingPolicy(),
+		},
+		{
+			"TestResult",
+			"test result attestations",
+			"testresult_missing_policy",
+			"testResult.missingPolicy",
+			pol.TestResult != nil,
+			pol.TestResultMissingPolicy(),
 		},
 	}
 

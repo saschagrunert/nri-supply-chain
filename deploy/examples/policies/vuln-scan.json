@@ -1,0 +1,15 @@
+{
+  "vulnScan": {
+    "missingPolicy": "deny",
+    "maxScore": 7.0,
+    "minSeverity": "critical",
+    "ignoreCVEs": ["CVE-2024-0001"],
+    "maxAge": "24h"
+  },
+  "slsa": {
+    "missingPolicy": "allow"
+  },
+  "vex": {
+    "missingPolicy": "allow"
+  }
+}

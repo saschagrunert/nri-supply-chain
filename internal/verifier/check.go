@@ -26,6 +26,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
+	"github.com/saschagrunert/nri-supply-chain/internal/buildenv"
 	celengine "github.com/saschagrunert/nri-supply-chain/internal/cel"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
@@ -34,9 +35,12 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/sbom"
 	"github.com/saschagrunert/nri-supply-chain/internal/scai"
 	"github.com/saschagrunert/nri-supply-chain/internal/slsa"
+	"github.com/saschagrunert/nri-supply-chain/internal/source"
+	"github.com/saschagrunert/nri-supply-chain/internal/testresult"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 	"github.com/saschagrunert/nri-supply-chain/internal/vex"
 	"github.com/saschagrunert/nri-supply-chain/internal/vsa"
+	"github.com/saschagrunert/nri-supply-chain/internal/vulnscan"
 )
 
 func applyEnforcement(
@@ -156,7 +160,7 @@ func registryHost(parsed name.Reference, parseErr error, imageRef string) string
 	return parsed.Context().RegistryStr()
 }
 
-func runChecksWithoutFetcher(
+func runChecksWithoutFetcher( //nolint:funlen // additional check types add entries
 	pol *policy.Policy, met *metrics.Metrics, imageRef string,
 ) *types.Result {
 	detail := "no attestation fetcher configured for image " + imageRef
@@ -198,6 +202,22 @@ func runChecksWithoutFetcher(
 			checkType     types.CheckType
 			missingPolicy types.Action
 		}{types.CheckTypeSCAI, pol.SCAIMissingPolicy()},
+		struct {
+			checkType     types.CheckType
+			missingPolicy types.Action
+		}{types.CheckTypeSource, pol.SourceMissingPolicy()},
+		struct {
+			checkType     types.CheckType
+			missingPolicy types.Action
+		}{types.CheckTypeBuildEnv, pol.BuildEnvMissingPolicy()},
+		struct {
+			checkType     types.CheckType
+			missingPolicy types.Action
+		}{types.CheckTypeVulnScan, pol.VulnScanMissingPolicy()},
+		struct {
+			checkType     types.CheckType
+			missingPolicy types.Action
+		}{types.CheckTypeTestResult, pol.TestResultMissingPolicy()},
 	)
 
 	results := make([]*types.CheckResult, 0, len(missingChecks))
@@ -459,6 +479,18 @@ func runParallelChecks(
 		{types.CheckTypeSCAI, func() *types.CheckResult {
 			return runSCAICheck(ctx, bins.scai, pol, met, imageRef, digest)
 		}},
+		{types.CheckTypeSource, func() *types.CheckResult {
+			return runSourceCheck(ctx, bins.source, pol, met, imageRef, digest)
+		}},
+		{types.CheckTypeBuildEnv, func() *types.CheckResult {
+			return runBuildEnvCheck(ctx, bins.buildenv, pol, met, imageRef, digest)
+		}},
+		{types.CheckTypeVulnScan, func() *types.CheckResult {
+			return runVulnScanCheck(ctx, bins.vulnscan, pol, met, imageRef, digest)
+		}},
+		{types.CheckTypeTestResult, func() *types.CheckResult {
+			return runTestResultCheck(ctx, bins.testresult, pol, met, imageRef, digest)
+		}},
 	}
 
 	results := make([]*types.CheckResult, len(checks))
@@ -683,7 +715,99 @@ func runNotationCheck(
 	)
 }
 
-func runCELCheck(
+func runSourceCheck(
+	ctx context.Context,
+	sourceAtts []attestation.VerifiedAttestation,
+	pol *policy.Policy, met *metrics.Metrics,
+	imageRef, digest string,
+) *types.CheckResult {
+	runner := &checkRunner{
+		checkType:     types.CheckTypeSource,
+		label:         "Source",
+		missingPolicy: pol.SourceMissingPolicy(),
+		missingLog:    "No source attestation found",
+		missingReason: reasonMissingAttestation,
+		missingDetail: "no source attestation found for image ",
+	}
+
+	return runner.run(
+		ctx, met, imageRef, len(sourceAtts) > 0,
+		func() (*types.CheckResult, error) {
+			return source.VerifyMultiple(ctx, extractPayloads(sourceAtts), pol, digest)
+		},
+	)
+}
+
+func runBuildEnvCheck(
+	ctx context.Context,
+	buildenvAtts []attestation.VerifiedAttestation,
+	pol *policy.Policy, met *metrics.Metrics,
+	imageRef, digest string,
+) *types.CheckResult {
+	runner := &checkRunner{
+		checkType:     types.CheckTypeBuildEnv,
+		label:         "BuildEnv",
+		missingPolicy: pol.BuildEnvMissingPolicy(),
+		missingLog:    "No build environment attestation found",
+		missingReason: reasonMissingAttestation,
+		missingDetail: "no build environment attestation found for image ",
+	}
+
+	return runner.run(
+		ctx, met, imageRef, len(buildenvAtts) > 0,
+		func() (*types.CheckResult, error) {
+			return buildenv.VerifyMultiple(ctx, extractPayloads(buildenvAtts), pol, digest)
+		},
+	)
+}
+
+func runVulnScanCheck(
+	ctx context.Context,
+	vulnscanAtts []attestation.VerifiedAttestation,
+	pol *policy.Policy, met *metrics.Metrics,
+	imageRef, digest string,
+) *types.CheckResult {
+	runner := &checkRunner{
+		checkType:     types.CheckTypeVulnScan,
+		label:         "VulnScan",
+		missingPolicy: pol.VulnScanMissingPolicy(),
+		missingLog:    "No vulnerability scan attestation found",
+		missingReason: reasonMissingAttestation,
+		missingDetail: "no vulnerability scan attestation found for image ",
+	}
+
+	return runner.run(
+		ctx, met, imageRef, len(vulnscanAtts) > 0,
+		func() (*types.CheckResult, error) {
+			return vulnscan.VerifyMultiple(ctx, extractPayloads(vulnscanAtts), pol, digest)
+		},
+	)
+}
+
+func runTestResultCheck(
+	ctx context.Context,
+	testresultAtts []attestation.VerifiedAttestation,
+	pol *policy.Policy, met *metrics.Metrics,
+	imageRef, digest string,
+) *types.CheckResult {
+	runner := &checkRunner{
+		checkType:     types.CheckTypeTestResult,
+		label:         "TestResult",
+		missingPolicy: pol.TestResultMissingPolicy(),
+		missingLog:    "No test result attestation found",
+		missingReason: reasonMissingAttestation,
+		missingDetail: "no test result attestation found for image ",
+	}
+
+	return runner.run(
+		ctx, met, imageRef, len(testresultAtts) > 0,
+		func() (*types.CheckResult, error) {
+			return testresult.VerifyMultiple(ctx, extractPayloads(testresultAtts), pol, digest)
+		},
+	)
+}
+
+func runCELCheck( //nolint:cyclop // additional check type adds a branch
 	pol *policy.Policy, imageRef, digest, namespace string,
 	parsedRef name.Reference, result *types.Result,
 ) *types.CheckResult {
@@ -693,7 +817,12 @@ func runCELCheck(
 
 	registry, repository := extractRegistryRepo(parsedRef, imageRef)
 
-	var slsaResult, vexResult, vsaResult, sbomResult, notationResult, scaiResult *types.CheckResult
+	var (
+		slsaResult, vexResult, vsaResult, sbomResult *types.CheckResult
+		notationResult, scaiResult                   *types.CheckResult
+		sourceResult, buildenvResult                 *types.CheckResult
+		vulnscanResult, testresultResult             *types.CheckResult
+	)
 
 	for idx := range result.CheckResults {
 		switch result.CheckResults[idx].Type {
@@ -709,6 +838,14 @@ func runCELCheck(
 			notationResult = &result.CheckResults[idx]
 		case types.CheckTypeSCAI:
 			scaiResult = &result.CheckResults[idx]
+		case types.CheckTypeSource:
+			sourceResult = &result.CheckResults[idx]
+		case types.CheckTypeBuildEnv:
+			buildenvResult = &result.CheckResults[idx]
+		case types.CheckTypeVulnScan:
+			vulnscanResult = &result.CheckResults[idx]
+		case types.CheckTypeTestResult:
+			testresultResult = &result.CheckResults[idx]
 		case types.CheckTypeFetch, types.CheckTypePolicy,
 			types.CheckTypeCEL:
 		}
@@ -717,6 +854,7 @@ func runCELCheck(
 	vars := celengine.BuildVars(
 		imageRef, registry, repository, digest, namespace,
 		slsaResult, vexResult, vsaResult, sbomResult, notationResult, scaiResult,
+		sourceResult, buildenvResult, vulnscanResult, testresultResult,
 	)
 
 	return celengine.Evaluate(pol.CompiledCEL, vars)
@@ -805,12 +943,16 @@ func appendReason(result *types.Result, detail string) {
 }
 
 type attestationBins struct {
-	vsa      []attestation.VerifiedAttestation
-	slsa     []attestation.VerifiedAttestation
-	vex      []attestation.VerifiedAttestation
-	notation []attestation.VerifiedAttestation
-	sbom     []attestation.VerifiedAttestation
-	scai     []attestation.VerifiedAttestation
+	vsa        []attestation.VerifiedAttestation
+	slsa       []attestation.VerifiedAttestation
+	vex        []attestation.VerifiedAttestation
+	notation   []attestation.VerifiedAttestation
+	sbom       []attestation.VerifiedAttestation
+	scai       []attestation.VerifiedAttestation
+	source     []attestation.VerifiedAttestation
+	buildenv   []attestation.VerifiedAttestation
+	vulnscan   []attestation.VerifiedAttestation
+	testresult []attestation.VerifiedAttestation
 }
 
 func binAttestations( //nolint:cyclop // additional predicate type adds a branch
@@ -841,6 +983,14 @@ func binAttestations( //nolint:cyclop // additional predicate type adds a branch
 			bins.sbom = append(bins.sbom, attestations[idx])
 		case attestation.PredicateSCAI:
 			bins.scai = append(bins.scai, attestations[idx])
+		case attestation.PredicateSLSASourceV1:
+			bins.source = append(bins.source, attestations[idx])
+		case attestation.PredicateBuildEnv:
+			bins.buildenv = append(bins.buildenv, attestations[idx])
+		case attestation.PredicateVulnScan:
+			bins.vulnscan = append(bins.vulnscan, attestations[idx])
+		case attestation.PredicateTestResult:
+			bins.testresult = append(bins.testresult, attestations[idx])
 		case attestation.PredicateCosignSignature:
 			slog.DebugContext(ctx,
 				"Skipping bare cosign signature attestation",
