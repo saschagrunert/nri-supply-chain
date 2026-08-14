@@ -122,19 +122,10 @@ func New(
 	fetchTimeout, digestResolveTimeout time.Duration,
 	cache *registry.TransportCache,
 ) *Plugin {
-	plug := &Plugin{
-		verifier:             v,
-		metrics:              met,
-		configPath:           configPath,
-		connected:            atomic.Bool{},
-		digestResolver:       nil,
-		fetchTimeout:         atomic.Int64{},
-		digestResolveTimeout: atomic.Int64{},
-		prewarmDone:          nil,
-		prewarmMu:            sync.Mutex{},
-		prewarmCancel:        nil,
-		transportCache:       atomic.Pointer[registry.TransportCache]{},
-		containerTimes:       sync.Map{},
+	plug := &Plugin{ //nolint:exhaustruct // zero-value fields are intentional
+		verifier:   v,
+		metrics:    met,
+		configPath: configPath,
 	}
 
 	plug.fetchTimeout.Store(int64(fetchTimeout))

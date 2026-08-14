@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/buildenv"
@@ -143,7 +144,7 @@ func runVSAAndParallelChecks(
 		prependVSAWarning(result, pol, "no VSA attestation found for image "+imageRef)
 	}
 
-	celCheck := runCELCheck(pol, imageRef, digest, namespace, parsedRef, result)
+	celCheck := runCELCheck(pol, met, imageRef, digest, namespace, parsedRef, result)
 	if celCheck != nil {
 		result.CheckResults = append(result.CheckResults, *celCheck)
 		applyCheckResult(result, celCheck)
@@ -160,7 +161,12 @@ func registryHost(parsed name.Reference, parseErr error, imageRef string) string
 	return parsed.Context().RegistryStr()
 }
 
-func runChecksWithoutFetcher( //nolint:funlen // additional check types add entries
+type missingCheck struct {
+	checkType     types.CheckType
+	missingPolicy types.Action
+}
+
+func runChecksWithoutFetcher(
 	pol *policy.Policy, met *metrics.Metrics, imageRef string,
 ) *types.Result {
 	detail := "no attestation fetcher configured for image " + imageRef
@@ -179,45 +185,24 @@ func runChecksWithoutFetcher( //nolint:funlen // additional check types add entr
 		}
 	}
 
-	missingChecks := []struct {
-		checkType     types.CheckType
-		missingPolicy types.Action
-	}{
+	missingChecks := []missingCheck{
 		{types.CheckTypeSLSA, pol.SLSAMissingPolicy()},
 		{types.CheckTypeVEX, pol.VEXMissingPolicy()},
 	}
 
 	if pol.Notation != nil {
-		missingChecks = append(missingChecks, struct {
-			checkType     types.CheckType
-			missingPolicy types.Action
-		}{types.CheckTypeNotation, pol.NotationMissingPolicy()})
+		missingChecks = append(missingChecks,
+			missingCheck{types.CheckTypeNotation, pol.NotationMissingPolicy()},
+		)
 	}
 
-	missingChecks = append(missingChecks, struct {
-		checkType     types.CheckType
-		missingPolicy types.Action
-	}{types.CheckTypeSBOM, pol.SBOMMissingPolicy()},
-		struct {
-			checkType     types.CheckType
-			missingPolicy types.Action
-		}{types.CheckTypeSCAI, pol.SCAIMissingPolicy()},
-		struct {
-			checkType     types.CheckType
-			missingPolicy types.Action
-		}{types.CheckTypeSource, pol.SourceMissingPolicy()},
-		struct {
-			checkType     types.CheckType
-			missingPolicy types.Action
-		}{types.CheckTypeBuildEnv, pol.BuildEnvMissingPolicy()},
-		struct {
-			checkType     types.CheckType
-			missingPolicy types.Action
-		}{types.CheckTypeVulnScan, pol.VulnScanMissingPolicy()},
-		struct {
-			checkType     types.CheckType
-			missingPolicy types.Action
-		}{types.CheckTypeTestResult, pol.TestResultMissingPolicy()},
+	missingChecks = append(missingChecks,
+		missingCheck{types.CheckTypeSBOM, pol.SBOMMissingPolicy()},
+		missingCheck{types.CheckTypeSCAI, pol.SCAIMissingPolicy()},
+		missingCheck{types.CheckTypeSource, pol.SourceMissingPolicy()},
+		missingCheck{types.CheckTypeBuildEnv, pol.BuildEnvMissingPolicy()},
+		missingCheck{types.CheckTypeVulnScan, pol.VulnScanMissingPolicy()},
+		missingCheck{types.CheckTypeTestResult, pol.TestResultMissingPolicy()},
 	)
 
 	results := make([]*types.CheckResult, 0, len(missingChecks))
@@ -807,8 +792,9 @@ func runTestResultCheck(
 	)
 }
 
-func runCELCheck( //nolint:cyclop // additional check type adds a branch
-	pol *policy.Policy, imageRef, digest, namespace string,
+func runCELCheck(
+	pol *policy.Policy, met *metrics.Metrics,
+	imageRef, digest, namespace string,
 	parsedRef name.Reference, result *types.Result,
 ) *types.CheckResult {
 	if pol.CompiledCEL == nil {
@@ -817,45 +803,28 @@ func runCELCheck( //nolint:cyclop // additional check type adds a branch
 
 	registry, repository := extractRegistryRepo(parsedRef, imageRef)
 
-	var (
-		slsaResult, vexResult, vsaResult, sbomResult *types.CheckResult
-		notationResult, scaiResult                   *types.CheckResult
-		sourceResult, buildenvResult                 *types.CheckResult
-		vulnscanResult, testresultResult             *types.CheckResult
-	)
+	checkResults := make(map[types.CheckType]*types.CheckResult, len(result.CheckResults))
 
 	for idx := range result.CheckResults {
-		switch result.CheckResults[idx].Type {
-		case types.CheckTypeSLSA:
-			slsaResult = &result.CheckResults[idx]
-		case types.CheckTypeVEX:
-			vexResult = &result.CheckResults[idx]
-		case types.CheckTypeVSA:
-			vsaResult = &result.CheckResults[idx]
-		case types.CheckTypeSBOM:
-			sbomResult = &result.CheckResults[idx]
-		case types.CheckTypeNotation:
-			notationResult = &result.CheckResults[idx]
-		case types.CheckTypeSCAI:
-			scaiResult = &result.CheckResults[idx]
-		case types.CheckTypeSource:
-			sourceResult = &result.CheckResults[idx]
-		case types.CheckTypeBuildEnv:
-			buildenvResult = &result.CheckResults[idx]
-		case types.CheckTypeVulnScan:
-			vulnscanResult = &result.CheckResults[idx]
-		case types.CheckTypeTestResult:
-			testresultResult = &result.CheckResults[idx]
-		case types.CheckTypeFetch, types.CheckTypePolicy,
-			types.CheckTypeCEL:
-		}
+		checkResults[result.CheckResults[idx].Type] = &result.CheckResults[idx]
 	}
 
 	vars := celengine.BuildVars(
 		imageRef, registry, repository, digest, namespace,
-		slsaResult, vexResult, vsaResult, sbomResult, notationResult, scaiResult,
-		sourceResult, buildenvResult, vulnscanResult, testresultResult,
+		checkResults[types.CheckTypeSLSA],
+		checkResults[types.CheckTypeVEX],
+		checkResults[types.CheckTypeVSA],
+		checkResults[types.CheckTypeSBOM],
+		checkResults[types.CheckTypeNotation],
+		checkResults[types.CheckTypeSCAI],
+		checkResults[types.CheckTypeSource],
+		checkResults[types.CheckTypeBuildEnv],
+		checkResults[types.CheckTypeVulnScan],
+		checkResults[types.CheckTypeTestResult],
 	)
+
+	timer := prometheus.NewTimer(met.CELEvaluationDuration)
+	defer timer.ObserveDuration()
 
 	return celengine.Evaluate(pol.CompiledCEL, vars)
 }

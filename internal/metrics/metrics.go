@@ -89,7 +89,11 @@ type Metrics struct {
 	MirrorFallbackTotal *prometheus.CounterVec
 	// ContainerLifetime measures the duration between container creation and removal.
 	ContainerLifetime *prometheus.HistogramVec
-	registry          *prometheus.Registry
+	// PolicyReloadsTotal counts OCI policy update events.
+	PolicyReloadsTotal prometheus.Counter
+	// CELEvaluationDuration measures CEL rule evaluation latency.
+	CELEvaluationDuration prometheus.Histogram
+	registry              *prometheus.Registry
 }
 
 // New creates and registers all supply chain verification metrics.
@@ -167,7 +171,17 @@ func New() *Metrics {
 			labelType,
 		),
 		ContainerLifetime: newContainerLifetime(),
-		registry:          prometheus.NewRegistry(),
+		PolicyReloadsTotal: newCounter(
+			"policy_reloads_total",
+			"Total number of OCI policy update events.",
+		),
+		CELEvaluationDuration: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "cel_evaluation_duration_seconds",
+			Help:      "Duration of CEL rule evaluation in seconds.",
+			Buckets:   prometheus.DefBuckets,
+		}),
+		registry: prometheus.NewRegistry(),
 	}
 
 	met.register()
@@ -336,6 +350,8 @@ func (m *Metrics) register() {
 		m.PrewarmDurationSeconds,
 		m.MirrorFallbackTotal,
 		m.ContainerLifetime,
+		m.PolicyReloadsTotal,
+		m.CELEvaluationDuration,
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{
 			PidFn:        nil,
 			Namespace:    "",

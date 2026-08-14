@@ -97,57 +97,19 @@ func Verify( //nolint:revive // ctx reserved for future context-aware logging
 
 // VerifyMultiple checks multiple vulnerability scan attestations. Any policy
 // violation in any document causes failure.
-func VerifyMultiple( //nolint:cyclop // metadata accumulation adds branches
+func VerifyMultiple(
 	ctx context.Context,
 	attestations [][]byte, pol *policy.Policy, imageDigest string,
 ) (*types.CheckResult, error) {
-	var (
-		failDetails  []string
-		verifyErrors []string
-		anyValid     bool
-		passedMeta   map[string]any
+	//nolint:wrapcheck // VerifyMultipleWithMerge returns domain errors
+	return types.VerifyMultipleWithMerge(
+		checkType, "vulnerability scan", "vulnerability scan verification passed",
+		attestations,
+		func(att []byte) (*types.CheckResult, error) {
+			return Verify(ctx, att, pol, imageDigest)
+		},
+		mergeVulnMeta,
 	)
-
-	for _, att := range attestations {
-		result, err := Verify(ctx, att, pol, imageDigest)
-		if err != nil {
-			verifyErrors = append(verifyErrors, err.Error())
-
-			continue
-		}
-
-		anyValid = true
-
-		if !result.Passed && result.Status == types.StatusFail {
-			failDetails = append(failDetails, result.Detail)
-		}
-
-		if result.Passed && result.Metadata != nil {
-			if passedMeta == nil {
-				passedMeta = make(map[string]any)
-			}
-
-			mergeVulnMeta(passedMeta, result.Metadata)
-		}
-	}
-
-	if len(failDetails) > 0 {
-		return failResult(strings.Join(failDetails, "; ")), nil
-	}
-
-	if len(attestations) > 0 && !anyValid {
-		return failResult(
-			"all vulnerability scan documents failed verification: " + strings.Join(
-				verifyErrors,
-				"; ",
-			),
-		), nil
-	}
-
-	result := passResult()
-	result.Metadata = passedMeta
-
-	return result, nil
 }
 
 func verifyVulnScanPredicate(

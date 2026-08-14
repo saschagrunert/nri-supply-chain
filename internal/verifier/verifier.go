@@ -133,14 +133,9 @@ func New(
 
 	snap := newSnapshot(&cfgCopy, policies, hashes, met, fetcher)
 
-	verif := &Verifier{
-		state:        atomic.Pointer[snapshot]{},
-		mu:           sync.Mutex{},
+	verif := &Verifier{ //nolint:exhaustruct // zero-value fields are intentional
 		policyHashes: hashes,
 		nodeName:     resolveNodeName(),
-		inflight:     singleflight.Group{},
-		inflightWg:   sync.WaitGroup{},
-		poller:       nil,
 	}
 	verif.state.Store(snap)
 
@@ -1097,23 +1092,15 @@ func (v *Verifier) applyPolicyUpdate(
 
 	resetVerificationCaches()
 
-	v.state.Store(&snapshot{
-		config:       state.config,
-		policies:     policies,
-		policyHashes: newHashes,
-		cache: cache.NewWithGauge(
-			state.config.CacheTTL.Duration, state.config.CacheMaxEntries,
-			state.metrics.CacheEntriesTotal,
-			state.metrics.CacheEvictionsTotal,
-		),
-		metrics:         state.metrics,
-		fetcher:         state.fetcher,
-		circuitBreakers: state.circuitBreakers,
-		fetchSem:        state.fetchSem,
-		hostSem:         &hostSemMap{m: sync.Map{}, count: atomic.Int64{}},
-		auditLogger:     state.auditLogger,
-	})
+	snap := newSnapshot(state.config, policies, newHashes, state.metrics, state.fetcher)
+	snap.circuitBreakers = state.circuitBreakers
+	snap.fetchSem = state.fetchSem
+	snap.auditLogger = state.auditLogger
+
+	v.state.Store(snap)
 	v.policyHashes = newHashes
+
+	state.metrics.PolicyReloadsTotal.Inc()
 
 	if state.config.Enabled() {
 		WarnEnforceDefaults(state.config, policies)

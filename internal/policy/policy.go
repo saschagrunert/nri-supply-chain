@@ -34,67 +34,63 @@ func (p *Policy) EffectiveMode(global config.VerificationMode) config.Verificati
 	return global
 }
 
+func missingPolicyOrAllow(action types.Action) types.Action {
+	if action != "" {
+		return action
+	}
+
+	return types.ActionAllow
+}
+
 // SLSAMissingPolicy returns the effective SLSA missing policy.
-// Defaults to allow so that the plugin can be deployed in warn mode
-// without requiring provenance from the start.
 func (p *Policy) SLSAMissingPolicy() types.Action {
-	if p.SLSA != nil && p.SLSA.MissingPolicy != "" {
-		return p.SLSA.MissingPolicy
+	if p.SLSA != nil {
+		return missingPolicyOrAllow(p.SLSA.MissingPolicy)
 	}
 
 	return types.ActionAllow
 }
 
 // VEXMissingPolicy returns the effective VEX missing policy.
-// Defaults to allow so that the plugin can be deployed in warn mode
-// without requiring VEX attestations from the start.
 func (p *Policy) VEXMissingPolicy() types.Action {
-	if p.VEX != nil && p.VEX.MissingPolicy != "" {
-		return p.VEX.MissingPolicy
+	if p.VEX != nil {
+		return missingPolicyOrAllow(p.VEX.MissingPolicy)
 	}
 
 	return types.ActionAllow
 }
 
 // VSAMissingPolicy returns the effective VSA missing policy.
-// Defaults to allow so that the plugin falls through to direct SLSA+VEX
-// verification when no VSA attestation is found.
 func (p *Policy) VSAMissingPolicy() types.Action {
-	if p.VSA != nil && p.VSA.MissingPolicy != "" {
-		return p.VSA.MissingPolicy
+	if p.VSA != nil {
+		return missingPolicyOrAllow(p.VSA.MissingPolicy)
 	}
 
 	return types.ActionAllow
 }
 
 // NotationMissingPolicy returns the effective Notation missing policy.
-// Defaults to allow so that the plugin can be deployed in warn mode
-// without requiring Notation signatures from the start.
 func (p *Policy) NotationMissingPolicy() types.Action {
-	if p.Notation != nil && p.Notation.MissingPolicy != "" {
-		return p.Notation.MissingPolicy
+	if p.Notation != nil {
+		return missingPolicyOrAllow(p.Notation.MissingPolicy)
 	}
 
 	return types.ActionAllow
 }
 
 // SBOMMissingPolicy returns the effective SBOM missing policy.
-// Defaults to allow so that the plugin can be deployed in warn mode
-// without requiring SBOM attestations from the start.
 func (p *Policy) SBOMMissingPolicy() types.Action {
-	if p.SBOM != nil && p.SBOM.MissingPolicy != "" {
-		return p.SBOM.MissingPolicy
+	if p.SBOM != nil {
+		return missingPolicyOrAllow(p.SBOM.MissingPolicy)
 	}
 
 	return types.ActionAllow
 }
 
 // SCAIMissingPolicy returns the effective SCAI missing policy.
-// Defaults to allow so that the plugin can be deployed in warn mode
-// without requiring SCAI attestations from the start.
 func (p *Policy) SCAIMissingPolicy() types.Action {
-	if p.SCAI != nil && p.SCAI.MissingPolicy != "" {
-		return p.SCAI.MissingPolicy
+	if p.SCAI != nil {
+		return missingPolicyOrAllow(p.SCAI.MissingPolicy)
 	}
 
 	return types.ActionAllow
@@ -102,8 +98,8 @@ func (p *Policy) SCAIMissingPolicy() types.Action {
 
 // SourceMissingPolicy returns the effective source track missing policy.
 func (p *Policy) SourceMissingPolicy() types.Action {
-	if p.Source != nil && p.Source.MissingPolicy != "" {
-		return p.Source.MissingPolicy
+	if p.Source != nil {
+		return missingPolicyOrAllow(p.Source.MissingPolicy)
 	}
 
 	return types.ActionAllow
@@ -111,8 +107,8 @@ func (p *Policy) SourceMissingPolicy() types.Action {
 
 // BuildEnvMissingPolicy returns the effective build environment missing policy.
 func (p *Policy) BuildEnvMissingPolicy() types.Action {
-	if p.BuildEnv != nil && p.BuildEnv.MissingPolicy != "" {
-		return p.BuildEnv.MissingPolicy
+	if p.BuildEnv != nil {
+		return missingPolicyOrAllow(p.BuildEnv.MissingPolicy)
 	}
 
 	return types.ActionAllow
@@ -120,8 +116,8 @@ func (p *Policy) BuildEnvMissingPolicy() types.Action {
 
 // VulnScanMissingPolicy returns the effective vulnerability scan missing policy.
 func (p *Policy) VulnScanMissingPolicy() types.Action {
-	if p.VulnScan != nil && p.VulnScan.MissingPolicy != "" {
-		return p.VulnScan.MissingPolicy
+	if p.VulnScan != nil {
+		return missingPolicyOrAllow(p.VulnScan.MissingPolicy)
 	}
 
 	return types.ActionAllow
@@ -129,8 +125,8 @@ func (p *Policy) VulnScanMissingPolicy() types.Action {
 
 // TestResultMissingPolicy returns the effective test result missing policy.
 func (p *Policy) TestResultMissingPolicy() types.Action {
-	if p.TestResult != nil && p.TestResult.MissingPolicy != "" {
-		return p.TestResult.MissingPolicy
+	if p.TestResult != nil {
+		return missingPolicyOrAllow(p.TestResult.MissingPolicy)
 	}
 
 	return types.ActionAllow

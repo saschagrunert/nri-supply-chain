@@ -65,38 +65,11 @@ func runVerifyTo(
 	writer io.Writer,
 	imageRef, namespace, outputFormat string, cfg *config.Config,
 ) int {
-	if outputFormat != outputFormatTable && outputFormat != outputFormatJSON {
-		slog.Error("Invalid output format", "format", outputFormat)
-
-		return exitError
-	}
-
-	if !cfg.Enabled() {
-		slog.Error(
-			"verify requires verification to be enabled" +
-				" (set verification = \"warn\" or \"enforce\" in the config file)",
-		)
-
-		return exitError
-	}
-
-	cfg.WarnInsecureRegistries()
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
-	cache := registry.NewTransportCacheOrNil(cfg.Registries)
-
-	verif, err := newVerifier(ctx, cfg, cache)
-	if err != nil {
-		slog.Error("Failed to create verifier", "error", err)
-
-		return exitError
-	}
-
-	defer verif.Stop()
-
-	return executeVerify(ctx, writer, imageRef, namespace, outputFormat, cfg, verif, cache)
+	return withVerifier(writer, outputFormat, cfg, func(
+		ctx context.Context, w io.Writer, v *verifier.Verifier, c *registry.TransportCache,
+	) int {
+		return executeVerify(ctx, w, imageRef, namespace, outputFormat, cfg, v, c)
+	})
 }
 
 func executeVerify(
@@ -161,6 +134,17 @@ func runVerifyBatchTo(
 	writer io.Writer,
 	images []string, namespace, outputFormat string, cfg *config.Config,
 ) int {
+	return withVerifier(writer, outputFormat, cfg, func(
+		ctx context.Context, w io.Writer, v *verifier.Verifier, c *registry.TransportCache,
+	) int {
+		return executeBatchVerify(ctx, w, images, namespace, outputFormat, cfg, v, c)
+	})
+}
+
+func withVerifier(
+	writer io.Writer, outputFormat string, cfg *config.Config,
+	execute func(context.Context, io.Writer, *verifier.Verifier, *registry.TransportCache) int,
+) int {
 	if outputFormat != outputFormatTable && outputFormat != outputFormatJSON {
 		slog.Error("Invalid output format", "format", outputFormat)
 
@@ -192,7 +176,7 @@ func runVerifyBatchTo(
 
 	defer verif.Stop()
 
-	return executeBatchVerify(ctx, writer, images, namespace, outputFormat, cfg, verif, cache)
+	return execute(ctx, writer, verif, cache)
 }
 
 func executeBatchVerify(

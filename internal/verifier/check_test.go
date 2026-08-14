@@ -30,6 +30,7 @@ import (
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	celengine "github.com/saschagrunert/nri-supply-chain/internal/cel"
+	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
@@ -291,7 +292,9 @@ func TestRunCELCheckNilCompiledCEL(t *testing.T) {
 		CheckResults: nil,
 	}
 
-	check := runCELCheck(pol, "ghcr.io/org/img:latest", benchDigest, "default", nil, result)
+	check := runCELCheck(
+		pol, metrics.New(), "ghcr.io/org/img:latest", benchDigest, "default", nil, result,
+	)
 	if check != nil {
 		t.Errorf("expected nil for nil CompiledCEL, got %v", check)
 	}
@@ -318,7 +321,9 @@ func TestRunCELCheckNilParsedRef(t *testing.T) {
 		},
 	}
 
-	check := runCELCheck(pol, "ghcr.io/org/img:latest", benchDigest, "default", nil, result)
+	check := runCELCheck(
+		pol, metrics.New(), "ghcr.io/org/img:latest", benchDigest, "default", nil, result,
+	)
 	if check == nil {
 		t.Fatal("expected non-nil CEL check result with nil parsedRef")
 	}
@@ -354,7 +359,9 @@ func TestRunCELCheckRequirePass(t *testing.T) {
 
 	ref, _ := name.ParseReference("ghcr.io/org/img:latest")
 
-	check := runCELCheck(pol, "ghcr.io/org/img:latest", benchDigest, "default", ref, result)
+	check := runCELCheck(
+		pol, metrics.New(), "ghcr.io/org/img:latest", benchDigest, "default", ref, result,
+	)
 	if check == nil {
 		t.Fatal("expected non-nil CEL check result")
 	}
@@ -387,7 +394,9 @@ func TestRunCELCheckRequireFail(t *testing.T) {
 
 	ref, _ := name.ParseReference("ghcr.io/org/img:latest")
 
-	check := runCELCheck(pol, "ghcr.io/org/img:latest", benchDigest, "default", ref, result)
+	check := runCELCheck(
+		pol, metrics.New(), "ghcr.io/org/img:latest", benchDigest, "default", ref, result,
+	)
 	if check == nil {
 		t.Fatal("expected non-nil CEL check result")
 	}
@@ -424,7 +433,9 @@ func TestRunCELCheckMatchFilter(t *testing.T) {
 
 	ref, _ := name.ParseReference("ghcr.io/org/img:latest")
 
-	check := runCELCheck(pol, "ghcr.io/org/img:latest", benchDigest, "default", ref, result)
+	check := runCELCheck(
+		pol, metrics.New(), "ghcr.io/org/img:latest", benchDigest, "default", ref, result,
+	)
 	if check == nil {
 		t.Fatal("expected non-nil CEL check result")
 	}
@@ -458,7 +469,9 @@ func TestRunCELCheckMultipleCheckTypes(t *testing.T) {
 
 	ref, _ := name.ParseReference("ghcr.io/org/img:latest")
 
-	check := runCELCheck(pol, "ghcr.io/org/img:latest", benchDigest, "default", ref, result)
+	check := runCELCheck(
+		pol, metrics.New(), "ghcr.io/org/img:latest", benchDigest, "default", ref, result,
+	)
 	if check == nil {
 		t.Fatal("expected non-nil CEL check result")
 	}
