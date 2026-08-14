@@ -132,6 +132,24 @@ func (p *Policy) TestResultMissingPolicy() types.Action {
 	return types.ActionAllow
 }
 
+// ReleaseMissingPolicy returns the effective release missing policy.
+func (p *Policy) ReleaseMissingPolicy() types.Action {
+	if p.Release != nil {
+		return missingPolicyOrAllow(p.Release.MissingPolicy)
+	}
+
+	return types.ActionAllow
+}
+
+// RuntimeTraceMissingPolicy returns the effective runtime trace missing policy.
+func (p *Policy) RuntimeTraceMissingPolicy() types.Action {
+	if p.RuntimeTrace != nil {
+		return missingPolicyOrAllow(p.RuntimeTrace.MissingPolicy)
+	}
+
+	return types.ActionAllow
+}
+
 // Builders returns the trusted builders list, or nil if trust is not configured.
 func (p *Policy) Builders() []TrustedBuilder {
 	if p.Trust != nil {

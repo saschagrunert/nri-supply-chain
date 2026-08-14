@@ -32,6 +32,8 @@ patterns for the nri-supply-chain plugin.
   - [<code>buildEnv</code> (object)](#buildenv-object)
   - [<code>vulnScan</code> (object)](#vulnscan-object)
   - [<code>testResult</code> (object)](#testresult-object)
+  - [<code>release</code> (object)](#release-object)
+  - [<code>runtimeTrace</code> (object)](#runtimetrace-object)
   - [<code>rules</code> (array of objects)](#rules-array-of-objects)
   - [<code>cel</code> (object)](#cel-object)
 - [Verification Types](#verification-types)
@@ -47,6 +49,8 @@ patterns for the nri-supply-chain plugin.
   - [Build Environment Verification](#build-environment-verification)
   - [Vulnerability Scan Verification](#vulnerability-scan-verification)
   - [Test Result Verification](#test-result-verification)
+  - [Release Verification](#release-verification)
+  - [Runtime Trace Verification](#runtime-trace-verification)
 - [Pattern Matching](#pattern-matching)
   - [<code>include</code>, <code>exclude</code>, and <code>trust.sources</code>](#include-exclude-and-trustsources)
   - [<code>trust.sanPatterns</code>](#trustsanpatterns)
@@ -301,6 +305,12 @@ nri-supply-chain json-schema policy
         "testResult": {
           "$ref": "#/$defs/TestResultPolicy"
         },
+        "release": {
+          "$ref": "#/$defs/ReleasePolicy"
+        },
+        "runtimeTrace": {
+          "$ref": "#/$defs/RuntimeTracePolicy"
+        },
         "images": {
           "items": {
             "type": "string"
@@ -429,6 +439,12 @@ nri-supply-chain json-schema policy
         },
         "testResult": {
           "$ref": "#/$defs/TestResultPolicy"
+        },
+        "release": {
+          "$ref": "#/$defs/ReleasePolicy"
+        },
+        "runtimeTrace": {
+          "$ref": "#/$defs/RuntimeTracePolicy"
         },
         "mode": {
           "type": "string",
@@ -617,6 +633,50 @@ nri-supply-chain json-schema policy
           "enum": ["allow", "warn", "deny"]
         },
         "requiredSuites": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "maxAge": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ReleasePolicy": {
+      "properties": {
+        "missingPolicy": {
+          "type": "string",
+          "enum": ["allow", "warn", "deny"]
+        },
+        "trustedRegistries": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "requirePackageId": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "RuntimeTracePolicy": {
+      "properties": {
+        "missingPolicy": {
+          "type": "string",
+          "enum": ["allow", "warn", "deny"]
+        },
+        "trustedMonitors": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "forbiddenFilePatterns": {
           "items": {
             "type": "string"
           },
@@ -1011,8 +1071,9 @@ policy is rejected at load time if they do.
 
 Vulnerability scan attestation verification settings. When configured, the
 plugin verifies
-[vulns v0.1](https://github.com/in-toto/attestation/blob/main/spec/predicates/vulns.md)
-attestations (predicate type `https://in-toto.io/attestation/vulns/v0.1`)
+[vulns](https://github.com/in-toto/attestation/blob/main/spec/predicates/vulns.md)
+attestations (predicate types `https://in-toto.io/attestation/vulns/v0.1` and
+`https://in-toto.io/attestation/vulns/v0.2`)
 attached to container images.
 
 | Field           | Type   | Default | Description                                                                         |
@@ -1043,6 +1104,37 @@ attached to container images.
 The overall test result must be `pass` or `passed` (case-insensitive). If any
 required suite is missing or has a non-passing result, verification fails.
 
+### `release` (object)
+
+Release attestation verification settings. When configured, the plugin verifies
+[release v0.1](https://github.com/in-toto/attestation/blob/main/spec/predicates/release.md)
+attestations (predicate type `https://in-toto.io/attestation/release/v0.1`)
+attached to container images.
+
+| Field               | Type    | Default | Description                                                             |
+| ------------------- | ------- | ------- | ----------------------------------------------------------------------- |
+| `missingPolicy`     | string  | `allow` | Behavior when no release attestation is found: `allow`, `warn`, `deny`  |
+| `trustedRegistries` | array   | (none)  | Glob patterns for trusted package registries (matched against the purl) |
+| `requirePackageId`  | boolean | `false` | Require a non-empty `packageId` in the release attestation              |
+
+When multiple release attestations exist, any single valid one is sufficient
+(any-pass semantics).
+
+### `runtimeTrace` (object)
+
+Runtime trace attestation verification settings. When configured, the plugin
+verifies
+[runtime-trace v0.1](https://github.com/in-toto/attestation/blob/main/spec/predicates/runtime-trace.md)
+attestations (predicate type `https://in-toto.io/attestation/runtime-trace/v0.1`)
+attached to container images.
+
+| Field                   | Type   | Default | Description                                                                      |
+| ----------------------- | ------ | ------- | -------------------------------------------------------------------------------- |
+| `missingPolicy`         | string | `allow` | Behavior when no runtime trace attestation is found: `allow`, `warn`, `deny`     |
+| `trustedMonitors`       | array  | (none)  | Glob patterns for trusted monitor types (e.g. `falco`, `tetragon*`)              |
+| `forbiddenFilePatterns` | array  | (none)  | Glob patterns for file accesses that must not appear (e.g. `/etc/shadow`)        |
+| `maxAge`                | string | (none)  | Maximum age of the trace (e.g. `24h`, `168h`); older traces are considered stale |
+
 ### `rules` (array of objects)
 
 Per-image policy overrides. Each rule matches images by glob patterns and
@@ -1051,22 +1143,24 @@ rule wins; images that do not match any rule use the base policy.
 
 Each rule is an object with:
 
-| Field        | Type   | Required | Description                                                 |
-| ------------ | ------ | -------- | ----------------------------------------------------------- |
-| `images`     | array  | yes      | Glob patterns to match against image references             |
-| `trust`      | object | no       | Override trust roots (same schema as top-level `trust`)     |
-| `slsa`       | object | no       | Override SLSA settings (same schema as top-level `slsa`)    |
-| `vex`        | object | no       | Override VEX settings (same schema as top-level `vex`)      |
-| `vsa`        | object | no       | Override VSA settings (same schema as top-level `vsa`)      |
-| `signatures` | object | no       | Override signature settings (same schema as `signatures`)   |
-| `notation`   | object | no       | Override Notation settings (same schema as `notation`)      |
-| `cel`        | object | no       | Override CEL rules (same schema as top-level `cel`)         |
-| `sbom`       | object | no       | Override SBOM settings (same schema as `sbom`)              |
-| `scai`       | object | no       | Override SCAI settings (same schema as `scai`)              |
-| `source`     | object | no       | Override source settings (same schema as `source`)          |
-| `buildEnv`   | object | no       | Override build env settings (same schema as `buildEnv`)     |
-| `vulnScan`   | object | no       | Override vuln scan settings (same schema as `vulnScan`)     |
-| `testResult` | object | no       | Override test result settings (same schema as `testResult`) |
+| Field          | Type   | Required | Description                                                     |
+| -------------- | ------ | -------- | --------------------------------------------------------------- |
+| `images`       | array  | yes      | Glob patterns to match against image references                 |
+| `trust`        | object | no       | Override trust roots (same schema as top-level `trust`)         |
+| `slsa`         | object | no       | Override SLSA settings (same schema as top-level `slsa`)        |
+| `vex`          | object | no       | Override VEX settings (same schema as top-level `vex`)          |
+| `vsa`          | object | no       | Override VSA settings (same schema as top-level `vsa`)          |
+| `signatures`   | object | no       | Override signature settings (same schema as `signatures`)       |
+| `notation`     | object | no       | Override Notation settings (same schema as `notation`)          |
+| `cel`          | object | no       | Override CEL rules (same schema as top-level `cel`)             |
+| `sbom`         | object | no       | Override SBOM settings (same schema as `sbom`)                  |
+| `scai`         | object | no       | Override SCAI settings (same schema as `scai`)                  |
+| `source`       | object | no       | Override source settings (same schema as `source`)              |
+| `buildEnv`     | object | no       | Override build env settings (same schema as `buildEnv`)         |
+| `vulnScan`     | object | no       | Override vuln scan settings (same schema as `vulnScan`)         |
+| `testResult`   | object | no       | Override test result settings (same schema as `testResult`)     |
+| `release`      | object | no       | Override release settings (same schema as `release`)            |
+| `runtimeTrace` | object | no       | Override runtime trace settings (same schema as `runtimeTrace`) |
 
 Fields not set in a rule are inherited from the base policy. The `images`
 patterns use the same glob syntax as `include` and `exclude`.
@@ -1136,58 +1230,67 @@ Each rule is an object with:
 
 **Available variables:**
 
-| Variable                 | Type   | Description                                       |
-| ------------------------ | ------ | ------------------------------------------------- |
-| `image.ref`              | string | Full image reference                              |
-| `image.registry`         | string | Registry host                                     |
-| `image.repository`       | string | Repository path                                   |
-| `image.digest`           | string | Image digest                                      |
-| `image.namespace`        | string | Kubernetes namespace                              |
-| `slsa.verified`          | bool   | Whether SLSA check passed                         |
-| `slsa.builderID`         | string | Builder ID from SLSA provenance                   |
-| `slsa.buildType`         | string | Build type from SLSA provenance                   |
-| `slsa.source`            | string | Source URI from SLSA provenance                   |
-| `vex.verified`           | bool   | Whether VEX check passed                          |
-| `vex.status`             | string | VEX status (e.g. `not_affected`, `affected`)      |
-| `vsa.verified`           | bool   | Whether VSA check passed                          |
-| `vsa.verifierID`         | string | VSA verifier ID                                   |
-| `vsa.result`             | string | VSA verification result (e.g. `PASSED`, `FAILED`) |
-| `vsa.level`              | int    | SLSA build level from VSA                         |
-| `notation.verified`      | bool   | Whether Notation check passed                     |
-| `notation.signerDN`      | string | Signer distinguished name from certificate        |
-| `notation.trustPolicy`   | string | Name of the matched trust policy                  |
-| `sbom.verified`          | bool   | Whether SBOM check passed                         |
-| `sbom.format`            | string | SBOM format (`spdx` or `cyclonedx`)               |
-| `sbom.componentCount`    | int    | Number of components in the SBOM                  |
-| `sbom.licenseCount`      | int    | Number of licenses in the SBOM                    |
-| `sbom.cvssMax`           | float  | Highest CVSS score across all vulnerabilities     |
-| `sbom.cvssCriticalCount` | int    | Number of critical-severity vulnerabilities       |
-| `sbom.cvssHighCount`     | int    | Number of high-severity vulnerabilities           |
-| `sbom.cvssMediumCount`   | int    | Number of medium-severity vulnerabilities         |
-| `scai.verified`          | bool   | Whether SCAI verification passed                  |
-| `scai.attributes`        | string | Comma-separated attribute names                   |
-| `scai.attributeCount`    | int    | Number of attributes                              |
-| `scai.hasEvidence`       | bool   | Whether all attributes have evidence              |
-| `source.verified`        | bool   | Whether source verification passed                |
-| `source.source`          | string | Source repository URI                             |
-| `source.branch`          | string | Source branch                                     |
-| `source.level`           | int    | SLSA source level                                 |
-| `buildenv.verified`      | bool   | Whether build environment verification passed     |
-| `buildenv.properties`    | string | Comma-separated property names                    |
-| `buildenv.propertyCount` | int    | Number of environment properties                  |
-| `vulnscan.verified`      | bool   | Whether vulnerability scan verification passed    |
-| `vulnscan.scanner`       | string | Scanner URI                                       |
-| `vulnscan.vulnCount`     | int    | Number of vulnerabilities found                   |
-| `vulnscan.maxScore`      | float  | Highest CVSS score across all vulnerabilities     |
-| `vulnscan.maxSeverity`   | string | Highest severity across all vulnerabilities       |
-| `vulnscan.criticalCount` | int    | Number of critical-severity vulnerabilities       |
-| `vulnscan.highCount`     | int    | Number of high-severity vulnerabilities           |
-| `testresult.verified`    | bool   | Whether test result verification passed           |
-| `testresult.result`      | string | Overall test result (e.g. `pass`, `fail`)         |
-| `testresult.suiteCount`  | int    | Number of test suites                             |
-| `testresult.suites`      | string | Comma-separated suite names                       |
-| `testresult.passed`      | int    | Total passed tests across all suites              |
-| `testresult.failed`      | int    | Total failed tests across all suites              |
+| Variable                       | Type   | Description                                       |
+| ------------------------------ | ------ | ------------------------------------------------- |
+| `image.ref`                    | string | Full image reference                              |
+| `image.registry`               | string | Registry host                                     |
+| `image.repository`             | string | Repository path                                   |
+| `image.digest`                 | string | Image digest                                      |
+| `image.namespace`              | string | Kubernetes namespace                              |
+| `slsa.verified`                | bool   | Whether SLSA check passed                         |
+| `slsa.builderID`               | string | Builder ID from SLSA provenance                   |
+| `slsa.buildType`               | string | Build type from SLSA provenance                   |
+| `slsa.source`                  | string | Source URI from SLSA provenance                   |
+| `vex.verified`                 | bool   | Whether VEX check passed                          |
+| `vex.status`                   | string | VEX status (e.g. `not_affected`, `affected`)      |
+| `vsa.verified`                 | bool   | Whether VSA check passed                          |
+| `vsa.verifierID`               | string | VSA verifier ID                                   |
+| `vsa.result`                   | string | VSA verification result (e.g. `PASSED`, `FAILED`) |
+| `vsa.level`                    | int    | SLSA build level from VSA                         |
+| `notation.verified`            | bool   | Whether Notation check passed                     |
+| `notation.signerDN`            | string | Signer distinguished name from certificate        |
+| `notation.trustPolicy`         | string | Name of the matched trust policy                  |
+| `sbom.verified`                | bool   | Whether SBOM check passed                         |
+| `sbom.format`                  | string | SBOM format (`spdx` or `cyclonedx`)               |
+| `sbom.componentCount`          | int    | Number of components in the SBOM                  |
+| `sbom.licenseCount`            | int    | Number of licenses in the SBOM                    |
+| `sbom.cvssMax`                 | float  | Highest CVSS score across all vulnerabilities     |
+| `sbom.cvssCriticalCount`       | int    | Number of critical-severity vulnerabilities       |
+| `sbom.cvssHighCount`           | int    | Number of high-severity vulnerabilities           |
+| `sbom.cvssMediumCount`         | int    | Number of medium-severity vulnerabilities         |
+| `scai.verified`                | bool   | Whether SCAI verification passed                  |
+| `scai.attributes`              | string | Comma-separated attribute names                   |
+| `scai.attributeCount`          | int    | Number of attributes                              |
+| `scai.hasEvidence`             | bool   | Whether all attributes have evidence              |
+| `source.verified`              | bool   | Whether source verification passed                |
+| `source.source`                | string | Source repository URI                             |
+| `source.branch`                | string | Source branch                                     |
+| `source.level`                 | int    | SLSA source level                                 |
+| `buildenv.verified`            | bool   | Whether build environment verification passed     |
+| `buildenv.properties`          | string | Comma-separated property names                    |
+| `buildenv.propertyCount`       | int    | Number of environment properties                  |
+| `vulnscan.verified`            | bool   | Whether vulnerability scan verification passed    |
+| `vulnscan.scanner`             | string | Scanner URI                                       |
+| `vulnscan.vulnCount`           | int    | Number of vulnerabilities found                   |
+| `vulnscan.maxScore`            | float  | Highest CVSS score across all vulnerabilities     |
+| `vulnscan.maxSeverity`         | string | Highest severity across all vulnerabilities       |
+| `vulnscan.criticalCount`       | int    | Number of critical-severity vulnerabilities       |
+| `vulnscan.highCount`           | int    | Number of high-severity vulnerabilities           |
+| `testresult.verified`          | bool   | Whether test result verification passed           |
+| `testresult.result`            | string | Overall test result (e.g. `pass`, `fail`)         |
+| `testresult.suiteCount`        | int    | Number of test suites                             |
+| `testresult.suites`            | string | Comma-separated suite names                       |
+| `testresult.passed`            | int    | Total passed tests across all suites              |
+| `testresult.failed`            | int    | Total failed tests across all suites              |
+| `release.verified`             | bool   | Whether release verification passed               |
+| `release.purl`                 | string | Package URL from the release attestation          |
+| `release.packageId`            | string | Package identifier from the release attestation   |
+| `runtimetrace.verified`        | bool   | Whether runtime trace verification passed         |
+| `runtimetrace.monitorType`     | string | Monitor type (e.g. `falco`, `tetragon`)           |
+| `runtimetrace.processCount`    | int    | Number of process log entries                     |
+| `runtimetrace.networkCount`    | int    | Number of network log entries                     |
+| `runtimetrace.fileAccessCount` | int    | Number of file access entries                     |
+| `runtimetrace.fileNames`       | string | Comma-separated file names from file accesses     |
 
 Standard string functions are available via `ext.Strings()`: `startsWith`,
 `endsWith`, `contains`, `matches`.
@@ -1623,8 +1726,9 @@ Example configuration:
 
 ### Vulnerability Scan Verification
 
-Verifies [vulns v0.1](https://github.com/in-toto/attestation/blob/main/spec/predicates/vulns.md)
-attestations (predicate type `https://in-toto.io/attestation/vulns/v0.1`).
+Verifies [vulns](https://github.com/in-toto/attestation/blob/main/spec/predicates/vulns.md)
+attestations (predicate types `https://in-toto.io/attestation/vulns/v0.1` and
+`https://in-toto.io/attestation/vulns/v0.2`).
 Vulnerability scan attestations capture the results of automated vulnerability
 scanning of container images.
 
@@ -1690,6 +1794,71 @@ Example configuration:
 }
 ```
 
+### Release Verification
+
+Verifies [release v0.1](https://github.com/in-toto/attestation/blob/main/spec/predicates/release.md)
+attestations (predicate type `https://in-toto.io/attestation/release/v0.1`).
+Release attestations record the publication of an artifact to a package
+repository, capturing the package URL (purl) and optional package identifier.
+
+Checks performed:
+
+- **Subject digest**: The in-toto `subject[].digest` must match the image digest.
+- **Trusted registries**: If `release.trustedRegistries` is configured, the
+  `purl` field must match at least one glob pattern.
+- **Package ID**: If `release.requirePackageId` is `true`, the `packageId`
+  field must be non-empty.
+
+When multiple release attestations exist, any single valid one is sufficient
+(any-pass semantics). Metadata from the first passing attestation is used.
+
+Example configuration:
+
+```json
+{
+  "release": {
+    "missingPolicy": "deny",
+    "trustedRegistries": ["pkg:oci/ghcr.io/*", "pkg:npm/@myorg/*"],
+    "requirePackageId": true
+  }
+}
+```
+
+### Runtime Trace Verification
+
+Verifies [runtime-trace v0.1](https://github.com/in-toto/attestation/blob/main/spec/predicates/runtime-trace.md)
+attestations (predicate type `https://in-toto.io/attestation/runtime-trace/v0.1`).
+Runtime trace attestations capture build-time runtime observations from a
+monitor, including process activity, network connections, and file accesses.
+
+Checks performed:
+
+- **Subject digest**: The in-toto `subject[].digest` must match the image digest.
+- **Trusted monitors**: If `runtimeTrace.trustedMonitors` is configured, the
+  `monitor.type` field must match at least one glob pattern.
+- **Forbidden files**: If `runtimeTrace.forbiddenFilePatterns` is configured,
+  no file access entry may match any forbidden pattern.
+- **Freshness**: If `runtimeTrace.maxAge` is configured, the
+  `metadata.buildFinishedOn` timestamp must be within the specified duration.
+
+When multiple runtime trace attestations exist, all must pass (all-must-pass
+semantics). Metadata from passing attestations is merged: process, network, and
+file access counts are summed, and monitor types and file names are
+deduplicated.
+
+Example configuration:
+
+```json
+{
+  "runtimeTrace": {
+    "missingPolicy": "deny",
+    "trustedMonitors": ["falco", "tetragon*"],
+    "forbiddenFilePatterns": ["/etc/shadow", "/root/.ssh/**"],
+    "maxAge": "24h"
+  }
+}
+```
+
 ## Pattern Matching
 
 The plugin uses glob patterns in several contexts, with slightly different
@@ -1739,7 +1908,7 @@ A file named `<namespace>.json` in the policy directory overrides
 By default, the override is a full replacement. If a namespace policy sets
 `"inherits": true`, unset top-level fields (`trust`, `include`, `exclude`,
 `slsa`, `vex`, `vsa`, `signatures`, `notation`, `sbom`, `scai`, `source`,
-`buildEnv`, `vulnScan`, `testResult`, `cel`, `rules`) are inherited from the default
+`buildEnv`, `vulnScan`, `testResult`, `release`, `runtimeTrace`, `cel`, `rules`) are inherited from the default
 policy. Each top-level section that is set in the namespace policy replaces
 the default's section entirely. The default policy itself cannot set `inherits`.
 
@@ -1798,7 +1967,7 @@ Example: `default.json` requires provenance, but `dev.json` allows everything:
 
 In this example, `staging.json` inherits all remaining sections (`trust`,
 `include`, `exclude`, `slsa`, `vsa`, `signatures`, `notation`, `sbom`, `scai`,
-`source`, `buildEnv`, `vulnScan`, `testResult`, `cel`, `rules`) from
+`source`, `buildEnv`, `vulnScan`, `testResult`, `release`, `runtimeTrace`, `cel`, `rules`) from
 `default.json` but replaces the `vex` section.
 
 ## Deployment Patterns

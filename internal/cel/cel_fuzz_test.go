@@ -51,6 +51,7 @@ func FuzzCompileAndEvaluate(f *testing.F) {
 			nil,
 			nil,
 			nil, nil, nil, nil,
+			nil, nil,
 		)
 
 		celengine.Evaluate(compiled, vars)

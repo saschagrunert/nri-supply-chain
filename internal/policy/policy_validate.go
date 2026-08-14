@@ -161,7 +161,7 @@ func (p *Policy) ValidateRuntime() error {
 	return errors.Join(errs...)
 }
 
-func (p *Policy) validateSections() []error {
+func (p *Policy) validateSections() []error { //nolint:funlen // one block per section type
 	var errs []error
 
 	appendErr := func(err error) {
@@ -215,6 +215,15 @@ func (p *Policy) validateSections() []error {
 		errs = append(errs, testErr)
 	} else {
 		p.resolveTestResultDuration()
+	}
+
+	appendErr(p.validateRelease())
+
+	runtimeTraceErr := p.validateRuntimeTrace()
+	if runtimeTraceErr != nil {
+		errs = append(errs, runtimeTraceErr)
+	} else {
+		p.resolveRuntimeTraceDuration()
 	}
 
 	return errs
@@ -1070,6 +1079,7 @@ func (p *Policy) validateRule(idx int) []error {
 	return errs
 }
 
+//nolint:funlen // one block per section type
 func validateRuleSections(rulePol *Policy, idx int) []error {
 	var errs []error
 
@@ -1083,6 +1093,7 @@ func validateRuleSections(rulePol *Policy, idx int) []error {
 		{"sbom", rulePol.validateSBOM},
 		{"scai", rulePol.validateSCAI},
 		{"buildEnv", rulePol.validateBuildEnv},
+		{"release", rulePol.validateRelease},
 	} {
 		err := validator.fn()
 		if err != nil {
@@ -1125,6 +1136,13 @@ func validateRuleSections(rulePol *Policy, idx int) []error {
 		errs = append(errs, fmt.Errorf("rules[%d]: %w", idx, testErr))
 	} else {
 		rulePol.resolveTestResultDuration()
+	}
+
+	runtimeTraceErr := rulePol.validateRuntimeTrace()
+	if runtimeTraceErr != nil {
+		errs = append(errs, fmt.Errorf("rules[%d]: %w", idx, runtimeTraceErr))
+	} else {
+		rulePol.resolveRuntimeTraceDuration()
 	}
 
 	return errs
@@ -1438,6 +1456,106 @@ func (p *Policy) resolveTestResultDuration() {
 	}
 
 	p.TestResult.MaxAgeDuration = maxAge
+}
+
+func (p *Policy) validateRelease() error {
+	if p.Release == nil {
+		return nil
+	}
+
+	var errs []error
+
+	if p.Release.MissingPolicy != "" {
+		err := types.ValidateAction(
+			"release.missingPolicy", p.Release.MissingPolicy,
+		)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("validating release policy: %w", err))
+		}
+	}
+
+	err := validateNonEmpty("release.trustedRegistries", p.Release.TrustedRegistries)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	err = validateGlobPatterns("release.trustedRegistries", p.Release.TrustedRegistries)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	return errors.Join(errs...)
+}
+
+func (p *Policy) validateRuntimeTrace() error { //nolint:cyclop // validation requires checking each field
+	if p.RuntimeTrace == nil {
+		return nil
+	}
+
+	var errs []error
+
+	if p.RuntimeTrace.MissingPolicy != "" {
+		err := types.ValidateAction(
+			"runtimeTrace.missingPolicy", p.RuntimeTrace.MissingPolicy,
+		)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("validating runtimeTrace policy: %w", err))
+		}
+	}
+
+	err := validateNonEmpty("runtimeTrace.trustedMonitors", p.RuntimeTrace.TrustedMonitors)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	err = validateGlobPatterns("runtimeTrace.trustedMonitors", p.RuntimeTrace.TrustedMonitors)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	err = validateNonEmpty(
+		"runtimeTrace.forbiddenFilePatterns", p.RuntimeTrace.ForbiddenFilePatterns,
+	)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	err = validateGlobPatterns(
+		"runtimeTrace.forbiddenFilePatterns", p.RuntimeTrace.ForbiddenFilePatterns,
+	)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	if p.RuntimeTrace.MaxAge != "" {
+		maxAge, parseErr := time.ParseDuration(p.RuntimeTrace.MaxAge)
+		if parseErr != nil {
+			errs = append(
+				errs,
+				fmt.Errorf("invalid runtimeTrace.maxAge %q: %w", p.RuntimeTrace.MaxAge, parseErr),
+			)
+		} else if maxAge <= 0 {
+			errs = append(
+				errs,
+				fmt.Errorf("%w, got %q", ErrRuntimeTraceMaxAgeNotPositive, p.RuntimeTrace.MaxAge),
+			)
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+func (p *Policy) resolveRuntimeTraceDuration() {
+	if p.RuntimeTrace == nil || p.RuntimeTrace.MaxAge == "" {
+		return
+	}
+
+	maxAge, err := time.ParseDuration(p.RuntimeTrace.MaxAge)
+	if err != nil {
+		return
+	}
+
+	p.RuntimeTrace.MaxAgeDuration = maxAge
 }
 
 func (p *Policy) validateAndCompileCEL() error {
