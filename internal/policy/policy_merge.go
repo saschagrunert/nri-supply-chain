@@ -110,7 +110,7 @@ func cloneSections(src *Sections) Sections {
 	return dst
 }
 
-//nolint:cyclop // one branch per section type
+//nolint:cyclop,funlen // one branch per section type
 func applySections(dst *Sections, src Sections) { //nolint:gocritic // value param avoids nil checks
 	if src.Trust != nil {
 		dst.Trust = cloneTrust(src.Trust)
@@ -168,6 +168,10 @@ func applySections(dst *Sections, src Sections) { //nolint:gocritic // value par
 
 	if src.TestResult != nil {
 		dst.TestResult = cloneTestResult(src.TestResult)
+	}
+
+	if src.RuntimeTrace != nil {
+		dst.RuntimeTrace = cloneRuntimeTrace(src.RuntimeTrace)
 	}
 }
 
@@ -295,6 +299,14 @@ func cloneVulnScan(src *VulnScanPolicy) *VulnScanPolicy {
 func cloneTestResult(src *TestResultPolicy) *TestResultPolicy {
 	clone := *src
 	clone.RequiredSuites = slices.Clone(clone.RequiredSuites)
+
+	return &clone
+}
+
+func cloneRuntimeTrace(src *RuntimeTracePolicy) *RuntimeTracePolicy {
+	clone := *src
+	clone.TrustedMonitors = slices.Clone(clone.TrustedMonitors)
+	clone.ForbiddenFilePatterns = slices.Clone(clone.ForbiddenFilePatterns)
 
 	return &clone
 }

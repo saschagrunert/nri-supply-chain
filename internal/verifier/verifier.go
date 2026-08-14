@@ -231,7 +231,10 @@ func WarnWarnModeDefaults(cfg *config.Config, policies map[string]*policy.Policy
 	}
 }
 
-func allMissingPoliciesAllow(pol *policy.Policy) bool {
+//nolint:cyclop // one condition per check type
+func allMissingPoliciesAllow(
+	pol *policy.Policy,
+) bool {
 	return pol.SLSAMissingPolicy() == types.ActionAllow &&
 		pol.VEXMissingPolicy() == types.ActionAllow &&
 		pol.VSAMissingPolicy() == types.ActionAllow &&
@@ -241,7 +244,8 @@ func allMissingPoliciesAllow(pol *policy.Policy) bool {
 		pol.SourceMissingPolicy() == types.ActionAllow &&
 		pol.BuildEnvMissingPolicy() == types.ActionAllow &&
 		pol.VulnScanMissingPolicy() == types.ActionAllow &&
-		pol.TestResultMissingPolicy() == types.ActionAllow
+		pol.TestResultMissingPolicy() == types.ActionAllow &&
+		pol.RuntimeTraceMissingPolicy() == types.ActionAllow
 }
 
 // WarnEnforceDefaults logs warnings when enforce mode is used with
@@ -355,6 +359,14 @@ func warnPermissiveMissingPolicies(label string, pol *policy.Policy) {
 			"testResult.missingPolicy",
 			pol.TestResult != nil,
 			pol.TestResultMissingPolicy(),
+		},
+		{
+			"RuntimeTrace",
+			"runtime trace attestations",
+			"runtimetrace_missing_policy",
+			"runtimeTrace.missingPolicy",
+			pol.RuntimeTrace != nil,
+			pol.RuntimeTraceMissingPolicy(),
 		},
 	}
 

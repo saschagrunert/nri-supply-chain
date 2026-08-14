@@ -32,6 +32,7 @@ patterns for the nri-supply-chain plugin.
   - [<code>buildEnv</code> (object)](#buildenv-object)
   - [<code>vulnScan</code> (object)](#vulnscan-object)
   - [<code>testResult</code> (object)](#testresult-object)
+  - [<code>runtimeTrace</code> (object)](#runtimetrace-object)
   - [<code>rules</code> (array of objects)](#rules-array-of-objects)
   - [<code>cel</code> (object)](#cel-object)
 - [Verification Types](#verification-types)
@@ -47,6 +48,7 @@ patterns for the nri-supply-chain plugin.
   - [Build Environment Verification](#build-environment-verification)
   - [Vulnerability Scan Verification](#vulnerability-scan-verification)
   - [Test Result Verification](#test-result-verification)
+  - [Runtime Trace Verification](#runtime-trace-verification)
 - [Pattern Matching](#pattern-matching)
   - [<code>include</code>, <code>exclude</code>, and <code>trust.sources</code>](#include-exclude-and-trustsources)
   - [<code>trust.sanPatterns</code>](#trustsanpatterns)
@@ -301,6 +303,9 @@ nri-supply-chain json-schema policy
         "testResult": {
           "$ref": "#/$defs/TestResultPolicy"
         },
+        "runtimeTrace": {
+          "$ref": "#/$defs/RuntimeTracePolicy"
+        },
         "images": {
           "items": {
             "type": "string"
@@ -429,6 +434,9 @@ nri-supply-chain json-schema policy
         },
         "testResult": {
           "$ref": "#/$defs/TestResultPolicy"
+        },
+        "runtimeTrace": {
+          "$ref": "#/$defs/RuntimeTracePolicy"
         },
         "mode": {
           "type": "string",
@@ -617,6 +625,31 @@ nri-supply-chain json-schema policy
           "enum": ["allow", "warn", "deny"]
         },
         "requiredSuites": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "maxAge": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "RuntimeTracePolicy": {
+      "properties": {
+        "missingPolicy": {
+          "type": "string",
+          "enum": ["allow", "warn", "deny"]
+        },
+        "trustedMonitors": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "forbiddenFilePatterns": {
           "items": {
             "type": "string"
           },
@@ -1043,6 +1076,21 @@ attached to container images.
 The overall test result must be `pass` or `passed` (case-insensitive). If any
 required suite is missing or has a non-passing result, verification fails.
 
+### `runtimeTrace` (object)
+
+Runtime trace attestation verification settings. When configured, the plugin
+verifies
+[runtime-trace v0.1](https://github.com/in-toto/attestation/blob/main/spec/predicates/runtime-trace.md)
+attestations (predicate type `https://in-toto.io/attestation/runtime-trace/v0.1`)
+attached to container images.
+
+| Field                   | Type   | Default | Description                                                                      |
+| ----------------------- | ------ | ------- | -------------------------------------------------------------------------------- |
+| `missingPolicy`         | string | `allow` | Behavior when no runtime trace attestation is found: `allow`, `warn`, `deny`     |
+| `trustedMonitors`       | array  | (none)  | Glob patterns for trusted monitor types (e.g. `falco`, `tetragon*`)              |
+| `forbiddenFilePatterns` | array  | (none)  | Glob patterns for file accesses that must not appear (e.g. `/etc/shadow`)        |
+| `maxAge`                | string | (none)  | Maximum age of the trace (e.g. `24h`, `168h`); older traces are considered stale |
+
 ### `rules` (array of objects)
 
 Per-image policy overrides. Each rule matches images by glob patterns and
@@ -1051,22 +1099,23 @@ rule wins; images that do not match any rule use the base policy.
 
 Each rule is an object with:
 
-| Field        | Type   | Required | Description                                                 |
-| ------------ | ------ | -------- | ----------------------------------------------------------- |
-| `images`     | array  | yes      | Glob patterns to match against image references             |
-| `trust`      | object | no       | Override trust roots (same schema as top-level `trust`)     |
-| `slsa`       | object | no       | Override SLSA settings (same schema as top-level `slsa`)    |
-| `vex`        | object | no       | Override VEX settings (same schema as top-level `vex`)      |
-| `vsa`        | object | no       | Override VSA settings (same schema as top-level `vsa`)      |
-| `signatures` | object | no       | Override signature settings (same schema as `signatures`)   |
-| `notation`   | object | no       | Override Notation settings (same schema as `notation`)      |
-| `cel`        | object | no       | Override CEL rules (same schema as top-level `cel`)         |
-| `sbom`       | object | no       | Override SBOM settings (same schema as `sbom`)              |
-| `scai`       | object | no       | Override SCAI settings (same schema as `scai`)              |
-| `source`     | object | no       | Override source settings (same schema as `source`)          |
-| `buildEnv`   | object | no       | Override build env settings (same schema as `buildEnv`)     |
-| `vulnScan`   | object | no       | Override vuln scan settings (same schema as `vulnScan`)     |
-| `testResult` | object | no       | Override test result settings (same schema as `testResult`) |
+| Field          | Type   | Required | Description                                                     |
+| -------------- | ------ | -------- | --------------------------------------------------------------- |
+| `images`       | array  | yes      | Glob patterns to match against image references                 |
+| `trust`        | object | no       | Override trust roots (same schema as top-level `trust`)         |
+| `slsa`         | object | no       | Override SLSA settings (same schema as top-level `slsa`)        |
+| `vex`          | object | no       | Override VEX settings (same schema as top-level `vex`)          |
+| `vsa`          | object | no       | Override VSA settings (same schema as top-level `vsa`)          |
+| `signatures`   | object | no       | Override signature settings (same schema as `signatures`)       |
+| `notation`     | object | no       | Override Notation settings (same schema as `notation`)          |
+| `cel`          | object | no       | Override CEL rules (same schema as top-level `cel`)             |
+| `sbom`         | object | no       | Override SBOM settings (same schema as `sbom`)                  |
+| `scai`         | object | no       | Override SCAI settings (same schema as `scai`)                  |
+| `source`       | object | no       | Override source settings (same schema as `source`)              |
+| `buildEnv`     | object | no       | Override build env settings (same schema as `buildEnv`)         |
+| `vulnScan`     | object | no       | Override vuln scan settings (same schema as `vulnScan`)         |
+| `testResult`   | object | no       | Override test result settings (same schema as `testResult`)     |
+| `runtimeTrace` | object | no       | Override runtime trace settings (same schema as `runtimeTrace`) |
 
 Fields not set in a rule are inherited from the base policy. The `images`
 patterns use the same glob syntax as `include` and `exclude`.
@@ -1690,6 +1739,41 @@ Example configuration:
 }
 ```
 
+### Runtime Trace Verification
+
+Verifies [runtime-trace v0.1](https://github.com/in-toto/attestation/blob/main/spec/predicates/runtime-trace.md)
+attestations (predicate type `https://in-toto.io/attestation/runtime-trace/v0.1`).
+Runtime trace attestations capture build-time runtime observations from a
+monitor, including process activity, network connections, and file accesses.
+
+Checks performed:
+
+- **Subject digest**: The in-toto `subject[].digest` must match the image digest.
+- **Trusted monitors**: If `runtimeTrace.trustedMonitors` is configured, the
+  `monitor.type` field must match at least one glob pattern.
+- **Forbidden files**: If `runtimeTrace.forbiddenFilePatterns` is configured,
+  no file access entry may match any forbidden pattern.
+- **Freshness**: If `runtimeTrace.maxAge` is configured, the
+  `metadata.buildFinishedOn` timestamp must be within the specified duration.
+
+When multiple runtime trace attestations exist, all must pass (all-must-pass
+semantics). Metadata from passing attestations is merged: process, network, and
+file access counts are summed, and monitor types and file names are
+deduplicated.
+
+Example configuration:
+
+```json
+{
+  "runtimeTrace": {
+    "missingPolicy": "deny",
+    "trustedMonitors": ["falco", "tetragon*"],
+    "forbiddenFilePatterns": ["/etc/shadow", "/root/.ssh/**"],
+    "maxAge": "24h"
+  }
+}
+```
+
 ## Pattern Matching
 
 The plugin uses glob patterns in several contexts, with slightly different
@@ -1739,7 +1823,7 @@ A file named `<namespace>.json` in the policy directory overrides
 By default, the override is a full replacement. If a namespace policy sets
 `"inherits": true`, unset top-level fields (`trust`, `include`, `exclude`,
 `slsa`, `vex`, `vsa`, `signatures`, `notation`, `sbom`, `scai`, `source`,
-`buildEnv`, `vulnScan`, `testResult`, `cel`, `rules`) are inherited from the default
+`buildEnv`, `vulnScan`, `testResult`, `runtimeTrace`, `cel`, `rules`) are inherited from the default
 policy. Each top-level section that is set in the namespace policy replaces
 the default's section entirely. The default policy itself cannot set `inherits`.
 
@@ -1798,7 +1882,7 @@ Example: `default.json` requires provenance, but `dev.json` allows everything:
 
 In this example, `staging.json` inherits all remaining sections (`trust`,
 `include`, `exclude`, `slsa`, `vsa`, `signatures`, `notation`, `sbom`, `scai`,
-`source`, `buildEnv`, `vulnScan`, `testResult`, `cel`, `rules`) from
+`source`, `buildEnv`, `vulnScan`, `testResult`, `runtimeTrace`, `cel`, `rules`) from
 `default.json` but replaces the `vex` section.
 
 ## Deployment Patterns

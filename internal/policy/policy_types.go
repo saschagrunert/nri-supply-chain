@@ -269,6 +269,9 @@ var (
 
 	// ErrTestResultMaxAgeNotPositive indicates a non-positive testResult maxAge value.
 	ErrTestResultMaxAgeNotPositive = errors.New("testResult.maxAge must be positive")
+
+	// ErrRuntimeTraceMaxAgeNotPositive indicates a non-positive runtimeTrace maxAge value.
+	ErrRuntimeTraceMaxAgeNotPositive = errors.New("runtimeTrace.maxAge must be positive")
 )
 
 // Sections groups the verification settings that can be overridden
@@ -300,6 +303,8 @@ type Sections struct {
 	VulnScan *VulnScanPolicy `json:"vulnScan,omitempty"`
 	// TestResult contains test result verification settings.
 	TestResult *TestResultPolicy `json:"testResult,omitempty"`
+	// RuntimeTrace contains runtime trace verification settings.
+	RuntimeTrace *RuntimeTracePolicy `json:"runtimeTrace,omitempty"`
 }
 
 // Policy defines the trust roots and per-namespace verification settings.
@@ -572,6 +577,20 @@ type TestResultPolicy struct {
 	// RequiredSuites is a list of test suite names that must be present and passed.
 	RequiredSuites []string `json:"requiredSuites,omitempty"`
 	// MaxAge is the maximum age of a test result before it is considered stale.
+	MaxAge string `json:"maxAge,omitempty"`
+	// MaxAgeDuration is the parsed form of MaxAge, resolved after validation.
+	MaxAgeDuration time.Duration `json:"-"`
+}
+
+// RuntimeTracePolicy contains runtime trace verification settings.
+type RuntimeTracePolicy struct {
+	// MissingPolicy controls behavior when no runtime trace attestation is found.
+	MissingPolicy types.Action `json:"missingPolicy,omitempty" jsonschema:"enum=allow,enum=warn,enum=deny"`
+	// TrustedMonitors is a list of allowed monitor type URI patterns.
+	TrustedMonitors []string `json:"trustedMonitors,omitempty"`
+	// ForbiddenFilePatterns is a list of glob patterns for file accesses that must not appear.
+	ForbiddenFilePatterns []string `json:"forbiddenFilePatterns,omitempty"`
+	// MaxAge is the maximum age of a runtime trace before it is considered stale.
 	MaxAge string `json:"maxAge,omitempty"`
 	// MaxAgeDuration is the parsed form of MaxAge, resolved after validation.
 	MaxAgeDuration time.Duration `json:"-"`

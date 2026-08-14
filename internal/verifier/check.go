@@ -32,6 +32,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/notation"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
+	"github.com/saschagrunert/nri-supply-chain/internal/runtimetrace"
 	"github.com/saschagrunert/nri-supply-chain/internal/sbom"
 	"github.com/saschagrunert/nri-supply-chain/internal/scai"
 	"github.com/saschagrunert/nri-supply-chain/internal/slsa"
@@ -218,6 +219,10 @@ func runChecksWithoutFetcher( //nolint:funlen // additional check types add entr
 			checkType     types.CheckType
 			missingPolicy types.Action
 		}{types.CheckTypeTestResult, pol.TestResultMissingPolicy()},
+		struct {
+			checkType     types.CheckType
+			missingPolicy types.Action
+		}{types.CheckTypeRuntimeTrace, pol.RuntimeTraceMissingPolicy()},
 	)
 
 	results := make([]*types.CheckResult, 0, len(missingChecks))
@@ -490,6 +495,9 @@ func runParallelChecks(
 		}},
 		{types.CheckTypeTestResult, func() *types.CheckResult {
 			return runTestResultCheck(ctx, bins.testresult, pol, met, imageRef, digest)
+		}},
+		{types.CheckTypeRuntimeTrace, func() *types.CheckResult {
+			return runRuntimeTraceCheck(ctx, bins.runtimetrace, pol, met, imageRef, digest)
 		}},
 	}
 
@@ -807,6 +815,29 @@ func runTestResultCheck(
 	)
 }
 
+func runRuntimeTraceCheck(
+	ctx context.Context,
+	runtimetraceAtts []attestation.VerifiedAttestation,
+	pol *policy.Policy, met *metrics.Metrics,
+	imageRef, digest string,
+) *types.CheckResult {
+	runner := &checkRunner{
+		checkType:     types.CheckTypeRuntimeTrace,
+		label:         "RuntimeTrace",
+		missingPolicy: pol.RuntimeTraceMissingPolicy(),
+		missingLog:    "No runtime trace attestation found",
+		missingReason: reasonMissingAttestation,
+		missingDetail: "no runtime trace attestation found for image ",
+	}
+
+	return runner.run(
+		ctx, met, imageRef, len(runtimetraceAtts) > 0,
+		func() (*types.CheckResult, error) {
+			return runtimetrace.VerifyMultiple(ctx, extractPayloads(runtimetraceAtts), pol, digest)
+		},
+	)
+}
+
 func runCELCheck( //nolint:cyclop // additional check type adds a branch
 	pol *policy.Policy, imageRef, digest, namespace string,
 	parsedRef name.Reference, result *types.Result,
@@ -822,6 +853,7 @@ func runCELCheck( //nolint:cyclop // additional check type adds a branch
 		notationResult, scaiResult                   *types.CheckResult
 		sourceResult, buildenvResult                 *types.CheckResult
 		vulnscanResult, testresultResult             *types.CheckResult
+		runtimetraceResult                           *types.CheckResult
 	)
 
 	for idx := range result.CheckResults {
@@ -846,6 +878,8 @@ func runCELCheck( //nolint:cyclop // additional check type adds a branch
 			vulnscanResult = &result.CheckResults[idx]
 		case types.CheckTypeTestResult:
 			testresultResult = &result.CheckResults[idx]
+		case types.CheckTypeRuntimeTrace:
+			runtimetraceResult = &result.CheckResults[idx]
 		case types.CheckTypeFetch, types.CheckTypePolicy,
 			types.CheckTypeCEL:
 		}
@@ -855,6 +889,7 @@ func runCELCheck( //nolint:cyclop // additional check type adds a branch
 		imageRef, registry, repository, digest, namespace,
 		slsaResult, vexResult, vsaResult, sbomResult, notationResult, scaiResult,
 		sourceResult, buildenvResult, vulnscanResult, testresultResult,
+		runtimetraceResult,
 	)
 
 	return celengine.Evaluate(pol.CompiledCEL, vars)
@@ -943,16 +978,17 @@ func appendReason(result *types.Result, detail string) {
 }
 
 type attestationBins struct {
-	vsa        []attestation.VerifiedAttestation
-	slsa       []attestation.VerifiedAttestation
-	vex        []attestation.VerifiedAttestation
-	notation   []attestation.VerifiedAttestation
-	sbom       []attestation.VerifiedAttestation
-	scai       []attestation.VerifiedAttestation
-	source     []attestation.VerifiedAttestation
-	buildenv   []attestation.VerifiedAttestation
-	vulnscan   []attestation.VerifiedAttestation
-	testresult []attestation.VerifiedAttestation
+	vsa          []attestation.VerifiedAttestation
+	slsa         []attestation.VerifiedAttestation
+	vex          []attestation.VerifiedAttestation
+	notation     []attestation.VerifiedAttestation
+	sbom         []attestation.VerifiedAttestation
+	scai         []attestation.VerifiedAttestation
+	source       []attestation.VerifiedAttestation
+	buildenv     []attestation.VerifiedAttestation
+	vulnscan     []attestation.VerifiedAttestation
+	testresult   []attestation.VerifiedAttestation
+	runtimetrace []attestation.VerifiedAttestation
 }
 
 func binAttestations( //nolint:cyclop // additional predicate type adds a branch
@@ -991,6 +1027,8 @@ func binAttestations( //nolint:cyclop // additional predicate type adds a branch
 			bins.vulnscan = append(bins.vulnscan, attestations[idx])
 		case attestation.PredicateTestResult:
 			bins.testresult = append(bins.testresult, attestations[idx])
+		case attestation.PredicateRuntimeTrace:
+			bins.runtimetrace = append(bins.runtimetrace, attestations[idx])
 		case attestation.PredicateCosignSignature:
 			slog.DebugContext(ctx,
 				"Skipping bare cosign signature attestation",

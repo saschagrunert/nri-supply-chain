@@ -62,6 +62,8 @@ const (
 	CheckTypeVulnScan CheckType = "vulnscan"
 	// CheckTypeTestResult is the test result check type.
 	CheckTypeTestResult CheckType = "testresult"
+	// CheckTypeRuntimeTrace is the runtime trace check type.
+	CheckTypeRuntimeTrace CheckType = "runtimetrace"
 )
 
 // Result represents the outcome of a supply chain verification.

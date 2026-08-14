@@ -136,6 +136,15 @@ func (p *Policy) TestResultMissingPolicy() types.Action {
 	return types.ActionAllow
 }
 
+// RuntimeTraceMissingPolicy returns the effective runtime trace missing policy.
+func (p *Policy) RuntimeTraceMissingPolicy() types.Action {
+	if p.RuntimeTrace != nil && p.RuntimeTrace.MissingPolicy != "" {
+		return p.RuntimeTrace.MissingPolicy
+	}
+
+	return types.ActionAllow
+}
+
 // Builders returns the trusted builders list, or nil if trust is not configured.
 func (p *Policy) Builders() []TrustedBuilder {
 	if p.Trust != nil {
