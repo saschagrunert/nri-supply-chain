@@ -24,12 +24,14 @@ import (
 
 	"github.com/invopop/jsonschema"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 )
 
 const (
 	schemaPolicy = "policy"
 	schemaResult = "result"
+	schemaConfig = "config"
 )
 
 func policyJSONSchema() ([]byte, error) {
@@ -38,6 +40,14 @@ func policyJSONSchema() ([]byte, error) {
 		"nri-supply-chain Policy",
 		"Defines the trust roots and "+
 			"per-namespace verification settings for nri-supply-chain.",
+	)
+}
+
+func configJSONSchema() ([]byte, error) {
+	return generateSchema(
+		(*config.Config)(nil),
+		"nri-supply-chain Config",
+		"TOML configuration file schema for nri-supply-chain.",
 	)
 }
 
@@ -100,9 +110,11 @@ func printJSONSchema(schemaType string) int {
 		data, err = policyJSONSchema()
 	case schemaResult:
 		data, err = verifyResultJSONSchema()
+	case schemaConfig:
+		data, err = configJSONSchema()
 	default:
 		slog.Error(
-			"Unknown schema type, use 'policy' or 'result'",
+			"Unknown schema type, use 'policy', 'result', or 'config'",
 			"type", schemaType,
 		)
 

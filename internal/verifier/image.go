@@ -186,7 +186,10 @@ func isIncluded(ctx context.Context, includedImages []string, imageRef string) b
 	return false
 }
 
-func resolveImagePolicy(
+// ResolveImagePolicy returns the effective policy for an image reference by
+// finding the first matching image rule and applying it on top of the base
+// policy. Returns the original policy and -1 if no rule matches.
+func ResolveImagePolicy(
 	ctx context.Context, pol *policy.Policy, imageRef string,
 ) (resolved *policy.Policy, ruleIdx int) {
 	if len(pol.Rules) == 0 {

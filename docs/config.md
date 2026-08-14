@@ -15,6 +15,9 @@ nri-supply-chain plugin.
 - [CLI](#cli)
   - [Batch Verification](#batch-verification)
   - [Exit Codes](#exit-codes)
+  - [Effective Policy](#effective-policy)
+  - [Inspect](#inspect)
+  - [JSON Schema](#json-schema)
 
 <!-- /toc -->
 
@@ -434,8 +437,10 @@ daemon.
 nri-supply-chain                         Run the NRI plugin daemon
 nri-supply-chain verify <image> [...]    Verify one or more images
 nri-supply-chain validate                Validate config and policies
+nri-supply-chain effective-policy        Show effective policy for a namespace
+nri-supply-chain inspect <image>         List attestations attached to an image
 nri-supply-chain version                 Print the version
-nri-supply-chain json-schema <type>      Print JSON Schema (policy, result)
+nri-supply-chain json-schema <type>      Print JSON Schema (policy, result, config)
 ```
 
 Global flags (available on all subcommands):
@@ -464,7 +469,12 @@ Verify flags:
 ```text
 -n, --namespace    Namespace for verification (default: default)
 -o, --output       Output format: table, json (default: table)
+-v, --verbose      Show step-by-step diagnostic output
 ```
+
+The `--verbose` flag enables debug-level logging during verification. This shows
+intermediate steps including registry connectivity, digest resolution, discovered
+attestations, trust chain evaluation, and policy resolution.
 
 To verify a single image:
 
@@ -538,7 +548,55 @@ When verifying multiple images, the exit code is the worst (highest) across all
 images. If any image is denied (exit 1), the overall exit is 1. If any image
 hits an infrastructure error (exit 2), the overall exit is 2.
 
-The full JSON Schema for this output can be generated via:
+### Effective Policy
+
+The `effective-policy` subcommand shows the fully resolved policy for a given
+namespace after inheritance and rule matching.
+
+```console
+nri-supply-chain effective-policy --namespace production
+```
+
+When `--image` is specified, the first matching image rule is applied on top of
+the base policy:
+
+```console
+nri-supply-chain effective-policy --namespace production --image ghcr.io/org/app:latest
+```
+
+The output is JSON containing the namespace, effective mode, policy source
+("default" or "namespace"), matched rule index (or -1 if no rule matched),
+matched rule patterns, and the fully resolved policy object.
+
+Effective-policy flags:
+
+```text
+-n, --namespace    Namespace to resolve (default: default)
+-i, --image        Image reference to match against rules
+```
+
+### Inspect
+
+The `inspect` subcommand lists all attestations attached to a container image
+without running policy evaluation.
+
+```console
+nri-supply-chain inspect ghcr.io/myorg/myimage:v1.0
+```
+
+This resolves the image digest, discovers all OCI referrer attestations, and
+displays their predicate types and signature types. Use `--output json` for
+machine-readable output.
+
+Inspect flags:
+
+```text
+-o, --output       Output format: table, json (default: table)
+```
+
+### JSON Schema
+
+The full JSON Schema for the verify result can be generated via:
 
 ```console
 nri-supply-chain json-schema result
@@ -613,3 +671,9 @@ nri-supply-chain json-schema result
 <!-- verify-jsonschema-end -->
 
 </details>
+
+The config file schema is also available:
+
+```console
+nri-supply-chain json-schema config
+```

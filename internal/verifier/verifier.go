@@ -607,7 +607,7 @@ func (v *Verifier) Verify( //nolint:funlen // early-return branches inflate line
 		), nil
 	}
 
-	resolvedPol, ruleIdx := resolveImagePolicy(ctx, pol, imageRef)
+	resolvedPol, ruleIdx := ResolveImagePolicy(ctx, pol, imageRef)
 	effectiveMode := resolvedPol.EffectiveMode(state.config.Verification)
 
 	info.verificationMode = string(effectiveMode)

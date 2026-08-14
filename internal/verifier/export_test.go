@@ -136,13 +136,6 @@ func (v *Verifier) ExportWaitInflight() {
 	v.inflightWg.Wait()
 }
 
-// ExportResolveImagePolicy exposes resolveImagePolicy for external tests.
-func ExportResolveImagePolicy(
-	ctx context.Context, pol *policy.Policy, imageRef string,
-) (resolved *policy.Policy, ruleIdx int) {
-	return resolveImagePolicy(ctx, pol, imageRef)
-}
-
 // ExportCacheNamespaceKey exposes cacheNamespaceKey for external tests.
 func ExportCacheNamespaceKey(namespace string, ruleIdx int) string {
 	return cacheNamespaceKey(namespace, ruleIdx)
