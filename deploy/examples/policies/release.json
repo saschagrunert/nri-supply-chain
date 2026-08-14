@@ -1,0 +1,13 @@
+{
+  "release": {
+    "missingPolicy": "warn",
+    "trustedRegistries": ["ghcr.io/myorg/**"],
+    "requirePackageId": true
+  },
+  "slsa": {
+    "missingPolicy": "allow"
+  },
+  "vex": {
+    "missingPolicy": "allow"
+  }
+}

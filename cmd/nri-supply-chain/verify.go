@@ -29,8 +29,6 @@ import (
 	"time"
 
 	"github.com/fatih/color"
-	"github.com/olekukonko/tablewriter"
-	"github.com/olekukonko/tablewriter/tw"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
@@ -430,31 +428,7 @@ func outputVerifyTable(writer io.Writer, out *verifyOutput) error {
 }
 
 func renderCheckTable(writer io.Writer, checks []types.CheckResult) error {
-	padding := tw.Padding{Left: "", Right: "   "}
-
-	table := tablewriter.NewTable(writer,
-		tablewriter.WithHeader([]string{"Type", "Status", "Detail"}),
-		tablewriter.WithHeaderAlignment(tw.AlignLeft),
-		tablewriter.WithRowAlignment(tw.AlignLeft),
-		tablewriter.WithRowAutoWrap(tw.WrapNone),
-		tablewriter.WithPadding(padding),
-		tablewriter.WithRendition(tw.Rendition{
-			Borders: tw.Border{
-				Left: tw.Off, Right: tw.Off, Top: tw.Off, Bottom: tw.Off,
-			},
-			Settings: tw.Settings{
-				Separators: tw.Separators{
-					BetweenColumns: tw.Off,
-					ShowHeader:     tw.Off,
-				},
-				Lines: tw.Lines{
-					ShowHeaderLine: tw.Off,
-					ShowTop:        tw.Off,
-					ShowBottom:     tw.Off,
-				},
-			},
-		}),
-	)
+	table := newBorderlessTable(writer, []string{"Type", "Status", "Detail"})
 
 	for _, check := range checks {
 		detail := check.Detail

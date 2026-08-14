@@ -26,8 +26,6 @@ import (
 	"syscall"
 
 	"github.com/google/go-containerregistry/pkg/name"
-	"github.com/olekukonko/tablewriter"
-	"github.com/olekukonko/tablewriter/tw"
 	"github.com/spf13/cobra"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
@@ -260,31 +258,7 @@ func outputInspectTable(writer io.Writer, out *inspectOutput) error {
 }
 
 func renderInspectTable(writer io.Writer, atts []inspectAttestation) error {
-	padding := tw.Padding{Left: "", Right: "   "}
-
-	table := tablewriter.NewTable(writer,
-		tablewriter.WithHeader([]string{"Predicate Type", "Signature", "Digest"}),
-		tablewriter.WithHeaderAlignment(tw.AlignLeft),
-		tablewriter.WithRowAlignment(tw.AlignLeft),
-		tablewriter.WithRowAutoWrap(tw.WrapNone),
-		tablewriter.WithPadding(padding),
-		tablewriter.WithRendition(tw.Rendition{
-			Borders: tw.Border{
-				Left: tw.Off, Right: tw.Off, Top: tw.Off, Bottom: tw.Off,
-			},
-			Settings: tw.Settings{
-				Separators: tw.Separators{
-					BetweenColumns: tw.Off,
-					ShowHeader:     tw.Off,
-				},
-				Lines: tw.Lines{
-					ShowHeaderLine: tw.Off,
-					ShowTop:        tw.Off,
-					ShowBottom:     tw.Off,
-				},
-			},
-		}),
-	)
+	table := newBorderlessTable(writer, []string{"Predicate Type", "Signature", "Digest"})
 
 	for _, att := range atts {
 		digest := att.Digest
