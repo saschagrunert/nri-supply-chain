@@ -64,6 +64,33 @@ func AssertErrorIs(t *testing.T, err, target error) {
 	}
 }
 
+// AssertNotEqual asserts that expected and actual are not equal.
+func AssertNotEqual[T comparable](t *testing.T, expected, actual T) {
+	t.Helper()
+
+	if expected == actual {
+		t.Errorf("expected values to differ, both are %v", actual)
+	}
+}
+
+// AssertTrue asserts that val is true.
+func AssertTrue(t *testing.T, val bool) {
+	t.Helper()
+
+	if !val {
+		t.Error("expected true, got false")
+	}
+}
+
+// AssertFalse asserts that val is false.
+func AssertFalse(t *testing.T, val bool) {
+	t.Helper()
+
+	if val {
+		t.Error("expected false, got true")
+	}
+}
+
 // AssertContains asserts that s contains substr.
 func AssertContains(t *testing.T, s, substr string) {
 	t.Helper()

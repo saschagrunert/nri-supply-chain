@@ -81,54 +81,19 @@ func Verify( //nolint:revive // ctx reserved for future context-aware logging
 
 // VerifyMultiple checks multiple test result attestations. All must pass
 // (any failure causes denial).
-func VerifyMultiple( //nolint:cyclop // metadata accumulation adds branches
+func VerifyMultiple(
 	ctx context.Context,
 	attestations [][]byte, pol *policy.Policy, imageDigest string,
 ) (*types.CheckResult, error) {
-	var (
-		failDetails  []string
-		verifyErrors []string
-		anyValid     bool
-		mergedMeta   map[string]any
+	//nolint:wrapcheck // VerifyMultipleWithMerge returns domain errors
+	return types.VerifyMultipleWithMerge(
+		checkType, "test result", "test result verification passed",
+		attestations,
+		func(att []byte) (*types.CheckResult, error) {
+			return Verify(ctx, att, pol, imageDigest)
+		},
+		mergeSuiteMeta,
 	)
-
-	for _, att := range attestations {
-		result, err := Verify(ctx, att, pol, imageDigest)
-		if err != nil {
-			verifyErrors = append(verifyErrors, err.Error())
-
-			continue
-		}
-
-		anyValid = true
-
-		if !result.Passed && result.Status == types.StatusFail {
-			failDetails = append(failDetails, result.Detail)
-		}
-
-		if result.Passed && result.Metadata != nil {
-			if mergedMeta == nil {
-				mergedMeta = make(map[string]any)
-			}
-
-			mergeSuiteMeta(mergedMeta, result.Metadata)
-		}
-	}
-
-	if len(failDetails) > 0 {
-		return failResult(strings.Join(failDetails, "; ")), nil
-	}
-
-	if len(attestations) > 0 && !anyValid {
-		return failResult(
-			"all test result documents failed verification: " + strings.Join(verifyErrors, "; "),
-		), nil
-	}
-
-	result := passResult()
-	result.Metadata = mergedMeta
-
-	return result, nil
 }
 
 //nolint:cyclop,funlen // sequential verification steps
