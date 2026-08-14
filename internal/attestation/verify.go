@@ -419,6 +419,19 @@ func warnNoSANPatterns(issuers []string) {
 	)
 }
 
+// ExtractBundlePayload parses a Sigstore bundle and extracts the DSSE payload
+// without performing signature verification.
+func ExtractBundlePayload(bundleBytes []byte) ([]byte, error) {
+	var bndl bundle.Bundle
+
+	err := bndl.UnmarshalJSON(bundleBytes)
+	if err != nil {
+		return nil, fmt.Errorf("parsing sigstore bundle: %w", err)
+	}
+
+	return extractVerifiedPayload(&bndl)
+}
+
 func extractVerifiedPayload(bndl *bundle.Bundle) ([]byte, error) {
 	envelope, err := bndl.Envelope()
 	if err != nil {

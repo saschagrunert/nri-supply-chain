@@ -800,6 +800,54 @@ func TestJSONSchemaTooManyArgs(t *testing.T) {
 	}
 }
 
+func TestJSONSchemaConfigSubcommand(t *testing.T) {
+	t.Parallel()
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{cmdJSONSchema, schemaConfig})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestEffectivePolicyRejectsArgs(t *testing.T) {
+	t.Parallel()
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{cmdEffectivePolicy, "extra"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when effective-policy called with args")
+	}
+}
+
+func TestInspectRequiresArg(t *testing.T) {
+	t.Parallel()
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{cmdInspect})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when inspect called without image arg")
+	}
+}
+
+func TestInspectTooManyArgs(t *testing.T) {
+	t.Parallel()
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{cmdInspect, testImgV1, testImgV2})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when inspect called with too many args")
+	}
+}
+
 func TestOCIFetcherWithRateLimit(t *testing.T) {
 	t.Parallel()
 

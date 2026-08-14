@@ -482,6 +482,28 @@ func renderCheckTable(writer io.Writer, checks []types.CheckResult) error {
 	return nil
 }
 
+func logVerbosePreamble(
+	writer io.Writer, images []string, namespace string, cfg *config.Config,
+) {
+	mode := colorMode(string(cfg.Verification))
+	_, _ = fmt.Fprintf(writer, "%s %s\n", colorBold.Sprint("Mode:"), mode)
+	_, _ = fmt.Fprintf(writer, "%s %s\n",
+		colorBold.Sprint("Policy dir:"), cfg.PolicyDir)
+	_, _ = fmt.Fprintf(writer, "%s %s\n",
+		colorBold.Sprint("Namespace:"), colorItalic.Sprint(namespace))
+	_, _ = fmt.Fprintf(writer, "%s %v\n",
+		colorBold.Sprint("Fetch timeout:"), cfg.FetchTimeout.Duration)
+	_, _ = fmt.Fprintf(writer, "%s %s\n",
+		colorBold.Sprint("Fetch failure policy:"),
+		string(cfg.FetchFailurePolicy))
+	_, _ = fmt.Fprintf(writer, "%s %v\n",
+		colorBold.Sprint("Verification timeout:"),
+		cfg.VerificationTimeout.Duration)
+	_, _ = fmt.Fprintf(writer, "%s %s\n",
+		colorBold.Sprint("Images:"), strings.Join(images, ", "))
+	_, _ = fmt.Fprintln(writer)
+}
+
 func colorMode(mode string) string {
 	switch config.VerificationMode(mode) {
 	case config.ModeWarn:

@@ -57,6 +57,7 @@ const (
 	testImageNginx125     = "nginx:1.25"
 	testImageV1           = "img:v1"
 	testDigestAAA         = "sha256:aaa"
+	testDigestABC123      = "sha256:abc123"
 	testNamespaceDefault  = "default"
 	testPolicyPathDefault = "/policies/default.json"
 	testReasonDenied      = "denied"
@@ -788,7 +789,7 @@ func TestOutputVerifyResultTableAllowed(t *testing.T) {
 	var buf bytes.Buffer
 
 	input := &verifyOutput{
-		Image: testImageNginx, Digest: "sha256:abc123", Namespace: testNamespaceProd,
+		Image: testImageNginx, Digest: testDigestABC123, Namespace: testNamespaceProd,
 		PolicyFile: "/policies/prod.json", Mode: string(config.ModeWarn), Allowed: true,
 		Reason: "", CheckResults: checks,
 	}
@@ -802,7 +803,7 @@ func TestOutputVerifyResultTableAllowed(t *testing.T) {
 
 	for _, want := range []string{
 		testImageNginx,
-		"sha256:abc123",
+		testDigestABC123,
 		testNamespaceProd,
 		"/policies/prod.json",
 		"ALLOWED",
@@ -838,7 +839,7 @@ func TestOutputVerifyResultTableDenied(t *testing.T) {
 	var buf bytes.Buffer
 
 	input := &verifyOutput{
-		Image: "evil:latest", Digest: "sha256:fff", Namespace: "default",
+		Image: "evil:latest", Digest: "sha256:fff", Namespace: testNamespaceDefault,
 		PolicyFile: "/policies/default.json", Mode: string(config.ModeEnforce), Allowed: false,
 		Reason: "verification failed", CheckResults: checks,
 	}
@@ -1200,5 +1201,39 @@ func TestRunVerifyBatchTableOutput(t *testing.T) {
 
 	if !strings.Contains(got, "ALLOWED") {
 		t.Errorf("table output missing ALLOWED\ngot:\n%s", got)
+	}
+}
+
+func TestLogVerbosePreamble(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = "/test/policies"
+	cfg.FetchFailurePolicy = internaltypes.ActionDeny
+
+	var buf bytes.Buffer
+
+	logVerbosePreamble(&buf, []string{testImageNginx, testImageAlpine}, testNamespaceDefault, cfg)
+
+	got := buf.String()
+
+	for _, want := range []string{
+		"Mode:",
+		"Policy dir:",
+		"/test/policies",
+		"Namespace:",
+		testNamespaceDefault,
+		"Fetch timeout:",
+		"Fetch failure policy:",
+		string(internaltypes.ActionDeny),
+		"Verification timeout:",
+		"Images:",
+		testImageNginx,
+		testImageAlpine,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output missing %q\ngot:\n%s", want, got)
+		}
 	}
 }

@@ -973,6 +973,19 @@ func TestExtractVerifiedPayload(t *testing.T) {
 	}
 }
 
+func TestExtractBundlePayloadInvalidJSON(t *testing.T) {
+	t.Parallel()
+
+	_, err := attestation.ExtractBundlePayload([]byte(`not json`))
+	if err == nil {
+		t.Fatal("expected error for invalid bundle JSON")
+	}
+
+	if !strings.Contains(err.Error(), "parsing sigstore bundle") {
+		t.Errorf("expected 'parsing sigstore bundle' in error, got: %v", err)
+	}
+}
+
 func TestVerifyBundleWithCacheNilCanceledCtx(t *testing.T) {
 	t.Parallel()
 

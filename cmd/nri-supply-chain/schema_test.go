@@ -211,6 +211,28 @@ func TestPrintJSONSchemaVerifyResult(t *testing.T) {
 	}
 }
 
+func TestPrintJSONSchemaConfig(t *testing.T) {
+	t.Parallel()
+
+	exitCode := printJSONSchema("config")
+	if exitCode != exitSuccess {
+		t.Errorf("expected exit code 0, got %d", exitCode)
+	}
+}
+
+func TestConfigJSONSchema(t *testing.T) {
+	t.Parallel()
+
+	data, err := configJSONSchema()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(data) == 0 {
+		t.Fatal("expected non-empty schema")
+	}
+}
+
 func TestPrintJSONSchemaUnknown(t *testing.T) {
 	t.Parallel()
 

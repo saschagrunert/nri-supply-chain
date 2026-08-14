@@ -63,7 +63,7 @@ const (
 
 var (
 	errExitNonZero       = errors.New("non-zero exit")
-	errMissingSchemaType = errors.New("requires a schema type: policy, result")
+	errMissingSchemaType = errors.New("requires a schema type: policy, result, config")
 	errTooManyArgs       = errors.New("accepts 1 arg")
 )
 
@@ -136,6 +136,8 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(
 		newVerifyCmd(&configPath, &logLevel),
 		newValidateCmd(&configPath, &logLevel),
+		newEffectivePolicyCmd(&configPath, &logLevel),
+		newInspectCmd(&configPath, &logLevel),
 		newVersionCmd(),
 		newJSONSchemaCmd(),
 	)
@@ -147,13 +149,15 @@ func newVerifyCmd(configPath, logLevel *string) *cobra.Command {
 	var (
 		namespace    string
 		outputFormat string
+		verbose      bool
 	)
 
 	cmd := &cobra.Command{
 		Use:   cmdVerify + " <image> [<image>...]",
 		Short: "Verify one or more images",
 		Long: "Verify one or more container images against configured policies.\n\n" +
-			"Pass one or more image references as positional arguments.",
+			"Pass one or more image references as positional arguments.\n" +
+			"Use --verbose to show step-by-step diagnostic output.",
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
@@ -165,9 +169,18 @@ func newVerifyCmd(configPath, logLevel *string) *cobra.Command {
 				return errExitNonZero
 			}
 
-			initLogging(effectiveLogLevel(*logLevel, cfg.LogLevel), true)
+			level := effectiveLogLevel(*logLevel, cfg.LogLevel)
+			if verbose {
+				level = logLevelDebug
+			}
+
+			initLogging(level, true)
 
 			slog.Info("Using config", "path", *configPath)
+
+			if verbose {
+				logVerbosePreamble(cmd.ErrOrStderr(), args, namespace, cfg)
+			}
 
 			code := runVerifyCmd(args, namespace, outputFormat, cfg)
 			if code != 0 {
@@ -182,6 +195,8 @@ func newVerifyCmd(configPath, logLevel *string) *cobra.Command {
 		policy.DefaultPolicyLabel, "namespace for verification")
 	cmd.Flags().StringVarP(&outputFormat, "output", "o",
 		outputFormatTable, "output format: table, json")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false,
+		"show step-by-step diagnostic output")
 
 	return cmd
 }
@@ -249,7 +264,8 @@ func newJSONSchemaCmd() *cobra.Command {
 		Long: "Print the JSON Schema definition for a given type.\n\n" +
 			"Available types:\n" +
 			"  policy   Policy configuration file schema\n" +
-			"  result   Verification result output schema",
+			"  result   Verification result output schema\n" +
+			"  config   TOML configuration file schema",
 		Args: func(_ *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return errMissingSchemaType
@@ -261,7 +277,7 @@ func newJSONSchemaCmd() *cobra.Command {
 
 			return nil
 		},
-		ValidArgs: []string{schemaPolicy, schemaResult},
+		ValidArgs: []string{schemaPolicy, schemaResult, schemaConfig},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 
@@ -447,13 +463,32 @@ func runValidation(cfg *config.Config) int {
 }
 
 func loadPoliciesForValidation(cfg *config.Config) (map[string]*policy.Policy, error) {
+	policies, digest, err := loadPolicies(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	if cfg.Policy.Source == config.PolicySourceOCI {
+		slog.Info("Loaded policies from OCI artifact",
+			"oci_ref", cfg.Policy.OCIRef,
+			"digest", digest,
+			"count", len(policies),
+		)
+	}
+
+	return policies, nil
+}
+
+func loadPolicies(
+	cfg *config.Config,
+) (policies map[string]*policy.Policy, digest string, err error) {
 	if cfg.Policy.Source != config.PolicySourceOCI {
-		policies, err := policy.LoadAll(cfg.PolicyDir)
+		policies, err = policy.LoadAll(cfg.PolicyDir)
 		if err != nil {
-			return nil, fmt.Errorf("loading policies: %w", err)
+			return nil, "", fmt.Errorf("loading policies: %w", err)
 		}
 
-		return policies, nil
+		return policies, "", nil
 	}
 
 	transportCache := registry.NewTransportCacheOrNil(cfg.Registries)
@@ -464,16 +499,10 @@ func loadPoliciesForValidation(cfg *config.Config) (map[string]*policy.Policy, e
 
 	result, err := fetcher.FetchFromOCI(ctx, cfg.Policy.OCIRef)
 	if err != nil {
-		return nil, fmt.Errorf("loading OCI policies: %w", err)
+		return nil, "", fmt.Errorf("loading OCI policies: %w", err)
 	}
 
-	slog.Info("Loaded policies from OCI artifact",
-		"oci_ref", cfg.Policy.OCIRef,
-		"digest", result.Digest,
-		"count", len(result.Policies),
-	)
-
-	return result.Policies, nil
+	return result.Policies, result.Digest, nil
 }
 
 func shouldUseConfigFile(path string) bool {

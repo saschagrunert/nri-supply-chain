@@ -2239,7 +2239,7 @@ func TestResolveImagePolicyNoRules(t *testing.T) {
 		},
 	}
 
-	resolved, ruleIdx := verifier.ExportResolveImagePolicy(
+	resolved, ruleIdx := verifier.ResolveImagePolicy(
 		context.Background(), pol, "ghcr.io/myorg/app:latest",
 	)
 
@@ -2269,7 +2269,7 @@ func TestResolveImagePolicyRuleMatch(t *testing.T) {
 		},
 	}
 
-	resolved, ruleIdx := verifier.ExportResolveImagePolicy(
+	resolved, ruleIdx := verifier.ResolveImagePolicy(
 		context.Background(), pol, "ghcr.io/myorg/app:latest",
 	)
 
@@ -2303,7 +2303,7 @@ func TestResolveImagePolicyNoMatch(t *testing.T) {
 		},
 	}
 
-	resolved, ruleIdx := verifier.ExportResolveImagePolicy(
+	resolved, ruleIdx := verifier.ResolveImagePolicy(
 		context.Background(), pol, "docker.io/other/app:latest",
 	)
 
