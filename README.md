@@ -88,11 +88,11 @@ For a detailed introduction, see the [CNCF blog post](https://www.cncf.io/blog/2
    NOTATION       pass     no Notation signature found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0
    SBOM           pass     SBOM verification passed
    SCAI           pass     no SCAI attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0
-   SOURCE         pass     no source attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0
-   BUILDENV       pass     no build environment attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0
-   VULNSCAN       pass     no vulnerability scan attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0
-   TESTRESULT     pass     no test result attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0
-   RELEASE        pass     no release attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0
+   SOURCE         pass     source verification passed
+   BUILDENV       pass     build environment verification passed
+   VULNSCAN       pass     vulnerability scan verification passed
+   TESTRESULT     pass     test result verification passed
+   RELEASE        pass     release verification passed
    RUNTIMETRACE   pass     no runtime trace attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0
    ```
 
@@ -139,31 +139,31 @@ For a detailed introduction, see the [CNCF blog post](https://www.cncf.io/blog/2
          "type": "source",
          "passed": true,
          "status": "pass",
-         "detail": "no source attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0"
+         "detail": "source verification passed"
        },
        {
          "type": "buildenv",
          "passed": true,
          "status": "pass",
-         "detail": "no build environment attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0"
+         "detail": "build environment verification passed"
        },
        {
          "type": "vulnscan",
          "passed": true,
          "status": "pass",
-         "detail": "no vulnerability scan attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0"
+         "detail": "vulnerability scan verification passed"
        },
        {
          "type": "testresult",
          "passed": true,
          "status": "pass",
-         "detail": "no test result attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0"
+         "detail": "test result verification passed"
        },
        {
          "type": "release",
          "passed": true,
          "status": "pass",
-         "detail": "no release attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0"
+         "detail": "release verification passed"
        },
        {
          "type": "runtimetrace",
