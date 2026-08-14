@@ -1,0 +1,14 @@
+{
+  "runtimeTrace": {
+    "missingPolicy": "warn",
+    "trustedMonitors": ["falco", "tetragon"],
+    "forbiddenFilePatterns": ["/etc/shadow", "/etc/passwd"],
+    "maxAge": "168h"
+  },
+  "slsa": {
+    "missingPolicy": "allow"
+  },
+  "vex": {
+    "missingPolicy": "allow"
+  }
+}

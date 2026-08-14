@@ -261,7 +261,7 @@ flowchart TD
     Cache{"Cache hit?"}
     Fetch["Fetch attestations\n(OCI Referrers API +\ncosign tag fallback)"]
     VSA{"Trusted VSA?"}
-    Parallel["SLSA + VEX + Notation + SBOM + SCAI\n+ Source + BuildEnv + VulnScan\n+ TestResult (parallel)"]
+    Parallel["SLSA + VEX + Notation + SBOM + SCAI\n+ Source + BuildEnv + VulnScan\n+ TestResult + Release\n+ RuntimeTrace (parallel)"]
     CEL["CEL policy evaluation"]
     Enforce{"Enforce / Warn"}
     Allow["Allow container"]
