@@ -101,6 +101,7 @@ func defaultVars() map[string]any {
 		nil,
 		nil,
 		nil, nil, nil, nil,
+		nil,
 	)
 }
 
@@ -444,6 +445,7 @@ func TestEvaluateSLSAVariables(t *testing.T) {
 		nil,
 		nil,
 		nil, nil, nil, nil,
+		nil,
 	)
 
 	result = celengine.Evaluate(compiled, varsUnverified)
@@ -475,6 +477,7 @@ func TestEvaluateVEXVariables(t *testing.T) {
 		nil,
 		nil,
 		nil, nil, nil, nil,
+		nil,
 	)
 
 	result := celengine.Evaluate(compiled, vars)
@@ -533,6 +536,7 @@ func TestEvaluateSBOMVariables(t *testing.T) {
 		nil,
 		nil,
 		nil, nil, nil, nil,
+		nil,
 	)
 
 	result = celengine.Evaluate(compiled, varsUnverified)
@@ -561,6 +565,7 @@ func TestEvaluateNilResults(t *testing.T) {
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
 		nil, nil, nil, nil, nil, nil,
 		nil, nil, nil, nil,
+		nil,
 	)
 
 	result := celengine.Evaluate(compiled, vars)
@@ -751,6 +756,7 @@ func TestBuildVarsPopulatesMetadata(t *testing.T) {
 		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
 		slsa, vex, vsa, types.PassResult(types.CheckTypeSBOM, "ok"), nil, nil,
 		nil, nil, nil, nil,
+		nil,
 	)
 
 	slsaVars, ok := vars["slsa"].(map[string]any)
@@ -825,6 +831,7 @@ func TestEvaluateMetadataInCELExpression(t *testing.T) {
 		slsa, types.PassResult(types.CheckTypeVEX, "ok"),
 		nil, types.PassResult(types.CheckTypeSBOM, "ok"), nil, nil,
 		nil, nil, nil, nil,
+		nil,
 	)
 
 	result := celengine.Evaluate(compiled, vars)
@@ -844,6 +851,7 @@ func TestEvaluateMetadataInCELExpression(t *testing.T) {
 		slsaWrong, types.PassResult(types.CheckTypeVEX, "ok"),
 		nil, types.PassResult(types.CheckTypeSBOM, "ok"), nil, nil,
 		nil, nil, nil, nil,
+		nil,
 	)
 
 	result = celengine.Evaluate(compiled, varsWrong)
@@ -1007,6 +1015,7 @@ func TestEvaluateNotationVariables(t *testing.T) {
 				test.result,
 				nil,
 				nil, nil, nil, nil,
+				nil,
 			)
 
 			result := celengine.Evaluate(compiled, vars)
@@ -1141,6 +1150,7 @@ func TestEvaluateExtendedSBOMVariables(t *testing.T) {
 				nil,
 				nil,
 				nil, nil, nil, nil,
+				nil,
 			)
 
 			result := celengine.Evaluate(compiled, vars)
@@ -1250,6 +1260,7 @@ func TestEvaluateSBOMCVSSVariables(t *testing.T) {
 			nil,
 			nil,
 			nil, nil, nil, nil,
+			nil,
 		)
 
 		result := celengine.Evaluate(compiled, vars)
@@ -1290,6 +1301,7 @@ func TestEvaluateSBOMCVSSVariables(t *testing.T) {
 			nil,
 			nil,
 			nil, nil, nil, nil,
+			nil,
 		)
 
 		result := celengine.Evaluate(compiled, vars)
@@ -1322,6 +1334,7 @@ func TestEvaluateSBOMCVSSVariables(t *testing.T) {
 			nil,
 			nil,
 			nil, nil, nil, nil,
+			nil,
 		)
 
 		result := celengine.Evaluate(compiled, vars)
@@ -1431,6 +1444,7 @@ func TestEvaluateSCAIVariables(t *testing.T) {
 				nil,
 				test.result,
 				nil, nil, nil, nil,
+				nil,
 			)
 
 			result := celengine.Evaluate(compiled, vars)
@@ -1596,6 +1610,7 @@ func TestEvaluateSourceVariables(t *testing.T) {
 				nil,
 				nil,
 				test.result, nil, nil, nil,
+				nil,
 			)
 
 			result := celengine.Evaluate(compiled, vars)
@@ -1690,6 +1705,7 @@ func TestEvaluateBuildEnvVariables(t *testing.T) {
 				nil,
 				nil,
 				nil, test.result, nil, nil,
+				nil,
 			)
 
 			result := celengine.Evaluate(compiled, vars)
@@ -1834,6 +1850,7 @@ func TestEvaluateVulnScanVariables(t *testing.T) {
 				nil,
 				nil,
 				nil, nil, test.result, nil,
+				nil,
 			)
 
 			result := celengine.Evaluate(compiled, vars)
@@ -1972,6 +1989,7 @@ func TestEvaluateTestResultVariables(t *testing.T) {
 				nil,
 				nil,
 				nil, nil, nil, test.result,
+				nil,
 			)
 
 			result := celengine.Evaluate(compiled, vars)

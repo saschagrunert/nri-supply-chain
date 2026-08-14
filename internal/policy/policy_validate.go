@@ -217,6 +217,8 @@ func (p *Policy) validateSections() []error {
 		p.resolveTestResultDuration()
 	}
 
+	appendErr(p.validateRelease())
+
 	return errs
 }
 
@@ -1083,6 +1085,7 @@ func validateRuleSections(rulePol *Policy, idx int) []error {
 		{"sbom", rulePol.validateSBOM},
 		{"scai", rulePol.validateSCAI},
 		{"buildEnv", rulePol.validateBuildEnv},
+		{"release", rulePol.validateRelease},
 	} {
 		err := validator.fn()
 		if err != nil {
@@ -1438,6 +1441,35 @@ func (p *Policy) resolveTestResultDuration() {
 	}
 
 	p.TestResult.MaxAgeDuration = maxAge
+}
+
+func (p *Policy) validateRelease() error {
+	if p.Release == nil {
+		return nil
+	}
+
+	var errs []error
+
+	if p.Release.MissingPolicy != "" {
+		err := types.ValidateAction(
+			"release.missingPolicy", p.Release.MissingPolicy,
+		)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("validating release policy: %w", err))
+		}
+	}
+
+	err := validateNonEmpty("release.trustedRegistries", p.Release.TrustedRegistries)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	err = validateGlobPatterns("release.trustedRegistries", p.Release.TrustedRegistries)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	return errors.Join(errs...)
 }
 
 func (p *Policy) validateAndCompileCEL() error {

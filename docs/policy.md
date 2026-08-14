@@ -32,6 +32,7 @@ patterns for the nri-supply-chain plugin.
   - [<code>buildEnv</code> (object)](#buildenv-object)
   - [<code>vulnScan</code> (object)](#vulnscan-object)
   - [<code>testResult</code> (object)](#testresult-object)
+  - [<code>release</code> (object)](#release-object)
   - [<code>rules</code> (array of objects)](#rules-array-of-objects)
   - [<code>cel</code> (object)](#cel-object)
 - [Verification Types](#verification-types)
@@ -47,6 +48,7 @@ patterns for the nri-supply-chain plugin.
   - [Build Environment Verification](#build-environment-verification)
   - [Vulnerability Scan Verification](#vulnerability-scan-verification)
   - [Test Result Verification](#test-result-verification)
+  - [Release Verification](#release-verification)
 - [Pattern Matching](#pattern-matching)
   - [<code>include</code>, <code>exclude</code>, and <code>trust.sources</code>](#include-exclude-and-trustsources)
   - [<code>trust.sanPatterns</code>](#trustsanpatterns)
@@ -301,6 +303,9 @@ nri-supply-chain json-schema policy
         "testResult": {
           "$ref": "#/$defs/TestResultPolicy"
         },
+        "release": {
+          "$ref": "#/$defs/ReleasePolicy"
+        },
         "images": {
           "items": {
             "type": "string"
@@ -429,6 +434,9 @@ nri-supply-chain json-schema policy
         },
         "testResult": {
           "$ref": "#/$defs/TestResultPolicy"
+        },
+        "release": {
+          "$ref": "#/$defs/ReleasePolicy"
         },
         "mode": {
           "type": "string",
@@ -624,6 +632,25 @@ nri-supply-chain json-schema policy
         },
         "maxAge": {
           "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ReleasePolicy": {
+      "properties": {
+        "missingPolicy": {
+          "type": "string",
+          "enum": ["allow", "warn", "deny"]
+        },
+        "trustedRegistries": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "requirePackageId": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false,
@@ -1067,6 +1094,7 @@ Each rule is an object with:
 | `buildEnv`   | object | no       | Override build env settings (same schema as `buildEnv`)     |
 | `vulnScan`   | object | no       | Override vuln scan settings (same schema as `vulnScan`)     |
 | `testResult` | object | no       | Override test result settings (same schema as `testResult`) |
+| `release`    | object | no       | Override release settings (same schema as `release`)        |
 
 Fields not set in a rule are inherited from the base policy. The `images`
 patterns use the same glob syntax as `include` and `exclude`.
@@ -1690,6 +1718,37 @@ Example configuration:
 }
 ```
 
+### Release Verification
+
+Verifies [release v0.1](https://github.com/in-toto/attestation/blob/main/spec/predicates/release.md)
+attestations (predicate type `https://in-toto.io/attestation/release/v0.1`).
+Release attestations record the publication of an artifact to a package
+repository, binding a package URL (purl) and optional package identifier to
+specific artifact digests.
+
+Checks performed:
+
+- **Subject digest**: The in-toto `subject[].digest` must match the image digest.
+- **Trusted registries**: If `release.trustedRegistries` is configured, the
+  purl must match at least one glob pattern.
+- **Package ID**: If `release.requirePackageId` is true, the `packageId` field
+  must be present and non-empty.
+
+When multiple release attestations exist, any single valid one is sufficient
+(any-pass semantics, consistent with the source track).
+
+Example configuration:
+
+```json
+{
+  "release": {
+    "missingPolicy": "deny",
+    "trustedRegistries": ["pkg:oci/ghcr.io/**", "pkg:docker/*"],
+    "requirePackageId": true
+  }
+}
+```
+
 ## Pattern Matching
 
 The plugin uses glob patterns in several contexts, with slightly different
@@ -1739,7 +1798,7 @@ A file named `<namespace>.json` in the policy directory overrides
 By default, the override is a full replacement. If a namespace policy sets
 `"inherits": true`, unset top-level fields (`trust`, `include`, `exclude`,
 `slsa`, `vex`, `vsa`, `signatures`, `notation`, `sbom`, `scai`, `source`,
-`buildEnv`, `vulnScan`, `testResult`, `cel`, `rules`) are inherited from the default
+`buildEnv`, `vulnScan`, `testResult`, `release`, `cel`, `rules`) are inherited from the default
 policy. Each top-level section that is set in the namespace policy replaces
 the default's section entirely. The default policy itself cannot set `inherits`.
 
@@ -1798,7 +1857,7 @@ Example: `default.json` requires provenance, but `dev.json` allows everything:
 
 In this example, `staging.json` inherits all remaining sections (`trust`,
 `include`, `exclude`, `slsa`, `vsa`, `signatures`, `notation`, `sbom`, `scai`,
-`source`, `buildEnv`, `vulnScan`, `testResult`, `cel`, `rules`) from
+`source`, `buildEnv`, `vulnScan`, `testResult`, `release`, `cel`, `rules`) from
 `default.json` but replaces the `vex` section.
 
 ## Deployment Patterns

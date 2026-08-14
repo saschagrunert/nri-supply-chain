@@ -32,6 +32,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/notation"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
+	"github.com/saschagrunert/nri-supply-chain/internal/release"
 	"github.com/saschagrunert/nri-supply-chain/internal/sbom"
 	"github.com/saschagrunert/nri-supply-chain/internal/scai"
 	"github.com/saschagrunert/nri-supply-chain/internal/slsa"
@@ -90,14 +91,14 @@ func runChecks(
 	}
 
 	if state.fetchSem != nil {
-		release, semErr := acquireFetchSlots(ctx, state, host)
+		releaseSlots, semErr := acquireFetchSlots(ctx, state, host)
 		if semErr != nil {
 			recordBreakerFailure(ctx, breaker, state.metrics, host, state.config.FetchFailurePolicy)
 
 			return handleFetchError(ctx, state.config, state.metrics, semErr, imageRef, host)
 		}
 
-		defer release()
+		defer releaseSlots()
 	}
 
 	attestations, attestDigest, fetchErr := timedFetchAttestations(
@@ -218,6 +219,10 @@ func runChecksWithoutFetcher( //nolint:funlen // additional check types add entr
 			checkType     types.CheckType
 			missingPolicy types.Action
 		}{types.CheckTypeTestResult, pol.TestResultMissingPolicy()},
+		struct {
+			checkType     types.CheckType
+			missingPolicy types.Action
+		}{types.CheckTypeRelease, pol.ReleaseMissingPolicy()},
 	)
 
 	results := make([]*types.CheckResult, 0, len(missingChecks))
@@ -490,6 +495,9 @@ func runParallelChecks(
 		}},
 		{types.CheckTypeTestResult, func() *types.CheckResult {
 			return runTestResultCheck(ctx, bins.testresult, pol, met, imageRef, digest)
+		}},
+		{types.CheckTypeRelease, func() *types.CheckResult {
+			return runReleaseCheck(ctx, bins.release, pol, met, imageRef, digest)
 		}},
 	}
 
@@ -807,6 +815,29 @@ func runTestResultCheck(
 	)
 }
 
+func runReleaseCheck(
+	ctx context.Context,
+	releaseAtts []attestation.VerifiedAttestation,
+	pol *policy.Policy, met *metrics.Metrics,
+	imageRef, digest string,
+) *types.CheckResult {
+	runner := &checkRunner{
+		checkType:     types.CheckTypeRelease,
+		label:         "Release",
+		missingPolicy: pol.ReleaseMissingPolicy(),
+		missingLog:    "No release attestation found",
+		missingReason: reasonMissingAttestation,
+		missingDetail: "no release attestation found for image ",
+	}
+
+	return runner.run(
+		ctx, met, imageRef, len(releaseAtts) > 0,
+		func() (*types.CheckResult, error) {
+			return release.VerifyMultiple(ctx, extractPayloads(releaseAtts), pol, digest)
+		},
+	)
+}
+
 func runCELCheck( //nolint:cyclop // additional check type adds a branch
 	pol *policy.Policy, imageRef, digest, namespace string,
 	parsedRef name.Reference, result *types.Result,
@@ -822,6 +853,7 @@ func runCELCheck( //nolint:cyclop // additional check type adds a branch
 		notationResult, scaiResult                   *types.CheckResult
 		sourceResult, buildenvResult                 *types.CheckResult
 		vulnscanResult, testresultResult             *types.CheckResult
+		releaseResult                                *types.CheckResult
 	)
 
 	for idx := range result.CheckResults {
@@ -846,6 +878,8 @@ func runCELCheck( //nolint:cyclop // additional check type adds a branch
 			vulnscanResult = &result.CheckResults[idx]
 		case types.CheckTypeTestResult:
 			testresultResult = &result.CheckResults[idx]
+		case types.CheckTypeRelease:
+			releaseResult = &result.CheckResults[idx]
 		case types.CheckTypeFetch, types.CheckTypePolicy,
 			types.CheckTypeCEL:
 		}
@@ -855,6 +889,7 @@ func runCELCheck( //nolint:cyclop // additional check type adds a branch
 		imageRef, registry, repository, digest, namespace,
 		slsaResult, vexResult, vsaResult, sbomResult, notationResult, scaiResult,
 		sourceResult, buildenvResult, vulnscanResult, testresultResult,
+		releaseResult,
 	)
 
 	return celengine.Evaluate(pol.CompiledCEL, vars)
@@ -953,6 +988,7 @@ type attestationBins struct {
 	buildenv   []attestation.VerifiedAttestation
 	vulnscan   []attestation.VerifiedAttestation
 	testresult []attestation.VerifiedAttestation
+	release    []attestation.VerifiedAttestation
 }
 
 func binAttestations( //nolint:cyclop // additional predicate type adds a branch
@@ -991,6 +1027,8 @@ func binAttestations( //nolint:cyclop // additional predicate type adds a branch
 			bins.vulnscan = append(bins.vulnscan, attestations[idx])
 		case attestation.PredicateTestResult:
 			bins.testresult = append(bins.testresult, attestations[idx])
+		case attestation.PredicateRelease:
+			bins.release = append(bins.release, attestations[idx])
 		case attestation.PredicateCosignSignature:
 			slog.DebugContext(ctx,
 				"Skipping bare cosign signature attestation",

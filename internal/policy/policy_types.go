@@ -300,6 +300,8 @@ type Sections struct {
 	VulnScan *VulnScanPolicy `json:"vulnScan,omitempty"`
 	// TestResult contains test result verification settings.
 	TestResult *TestResultPolicy `json:"testResult,omitempty"`
+	// Release contains release attestation verification settings.
+	Release *ReleasePolicy `json:"release,omitempty"`
 }
 
 // Policy defines the trust roots and per-namespace verification settings.
@@ -575,6 +577,16 @@ type TestResultPolicy struct {
 	MaxAge string `json:"maxAge,omitempty"`
 	// MaxAgeDuration is the parsed form of MaxAge, resolved after validation.
 	MaxAgeDuration time.Duration `json:"-"`
+}
+
+// ReleasePolicy contains release attestation verification settings.
+type ReleasePolicy struct {
+	// MissingPolicy controls behavior when no release attestation is found.
+	MissingPolicy types.Action `json:"missingPolicy,omitempty" jsonschema:"enum=allow,enum=warn,enum=deny"`
+	// TrustedRegistries is a list of glob patterns matched against the release purl.
+	TrustedRegistries []string `json:"trustedRegistries,omitempty"`
+	// RequirePackageID requires the release attestation to include a packageId field.
+	RequirePackageID bool `json:"requirePackageId,omitempty"` //nolint:tagliatelle // spec field
 }
 
 // ImageRule defines per-image verification overrides within a namespace policy.
