@@ -166,7 +166,7 @@ policy_dir = "/etc/nri-supply-chain/policies"
         "keys": ["/etc/keys/verifier.pub"]
       }
     ],
-    "sources": ["github.com/myorg/*"]
+    "sources": ["https://github.com/myorg/*"]
   },
   "slsa": {
     "missingPolicy": "deny",

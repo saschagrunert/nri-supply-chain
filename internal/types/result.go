@@ -68,6 +68,25 @@ const (
 	CheckTypeRuntimeTrace CheckType = "runtimetrace"
 )
 
+// AttestationCheckTypes lists all check types that correspond to
+// attestation sections in a policy. Add new attestation types here;
+// the verifier, policy, and CEL engine use this list to avoid
+// per-type boilerplate. Do not mutate.
+var AttestationCheckTypes = []CheckType{ //nolint:gochecknoglobals // registry
+	CheckTypeSLSA,
+	CheckTypeVEX,
+	CheckTypeVSA,
+	CheckTypeNotation,
+	CheckTypeSBOM,
+	CheckTypeSCAI,
+	CheckTypeSource,
+	CheckTypeBuildEnv,
+	CheckTypeVulnScan,
+	CheckTypeTestResult,
+	CheckTypeRelease,
+	CheckTypeRuntimeTrace,
+}
+
 // Result represents the outcome of a supply chain verification.
 type Result struct {
 	// Allowed indicates whether the image passed verification.

@@ -55,7 +55,7 @@ For a detailed introduction, see the [CNCF blog post](https://www.cncf.io/blog/2
      "trust": {
        "issuers": ["https://token.actions.githubusercontent.com"],
        "sanPatterns": ["https://github.com/saschagrunert/nri-supply-chain/**"],
-       "sources": ["github.com/saschagrunert/*"]
+       "sources": ["https://github.com/saschagrunert/*"]
      },
      "slsa": { "missingPolicy": "deny" },
      "vex": { "missingPolicy": "deny" },
@@ -69,36 +69,38 @@ For a detailed introduction, see the [CNCF blog post](https://www.cncf.io/blog/2
 
    ```console
    nri-supply-chain --config config.toml \
-     verify ghcr.io/saschagrunert/nri-supply-chain:0.3.0
+     verify ghcr.io/saschagrunert/nri-supply-chain:0.4.0
    ```
 
    The default output is a colored table:
 
    ```text
-   Image: ghcr.io/saschagrunert/nri-supply-chain:0.3.0
+   Image: ghcr.io/saschagrunert/nri-supply-chain:0.4.0
    Digest: sha256:abc123...
    Namespace: default
    Policy: /etc/nri-supply-chain/policies/default.json
    Mode: enforce
    Result: ALLOWED
 
-   TYPE       STATUS   DETAIL
-   SLSA       pass     SLSA provenance verified
-   VEX        pass     VEX verification passed
-   NOTATION   pass     no Notation signature found for image ghcr.io/saschagrunert/nri-supply-chain:0.3.0
-   SBOM       pass     SBOM verification passed
-   SCAI       pass     no SCAI attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.3.0
-   SOURCE     pass     no source attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.3.0
-   BUILDENV   pass     no build environment attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.3.0
-   VULNSCAN   pass     no vulnerability scan attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.3.0
-   TESTRESULT pass     no test result attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.3.0
+   TYPE           STATUS   DETAIL
+   SLSA           pass     SLSA provenance verified
+   VEX            pass     VEX verification passed
+   NOTATION       pass     no Notation signature found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0
+   SBOM           pass     SBOM verification passed
+   SCAI           pass     no SCAI attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0
+   SOURCE         pass     no source attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0
+   BUILDENV       pass     no build environment attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0
+   VULNSCAN       pass     no vulnerability scan attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0
+   TESTRESULT     pass     no test result attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0
+   RELEASE        pass     no release attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0
+   RUNTIMETRACE   pass     no runtime trace attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0
    ```
 
    Use `--output json` for machine-readable output:
 
    ```json
    {
-     "image": "ghcr.io/saschagrunert/nri-supply-chain:0.3.0",
+     "image": "ghcr.io/saschagrunert/nri-supply-chain:0.4.0",
      "digest": "sha256:abc123...",
      "namespace": "default",
      "allowed": true,
@@ -119,7 +121,7 @@ For a detailed introduction, see the [CNCF blog post](https://www.cncf.io/blog/2
          "type": "notation",
          "passed": true,
          "status": "pass",
-         "detail": "no Notation signature found for image ghcr.io/saschagrunert/nri-supply-chain:0.3.0"
+         "detail": "no Notation signature found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0"
        },
        {
          "type": "sbom",
@@ -131,31 +133,43 @@ For a detailed introduction, see the [CNCF blog post](https://www.cncf.io/blog/2
          "type": "scai",
          "passed": true,
          "status": "pass",
-         "detail": "no SCAI attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.3.0"
+         "detail": "no SCAI attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0"
        },
        {
          "type": "source",
          "passed": true,
          "status": "pass",
-         "detail": "no source attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.3.0"
+         "detail": "no source attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0"
        },
        {
          "type": "buildenv",
          "passed": true,
          "status": "pass",
-         "detail": "no build environment attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.3.0"
+         "detail": "no build environment attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0"
        },
        {
          "type": "vulnscan",
          "passed": true,
          "status": "pass",
-         "detail": "no vulnerability scan attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.3.0"
+         "detail": "no vulnerability scan attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0"
        },
        {
          "type": "testresult",
          "passed": true,
          "status": "pass",
-         "detail": "no test result attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.3.0"
+         "detail": "no test result attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0"
+       },
+       {
+         "type": "release",
+         "passed": true,
+         "status": "pass",
+         "detail": "no release attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0"
+       },
+       {
+         "type": "runtimetrace",
+         "passed": true,
+         "status": "pass",
+         "detail": "no runtime trace attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0"
        }
      ]
    }
@@ -171,7 +185,7 @@ For a detailed introduction, see the [CNCF blog post](https://www.cncf.io/blog/2
      "trust": {
        "issuers": ["https://token.actions.githubusercontent.com"],
        "sanPatterns": ["https://github.com/saschagrunert/nri-supply-chain/**"],
-       "sources": ["github.com/saschagrunert/*"],
+       "sources": ["https://github.com/saschagrunert/*"],
        "verifiers": [
          {
            "id": "https://github.com/saschagrunert/nri-supply-chain/.github/workflows/release.yml"
@@ -189,7 +203,7 @@ For a detailed introduction, see the [CNCF blog post](https://www.cncf.io/blog/2
    With this policy the default table output becomes:
 
    ```text
-   Image: ghcr.io/saschagrunert/nri-supply-chain:0.3.0
+   Image: ghcr.io/saschagrunert/nri-supply-chain:0.4.0
    Digest: sha256:abc123...
    Namespace: default
    Policy: /etc/nri-supply-chain/policies/default.json

@@ -98,7 +98,7 @@ func validSLSAPayload(tb testing.TB) []byte {
 			BuildDefinition: slsa.BuildDefinition{
 				BuildType: "https://actions.github.io/buildtypes/workflow/v1",
 				ExternalParameters: map[string]any{
-					"source": "github.com/example/repo",
+					"source": "https://github.com/example/repo",
 				},
 				InternalParameters: map[string]any{},
 			},
@@ -1342,7 +1342,7 @@ func TestVerifyIndexDigestFallback(t *testing.T) {
 				BuildDefinition: slsa.BuildDefinition{
 					BuildType: testBuilderRunner,
 					ExternalParameters: map[string]any{
-						"source": "github.com/example/repo",
+						"source": "https://github.com/example/repo",
 					},
 					InternalParameters: map[string]any{},
 				},

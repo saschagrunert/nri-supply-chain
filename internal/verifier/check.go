@@ -187,27 +187,21 @@ func runChecksWithoutFetcher(
 		}
 	}
 
-	missingChecks := []missingCheck{
-		{types.CheckTypeSLSA, pol.SLSAMissingPolicy()},
-		{types.CheckTypeVEX, pol.VEXMissingPolicy()},
-	}
+	missingChecks := make([]missingCheck, 0, len(types.AttestationCheckTypes))
 
-	if pol.Notation != nil {
+	for _, checkType := range types.AttestationCheckTypes {
+		if checkType == types.CheckTypeVSA {
+			continue
+		}
+
+		if checkType == types.CheckTypeNotation && pol.Notation == nil {
+			continue
+		}
+
 		missingChecks = append(missingChecks,
-			missingCheck{types.CheckTypeNotation, pol.NotationMissingPolicy()},
+			missingCheck{checkType, pol.MissingPolicyFor(checkType)},
 		)
 	}
-
-	missingChecks = append(missingChecks,
-		missingCheck{types.CheckTypeSBOM, pol.SBOMMissingPolicy()},
-		missingCheck{types.CheckTypeSCAI, pol.SCAIMissingPolicy()},
-		missingCheck{types.CheckTypeSource, pol.SourceMissingPolicy()},
-		missingCheck{types.CheckTypeBuildEnv, pol.BuildEnvMissingPolicy()},
-		missingCheck{types.CheckTypeVulnScan, pol.VulnScanMissingPolicy()},
-		missingCheck{types.CheckTypeTestResult, pol.TestResultMissingPolicy()},
-		missingCheck{types.CheckTypeRelease, pol.ReleaseMissingPolicy()},
-		missingCheck{types.CheckTypeRuntimeTrace, pol.RuntimeTraceMissingPolicy()},
-	)
 
 	results := make([]*types.CheckResult, 0, len(missingChecks))
 
@@ -866,19 +860,7 @@ func runCELCheck(
 	}
 
 	vars := celengine.BuildVars(
-		imageRef, registry, repository, digest, namespace,
-		checkResults[types.CheckTypeSLSA],
-		checkResults[types.CheckTypeVEX],
-		checkResults[types.CheckTypeVSA],
-		checkResults[types.CheckTypeSBOM],
-		checkResults[types.CheckTypeNotation],
-		checkResults[types.CheckTypeSCAI],
-		checkResults[types.CheckTypeSource],
-		checkResults[types.CheckTypeBuildEnv],
-		checkResults[types.CheckTypeVulnScan],
-		checkResults[types.CheckTypeTestResult],
-		checkResults[types.CheckTypeRelease],
-		checkResults[types.CheckTypeRuntimeTrace],
+		imageRef, registry, repository, digest, namespace, checkResults,
 	)
 
 	timer := prometheus.NewTimer(met.CELEvaluationDuration)

@@ -193,6 +193,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ matrix.fuzz.package }}testdata/fuzz
+          key: fuzz-corpus-${{ matrix.fuzz.name }}-${{ github.sha }}
+          restore-keys: fuzz-corpus-${{ matrix.fuzz.name }}-
       - run: go test -fuzz=${{ matrix.fuzz.target }} -fuzztime=30s ${{ matrix.fuzz.package }}
 
   govulncheck:
@@ -289,6 +294,16 @@ jobs:
         with:
           go-version-file: go.mod
       - run: make verify-mdtoc
+
+  mod-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go mod verify
 
   tidy:
     runs-on: ubuntu-latest

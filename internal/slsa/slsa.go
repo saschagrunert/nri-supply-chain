@@ -318,15 +318,11 @@ func sourceV02(pred *ProvenancePredicateV02) string {
 }
 
 // normalizeSourceV02 converts v0.2 git URIs like
-// "git+https://github.com/org/repo@refs/heads/main" into bare paths
-// like "github.com/org/repo" so they match the same trust policy
-// source patterns used for v1 provenance.
+// "git+https://github.com/org/repo@refs/heads/main" into
+// "https://github.com/org/repo" so they match the same trust policy
+// source patterns used for v1 provenance and source track attestations.
 func normalizeSourceV02(uri string) string {
-	normalized := uri
-	normalized = strings.TrimPrefix(normalized, "git+https://")
-	normalized = strings.TrimPrefix(normalized, "git+http://")
-	normalized = strings.TrimPrefix(normalized, "https://")
-	normalized = strings.TrimPrefix(normalized, "http://")
+	normalized := strings.TrimPrefix(uri, "git+")
 
 	if idx := strings.IndexByte(normalized, '@'); idx > 0 {
 		normalized = normalized[:idx]
