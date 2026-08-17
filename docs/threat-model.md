@@ -25,7 +25,8 @@ The nri-supply-chain plugin is an NRI (Node Resource Interface) plugin that
 intercepts container creation events on CRI-O or containerd. Before a container
 is allowed to run, the plugin fetches and verifies supply chain attestations
 (SLSA provenance, VEX, VSA, Notation signatures, SBOMs, SCAI, Source Track,
-Build Environment, Vulnerability Scan, Test Result) from OCI registries.
+Build Environment, Vulnerability Scan, Test Result, Release, Runtime Trace)
+from OCI registries.
 It operates below the Kubernetes API layer, so every container on a node must
 pass verification regardless of how it was scheduled.
 
@@ -95,14 +96,14 @@ and caches results to reduce registry load.
 
 ### TB5: Plugin to Kubernetes API
 
-| Category              | Threat                                                                    | Mitigation                                                                                                                                                                                       |
-| --------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Spoofing**          | User injects fake runtime annotations via pod spec to bypass verification | Runtime overwrites user-supplied annotation keys with its own values after processing the CRI request; digests are validated for strict `algorithm:hex` format (`validDigestOrEmpty`)            |
-| **Tampering**         | User crafts annotations to make the plugin verify a different image       | Sigstore bundle verification cryptographically binds attestations to the image digest; forged annotations cause signature verification failure                                                   |
-| **Repudiation**       | No audit trail of verification decisions per pod                          | Plugin injects `supply-chain.nri/verified`, `supply-chain.nri/mode`, and `supply-chain.nri/checks` annotations on each container; audit logging records decisions with policy hash and node name |
-| **Info disclosure**   | Verification annotations leak internal state                              | Annotations contain only pass/fail status and check type; no secrets, keys, or registry credentials are exposed                                                                                  |
-| **Denial of service** | Many namespaces create excessive policy lookups                           | Policy files are loaded once at startup and on reload; namespace lookup is a map access. Metrics label cardinality may cause Prometheus memory growth (see `operations.md:239`)                  |
-| **Elevation of priv** | User in one namespace influences verification of another namespace        | Policies are per-namespace with no cross-namespace references; namespace is derived from the pod sandbox, not user input                                                                         |
+| Category              | Threat                                                                    | Mitigation                                                                                                                                                                                                         |
+| --------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Spoofing**          | User injects fake runtime annotations via pod spec to bypass verification | Runtime overwrites user-supplied annotation keys with its own values after processing the CRI request; digests are validated for strict `algorithm:hex` format (`validDigestOrEmpty`)                              |
+| **Tampering**         | User crafts annotations to make the plugin verify a different image       | Sigstore bundle verification cryptographically binds attestations to the image digest; forged annotations cause signature verification failure                                                                     |
+| **Repudiation**       | No audit trail of verification decisions per pod                          | Plugin injects `supply-chain.nri/verified`, `supply-chain.nri/mode`, and `supply-chain.nri/checks` annotations on each container; audit logging records decisions with policy hash and node name                   |
+| **Info disclosure**   | Verification annotations leak internal state                              | Annotations contain only pass/fail status and check type; no secrets, keys, or registry credentials are exposed                                                                                                    |
+| **Denial of service** | Many namespaces create excessive policy lookups                           | Policy files are loaded once at startup and on reload; namespace lookup is a map access. Metrics label cardinality may cause Prometheus memory growth (see [operations.md](operations.md#security-considerations)) |
+| **Elevation of priv** | User in one namespace influences verification of another namespace        | Policies are per-namespace with no cross-namespace references; namespace is derived from the pod sandbox, not user input                                                                                           |
 
 ## Residual Risks
 

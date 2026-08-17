@@ -477,6 +477,17 @@ func TestResolvePolicyFile(t *testing.T) {
 			t.Errorf("got %q, want %q", got, want)
 		}
 	})
+
+	t.Run("path traversal stripped", func(t *testing.T) {
+		t.Parallel()
+
+		got := resolvePolicyFile(policyDir, "../../etc/shadow")
+		want := filepath.Join(policyDir, "default.json")
+
+		if got != want {
+			t.Errorf("got %q, want %q (traversal not stripped)", got, want)
+		}
+	})
 }
 
 func TestRunVerifyInvalidOutputFormat(t *testing.T) {

@@ -409,7 +409,7 @@ func checksFrom(result *types.Result) []types.CheckResult {
 }
 
 func resolvePolicyFile(policyDir, namespace string) string {
-	nsFile := filepath.Join(policyDir, namespace+".json")
+	nsFile := filepath.Join(policyDir, filepath.Base(namespace)+".json")
 
 	_, err := os.Stat(nsFile)
 	if err == nil {

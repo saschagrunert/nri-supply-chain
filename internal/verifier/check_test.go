@@ -18,6 +18,7 @@ package verifier
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -39,6 +40,8 @@ const (
 	celExprSLSAVerified = "slsa.verified == true"
 	celMsgSLSARequired  = "SLSA must pass"
 )
+
+var errBadRef = errors.New("bad ref")
 
 func TestBinAttestationsUnknownType(t *testing.T) {
 	t.Parallel()
@@ -643,6 +646,48 @@ func TestBuildFetchOptsPropagatesTimeBounds(t *testing.T) {
 	if !opts.TrustedKeys[2].NotAfter.IsZero() {
 		t.Errorf("key[2] NotAfter: expected zero, got %v", opts.TrustedKeys[2].NotAfter)
 	}
+}
+
+func TestRegistryHost(t *testing.T) {
+	t.Parallel()
+
+	t.Run("successful parse", func(t *testing.T) {
+		t.Parallel()
+
+		ref, err := name.ParseReference("ghcr.io/org/img:latest")
+		if err != nil {
+			t.Fatalf("unexpected parse error: %v", err)
+		}
+
+		got := registryHost(ref, nil, "ghcr.io/org/img:latest")
+		if got != "ghcr.io" {
+			t.Errorf("got %q, want %q", got, "ghcr.io")
+		}
+	})
+
+	t.Run("parse error short ref", func(t *testing.T) {
+		t.Parallel()
+
+		got := registryHost(nil, errBadRef, "not-a-valid-ref")
+		if got != "not-a-valid-ref" {
+			t.Errorf("got %q, want %q", got, "not-a-valid-ref")
+		}
+	})
+
+	t.Run("parse error long ref truncated", func(t *testing.T) {
+		t.Parallel()
+
+		longRef := strings.Repeat("x", 500)
+		got := registryHost(nil, errBadRef, longRef)
+
+		if len(got) != maxRegistryHostLen {
+			t.Errorf("len = %d, want %d", len(got), maxRegistryHostLen)
+		}
+
+		if got != longRef[:maxRegistryHostLen] {
+			t.Error("truncated value does not match prefix of input")
+		}
+	})
 }
 
 func TestBuildFetchOptsNilTrustHasNoKeys(t *testing.T) {

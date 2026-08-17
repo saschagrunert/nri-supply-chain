@@ -21,6 +21,18 @@ cache_ttl = "24h"
 # Shorter than cache_ttl so transient failures are retried sooner.
 cache_failure_ttl = "5m"
 
+# Maximum number of entries in the verification result cache.
+# cache_max_entries = 10000
+
+# Per-image verification timeout (covers all checks for one image).
+# verification_timeout = "5m"
+
+# Per-fetch timeout for resolving image digests.
+# digest_resolve_timeout = "1s"
+
+# Maximum size (bytes) of a single attestation payload to accept.
+# max_attestation_size = 10485760
+
 # Directory containing per-namespace JSON policy files.
 # <dir>/default.json is the base policy.
 # <dir>/<namespace>.json overrides for that namespace.

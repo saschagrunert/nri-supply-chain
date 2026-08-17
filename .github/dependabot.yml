@@ -34,6 +34,13 @@ updates:
       containerd:
         patterns:
           - "github.com/containerd/*"
+      prometheus:
+        patterns:
+          - "github.com/prometheus/*"
+      cel:
+        patterns:
+          - "github.com/google/cel-go"
+          - "cel.dev/*"
   - package-ecosystem: docker
     directory: /
     schedule:

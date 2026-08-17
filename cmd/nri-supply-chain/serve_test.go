@@ -324,9 +324,8 @@ func TestServeMetricsStatusEndpointConnected(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // mutates slog.SetDefault
 func TestLogEffectiveConfig(t *testing.T) {
-	t.Parallel()
-
 	var buf strings.Builder
 
 	handler := slog.NewTextHandler(&buf, nil)
@@ -343,9 +342,8 @@ func TestLogEffectiveConfig(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // mutates slog.SetDefault
 func TestLogEffectiveConfigOCISource(t *testing.T) {
-	t.Parallel()
-
 	var buf strings.Builder
 
 	handler := slog.NewTextHandler(&buf, nil)
