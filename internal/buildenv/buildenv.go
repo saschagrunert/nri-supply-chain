@@ -88,13 +88,17 @@ func verifyBuildEnvPredicate(
 	}
 
 	propNames := make([]string, 0, len(pred.Environment))
+	propValues := make(map[string]string, len(pred.Environment))
+
 	for idx := range pred.Environment {
 		propNames = append(propNames, pred.Environment[idx].Name)
+		propValues[pred.Environment[idx].Name] = pred.Environment[idx].Value
 	}
 
 	meta := map[string]any{
-		"propertyCount": int64(len(pred.Environment)),
-		"properties":    strings.Join(propNames, ","),
+		"propertyCount":  int64(len(pred.Environment)),
+		"properties":     strings.Join(propNames, ","),
+		"propertyValues": propValues,
 	}
 
 	if pol.BuildEnv == nil {
@@ -155,18 +159,48 @@ func mergePropertyMeta(dst, src map[string]any) {
 
 		switch key {
 		case "propertyCount":
-			if dstCount, ok := existing.(int64); ok {
-				if srcCount, ok := val.(int64); ok {
-					dst[key] = dstCount + srcCount
-				}
-			}
+			mergeInt64(dst, key, existing, val)
 		case "properties":
-			if dstProps, ok := existing.(string); ok {
-				if srcProps, ok := val.(string); ok {
-					dst[key] = types.MergeCommaSeparated(dstProps, srcProps)
-				}
-			}
+			mergeString(dst, key, existing, val)
+		case "propertyValues":
+			mergeStringMap(existing, val)
 		default:
+		}
+	}
+}
+
+func mergeInt64(dst map[string]any, key string, existing, val any) {
+	dstCount, dstOK := existing.(int64)
+	srcCount, srcOK := val.(int64)
+
+	if dstOK && srcOK {
+		dst[key] = dstCount + srcCount
+	}
+}
+
+func mergeString(dst map[string]any, key string, existing, val any) {
+	dstProps, dstOK := existing.(string)
+	srcProps, srcOK := val.(string)
+
+	if dstOK && srcOK {
+		dst[key] = types.MergeCommaSeparated(dstProps, srcProps)
+	}
+}
+
+func mergeStringMap(dst, src any) {
+	dstMap, dstOK := dst.(map[string]string)
+	if !dstOK {
+		return
+	}
+
+	srcMap, srcOK := src.(map[string]string)
+	if !srcOK {
+		return
+	}
+
+	for key, val := range srcMap {
+		if _, exists := dstMap[key]; !exists {
+			dstMap[key] = val
 		}
 	}
 }

@@ -516,15 +516,20 @@ func buildSourceVars(result *types.CheckResult) map[string]any {
 
 func buildBuildEnvVars(result *types.CheckResult) map[string]any {
 	vars := map[string]any{
-		varVerified:     false,
-		"properties":    "",
-		"propertyCount": int64(0),
+		varVerified:      false,
+		"properties":     "",
+		"propertyCount":  int64(0),
+		"propertyValues": map[string]string{},
 	}
 
 	if result != nil {
 		vars[varVerified] = result.Passed
 		extractStringMeta(result.Metadata, vars, "properties")
 		extractInt64Meta(result.Metadata, vars, "propertyCount")
+
+		if pv, ok := result.Metadata["propertyValues"].(map[string]string); ok {
+			vars["propertyValues"] = pv
+		}
 	}
 
 	return vars

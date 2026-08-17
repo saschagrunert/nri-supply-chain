@@ -3,7 +3,7 @@ version: 2
 project_name: nri-supply-chain
 
 gomod:
-  proxy: true
+  proxy: false
 
 builds:
   - main: ./cmd/nri-supply-chain/
@@ -12,6 +12,7 @@ builds:
       - CGO_ENABLED=0
     flags:
       - -trimpath
+      - -mod=vendor
     goos:
       - linux
     goarch:

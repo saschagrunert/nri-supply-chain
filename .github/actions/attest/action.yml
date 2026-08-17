@@ -276,7 +276,7 @@ runs:
             {"name": "RUNNER_OS", "value": "${{ runner.os }}"},
             {"name": "RUNNER_ARCH", "value": "${{ runner.arch }}"},
             {"name": "GO_VERSION", "value": "${GO_VERSION}"},
-            {"name": "HERMETIC", "value": "false"},
+            {"name": "HERMETIC", "value": "true"},
             {"name": "REPRODUCIBLE", "value": "true"}
           ]
         }

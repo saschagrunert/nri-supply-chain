@@ -88,6 +88,7 @@ const (
 	metaFileNames       = "fileNames"
 	testPurl            = "pkg:oci/ghcr.io/myorg/myapp@sha256:abc123"
 	testMonitorFalco    = "falco"
+	testPropHermetic    = "HERMETIC"
 
 	exprMatchGHCR        = "image.registry == 'ghcr.io'"
 	exprSLSAVerified     = "slsa.verified == true"
@@ -913,7 +914,7 @@ func TestEvaluateMultipleRulesFirstFails(t *testing.T) {
 			Message: "first rule always fails",
 		},
 		{
-			Require: "true",
+			Require: exprTrue,
 			Message: "second rule always passes",
 		},
 	}
@@ -1217,7 +1218,7 @@ func TestEvaluateNoMatchSkipsRequire(t *testing.T) {
 		},
 		{
 			Match:   "image.namespace == 'production'",
-			Require: "true",
+			Require: exprTrue,
 			Message: "production rule passes",
 		},
 	}
@@ -1604,6 +1605,40 @@ func TestEvaluateBuildEnvVariables(t *testing.T) {
 				`&& buildenv.propertyCount == 0`,
 			result: nil,
 			pass:   true,
+		},
+		{
+			name: "buildenv.propertyValues value check",
+			require: `"HERMETIC" in buildenv.propertyValues` +
+				` && buildenv.propertyValues["HERMETIC"] == "true"`,
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeBuildEnv, "ok")
+				r.Metadata = map[string]any{
+					metaProperties:    testPropHermetic + ",REPRODUCIBLE",
+					metaPropertyCount: int64(2),
+					"propertyValues": map[string]string{
+						testPropHermetic: "true", "REPRODUCIBLE": "true",
+					},
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name: "buildenv.propertyValues value mismatch",
+			require: `"HERMETIC" in buildenv.propertyValues` +
+				` && buildenv.propertyValues["HERMETIC"] == "true"`,
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeBuildEnv, "ok")
+				r.Metadata = map[string]any{
+					metaProperties:    testPropHermetic,
+					metaPropertyCount: int64(1),
+					"propertyValues":  map[string]string{testPropHermetic: "false"},
+				}
+
+				return r
+			}(),
+			pass: false,
 		},
 	}
 

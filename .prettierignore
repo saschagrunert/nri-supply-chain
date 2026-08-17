@@ -1,6 +1,7 @@
 .claude/
 build/
 dist/
+vendor/
 *.go
 go.mod
 go.sum

@@ -4,6 +4,15 @@
     "requiredProperties": ["HERMETIC", "REPRODUCIBLE"],
     "forbiddenProperties": ["ALLOW_NETWORK"]
   },
+  "cel": {
+    "rules": [
+      {
+        "match": "buildenv.verified == true",
+        "require": "\"HERMETIC\" in buildenv.propertyValues && buildenv.propertyValues[\"HERMETIC\"] == \"true\"",
+        "message": "Build environment must declare HERMETIC=true"
+      }
+    ]
+  },
   "slsa": {
     "missingPolicy": "allow"
   },
