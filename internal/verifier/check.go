@@ -26,10 +26,21 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
+	"github.com/saschagrunert/nri-supply-chain/internal/buildenv"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
+	"github.com/saschagrunert/nri-supply-chain/internal/notation"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
+	"github.com/saschagrunert/nri-supply-chain/internal/release"
+	"github.com/saschagrunert/nri-supply-chain/internal/runtimetrace"
+	"github.com/saschagrunert/nri-supply-chain/internal/sbom"
+	"github.com/saschagrunert/nri-supply-chain/internal/scai"
+	"github.com/saschagrunert/nri-supply-chain/internal/slsa"
+	"github.com/saschagrunert/nri-supply-chain/internal/source"
+	"github.com/saschagrunert/nri-supply-chain/internal/testresult"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
+	"github.com/saschagrunert/nri-supply-chain/internal/vex"
 	"github.com/saschagrunert/nri-supply-chain/internal/vsa"
+	"github.com/saschagrunert/nri-supply-chain/internal/vulnscan"
 )
 
 func runChecks(
@@ -337,6 +348,7 @@ func checkVSA(
 	return nil
 }
 
+//nolint:funlen // table-driven dispatch over all check types
 func runParallelChecks(
 	ctx context.Context, bins *attestationBins,
 	pol *policy.Policy, met *metrics.Metrics,
@@ -348,37 +360,102 @@ func runParallelChecks(
 		fn        func() *types.CheckResult
 	}{
 		{types.CheckTypeSLSA, func() *types.CheckResult {
-			return runSLSACheck(ctx, bins.slsa, pol, met, imageRef, digest)
+			return runAttestationCheck(
+				ctx, types.CheckTypeSLSA, bins.slsa, pol, met, imageRef,
+				func() (*types.CheckResult, error) {
+					return slsa.VerifyMultiple(ctx, bins.slsa, pol, digest)
+				})
 		}},
 		{types.CheckTypeVEX, func() *types.CheckResult {
-			return runVEXCheck(ctx, bins.vex, pol, met, imageRef, digest, parsedRef)
+			return runAttestationCheck(
+				ctx, types.CheckTypeVEX, bins.vex, pol, met, imageRef,
+				func() (*types.CheckResult, error) {
+					return vex.VerifyMultiple(
+						ctx, extractPayloads(bins.vex),
+						pol, imageRef, digest, parsedRef,
+					)
+				})
 		}},
 		{types.CheckTypeNotation, func() *types.CheckResult {
-			return runNotationCheck(ctx, bins.notation, pol, met, imageRef, digest)
+			return runAttestationCheck(
+				ctx, types.CheckTypeNotation, bins.notation, pol, met, imageRef,
+				func() (*types.CheckResult, error) {
+					return notation.VerifyMultiple(
+						ctx, bins.notation, imageRef, digest, pol,
+					)
+				})
 		}},
 		{types.CheckTypeSBOM, func() *types.CheckResult {
-			return runSBOMCheck(ctx, bins.sbom, pol, met, imageRef, digest)
+			return runAttestationCheck(
+				ctx, types.CheckTypeSBOM, bins.sbom, pol, met, imageRef,
+				func() (*types.CheckResult, error) {
+					return sbom.VerifyMultiple(
+						ctx, extractPayloads(bins.sbom), pol, digest,
+					)
+				})
 		}},
 		{types.CheckTypeSCAI, func() *types.CheckResult {
-			return runSCAICheck(ctx, bins.scai, pol, met, imageRef, digest)
+			return runAttestationCheck(
+				ctx, types.CheckTypeSCAI, bins.scai, pol, met, imageRef,
+				func() (*types.CheckResult, error) {
+					return scai.VerifyMultiple(
+						ctx, extractPayloads(bins.scai), pol, digest,
+					)
+				})
 		}},
 		{types.CheckTypeSource, func() *types.CheckResult {
-			return runSourceCheck(ctx, bins.source, pol, met, imageRef, digest)
+			return runAttestationCheck(
+				ctx, types.CheckTypeSource, bins.source, pol, met, imageRef,
+				func() (*types.CheckResult, error) {
+					return source.VerifyMultiple(
+						ctx, extractPayloads(bins.source), pol, digest,
+					)
+				})
 		}},
 		{types.CheckTypeBuildEnv, func() *types.CheckResult {
-			return runBuildEnvCheck(ctx, bins.buildenv, pol, met, imageRef, digest)
+			return runAttestationCheck(
+				ctx, types.CheckTypeBuildEnv, bins.buildenv, pol, met, imageRef,
+				func() (*types.CheckResult, error) {
+					return buildenv.VerifyMultiple(
+						ctx, extractPayloads(bins.buildenv), pol, digest,
+					)
+				})
 		}},
 		{types.CheckTypeVulnScan, func() *types.CheckResult {
-			return runVulnScanCheck(ctx, bins.vulnscan, pol, met, imageRef, digest)
+			return runAttestationCheck(
+				ctx, types.CheckTypeVulnScan, bins.vulnscan, pol, met, imageRef,
+				func() (*types.CheckResult, error) {
+					return vulnscan.VerifyMultiple(
+						ctx, extractPayloads(bins.vulnscan), pol, digest,
+					)
+				})
 		}},
 		{types.CheckTypeTestResult, func() *types.CheckResult {
-			return runTestResultCheck(ctx, bins.testresult, pol, met, imageRef, digest)
+			return runAttestationCheck(
+				ctx, types.CheckTypeTestResult, bins.testresult, pol, met, imageRef,
+				func() (*types.CheckResult, error) {
+					return testresult.VerifyMultiple(
+						ctx, extractPayloads(bins.testresult), pol, digest,
+					)
+				})
 		}},
 		{types.CheckTypeRelease, func() *types.CheckResult {
-			return runReleaseCheck(ctx, bins.release, pol, met, imageRef, digest)
+			return runAttestationCheck(
+				ctx, types.CheckTypeRelease, bins.release, pol, met, imageRef,
+				func() (*types.CheckResult, error) {
+					return release.VerifyMultiple(
+						ctx, extractPayloads(bins.release), pol, digest,
+					)
+				})
 		}},
 		{types.CheckTypeRuntimeTrace, func() *types.CheckResult {
-			return runRuntimeTraceCheck(ctx, bins.runtimetrace, pol, met, imageRef, digest)
+			return runAttestationCheck(
+				ctx, types.CheckTypeRuntimeTrace, bins.runtimetrace, pol, met, imageRef,
+				func() (*types.CheckResult, error) {
+					return runtimetrace.VerifyMultiple(
+						ctx, extractPayloads(bins.runtimetrace), pol, digest,
+					)
+				})
 		}},
 	}
 

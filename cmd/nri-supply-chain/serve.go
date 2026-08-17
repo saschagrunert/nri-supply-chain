@@ -36,6 +36,7 @@ import (
 )
 
 const (
+	readTimeout         = 30 * time.Second
 	readHeaderTimeout   = 10 * time.Second
 	writeTimeout        = 30 * time.Second
 	idleTimeout         = 120 * time.Second
@@ -60,6 +61,7 @@ func serveMetrics(
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           mux,
+		ReadTimeout:       readTimeout,
 		ReadHeaderTimeout: readHeaderTimeout,
 		WriteTimeout:      writeTimeout,
 		IdleTimeout:       idleTimeout,

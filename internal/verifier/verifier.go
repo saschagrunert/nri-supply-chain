@@ -180,6 +180,9 @@ func resolveNodeName() string {
 		return ""
 	}
 
+	slog.Warn("NODE_NAME not set, falling back to hostname",
+		"hostname", hostname)
+
 	return hostname
 }
 
