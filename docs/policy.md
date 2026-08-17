@@ -2208,3 +2208,5 @@ Ready-to-use policy files are available in
 - `build-env.json`: Build environment verification with required and forbidden properties
 - `vuln-scan.json`: Vulnerability scan verification with CVSS thresholds and CVE ignore list
 - `test-result.json`: Test result verification with required test suites
+- `release.json`: Release attestation verification with trusted registries and required package IDs
+- `runtime-trace.json`: Runtime trace verification with trusted monitors and forbidden file patterns

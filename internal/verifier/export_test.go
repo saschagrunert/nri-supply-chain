@@ -147,8 +147,10 @@ func ExportExtractRegistryRepo(parsedRef name.Reference, imageRef string) (reg, 
 }
 
 // ExportOnPolicyUpdate exposes onPolicyUpdate for external tests.
-func (v *Verifier) ExportOnPolicyUpdate(policies map[string]*policy.Policy) error {
-	return v.onPolicyUpdate(policies)
+func (v *Verifier) ExportOnPolicyUpdate(
+	ctx context.Context, policies map[string]*policy.Policy,
+) error {
+	return v.onPolicyUpdate(ctx, policies)
 }
 
 // ExportResolveNodeName exposes resolveNodeName for external tests.

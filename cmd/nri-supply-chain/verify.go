@@ -29,13 +29,82 @@ import (
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/spf13/cobra"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
+	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
+
+func newVerifyCmd(configPath, logLevel *string) *cobra.Command {
+	var (
+		namespace    string
+		outputFormat string
+		verbose      bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   cmdVerify + " <image> [<image>...]",
+		Short: "Verify one or more images",
+		Long: "Verify one or more container images against configured policies.\n\n" +
+			"Pass one or more image references as positional arguments.\n" +
+			"Use --verbose to show step-by-step diagnostic output.",
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+
+			cfg, err := setupConfig(*configPath)
+			if err != nil {
+				slog.Error("Setup failed", "error", err)
+
+				return errExitNonZero
+			}
+
+			level := effectiveLogLevel(*logLevel, cfg.LogLevel)
+			if verbose {
+				level = logLevelDebug
+			}
+
+			initLogging(level, true)
+
+			slog.Info("Using config", "path", *configPath)
+
+			if verbose {
+				logVerbosePreamble(cmd.ErrOrStderr(), args, namespace, cfg)
+			}
+
+			code := runVerifyCmd(args, namespace, outputFormat, cfg)
+			if code != 0 {
+				return errExitNonZero
+			}
+
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVarP(&namespace, "namespace", "n",
+		policy.DefaultPolicyLabel, "namespace for verification")
+	cmd.Flags().StringVarP(&outputFormat, "output", "o",
+		outputFormatTable, "output format: table, json")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false,
+		"show step-by-step diagnostic output")
+
+	return cmd
+}
+
+func runVerifyCmd(
+	args []string, namespace, outputFormat string,
+	cfg *config.Config,
+) int {
+	if len(args) == 1 {
+		return runVerify(args[0], namespace, outputFormat, cfg)
+	}
+
+	return runVerifyBatch(args, namespace, outputFormat, cfg)
+}
 
 type verifyOutput struct {
 	Image        string              `json:"image"`

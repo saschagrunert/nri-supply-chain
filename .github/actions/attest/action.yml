@@ -12,6 +12,10 @@ inputs:
     description: "Path to nri-supply-chain binary. If empty, uses docker run."
     required: false
     default: ""
+  ci-run-id:
+    description: "GitHub Actions run ID of the CI workflow to query test results from."
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -181,27 +185,57 @@ runs:
 
     - name: Attest test results
       shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        CI_RUN_ID: ${{ inputs.ci-run-id }}
       run: |
         TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
         GO_VERSION=$(go version 2>/dev/null | awk '{print $3}' || echo "unknown")
-        cat > /tmp/testresult-predicate.json <<EOF
-        {
-          "result": "pass",
-          "suites": [
-            {"name": "unit", "result": "pass"},
-            {"name": "integration", "result": "pass"},
-            {"name": "e2e", "result": "pass"},
-            {"name": "fuzz", "result": "pass"},
-            {"name": "lint", "result": "pass"}
-          ],
-          "metadata": {
-            "finishedOn": "${TIMESTAMP}",
-            "framework": "go-test",
-            "goVersion": "${GO_VERSION}",
-            "ciRun": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          }
-        }
-        EOF
+        CI_RUN="${CI_RUN_ID:-${{ github.event.workflow_run.id }}}"
+
+        SUITES='[]'
+        CI_RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+        if [ -n "$CI_RUN" ]; then
+          CI_RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${CI_RUN}"
+          SUITES=$(gh api --paginate \
+            "repos/${{ github.repository }}/actions/runs/${CI_RUN}/jobs" \
+            --jq '[.jobs[] | select(.name | test("test|lint|fuzz"; "i")) | {
+              name: .name,
+              result: (if .conclusion == "success" then "pass" elif .conclusion == "failure" then "fail" else .conclusion end),
+              startedAt: .started_at,
+              completedAt: .completed_at,
+              durationSeconds: (if .started_at and .completed_at then
+                (((.completed_at | fromdateiso8601) - (.started_at | fromdateiso8601)))
+              else null end)
+            }]' 2>/dev/null || echo '[]')
+        fi
+
+        if [ -n "$CI_RUN" ] && [ "$SUITES" = "[]" ]; then
+          echo "::warning::No test/lint/fuzz jobs found for run ${CI_RUN} (fetch failed or no matching jobs), marking as unknown"
+        fi
+
+        OVERALL=$(echo "$SUITES" | jq -r 'if length == 0 then "unknown"
+          elif all(.result == "pass") then "pass"
+          else "fail" end')
+
+        jq -n \
+          --arg result "$OVERALL" \
+          --argjson suites "$SUITES" \
+          --arg finishedOn "$TIMESTAMP" \
+          --arg goVersion "$GO_VERSION" \
+          --arg ciRun "$CI_RUN_URL" \
+          '{
+            result: $result,
+            suites: $suites,
+            metadata: {
+              finishedOn: $finishedOn,
+              framework: "go-test",
+              goVersion: $goVersion,
+              ciRun: $ciRun
+            }
+          }' > /tmp/testresult-predicate.json
+
         cosign attest --predicate /tmp/testresult-predicate.json \
           --type https://in-toto.io/attestation/test-result/v0.1 \
           --yes \

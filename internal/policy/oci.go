@@ -173,7 +173,7 @@ func (f *OCIFetcher) FetchFromOCI(
 	}
 
 	if _, isDigest := ref.(name.Digest); !isDigest {
-		slog.Warn(
+		slog.WarnContext(ctx,
 			"OCI policy fetched by mutable tag reference;"+
 				" consider using a digest reference for integrity",
 			"ref", ociRef,

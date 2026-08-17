@@ -180,7 +180,7 @@ func buildResult(
 			strings.Join(affectedNames, ", "), statusAffected,
 		)
 
-		result := failResult(detail)
+		result := check.Fail(detail)
 		result.Metadata = map[string]any{metaKeyStatus: statusAffected}
 
 		return result
@@ -193,7 +193,7 @@ func buildResult(
 		return result
 	}
 
-	result := passResult()
+	result := check.Pass()
 	result.Metadata = map[string]any{metaKeyStatus: statusNotAffected}
 
 	return result
@@ -236,7 +236,7 @@ func VerifyMultiple(
 	}
 
 	if len(failDetails) > 0 {
-		result := failResult(strings.Join(failDetails, "; "))
+		result := check.Fail(strings.Join(failDetails, "; "))
 		result.Metadata = map[string]any{metaKeyStatus: statusAffected}
 
 		return result, nil
@@ -250,12 +250,12 @@ func VerifyMultiple(
 	}
 
 	if len(attestations) > 0 && !anyValid {
-		return failResult(
+		return check.Fail(
 			"all VEX documents failed to parse: " + strings.Join(parseErrors, "; "),
 		), nil
 	}
 
-	result := passResult()
+	result := check.Pass()
 	result.Metadata = map[string]any{metaKeyStatus: statusNotAffected}
 
 	return result, nil
@@ -275,7 +275,7 @@ func handleUnderInvestigation(pol *policy.Policy) *types.CheckResult {
 
 	switch uiPolicy {
 	case types.ActionDeny:
-		return failResult(detail)
+		return check.Fail(detail)
 	case types.ActionWarn:
 		return types.WarnResult(checkType, detail)
 	case types.ActionAllow:
@@ -285,14 +285,11 @@ func handleUnderInvestigation(pol *policy.Policy) *types.CheckResult {
 			"policy", uiPolicy,
 		)
 
-		return failResult(detail)
+		return check.Fail(detail)
 	}
 }
 
-func passResult() *types.CheckResult {
-	return types.PassResult(checkType, "VEX verification passed")
-}
-
-func failResult(detail string) *types.CheckResult {
-	return types.FailResult(checkType, detail, nil)
+var check = types.Checker{ //nolint:gochecknoglobals // package-scoped helper
+	Type:    checkType,
+	PassMsg: "VEX verification passed",
 }

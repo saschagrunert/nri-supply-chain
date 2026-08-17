@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 
@@ -100,4 +101,64 @@ func colorLevel(level slog.Level) string {
 	default:
 		return levelDebug.Sprint(level.String())
 	}
+}
+
+func effectiveLogLevel(flagLevel, configLevel string) string {
+	if flagLevel != "" {
+		return flagLevel
+	}
+
+	if configLevel != "" {
+		return configLevel
+	}
+
+	return logLevelInfo
+}
+
+func initLogging(level string, cliMode bool) {
+	updateLogLevel(level)
+	slog.SetDefault(newLogger(cliMode))
+
+	if parseLogLevel(level) == nil {
+		slog.Warn("Unrecognized log level, defaulting to info", "level", level)
+	}
+}
+
+func updateLogLevel(level string) {
+	logLevel := slog.LevelInfo
+
+	if parsed := parseLogLevel(level); parsed != nil {
+		logLevel = *parsed
+	}
+
+	logLevelVar.Set(logLevel)
+}
+
+func parseLogLevel(level string) *slog.Level {
+	var parsed slog.Level
+
+	switch level {
+	case logLevelDebug:
+		parsed = slog.LevelDebug
+	case logLevelInfo:
+		parsed = slog.LevelInfo
+	case logLevelWarn:
+		parsed = slog.LevelWarn
+	case logLevelError:
+		parsed = slog.LevelError
+	default:
+		return nil
+	}
+
+	return &parsed
+}
+
+func newLogger(cliMode bool) *slog.Logger {
+	if cliMode {
+		return slog.New(newCLIHandler(os.Stderr, &logLevelVar))
+	}
+
+	return slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+		Level: &logLevelVar,
+	}))
 }

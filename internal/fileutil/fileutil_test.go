@@ -82,3 +82,55 @@ func TestReadLimitedNonexistent(t *testing.T) {
 		t.Errorf("expected non-ErrFileTooLarge error, got ErrFileTooLarge")
 	}
 }
+
+func TestCheckCredentialPermissionsSecure(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "key.pem")
+
+	writeErr := os.WriteFile(path, []byte("secret"), 0o600)
+	if writeErr != nil {
+		t.Fatalf("writing test file: %v", writeErr)
+	}
+
+	permErr := fileutil.CheckCredentialPermissions(path)
+	if permErr != nil {
+		t.Fatalf("unexpected error for 0600 file: %v", permErr)
+	}
+}
+
+func TestCheckCredentialPermissionsInsecure(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "key.pem")
+
+	//nolint:gosec // intentionally insecure for test
+	writeErr := os.WriteFile(path, []byte("secret"), 0o644)
+	if writeErr != nil {
+		t.Fatalf("writing test file: %v", writeErr)
+	}
+
+	err := fileutil.CheckCredentialPermissions(path)
+	if err == nil {
+		t.Fatal("expected error for 0644 file, got nil")
+	}
+
+	if !errors.Is(err, fileutil.ErrInsecurePermissions) {
+		t.Errorf("expected ErrInsecurePermissions, got: %v", err)
+	}
+}
+
+func TestCheckCredentialPermissionsNonexistent(t *testing.T) {
+	t.Parallel()
+
+	err := fileutil.CheckCredentialPermissions("/nonexistent/path/key.pem")
+	if err == nil {
+		t.Fatal("expected error for nonexistent file, got nil")
+	}
+
+	if errors.Is(err, fileutil.ErrInsecurePermissions) {
+		t.Errorf("expected non-ErrInsecurePermissions error, got ErrInsecurePermissions")
+	}
+}

@@ -1169,7 +1169,7 @@ func TestWarnEnforceDefaultsDoesNotPanicForWarnMode(t *testing.T) {
 		"": {},
 	}
 
-	verifier.WarnEnforceDefaults(cfg, policies)
+	verifier.WarnEnforceDefaults(context.Background(), cfg, policies)
 
 	if buf.Len() != 0 {
 		t.Errorf("expected no warning for warn mode, got: %s", buf.String())
@@ -1194,7 +1194,7 @@ func TestWarnEnforceDefaultsEmitsForEnforceMode(t *testing.T) {
 		"": {},
 	}
 
-	verifier.WarnEnforceDefaults(cfg, policies)
+	verifier.WarnEnforceDefaults(context.Background(), cfg, policies)
 
 	output := buf.String()
 	if !strings.Contains(output, "enforce mode") {
@@ -1853,7 +1853,7 @@ func TestWarnEnforceDefaultsPerNamespaceMode(t *testing.T) {
 		testNsProduction: {Mode: config.ModeEnforce},
 	}
 
-	verifier.WarnEnforceDefaults(cfg, policies)
+	verifier.WarnEnforceDefaults(context.Background(), cfg, policies)
 
 	output := buf.String()
 	if !strings.Contains(output, "enforce mode") {
@@ -2388,7 +2388,7 @@ func TestOnPolicyUpdateAppliesNewPolicies(t *testing.T) {
 			},
 		},
 	}
-	err = verif.ExportOnPolicyUpdate(updatedPolicies)
+	err = verif.ExportOnPolicyUpdate(context.Background(), updatedPolicies)
 	testutil.AssertNoError(t, err)
 
 	// After update: allow policy produces no failure reason.
@@ -2974,7 +2974,7 @@ func TestWarnWarnModeDefaultsEmitsForPermissiveDefaults(t *testing.T) {
 		"": {},
 	}
 
-	verifier.WarnWarnModeDefaults(cfg, policies)
+	verifier.WarnWarnModeDefaults(context.Background(), cfg, policies)
 
 	output := buf.String()
 	if !strings.Contains(output, "warn mode with all-permissive defaults") {
@@ -3001,7 +3001,7 @@ func TestWarnWarnModeDefaultsEmitsForWarnFetchPolicy(t *testing.T) {
 		"": {},
 	}
 
-	verifier.WarnWarnModeDefaults(cfg, policies)
+	verifier.WarnWarnModeDefaults(context.Background(), cfg, policies)
 
 	output := buf.String()
 	if !strings.Contains(output, "warn mode with all-permissive defaults") {
@@ -3027,7 +3027,7 @@ func TestWarnWarnModeDefaultsSkipsEnforceMode(t *testing.T) {
 		"": {},
 	}
 
-	verifier.WarnWarnModeDefaults(cfg, policies)
+	verifier.WarnWarnModeDefaults(context.Background(), cfg, policies)
 
 	if buf.Len() != 0 {
 		t.Errorf("expected no warning for enforce mode, got: %s", buf.String())
@@ -3053,7 +3053,7 @@ func TestWarnWarnModeDefaultsSkipsWhenMissingPolicyDeny(t *testing.T) {
 		"": {Sections: policy.Sections{SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionDeny}}},
 	}
 
-	verifier.WarnWarnModeDefaults(cfg, policies)
+	verifier.WarnWarnModeDefaults(context.Background(), cfg, policies)
 
 	if buf.Len() != 0 {
 		t.Errorf("expected no warning when SLSA deny policy set, got: %s", buf.String())
@@ -3079,7 +3079,7 @@ func TestWarnWarnModeDefaultsSkipsStrictFetchPolicy(t *testing.T) {
 		"": {},
 	}
 
-	verifier.WarnWarnModeDefaults(cfg, policies)
+	verifier.WarnWarnModeDefaults(context.Background(), cfg, policies)
 
 	if buf.Len() != 0 {
 		t.Errorf("expected no warning with deny fetch policy, got: %s", buf.String())

@@ -142,7 +142,7 @@ func verifyTestResultPredicate(
 			detail += " (failed suites: " + strings.Join(failedSuites, ", ") + ")"
 		}
 
-		result := failResult(detail)
+		result := check.Fail(detail)
 		result.Metadata = meta
 
 		return result, nil
@@ -156,7 +156,7 @@ func verifyTestResultPredicate(
 
 		err = verifyFreshness(finishedOn, pol)
 		if err != nil {
-			result := failResult(err.Error())
+			result := check.Fail(err.Error())
 			result.Metadata = meta
 
 			return result, nil
@@ -164,14 +164,14 @@ func verifyTestResultPredicate(
 
 		missing := checkRequiredSuites(pred.Suites, pol.TestResult.RequiredSuites)
 		if missing != "" {
-			result := failResult(missing)
+			result := check.Fail(missing)
 			result.Metadata = meta
 
 			return result, nil
 		}
 	}
 
-	result := passResult()
+	result := check.Pass()
 	result.Metadata = meta
 
 	return result, nil
@@ -270,10 +270,7 @@ func mergeSuiteMeta(dst, src map[string]any) {
 	}
 }
 
-func passResult() *types.CheckResult {
-	return types.PassResult(checkType, "test result verification passed")
-}
-
-func failResult(detail string) *types.CheckResult {
-	return types.FailResult(checkType, detail, nil)
+var check = types.Checker{ //nolint:gochecknoglobals // package-scoped helper
+	Type:    checkType,
+	PassMsg: "test result verification passed",
 }

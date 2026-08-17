@@ -193,6 +193,24 @@ func SoftFailResult(checkType CheckType, detail string, err error) *CheckResult 
 	}
 }
 
+// Checker provides convenience methods for building pass/fail CheckResults
+// bound to a specific check type. Use this in attestation verifier packages to
+// avoid repeating the check type at each call site.
+type Checker struct {
+	Type    CheckType
+	PassMsg string
+}
+
+// Pass returns a passing CheckResult with the checker's preset message.
+func (c Checker) Pass() *CheckResult {
+	return PassResult(c.Type, c.PassMsg)
+}
+
+// Fail returns a failing CheckResult with the given detail.
+func (c Checker) Fail(detail string) *CheckResult {
+	return FailResult(c.Type, detail, nil)
+}
+
 // MergeCommaSeparated merges two comma-separated lists, deduplicating entries
 // case-insensitively while preserving the original casing of the first
 // occurrence.

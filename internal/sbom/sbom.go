@@ -195,16 +195,16 @@ func VerifyMultiple( //nolint:cyclop // metadata accumulation adds branches
 	}
 
 	if len(failDetails) > 0 {
-		return failResult(strings.Join(failDetails, "; ")), nil
+		return check.Fail(strings.Join(failDetails, "; ")), nil
 	}
 
 	if len(attestations) > 0 && !anyValid {
-		return failResult(
+		return check.Fail(
 			"all SBOM documents failed verification: " + strings.Join(verifyErrors, "; "),
 		), nil
 	}
 
-	result := passResult()
+	result := check.Pass()
 	result.Metadata = passedMeta
 
 	return result, nil
@@ -511,7 +511,7 @@ func checkDenyLists(
 	licenses, purls []string, pol *policy.Policy,
 ) *types.CheckResult {
 	if pol.SBOM == nil {
-		return passResult()
+		return check.Pass()
 	}
 
 	result := checkLicensePolicy(licenses, pol.SBOM.License)
@@ -524,7 +524,7 @@ func checkDenyLists(
 		return result
 	}
 
-	return passResult()
+	return check.Pass()
 }
 
 func checkLicensePolicy(
@@ -558,7 +558,7 @@ func checkLicenseDenyList(
 						"SBOM contains denied license %q", id,
 					)
 
-					return failResult(detail)
+					return check.Fail(detail)
 				}
 			}
 		}
@@ -581,7 +581,7 @@ func checkLicenseAllowList(
 					"SBOM contains license %q not in allow list", id,
 				)
 
-				return failResult(detail)
+				return check.Fail(detail)
 			}
 		}
 	}
@@ -681,7 +681,7 @@ func checkComponentDenyList(
 					"SBOM contains denied component %q", purl,
 				)
 
-				return failResult(detail)
+				return check.Fail(detail)
 			}
 		}
 	}
@@ -702,7 +702,7 @@ func checkComponentAllowList(
 				"SBOM contains component %q not in allow list", purl,
 			)
 
-			return failResult(detail)
+			return check.Fail(detail)
 		}
 	}
 
@@ -731,13 +731,13 @@ func checkCVSSThresholds(
 
 	violation := findThresholdViolation(vulns, cached, cvssPolicy)
 	if violation != "" {
-		result := failResult(violation)
+		result := check.Fail(violation)
 		result.Metadata = meta
 
 		return result
 	}
 
-	result := passResult()
+	result := check.Pass()
 	result.Metadata = meta
 
 	return result
@@ -886,10 +886,7 @@ func mergeCVSSMeta(dst, src map[string]any) { //nolint:cyclop // type assertions
 	}
 }
 
-func passResult() *types.CheckResult {
-	return types.PassResult(checkType, "SBOM verification passed")
-}
-
-func failResult(detail string) *types.CheckResult {
-	return types.FailResult(checkType, detail, nil)
+var check = types.Checker{ //nolint:gochecknoglobals,gosec // package-scoped helper
+	Type:    checkType,
+	PassMsg: "SBOM verification passed",
 }

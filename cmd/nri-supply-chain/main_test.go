@@ -432,7 +432,7 @@ func TestWarnValidationEnforceDefaults(t *testing.T) {
 			t.Parallel()
 
 			// Should not panic for any combination.
-			verifier.WarnEnforceDefaults(test.cfg, test.policies)
+			verifier.WarnEnforceDefaults(context.Background(), test.cfg, test.policies)
 		})
 	}
 }

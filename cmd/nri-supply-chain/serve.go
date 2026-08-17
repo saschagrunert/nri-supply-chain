@@ -21,10 +21,18 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"runtime"
 	"time"
 
+	"github.com/containerd/nri/pkg/stub"
+	"golang.org/x/sync/errgroup"
+
+	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
+	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/plugin"
+	"github.com/saschagrunert/nri-supply-chain/internal/registry"
+	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
 const (
@@ -82,6 +90,146 @@ func shutdownOnCancel(done <-chan struct{}, srv *http.Server) {
 	if shutdownErr != nil {
 		slog.Error("Failed to shutdown metrics server", "error", shutdownErr)
 	}
+}
+
+func logEffectiveConfig(configPath string, cfg *config.Config) {
+	attrs := []any{
+		"config", configPath,
+		"mode", cfg.Verification,
+		"policy_dir", cfg.PolicyDir,
+		"cache_ttl", cfg.CacheTTL.Duration,
+		"cache_failure_ttl", cfg.CacheFailureTTL.Duration,
+		"fetch_timeout", cfg.FetchTimeout.Duration,
+		"digest_resolve_timeout", cfg.DigestResolveTimeout.Duration,
+		"fetch_rate_limit", cfg.FetchRateLimit,
+		"fetch_failure_policy", cfg.FetchFailurePolicy,
+		"circuit_breaker_threshold", cfg.CircuitBreakerThreshold,
+		"circuit_breaker_cooldown", cfg.CircuitBreakerCooldown.Duration,
+		"metrics_addr", cfg.MetricsAddr,
+	}
+
+	if cfg.Policy.Source == config.PolicySourceOCI {
+		attrs = append(attrs,
+			"policy_source", cfg.Policy.Source,
+			"policy_oci_ref", cfg.Policy.OCIRef,
+			"policy_poll_interval", cfg.Policy.PollInterval.Duration,
+		)
+	}
+
+	slog.Info("Effective configuration", attrs...)
+}
+
+func startPlugin(
+	configPath, pluginName, pluginIdx string, cfg *config.Config,
+) int {
+	met := metrics.New()
+	met.SetBuildInfo(version, runtime.Version())
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	logEffectiveConfig(configPath, cfg)
+
+	cfg.WarnInsecureRegistries()
+
+	transportCache := registry.NewTransportCacheOrNil(cfg.Registries)
+
+	verif, err := createVerifier(ctx, cfg, met, transportCache)
+	if err != nil {
+		slog.Error("Startup failed", "error", err)
+
+		if transportCache != nil {
+			transportCache.CloseIdleConnections()
+		}
+
+		cancel()
+
+		return exitError
+	}
+
+	defer cancel()
+	defer verif.Stop()
+
+	plug := plugin.New(
+		verif, met, configPath,
+		cfg.FetchTimeout.Duration, cfg.DigestResolveTimeout.Duration,
+		transportCache,
+	)
+
+	cleanupSignals := setupSignals(ctx, cancel, configPath, verif, met, cfg, plug)
+	defer cleanupSignals()
+
+	err = runPlugin(ctx, plug, met, cfg.MetricsAddr, pluginName, pluginIdx, cancel)
+	if err != nil {
+		slog.Error("Plugin exited with error", "error", err)
+
+		return exitError
+	}
+
+	return exitSuccess
+}
+
+func createVerifier(
+	ctx context.Context,
+	cfg *config.Config,
+	met *metrics.Metrics,
+	transportCache *registry.TransportCache,
+) (*verifier.Verifier, error) {
+	var fetcher attestation.Fetcher
+
+	if cfg.Enabled() {
+		var err error
+
+		fetcher, err = verifier.NewFetcher(ctx, cfg, transportCache)
+		if err != nil {
+			return nil, fmt.Errorf("creating fetcher: %w", err)
+		}
+	}
+
+	verif, err := verifier.New(ctx, cfg, met, fetcher)
+	if err != nil {
+		return nil, fmt.Errorf("creating verifier: %w", err)
+	}
+
+	return verif, nil
+}
+
+func runPlugin(
+	ctx context.Context, plug *plugin.Plugin, met *metrics.Metrics,
+	metricsAddr, pluginName, pluginIdx string, cancel context.CancelFunc,
+) error {
+	nriStub, err := stub.New(plug,
+		stub.WithPluginName(pluginName),
+		stub.WithPluginIdx(pluginIdx),
+		stub.WithOnClose(func() {
+			slog.Error("NRI connection lost")
+			plug.SetDisconnected()
+			cancel()
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("creating NRI stub: %w", err)
+	}
+
+	group, gctx := errgroup.WithContext(ctx)
+
+	group.Go(func() error {
+		slog.Info("Starting NRI plugin",
+			"name", pluginName, "index", pluginIdx,
+		)
+
+		return nriStub.Run(gctx)
+	})
+
+	group.Go(func() error {
+		return serveMetrics(gctx, met, metricsAddr, plug)
+	})
+
+	err = group.Wait()
+	if err != nil {
+		return fmt.Errorf("plugin services: %w", err)
+	}
+
+	return nil
 }
 
 func registerHealthProbes(mux *http.ServeMux, plug *plugin.Plugin) {

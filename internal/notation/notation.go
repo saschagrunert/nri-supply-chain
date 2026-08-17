@@ -165,10 +165,10 @@ func verifySignatures(
 
 func buildMultipleResult(failReasons []string) *types.CheckResult {
 	if len(failReasons) > 0 {
-		return failResult(strings.Join(failReasons, "; "))
+		return check.Fail(strings.Join(failReasons, "; "))
 	}
 
-	return failResult("no notation signatures found")
+	return check.Fail("no notation signatures found")
 }
 
 //nolint:ireturn // notation.Verifier is the API type returned by notation-go.
@@ -273,18 +273,18 @@ func verifySignatureEntry(
 	if sig.NotationSubjectDigest != "" {
 		parsed, err := godigest.Parse(sig.NotationSubjectDigest)
 		if err != nil {
-			return failResult(fmt.Sprintf("invalid subject digest: %s", err))
+			return check.Fail(fmt.Sprintf("invalid subject digest: %s", err))
 		}
 
 		desc.Digest = parsed
 	}
 
 	if sig.NotationSubjectDigest == "" {
-		return failResult("signature has no subject binding")
+		return check.Fail("signature has no subject binding")
 	}
 
 	if sig.NotationSubjectDigest != digest {
-		return failResult(fmt.Sprintf(
+		return check.Fail(fmt.Sprintf(
 			"subject digest %s does not match image digest %s",
 			sig.NotationSubjectDigest, digest,
 		))
@@ -303,7 +303,7 @@ func verifySignatureEntry(
 			"error", err,
 		)
 
-		return failResult(fmt.Sprintf("Notation signature verification failed: %s", err))
+		return check.Fail(fmt.Sprintf("Notation signature verification failed: %s", err))
 	}
 
 	logAttrs := []any{
@@ -324,7 +324,7 @@ func verifySignatureEntry(
 		"trustPolicy": trustPolicyName,
 	}
 
-	result := passResult()
+	result := check.Pass()
 	result.Metadata = meta
 
 	return result
@@ -343,10 +343,7 @@ func extractSignerDN(outcome *notationlib.VerificationOutcome) string {
 	return chain[0].Subject.String()
 }
 
-func passResult() *types.CheckResult {
-	return types.PassResult(checkType, "Notation signature cryptographically verified")
-}
-
-func failResult(detail string) *types.CheckResult {
-	return types.FailResult(checkType, detail, nil)
+var check = types.Checker{ //nolint:gochecknoglobals // package-scoped helper
+	Type:    checkType,
+	PassMsg: "Notation signature cryptographically verified",
 }
