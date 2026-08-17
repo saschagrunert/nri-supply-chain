@@ -113,7 +113,7 @@ func verifySCAIPredicate(
 	}
 
 	if pol.SCAI == nil {
-		result := passResult()
+		result := check.Pass()
 		result.Metadata = meta
 
 		return result, nil
@@ -121,13 +121,13 @@ func verifySCAIPredicate(
 
 	violation := checkAttributePolicy(report.Attributes, pol.SCAI, hasEvidence)
 	if violation != "" {
-		result := failResult(violation)
+		result := check.Fail(violation)
 		result.Metadata = meta
 
 		return result, nil
 	}
 
-	result := passResult()
+	result := check.Pass()
 	result.Metadata = meta
 
 	return result, nil
@@ -237,10 +237,7 @@ func mergeBoolAND(existing, incoming any) (any, bool) {
 	return dstEvidence && srcEvidence, true
 }
 
-func passResult() *types.CheckResult {
-	return types.PassResult(checkType, "SCAI verification passed")
-}
-
-func failResult(detail string) *types.CheckResult {
-	return types.FailResult(checkType, detail, nil)
+var check = types.Checker{ //nolint:gochecknoglobals,gosec // package-scoped helper
+	Type:    checkType,
+	PassMsg: "SCAI verification passed",
 }

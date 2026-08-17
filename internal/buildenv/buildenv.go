@@ -98,7 +98,7 @@ func verifyBuildEnvPredicate(
 	}
 
 	if pol.BuildEnv == nil {
-		result := passResult()
+		result := check.Pass()
 		result.Metadata = meta
 
 		return result, nil
@@ -106,13 +106,13 @@ func verifyBuildEnvPredicate(
 
 	violation := checkPropertyPolicy(pred.Environment, pol.BuildEnv)
 	if violation != "" {
-		result := failResult(violation)
+		result := check.Fail(violation)
 		result.Metadata = meta
 
 		return result, nil
 	}
 
-	result := passResult()
+	result := check.Pass()
 	result.Metadata = meta
 
 	return result, nil
@@ -171,10 +171,7 @@ func mergePropertyMeta(dst, src map[string]any) {
 	}
 }
 
-func passResult() *types.CheckResult {
-	return types.PassResult(checkType, "build environment verification passed")
-}
-
-func failResult(detail string) *types.CheckResult {
-	return types.FailResult(checkType, detail, nil)
+var check = types.Checker{ //nolint:gochecknoglobals,gosec // package-scoped helper
+	Type:    checkType,
+	PassMsg: "build environment verification passed",
 }

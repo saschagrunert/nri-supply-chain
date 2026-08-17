@@ -153,35 +153,35 @@ func verifyV1(
 
 	err = verifySubjectDigest(stmt.Subject, imageDigest)
 	if err != nil {
-		return failResult(err.Error()), nil
+		return check.Fail(err.Error()), nil
 	}
 
 	err = verifyBuilder(ctx, stmt.Predicate.RunDetails.Builder, pol)
 	if err != nil {
-		return failResult(err.Error()), nil
+		return check.Fail(err.Error()), nil
 	}
 
 	err = verifyBuildType(stmt.Predicate.BuildDefinition.BuildType, pol)
 	if err != nil {
-		return failResult(err.Error()), nil
+		return check.Fail(err.Error()), nil
 	}
 
 	err = verifySources(stmt.Predicate.BuildDefinition.ExternalParameters, pol)
 	if err != nil {
-		return failResult(err.Error()), nil
+		return check.Fail(err.Error()), nil
 	}
 
 	err = verifyParameters(stmt.Predicate.BuildDefinition.ExternalParameters, pol)
 	if err != nil {
-		return failResult(err.Error()), nil
+		return check.Fail(err.Error()), nil
 	}
 
 	err = verifyFreshness(stmt.Predicate.RunDetails.Metadata.StartedOn, pol)
 	if err != nil {
-		return failResult(err.Error()), nil
+		return check.Fail(err.Error()), nil
 	}
 
-	result := passResult()
+	result := check.Pass()
 	result.Metadata = map[string]any{
 		metaBuilderID: stmt.Predicate.RunDetails.Builder.ID,
 		metaBuildType: stmt.Predicate.BuildDefinition.BuildType,
@@ -242,22 +242,22 @@ func verifyV02(
 
 	err = verifySubjectDigest(stmt.Subject, imageDigest)
 	if err != nil {
-		return failResult(err.Error()), nil
+		return check.Fail(err.Error()), nil
 	}
 
 	err = verifyBuilder(ctx, stmt.Predicate.Builder, pol)
 	if err != nil {
-		return failResult(err.Error()), nil
+		return check.Fail(err.Error()), nil
 	}
 
 	err = verifyBuildType(stmt.Predicate.BuildType, pol)
 	if err != nil {
-		return failResult(err.Error()), nil
+		return check.Fail(err.Error()), nil
 	}
 
 	err = verifySourceV02(&stmt.Predicate, pol)
 	if err != nil {
-		return failResult(err.Error()), nil
+		return check.Fail(err.Error()), nil
 	}
 
 	// v0.2 has no externalParameters, so rejectUnknownParameters does not
@@ -265,10 +265,10 @@ func verifyV02(
 
 	err = verifyFreshness(stmt.Predicate.Metadata.BuildStartedOn, pol)
 	if err != nil {
-		return failResult(err.Error()), nil
+		return check.Fail(err.Error()), nil
 	}
 
-	result := passResult()
+	result := check.Pass()
 	result.Metadata = map[string]any{
 		metaBuilderID: stmt.Predicate.Builder.ID,
 		metaBuildType: stmt.Predicate.BuildType,
@@ -362,16 +362,16 @@ func VerifyMultiple(
 			detail += " (also failed to parse: " + strings.Join(parseErrors, "; ") + ")"
 		}
 
-		return failResult(detail), nil
+		return check.Fail(detail), nil
 	}
 
 	if len(parseErrors) > 0 {
-		return failResult(
+		return check.Fail(
 			"no valid provenance: " + strings.Join(parseErrors, "; "),
 		), nil
 	}
 
-	return failResult("no valid provenance attestation found"), nil
+	return check.Fail("no valid provenance attestation found"), nil
 }
 
 func verifySubjectDigest(subjects []Subject, imageDigest string) error {
@@ -492,8 +492,9 @@ func defaultKnownParameters() []string {
 	return []string{metaSource, "repository", "ref", "workflow", metaBuildType}
 }
 
-func passResult() *types.CheckResult {
-	return types.PassResult(checkType, "SLSA provenance verified")
+var check = types.Checker{ //nolint:gochecknoglobals // package-scoped helper
+	Type:    checkType,
+	PassMsg: "SLSA provenance verified",
 }
 
 // ResetWarnings clears the deduplication state so that maxLevel
@@ -547,8 +548,4 @@ func verifyFreshness(buildStarted *time.Time, pol *policy.Policy) error {
 		ErrStaleProvenance,
 		ErrStaleProvenance,
 	)
-}
-
-func failResult(detail string) *types.CheckResult {
-	return types.FailResult(checkType, detail, nil)
 }

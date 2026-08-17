@@ -184,7 +184,7 @@ func (p *Plugin) SetDisconnected() {
 func (p *Plugin) Configure(
 	ctx context.Context, cfg, rt, version string,
 ) (stub.EventMask, error) {
-	slog.Info("Connected to runtime", "runtime", rt, "version", version)
+	slog.InfoContext(ctx, "Connected to runtime", "runtime", rt, "version", version)
 
 	if p.configPath == "" && cfg != "" {
 		parsed, err := config.LoadFromString(cfg)
@@ -664,7 +664,7 @@ func (p *Plugin) prewarmCache(ctx context.Context, images []prewarmImage) {
 
 	images = p.resolvePrewarmDigests(ctx, images)
 	total := len(images)
-	slog.Info("Pre-warming cache", "images", total)
+	slog.InfoContext(ctx, "Pre-warming cache", "images", total)
 
 	verified, cancelled := p.runPrewarmVerifications(ctx, images, total)
 	if cancelled {
@@ -680,7 +680,7 @@ func (p *Plugin) prewarmCache(ctx context.Context, images []prewarmImage) {
 
 	p.observePrewarm(start, result)
 
-	slog.Info("Pre-warming cache complete",
+	slog.InfoContext(ctx, "Pre-warming cache complete",
 		"verified", verified,
 		"total", total,
 		"duration", time.Since(start),

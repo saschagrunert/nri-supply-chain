@@ -90,16 +90,16 @@ func VerifyMultiple(
 			detail += " (also failed to parse: " + strings.Join(parseErrors, "; ") + ")"
 		}
 
-		return failResult(detail), nil
+		return check.Fail(detail), nil
 	}
 
 	if len(parseErrors) > 0 {
-		return failResult(
+		return check.Fail(
 			"no valid release attestation: " + strings.Join(parseErrors, "; "),
 		), nil
 	}
 
-	return failResult("no valid release attestation found"), nil
+	return check.Fail("no valid release attestation found"), nil
 }
 
 func verifyReleasePredicate(
@@ -120,7 +120,7 @@ func verifyReleasePredicate(
 	if pol.Release != nil && len(pol.Release.TrustedRegistries) > 0 {
 		err = verifyTrustedRegistry(pred.PURL, pol.Release.TrustedRegistries)
 		if err != nil {
-			result := failResult(err.Error())
+			result := check.Fail(err.Error())
 			result.Metadata = meta
 
 			return result, nil
@@ -128,13 +128,13 @@ func verifyReleasePredicate(
 	}
 
 	if pol.Release != nil && pol.Release.RequirePackageID && pred.PackageID == "" {
-		result := failResult(ErrMissingPackageID.Error())
+		result := check.Fail(ErrMissingPackageID.Error())
 		result.Metadata = meta
 
 		return result, nil
 	}
 
-	result := passResult()
+	result := check.Pass()
 	result.Metadata = meta
 
 	return result, nil
@@ -159,10 +159,7 @@ func verifyTrustedRegistry(purl string, trustedRegistries []string) error {
 	return fmt.Errorf("%w: %q", ErrUntrustedRegistry, purl)
 }
 
-func passResult() *types.CheckResult {
-	return types.PassResult(checkType, "release verification passed")
-}
-
-func failResult(detail string) *types.CheckResult {
-	return types.FailResult(checkType, detail, nil)
+var check = types.Checker{ //nolint:gochecknoglobals // package-scoped helper
+	Type:    checkType,
+	PassMsg: "release verification passed",
 }

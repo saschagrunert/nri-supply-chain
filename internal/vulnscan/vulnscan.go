@@ -134,7 +134,7 @@ func verifyVulnScanPredicate(
 	}
 
 	if pol.VulnScan == nil {
-		result := passResult()
+		result := check.Pass()
 		result.Metadata = meta
 
 		return result, nil
@@ -147,7 +147,7 @@ func verifyVulnScanPredicate(
 
 	err = verifyFreshness(scannedOn, pol)
 	if err != nil {
-		result := failResult(err.Error())
+		result := check.Fail(err.Error())
 		result.Metadata = meta
 
 		return result, nil
@@ -155,13 +155,13 @@ func verifyVulnScanPredicate(
 
 	violation := checkThresholds(pred.Result.Vulnerabilities, pol.VulnScan)
 	if violation != "" {
-		result := failResult(violation)
+		result := check.Fail(violation)
 		result.Metadata = meta
 
 		return result, nil
 	}
 
-	result := passResult()
+	result := check.Pass()
 	result.Metadata = meta
 
 	return result, nil
@@ -327,10 +327,7 @@ func mergeVulnKey(dst map[string]any, key string, val, existing any) {
 	}
 }
 
-func passResult() *types.CheckResult {
-	return types.PassResult(checkType, "vulnerability scan verification passed")
-}
-
-func failResult(detail string) *types.CheckResult {
-	return types.FailResult(checkType, detail, nil)
+var check = types.Checker{ //nolint:gochecknoglobals // package-scoped helper
+	Type:    checkType,
+	PassMsg: "vulnerability scan verification passed",
 }

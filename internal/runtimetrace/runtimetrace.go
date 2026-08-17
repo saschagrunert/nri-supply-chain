@@ -127,7 +127,7 @@ func verifyRuntimeTracePredicate(
 	}
 
 	if pol.RuntimeTrace == nil {
-		result := passResult()
+		result := check.Pass()
 		result.Metadata = meta
 
 		return result, nil
@@ -136,7 +136,7 @@ func verifyRuntimeTracePredicate(
 	if len(pol.RuntimeTrace.TrustedMonitors) > 0 {
 		err = verifyMonitorType(pred.Monitor.Type, pol.RuntimeTrace.TrustedMonitors)
 		if err != nil {
-			result := failResult(err.Error())
+			result := check.Fail(err.Error())
 			result.Metadata = meta
 
 			return result, nil
@@ -148,7 +148,7 @@ func verifyRuntimeTracePredicate(
 			pred.MonitorLog.FileAccess, pol.RuntimeTrace.ForbiddenFilePatterns,
 		)
 		if err != nil {
-			result := failResult(err.Error())
+			result := check.Fail(err.Error())
 			result.Metadata = meta
 
 			return result, nil
@@ -157,13 +157,13 @@ func verifyRuntimeTracePredicate(
 
 	err = verifyFreshness(pred.Metadata, pol)
 	if err != nil {
-		result := failResult(err.Error())
+		result := check.Fail(err.Error())
 		result.Metadata = meta
 
 		return result, nil
 	}
 
-	result := passResult()
+	result := check.Pass()
 	result.Metadata = meta
 
 	return result, nil
@@ -289,10 +289,7 @@ func mergeTraceMeta(dst, src map[string]any) {
 	}
 }
 
-func passResult() *types.CheckResult {
-	return types.PassResult(checkType, "runtime trace verification passed")
-}
-
-func failResult(detail string) *types.CheckResult {
-	return types.FailResult(checkType, detail, nil)
+var check = types.Checker{ //nolint:gochecknoglobals,gosec // package-scoped helper
+	Type:    checkType,
+	PassMsg: "runtime trace verification passed",
 }

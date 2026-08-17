@@ -329,7 +329,7 @@ func tryCandidates(
 			remoteOpts, sigVerifier, policyOpts, fetchImage,
 		)
 		if verifyErr == nil {
-			slog.Info("OCI policy signature verified",
+			slog.InfoContext(ctx, "OCI policy signature verified",
 				"ref", ref.String(),
 				"digest", digest.String(),
 			)
@@ -337,14 +337,14 @@ func tryCandidates(
 			return nil
 		}
 
-		slog.Debug("Policy signature candidate failed",
+		slog.DebugContext(ctx, "Policy signature candidate failed",
 			"ref", ref.String(),
 			"candidate_digest", desc.Digest.String(),
 			"error", verifyErr,
 		)
 	}
 
-	slog.Warn("OCI policy signature verification failed",
+	slog.WarnContext(ctx, "OCI policy signature verification failed",
 		"ref", ref.String(),
 		"digest", digest.String(),
 		"error", "all candidates failed",
@@ -465,7 +465,7 @@ func extractFirstLayer(ctx context.Context, img ociV1.Image) ([]byte, error) {
 	defer func() {
 		closeErr := reader.Close()
 		if closeErr != nil {
-			slog.Warn("Failed to close signature layer reader", "error", closeErr)
+			slog.WarnContext(ctx, "Failed to close signature layer reader", "error", closeErr)
 		}
 	}()
 

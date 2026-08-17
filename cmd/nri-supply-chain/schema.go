@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/invopop/jsonschema"
+	"github.com/spf13/cobra"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
@@ -33,6 +34,40 @@ const (
 	schemaResult = "result"
 	schemaConfig = "config"
 )
+
+func newJSONSchemaCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   cmdJSONSchema + " <type>",
+		Short: "Print JSON Schema for a given type",
+		Long: "Print the JSON Schema definition for a given type.\n\n" +
+			"Available types:\n" +
+			"  policy   Policy configuration file schema\n" +
+			"  result   Verification result output schema\n" +
+			"  config   TOML configuration file schema",
+		Args: func(_ *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return errMissingSchemaType
+			}
+
+			if len(args) > 1 {
+				return fmt.Errorf("%w, received %d", errTooManyArgs, len(args))
+			}
+
+			return nil
+		},
+		ValidArgs: []string{schemaPolicy, schemaResult, schemaConfig},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+
+			code := printJSONSchema(args[0])
+			if code != 0 {
+				return errExitNonZero
+			}
+
+			return nil
+		},
+	}
+}
 
 func policyJSONSchema() ([]byte, error) {
 	return generateSchema(

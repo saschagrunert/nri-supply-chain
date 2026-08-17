@@ -754,7 +754,7 @@ func TestVerifySubjectDigestCrossCheck(t *testing.T) {
 func TestPassResult(t *testing.T) {
 	t.Parallel()
 
-	result := passResult()
+	result := check.Pass()
 
 	if result.Type != types.CheckTypeNotation {
 		t.Errorf("type = %q, want %q", result.Type, types.CheckTypeNotation)
@@ -779,7 +779,7 @@ func TestFailResult(t *testing.T) {
 	t.Parallel()
 
 	detail := "signature mismatch"
-	result := failResult(detail)
+	result := check.Fail(detail)
 
 	if result.Type != types.CheckTypeNotation {
 		t.Errorf("type = %q, want %q", result.Type, types.CheckTypeNotation)

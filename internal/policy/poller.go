@@ -131,7 +131,7 @@ func (p *Poller) run(ctx context.Context) {
 func (p *Poller) poll(ctx context.Context) {
 	digest, err := p.fetcher.CheckDigest(ctx, p.ociRef)
 	if err != nil {
-		slog.Warn("OCI policy digest check failed",
+		slog.WarnContext(ctx, "OCI policy digest check failed",
 			"oci_ref", p.ociRef,
 			"error", err,
 		)
@@ -144,7 +144,7 @@ func (p *Poller) poll(ctx context.Context) {
 	p.mu.Unlock()
 
 	if !changed {
-		slog.Debug("OCI policy digest unchanged, skipping reload",
+		slog.DebugContext(ctx, "OCI policy digest unchanged, skipping reload",
 			"oci_ref", p.ociRef,
 			"digest", digest,
 		)
@@ -158,7 +158,7 @@ func (p *Poller) poll(ctx context.Context) {
 func (p *Poller) fetchAndApply(ctx context.Context) {
 	result, err := p.fetcher.FetchFromOCI(ctx, p.ociRef)
 	if err != nil {
-		slog.Warn("OCI policy fetch failed",
+		slog.WarnContext(ctx, "OCI policy fetch failed",
 			"oci_ref", p.ociRef,
 			"error", err,
 		)
@@ -171,7 +171,7 @@ func (p *Poller) fetchAndApply(ctx context.Context) {
 	p.mu.Unlock()
 
 	if alreadyApplied {
-		slog.Debug("OCI policy digest unchanged after fetch, skipping reload",
+		slog.DebugContext(ctx, "OCI policy digest unchanged after fetch, skipping reload",
 			"oci_ref", p.ociRef,
 			"digest", result.Digest,
 		)
@@ -179,7 +179,7 @@ func (p *Poller) fetchAndApply(ctx context.Context) {
 		return
 	}
 
-	slog.Info("OCI policy update detected, reloading policies",
+	slog.InfoContext(ctx, "OCI policy update detected, reloading policies",
 		"oci_ref", p.ociRef,
 		"digest", result.Digest,
 	)
@@ -187,7 +187,7 @@ func (p *Poller) fetchAndApply(ctx context.Context) {
 	if p.onReload != nil {
 		reloadErr := p.onReload(result.Policies)
 		if reloadErr != nil {
-			slog.Warn("OCI policy reload rejected, will retry next poll",
+			slog.WarnContext(ctx, "OCI policy reload rejected, will retry next poll",
 				"oci_ref", p.ociRef,
 				"digest", result.Digest,
 				"error", reloadErr,

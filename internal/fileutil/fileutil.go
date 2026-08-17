@@ -31,8 +31,13 @@ const (
 	MaxConfigFileSize = 10 << 20
 )
 
-// ErrFileTooLarge indicates a file exceeds the maximum allowed size.
-var ErrFileTooLarge = errors.New("file exceeds maximum allowed size")
+var (
+	// ErrFileTooLarge indicates a file exceeds the maximum allowed size.
+	ErrFileTooLarge = errors.New("file exceeds maximum allowed size")
+
+	// ErrInsecurePermissions indicates a credential file has overly permissive mode bits.
+	ErrInsecurePermissions = errors.New("file has insecure permissions")
+)
 
 // ReadLimited reads a file up to maxSize bytes. Returns ErrFileTooLarge if the
 // file exceeds the limit.
@@ -58,4 +63,27 @@ func ReadLimited(path string, maxSize int64) ([]byte, error) {
 	}
 
 	return data, nil
+}
+
+// maxCredentialFileMode is the most permissive mode allowed for credential files.
+const maxCredentialFileMode = 0o600
+
+// CheckCredentialPermissions verifies that a credential or key file is not
+// world- or group-readable. Returns ErrInsecurePermissions if the file's
+// mode bits exceed 0600.
+func CheckCredentialPermissions(path string) error {
+	info, err := os.Stat(filepath.Clean(path))
+	if err != nil {
+		return fmt.Errorf("stat %q: %w", path, err)
+	}
+
+	mode := info.Mode().Perm()
+	if mode&^maxCredentialFileMode != 0 {
+		return fmt.Errorf(
+			"%w: %q has mode %04o, want %04o or stricter",
+			ErrInsecurePermissions, path, mode, maxCredentialFileMode,
+		)
+	}
+
+	return nil
 }

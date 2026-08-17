@@ -52,7 +52,7 @@ func createAndWarmFetcher(
 
 	warmErr := ociFetcher.Warm(warmCtx)
 	if warmErr != nil {
-		slog.Warn(
+		slog.WarnContext(ctx,
 			"Failed to pre-warm Sigstore trusted root",
 			"error", warmErr,
 		)

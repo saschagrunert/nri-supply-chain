@@ -109,16 +109,16 @@ func VerifyMultiple(
 			detail += " (also failed to parse: " + strings.Join(parseErrors, "; ") + ")"
 		}
 
-		return failResult(detail), nil
+		return check.Fail(detail), nil
 	}
 
 	if len(parseErrors) > 0 {
-		return failResult(
+		return check.Fail(
 			"no valid source attestation: " + strings.Join(parseErrors, "; "),
 		), nil
 	}
 
-	return failResult("no valid source attestation found"), nil
+	return check.Fail("no valid source attestation found"), nil
 }
 
 //nolint:cyclop,funlen // sequential verification steps
@@ -154,7 +154,7 @@ func verifySourcePredicate(
 	if pol.Trust != nil && len(pol.Trust.Sources) > 0 {
 		err = verifySourceRepo(sourceURI, pol.Trust.Sources)
 		if err != nil {
-			result := failResult(err.Error())
+			result := check.Fail(err.Error())
 			result.Metadata = meta
 
 			return result, nil
@@ -163,7 +163,7 @@ func verifySourcePredicate(
 
 	if pol.Source != nil {
 		if sourceLevel < pol.Source.MinimumLevel {
-			result := failResult(fmt.Sprintf(
+			result := check.Fail(fmt.Sprintf(
 				"%s: got %d, minimum %d",
 				ErrSourceLevelInsufficient, sourceLevel, pol.Source.MinimumLevel,
 			))
@@ -179,14 +179,14 @@ func verifySourcePredicate(
 
 		err = verifyFreshness(verifiedOn, pol)
 		if err != nil {
-			result := failResult(err.Error())
+			result := check.Fail(err.Error())
 			result.Metadata = meta
 
 			return result, nil
 		}
 	}
 
-	result := passResult()
+	result := check.Pass()
 	result.Metadata = meta
 
 	return result, nil
@@ -239,10 +239,7 @@ func verifyFreshness(verifiedOn *time.Time, pol *policy.Policy) error {
 	)
 }
 
-func passResult() *types.CheckResult {
-	return types.PassResult(checkType, "source verification passed")
-}
-
-func failResult(detail string) *types.CheckResult {
-	return types.FailResult(checkType, detail, nil)
+var check = types.Checker{ //nolint:gochecknoglobals // package-scoped helper
+	Type:    checkType,
+	PassMsg: "source verification passed",
 }
