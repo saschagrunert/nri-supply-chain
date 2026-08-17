@@ -1036,7 +1036,7 @@ attribute report attestations attached to container images.
 ### `source` (object)
 
 SLSA Source Track verification settings. When configured, the plugin verifies
-[SLSA Source Track v1](https://slsa.dev/spec/v1.0/source-requirements)
+[SLSA Source Track v1](https://slsa.dev/spec/draft/source-requirements)
 attestations (predicate type `https://slsa.dev/source/v1`) attached to
 container images.
 
@@ -1054,7 +1054,7 @@ in the policy.
 
 Build environment attestation verification settings. When configured, the
 plugin verifies
-[build-env v1](https://github.com/in-toto/attestation/blob/main/spec/predicates/build-env.md)
+[build-env v1](https://github.com/in-toto/attestation/tree/main/spec/predicates)
 attestations (predicate type `https://in-toto.io/attestation/build-env/v1`)
 attached to container images.
 
@@ -1071,7 +1071,7 @@ policy is rejected at load time if they do.
 
 Vulnerability scan attestation verification settings. When configured, the
 plugin verifies
-[vulns](https://github.com/in-toto/attestation/blob/main/spec/predicates/vulns.md)
+[vulns](https://github.com/in-toto/attestation/blob/main/spec/predicates/vuln.md)
 attestations (predicate types `https://in-toto.io/attestation/vulns/v0.1` and
 `https://in-toto.io/attestation/vulns/v0.2`)
 attached to container images.
@@ -1658,7 +1658,7 @@ Example configuration:
 
 ### Source Track Verification
 
-Verifies [SLSA Source Track v1](https://slsa.dev/spec/v1.0/source-requirements)
+Verifies [SLSA Source Track v1](https://slsa.dev/spec/draft/source-requirements)
 attestations (predicate type `https://slsa.dev/source/v1`). Source attestations
 capture the origin repository, branch, and source level of the code used to
 build the image.
@@ -1694,7 +1694,7 @@ Example configuration:
 
 ### Build Environment Verification
 
-Verifies [build-env v1](https://github.com/in-toto/attestation/blob/main/spec/predicates/build-env.md)
+Verifies [build-env v1](https://github.com/in-toto/attestation/tree/main/spec/predicates)
 attestations (predicate type `https://in-toto.io/attestation/build-env/v1`).
 Build environment attestations describe the properties and configuration of the
 environment in which an artifact was built.
@@ -1726,7 +1726,7 @@ Example configuration:
 
 ### Vulnerability Scan Verification
 
-Verifies [vulns](https://github.com/in-toto/attestation/blob/main/spec/predicates/vulns.md)
+Verifies [vulns](https://github.com/in-toto/attestation/blob/main/spec/predicates/vuln.md)
 attestations (predicate types `https://in-toto.io/attestation/vulns/v0.1` and
 `https://in-toto.io/attestation/vulns/v0.2`).
 Vulnerability scan attestations capture the results of automated vulnerability

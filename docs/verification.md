@@ -212,7 +212,7 @@ field reference.
 
 ### SLSA Source Track
 
-Verifies [SLSA Source Track v1](https://slsa.dev/spec/v1.0/source-requirements)
+Verifies [SLSA Source Track v1](https://slsa.dev/spec/draft/source-requirements)
 attestations (predicate type `https://slsa.dev/source/v1`). Source attestations
 capture the origin repository, branch, and source level of the code used to
 build the image. The plugin checks the source against trusted repositories
@@ -221,7 +221,7 @@ and enforces minimum source level requirements. See
 
 ### Build Environment
 
-Verifies [build-env v1](https://github.com/in-toto/attestation/blob/main/spec/predicates/build-env.md)
+Verifies [build-env v1](https://github.com/in-toto/attestation/tree/main/spec/predicates)
 attestations (predicate type `https://in-toto.io/attestation/build-env/v1`).
 Build environment attestations describe the properties of the build
 environment, such as whether the build was hermetic or reproducible. The
@@ -230,7 +230,7 @@ plugin checks required and forbidden properties. See
 
 ### Vulnerability Scan
 
-Verifies [vulns](https://github.com/in-toto/attestation/blob/main/spec/predicates/vulns.md)
+Verifies [vulns](https://github.com/in-toto/attestation/blob/main/spec/predicates/vuln.md)
 attestations (predicate types `https://in-toto.io/attestation/vulns/v0.1` and
 `https://in-toto.io/attestation/vulns/v0.2`).
 Vulnerability scan attestations capture automated scanner results. The
