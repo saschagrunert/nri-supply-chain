@@ -89,7 +89,7 @@ help: ## Display this help
 .PHONY: build
 build: ## Build the nri-supply-chain binary (static)
 	@mkdir -p $(BUILD_DIR)
-	SOURCE_DATE_EPOCH=$(SOURCE_DATE_EPOCH) CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $(BUILD_DIR)/nri-supply-chain ./cmd/nri-supply-chain/
+	SOURCE_DATE_EPOCH=$(SOURCE_DATE_EPOCH) CGO_ENABLED=0 $(GO) build -mod=vendor -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $(BUILD_DIR)/nri-supply-chain ./cmd/nri-supply-chain/
 
 PREFIX ?= /usr/local
 
@@ -151,7 +151,7 @@ $(GOLANGCI_LINT):
 	@mkdir -p $(BUILD_DIR)
 	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/v$(GOLANGCI_LINT_VERSION)/install.sh | sh -s -- -b $(BUILD_DIR) v$(GOLANGCI_LINT_VERSION)
 
-SHELL_FILES = $(eval SHELL_FILES := $(shell find . -not -path './build/*' -not -path './dist/*' \( -name '*.sh' -o -name '*.bash' -o -name '*.bats' \) | sort))$(SHELL_FILES)
+SHELL_FILES = $(eval SHELL_FILES := $(shell find . -not -path './build/*' -not -path './dist/*' -not -path './vendor/*' \( -name '*.sh' -o -name '*.bash' -o -name '*.bats' \) | sort))$(SHELL_FILES)
 
 .PHONY: verify-shfmt
 verify-shfmt: $(SHFMT) ## Verify shell script formatting

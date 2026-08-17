@@ -1,2 +1,5 @@
+[files]
+extend-exclude = ["vendor/"]
+
 [default.extend-words]
 intoto = "intoto"
