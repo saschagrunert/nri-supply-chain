@@ -18,8 +18,10 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -320,6 +322,65 @@ func TestServeMetricsStatusEndpointConnected(t *testing.T) {
 			status.CircuitBreakers,
 		)
 	}
+}
+
+func TestLogEffectiveConfig(t *testing.T) {
+	t.Parallel()
+
+	var buf strings.Builder
+
+	handler := slog.NewTextHandler(&buf, nil)
+	slog.SetDefault(slog.New(handler))
+
+	cfg := config.DefaultConfig()
+	logEffectiveConfig("/etc/nri-supply-chain/config.toml", cfg)
+
+	out := buf.String()
+	for _, want := range []string{"config=", "mode=", "policy_dir=", "cache_ttl="} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log output missing %q", want)
+		}
+	}
+}
+
+func TestLogEffectiveConfigOCISource(t *testing.T) {
+	t.Parallel()
+
+	var buf strings.Builder
+
+	handler := slog.NewTextHandler(&buf, nil)
+	slog.SetDefault(slog.New(handler))
+
+	cfg := config.DefaultConfig()
+	cfg.Policy.Source = config.PolicySourceOCI
+	cfg.Policy.OCIRef = "ghcr.io/example/policies:v1"
+
+	logEffectiveConfig("/etc/nri-supply-chain/config.toml", cfg)
+
+	out := buf.String()
+	for _, want := range []string{"policy_source=", "policy_oci_ref=", "policy_poll_interval="} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log output missing %q", want)
+		}
+	}
+}
+
+func TestCreateVerifierDisabled(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	met := metrics.New()
+
+	v, err := createVerifier(t.Context(), cfg, met, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if v == nil {
+		t.Fatal("expected non-nil verifier")
+	}
+
+	v.Stop()
 }
 
 func assertProbeStatus(t *testing.T, addr, path string, wantStatus int) {

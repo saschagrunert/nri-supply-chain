@@ -28,6 +28,12 @@ updates:
       opentelemetry:
         patterns:
           - "go.opentelemetry.io/*"
+      notaryproject:
+        patterns:
+          - "github.com/notaryproject/*"
+      containerd:
+        patterns:
+          - "github.com/containerd/*"
   - package-ecosystem: docker
     directory: /
     schedule:
