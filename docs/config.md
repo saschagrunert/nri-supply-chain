@@ -15,6 +15,7 @@ nri-supply-chain plugin.
 - [CLI](#cli)
   - [Batch Verification](#batch-verification)
   - [Exit Codes](#exit-codes)
+  - [Preview](#preview)
   - [Effective Policy](#effective-policy)
   - [Inspect](#inspect)
   - [JSON Schema](#json-schema)
@@ -547,6 +548,40 @@ The verify command uses distinct exit codes for CI/CD integration:
 When verifying multiple images, the exit code is the worst (highest) across all
 images. If any image is denied (exit 1), the overall exit is 1. If any image
 hits an infrastructure error (exit 2), the overall exit is 2.
+
+### Preview
+
+The `preview` subcommand verifies a batch of images against the current policy
+set without blocking workloads. This lets operators assess the impact of policy
+changes before enabling enforce mode.
+
+```console
+nri-supply-chain preview alpine:latest nginx:1.25 --output json
+```
+
+Images can also be loaded from a file (one per line, comments with `#`):
+
+```console
+nri-supply-chain preview --images-file images.txt
+```
+
+Use `--compare-policy` to diff results between two policy directories:
+
+```console
+nri-supply-chain preview --compare-policy /path/to/proposed-policies alpine:latest
+```
+
+The diff mode shows which images would change status (allowed/denied) under the
+proposed policy set.
+
+Preview flags:
+
+```text
+-n, --namespace        Namespace for policy resolution (default: default)
+-o, --output           Output format: table, json (default: table)
+    --images-file      File containing image references (one per line)
+    --compare-policy   Path to alternative policy directory for comparison
+```
 
 ### Effective Policy
 
