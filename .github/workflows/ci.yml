@@ -39,6 +39,17 @@ jobs:
         with:
           version: v2.12.2
 
+  helm:
+    name: verify / helm
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      HELM_IMAGE: docker.io/alpine/helm:3.17.3@sha256:d899e6316789fec04ee95300a18e454b7942539cbb3d89bde3e0655d6ca2e895
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Lint and render chart
+        run: docker run --rm --entrypoint /bin/sh -v "$PWD:/work" -w /work "$HELM_IMAGE" -c 'helm lint --strict deploy/helm/nri-supply-chain && helm template nri-supply-chain deploy/helm/nri-supply-chain --namespace nri-supply-chain > /dev/null'
+
   test-unit:
     name: test / unit
     runs-on: ubuntu-latest

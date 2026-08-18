@@ -1,0 +1,266 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "nri-supply-chain chart values",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "namespaceOverride": { "type": "string" },
+    "nameOverride": { "type": "string" },
+    "fullnameOverride": { "type": "string" },
+    "namespace": { "$ref": "#/definitions/namespace" },
+    "image": { "$ref": "#/definitions/image" },
+    "imagePullSecrets": { "type": "array", "items": { "type": "object" } },
+    "serviceAccount": { "$ref": "#/definitions/serviceAccount" },
+    "podAnnotations": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "podLabels": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "daemonSet": { "$ref": "#/definitions/daemonSet" },
+    "resources": { "type": "object" },
+    "securityContext": { "type": "object" },
+    "nriSocket": { "$ref": "#/definitions/nriSocket" },
+    "config": { "$ref": "#/definitions/config" },
+    "policies": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "extraVolumes": { "type": "array", "items": { "type": "object" } },
+    "extraVolumeMounts": { "type": "array", "items": { "type": "object" } },
+    "extraEnv": { "type": "array", "items": { "type": "object" } },
+    "service": { "$ref": "#/definitions/service" },
+    "probes": { "$ref": "#/definitions/probes" },
+    "podDisruptionBudget": { "$ref": "#/definitions/podDisruptionBudget" },
+    "networkPolicy": { "$ref": "#/definitions/networkPolicy" },
+    "monitoring": { "$ref": "#/definitions/monitoring" }
+  },
+  "definitions": {
+    "namespace": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "create": { "type": "boolean" } }
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string" },
+        "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "automountServiceAccountToken": { "type": "boolean" }
+      }
+    },
+    "daemonSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "updateStrategy": { "type": "object" },
+        "priorityClassName": { "type": "string" },
+        "tolerations": { "type": "array", "items": { "type": "object" } },
+        "nodeSelector": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "affinity": { "type": "object" }
+      }
+    },
+    "nriSocket": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hostPath": { "type": "string", "minLength": 1 },
+        "hostPathType": { "type": "string" }
+      }
+    },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "verification": { "enum": ["disabled", "warn", "enforce"] },
+        "fetchTimeout": { "type": "string" },
+        "digestResolveTimeout": { "type": "string" },
+        "fetchFailurePolicy": { "enum": ["", "allow", "warn", "deny"] },
+        "cacheTTL": { "type": "string" },
+        "cacheFailureTTL": { "type": "string" },
+        "verificationTimeout": { "type": "string" },
+        "fetchRateLimit": { "type": "number", "minimum": 0 },
+        "logLevel": { "enum": ["", "debug", "info", "warn", "error"] },
+        "metricsAddr": { "type": "string", "pattern": ":[0-9]{1,5}$" },
+        "circuitBreakerThreshold": { "type": "integer", "minimum": 1 },
+        "circuitBreakerCooldown": { "type": "string" },
+        "maxAttestationSize": {
+          "type": "integer",
+          "minimum": 1048576,
+          "maximum": 104857600
+        },
+        "cacheMaxEntries": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 1000000
+        },
+        "allowlistDigests": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "policy": { "$ref": "#/definitions/policy" },
+        "sigstore": { "$ref": "#/definitions/sigstore" },
+        "registries": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/registry" }
+        },
+        "extraConfig": { "type": "string" }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source": { "enum": ["local", "oci"] },
+        "ociRef": { "type": "string" },
+        "pollInterval": { "type": "string" },
+        "issuers": { "type": "array", "items": { "type": "string" } },
+        "sanPatterns": { "type": "array", "items": { "type": "string" } },
+        "keys": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "sigstore": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "includePublicRoot": { "type": "boolean" },
+        "roots": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/sigstoreRoot" }
+        }
+      }
+    },
+    "sigstoreRoot": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "tufMirror": { "type": "string" },
+        "tufRoot": { "type": "string" }
+      }
+    },
+    "registry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "prefix": { "type": "string" },
+        "mirror": { "type": "string" },
+        "caCert": { "type": "string" },
+        "insecure": { "type": "boolean" }
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "type": { "type": "string" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "probes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "startup": { "$ref": "#/definitions/probe" },
+        "liveness": { "$ref": "#/definitions/probe" },
+        "readiness": { "$ref": "#/definitions/probe" }
+      }
+    },
+    "probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "failureThreshold": { "type": "integer", "minimum": 1 },
+        "periodSeconds": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "podDisruptionBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "maxUnavailable": {
+          "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "string" }]
+        }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "ingress": { "type": "array", "items": { "type": "object" } },
+        "egress": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "monitoring": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "serviceMonitor": { "$ref": "#/definitions/serviceMonitor" },
+        "prometheusRule": { "$ref": "#/definitions/prometheusRule" }
+      }
+    },
+    "serviceMonitor": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "interval": { "type": "string" },
+        "scrapeTimeout": { "type": "string" },
+        "labels": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "prometheusRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "labels": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "failureRateThreshold": { "type": "number", "minimum": 0 },
+        "circuitBreakerFor": { "type": "string" },
+        "fetchErrorRateThreshold": { "type": "number", "minimum": 0 },
+        "fetchErrorFor": { "type": "string" },
+        "verificationInterruptedFor": { "type": "string" },
+        "verificationLatencyThresholdSeconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "verificationLatencyFor": { "type": "string" },
+        "reloadFailureFor": { "type": "string" }
+      }
+    }
+  }
+}

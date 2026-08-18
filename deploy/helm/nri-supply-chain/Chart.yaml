@@ -1,0 +1,17 @@
+apiVersion: v2
+name: nri-supply-chain
+description: Runtime supply-chain attestation verification for Kubernetes nodes via NRI
+type: application
+version: 0.1.0
+appVersion: "0.4.0"
+keywords:
+  - nri
+  - supply-chain-security
+  - sigstore
+  - slsa
+home: https://github.com/saschagrunert/nri-supply-chain
+sources:
+  - https://github.com/saschagrunert/nri-supply-chain
+maintainers:
+  - name: Sascha Grunert
+    url: https://github.com/saschagrunert

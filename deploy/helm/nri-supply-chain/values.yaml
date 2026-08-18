@@ -1,0 +1,175 @@
+# Override to deploy the release into a namespace other than .Release.Namespace.
+namespaceOverride: ""
+namespace:
+  create: false
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/saschagrunert/nri-supply-chain
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  automountServiceAccountToken: false
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  # Must match the port in config.metricsAddr when using annotation-based discovery.
+  prometheus.io/port: "9090"
+  prometheus.io/path: /metrics
+podLabels: {}
+
+daemonSet:
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  priorityClassName: system-node-critical
+  tolerations:
+    - operator: Exists
+  nodeSelector: {}
+  affinity: {}
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+securityContext:
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65534
+  runAsGroup: 65534
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+nriSocket:
+  hostPath: /var/run/nri
+  hostPathType: DirectoryOrCreate
+
+config:
+  verification: warn
+  fetchTimeout: 30s
+  digestResolveTimeout: 1s
+  # Leave empty to use the mode-dependent application default.
+  fetchFailurePolicy: ""
+  cacheTTL: 24h
+  cacheFailureTTL: 5m
+  verificationTimeout: 5m
+  fetchRateLimit: 0
+  logLevel: ""
+  # The chart derives the container and probe port from this address.
+  metricsAddr: ":9090"
+  circuitBreakerThreshold: 5
+  circuitBreakerCooldown: 30s
+  maxAttestationSize: 10485760
+  cacheMaxEntries: 10000
+  # Trusted digests or digest-qualified image references that bypass verification.
+  allowlistDigests: []
+  policy:
+    source: local
+    ociRef: ""
+    pollInterval: 5m
+    issuers: []
+    sanPatterns: []
+    keys: []
+  sigstore:
+    enabled: false
+    includePublicRoot: true
+    roots: []
+  registries: []
+  # Appended verbatim to config.toml for forward-compatible configuration.
+  extraConfig: ""
+
+# Used only when config.policy.source is local. Keys must end in .json.
+policies:
+  default.json: |
+    {
+      "trust": {
+        "issuers": ["https://token.actions.githubusercontent.com"],
+        "sanPatterns": ["https://github.com/myorg/*"],
+        "sources": ["https://github.com/myorg/*"]
+      },
+      "slsa": { "missingPolicy": "warn" },
+      "vex": { "missingPolicy": "allow" }
+    }
+
+# Mount additional files, for example private Sigstore roots or registry CAs.
+extraVolumes: []
+extraVolumeMounts: []
+extraEnv: []
+
+service:
+  enabled: true
+  type: ClusterIP
+  # The Service may expose a different port than config.metricsAddr.
+  port: 9090
+  annotations: {}
+
+probes:
+  startup:
+    failureThreshold: 30
+    periodSeconds: 2
+  liveness:
+    failureThreshold: 3
+    periodSeconds: 10
+  readiness:
+    failureThreshold: 3
+    periodSeconds: 10
+
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+networkPolicy:
+  enabled: true
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: metrics
+          protocol: TCP
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+        - port: 80
+          protocol: TCP
+        - port: 443
+          protocol: TCP
+
+monitoring:
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: ""
+    labels: {}
+  prometheusRule:
+    enabled: false
+    labels: {}
+    failureRateThreshold: 0
+    circuitBreakerFor: 5m
+    fetchErrorRateThreshold: 0.1
+    fetchErrorFor: 5m
+    verificationInterruptedFor: 5m
+    verificationLatencyThresholdSeconds: 5
+    verificationLatencyFor: 5m
+    reloadFailureFor: 15m

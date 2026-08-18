@@ -16,6 +16,20 @@ dependencies:
         match: '"detail".*nri-supply-chain:'
       - path: deploy/kubernetes/daemonset.yaml
         match: "image.*nri-supply-chain:"
+      - path: deploy/helm/nri-supply-chain/Chart.yaml
+        match: ^appVersion
+
+  - name: helm
+    version: 3.17.3
+    refPaths:
+      - path: .github/workflows/ci.yml
+        match: "HELM_IMAGE:.*alpine/helm:"
+
+  - name: helm-image-digest
+    version: sha256:d899e6316789fec04ee95300a18e454b7942539cbb3d89bde3e0655d6ca2e895
+    refPaths:
+      - path: .github/workflows/ci.yml
+        match: "HELM_IMAGE:.*alpine/helm:"
 
   - name: distroless
     version: debian13
