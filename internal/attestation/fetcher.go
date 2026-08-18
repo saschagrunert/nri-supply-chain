@@ -25,7 +25,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	ociV1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -238,7 +237,7 @@ func (f *OCIFetcher) buildFetchOptions(
 	effectiveRef := imageRef
 
 	remoteOpts := []remote.Option{
-		remote.WithAuthFromKeychain(authn.DefaultKeychain),
+		registry.AuthOption(),
 		remote.WithContext(ctx),
 	}
 
@@ -286,7 +285,7 @@ func (f *OCIFetcher) fetchWithFallback(
 	}
 
 	fallbackOpts := []remote.Option{
-		remote.WithAuthFromKeychain(authn.DefaultKeychain),
+		registry.AuthOption(),
 		remote.WithContext(ctx),
 	}
 

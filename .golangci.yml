@@ -138,7 +138,9 @@ linters:
         main:
           allow:
             - $gostd
+            - github.com/awslabs/amazon-ecr-credential-helper
             - github.com/BurntSushi/toml
+            - github.com/Azure/azure-sdk-for-go/sdk
             - github.com/CycloneDX/cyclonedx-go
             - github.com/containerd/nri
             - github.com/fatih/color
@@ -182,6 +184,8 @@ linters:
         - 'github\.com/saschagrunert/nri-supply-chain/internal/attestation\.TrustedKeyRef'
         - 'github\.com/saschagrunert/nri-supply-chain/internal/attestation\.VerifiedAttestation'
         - 'github\.com/saschagrunert/nri-supply-chain/internal/cel\..*'
+        - 'github\.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported\.TokenRequestOptions'
+        - 'github\.com/saschagrunert/nri-supply-chain/internal/registry\.acrHelper'
         - 'github\.com/saschagrunert/nri-supply-chain/internal/policy\..*'
         - 'github\.com/sigstore/sigstore-go/.*'
         - 'github\.com/sigstore/sigstore/.*'

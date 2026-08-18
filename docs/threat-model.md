@@ -37,13 +37,13 @@ and caches results to reduce registry load.
 
 ## Trust Boundaries
 
-| ID  | Boundary                          | Transport               | Authentication                 |
-| --- | --------------------------------- | ----------------------- | ------------------------------ |
-| TB1 | Container runtime to plugin       | NRI Unix socket (ttrpc) | Implicit (same-node process)   |
-| TB2 | Plugin to OCI registries          | HTTPS                   | Docker/Podman keychain         |
-| TB3 | Plugin to Sigstore infrastructure | HTTPS (TUF)             | TUF root of trust              |
-| TB4 | Plugin to local filesystem        | Filesystem              | Unix permissions               |
-| TB5 | Plugin to Kubernetes API          | NRI annotations         | Runtime-injected, not user-set |
+| ID  | Boundary                          | Transport               | Authentication                                   |
+| --- | --------------------------------- | ----------------------- | ------------------------------------------------ |
+| TB1 | Container runtime to plugin       | NRI Unix socket (ttrpc) | Implicit (same-node process)                     |
+| TB2 | Plugin to OCI registries          | HTTPS                   | Multi-keychain (Docker/Podman + cloud providers) |
+| TB3 | Plugin to Sigstore infrastructure | HTTPS (TUF)             | TUF root of trust                                |
+| TB4 | Plugin to local filesystem        | Filesystem              | Unix permissions                                 |
+| TB5 | Plugin to Kubernetes API          | NRI annotations         | Runtime-injected, not user-set                   |
 
 ## STRIDE Analysis
 
