@@ -56,16 +56,17 @@ const (
 )
 
 type snapshot struct {
-	config          *config.Config
-	policies        map[string]*policy.Policy
-	policyHashes    map[string]string // lock-free copy updated with v.policyHashes under v.mu
-	cache           *cache.Cache
-	metrics         *metrics.Metrics
-	fetcher         attestation.Fetcher
-	circuitBreakers *attestation.CircuitBreakerRegistry
-	fetchSem        *semaphore.Weighted
-	hostSem         *hostSemMap
-	auditLogger     *slog.Logger
+	config           *config.Config
+	policies         map[string]*policy.Policy
+	policyHashes     map[string]string // lock-free copy updated with v.policyHashes under v.mu
+	cache            *cache.Cache
+	metrics          *metrics.Metrics
+	fetcher          attestation.Fetcher
+	circuitBreakers  *attestation.CircuitBreakerRegistry
+	fetchSem         *semaphore.Weighted
+	hostSem          *hostSemMap
+	auditLogger      *slog.Logger
+	allowlistDigests map[string]struct{}
 }
 
 // Verifier performs supply chain attestation verification on container images.
@@ -164,10 +165,33 @@ func newSnapshot(
 			cfg.CircuitBreakerThreshold,
 			cfg.CircuitBreakerCooldown.Duration,
 		),
-		fetchSem:    semaphore.NewWeighted(maxConcurrentFetches),
-		hostSem:     &hostSemMap{m: sync.Map{}, count: atomic.Int64{}},
-		auditLogger: slog.Default(),
+		fetchSem:         semaphore.NewWeighted(maxConcurrentFetches),
+		hostSem:          &hostSemMap{m: sync.Map{}, count: atomic.Int64{}},
+		auditLogger:      slog.Default(),
+		allowlistDigests: buildAllowlistMap(cfg.AllowlistDigests),
 	}
+}
+
+func buildAllowlistMap(entries []string) map[string]struct{} {
+	if len(entries) == 0 {
+		return nil
+	}
+
+	allowlist := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		digest := types.ExtractDigest(entry)
+		if digest != "" {
+			allowlist[digest] = struct{}{}
+		}
+	}
+
+	if len(allowlist) == 0 {
+		return nil
+	}
+
+	slog.Debug("Loaded allowlist digests", "count", len(allowlist))
+
+	return allowlist
 }
 
 func resolveNodeName() string {
@@ -347,6 +371,16 @@ func (v *Verifier) Verify( //nolint:funlen // early-return branches inflate line
 		return allowResult(
 			ctx, state.auditLogger, imageRef, digest,
 			namespace, "verification disabled", info,
+		), nil
+	}
+
+	if _, ok := state.allowlistDigests[digest]; ok {
+		info.verificationMode = string(state.config.Verification)
+		state.metrics.VerificationSkippedTotal.WithLabelValues("allowlisted", namespace).Inc()
+
+		return allowResult(
+			ctx, state.auditLogger, imageRef, digest,
+			namespace, "image digest is allowlisted", info,
 		), nil
 	}
 

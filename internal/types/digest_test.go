@@ -194,6 +194,37 @@ var wantHexLen = map[string]int{ //nolint:gochecknoglobals // mirrors expectedHe
 	"sha512-256": 64,
 }
 
+func TestExtractDigest(t *testing.T) {
+	t.Parallel()
+
+	validDigest := "sha256:" + hexBlock64
+
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"bare digest", validDigest, validDigest},
+		{"reference with digest", "docker.io/library/nginx@" + validDigest, validDigest},
+		{"reference without digest", "docker.io/library/nginx:latest", ""},
+		{"empty string", "", ""},
+		{"garbage", "not-a-digest", ""},
+		{"at sign only", "@" + validDigest, validDigest},
+		{"short hash after at", "image@sha256:abc", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := types.ExtractDigest(tt.input)
+			if got != tt.want {
+				t.Errorf("ExtractDigest(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func FuzzParseDigest(f *testing.F) {
 	f.Add("sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2")
 	f.Add("")

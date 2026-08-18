@@ -212,4 +212,7 @@ var (
 
 	// ErrInvalidConfigVersion indicates the config_version is not a valid positive integer.
 	ErrInvalidConfigVersion = errors.New("config_version must be a positive integer")
+
+	// ErrAllowlistDigestInvalid indicates an allowlist_digests entry is not a valid OCI digest.
+	ErrAllowlistDigestInvalid = errors.New("invalid allowlist digest")
 )

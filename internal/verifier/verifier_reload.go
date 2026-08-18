@@ -120,16 +120,17 @@ func (v *Verifier) applyReload(
 	hostSem := resetCachesIfChanged(current.hostSem, policiesChanged)
 
 	v.state.Store(&snapshot{
-		config:          cfgCopy,
-		policies:        policies,
-		policyHashes:    newHashes,
-		cache:           newCache,
-		metrics:         current.metrics,
-		fetcher:         fetcher,
-		circuitBreakers: circuitBreakers,
-		fetchSem:        current.fetchSem,
-		hostSem:         hostSem,
-		auditLogger:     current.auditLogger,
+		config:           cfgCopy,
+		policies:         policies,
+		policyHashes:     newHashes,
+		cache:            newCache,
+		metrics:          current.metrics,
+		fetcher:          fetcher,
+		circuitBreakers:  circuitBreakers,
+		fetchSem:         current.fetchSem,
+		hostSem:          hostSem,
+		auditLogger:      current.auditLogger,
+		allowlistDigests: buildAllowlistMap(cfgCopy.AllowlistDigests),
 	})
 	v.policyHashes = newHashes
 }
