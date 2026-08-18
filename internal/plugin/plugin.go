@@ -99,6 +99,58 @@ const (
 	AnnotationChecks = "supply-chain.nri/checks"
 )
 
+// containerTimeMap is a typed concurrent map from container ID to creation time,
+// replacing sync.Map to eliminate runtime type assertions.
+type containerTimeMap struct {
+	mu sync.RWMutex
+	m  map[string]time.Time
+}
+
+func newContainerTimeMap() *containerTimeMap {
+	return &containerTimeMap{
+		mu: sync.RWMutex{},
+		m:  make(map[string]time.Time),
+	}
+}
+
+func (c *containerTimeMap) Store(id string, t time.Time) {
+	c.mu.Lock()
+	c.m[id] = t
+	c.mu.Unlock()
+}
+
+func (c *containerTimeMap) Load(id string) (time.Time, bool) {
+	c.mu.RLock()
+	createdAt, found := c.m[id]
+	c.mu.RUnlock()
+
+	return createdAt, found
+}
+
+func (c *containerTimeMap) LoadAndDelete(id string) (time.Time, bool) {
+	c.mu.Lock()
+
+	createdAt, found := c.m[id]
+	if found {
+		delete(c.m, id)
+	}
+
+	c.mu.Unlock()
+
+	return createdAt, found
+}
+
+func (c *containerTimeMap) cleanStale(activeIDs map[string]struct{}) {
+	c.mu.Lock()
+	for id := range c.m {
+		if _, exists := activeIDs[id]; !exists {
+			delete(c.m, id)
+		}
+	}
+
+	c.mu.Unlock()
+}
+
 // Plugin implements the NRI CreateContainer, RemoveContainer, and Configure
 // hooks for supply chain attestation verification.
 type Plugin struct {
@@ -113,7 +165,7 @@ type Plugin struct {
 	prewarmMu            sync.Mutex
 	prewarmCancel        context.CancelFunc
 	transportCache       atomic.Pointer[registry.TransportCache]
-	containerTimes       sync.Map // map[string]time.Time (container ID -> creation time)
+	containerTimes       *containerTimeMap
 }
 
 // New creates a new Plugin with the given verifier, metrics, and config file path.
@@ -123,9 +175,10 @@ func New(
 	cache *registry.TransportCache,
 ) *Plugin {
 	plug := &Plugin{ //nolint:exhaustruct // zero-value fields are intentional
-		verifier:   v,
-		metrics:    met,
-		configPath: configPath,
+		verifier:       v,
+		metrics:        met,
+		configPath:     configPath,
+		containerTimes: newContainerTimeMap(),
 	}
 
 	plug.fetchTimeout.Store(int64(fetchTimeout))
@@ -384,13 +437,8 @@ func (p *Plugin) RemoveContainer(
 	containerID := ctr.GetId()
 	namespace := pod.GetNamespace()
 
-	val, loaded := p.containerTimes.LoadAndDelete(containerID)
+	createdAt, loaded := p.containerTimes.LoadAndDelete(containerID)
 	if !loaded {
-		return nil
-	}
-
-	createdAt, ok := val.(time.Time)
-	if !ok {
 		return nil
 	}
 
@@ -417,18 +465,7 @@ func (p *Plugin) cleanStaleContainerTimes(active []*api.Container) {
 		activeIDs[ctr.GetId()] = struct{}{}
 	}
 
-	p.containerTimes.Range(func(key, _ any) bool {
-		containerID, ok := key.(string)
-		if !ok {
-			return true
-		}
-
-		if _, exists := activeIDs[containerID]; !exists {
-			p.containerTimes.Delete(key)
-		}
-
-		return true
-	})
+	p.containerTimes.cleanStale(activeIDs)
 }
 
 func (p *Plugin) registryAwareResolver(

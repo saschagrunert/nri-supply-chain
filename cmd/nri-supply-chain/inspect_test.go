@@ -184,6 +184,56 @@ func TestOutputInspectTableWithAttestations(t *testing.T) {
 	}
 }
 
+func TestOutputInspectResultJSON(t *testing.T) {
+	t.Parallel()
+
+	out := &inspectOutput{
+		Image:        testImageNginx,
+		Digest:       testDigestAAA,
+		Attestations: nil,
+	}
+
+	var buf bytes.Buffer
+
+	err := outputInspectResult(&buf, outputFormatJSON, out)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var parsed inspectOutput
+
+	err = json.Unmarshal(buf.Bytes(), &parsed)
+	if err != nil {
+		t.Fatalf("invalid JSON: %v\nraw: %s", err, buf.String())
+	}
+
+	if parsed.Image != testImageNginx {
+		t.Errorf("Image = %q, want %q", parsed.Image, testImageNginx)
+	}
+}
+
+func TestOutputInspectResultTable(t *testing.T) {
+	t.Parallel()
+
+	out := &inspectOutput{
+		Image:        testImageNginx,
+		Digest:       testDigestAAA,
+		Attestations: nil,
+	}
+
+	var buf bytes.Buffer
+
+	err := outputInspectResult(&buf, outputFormatTable, out)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := buf.String()
+	if !strings.Contains(got, testImageNginx) {
+		t.Errorf("table output missing image ref\ngot:\n%s", got)
+	}
+}
+
 func TestRunInspectInvalidOutputFormat(t *testing.T) {
 	t.Parallel()
 

@@ -66,20 +66,20 @@ func TestBinAttestationsUnknownType(t *testing.T) {
 
 	bins := binAttestations(context.Background(), attestations, "")
 
-	if len(bins.slsa) != 1 {
-		t.Errorf("expected 1 SLSA attestation, got %d", len(bins.slsa))
+	if len(bins[types.CheckTypeSLSA]) != 1 {
+		t.Errorf("expected 1 SLSA attestation, got %d", len(bins[types.CheckTypeSLSA]))
 	}
 
-	if len(bins.vex) != 0 {
-		t.Errorf("expected 0 VEX attestations, got %d", len(bins.vex))
+	if len(bins[types.CheckTypeVEX]) != 0 {
+		t.Errorf("expected 0 VEX attestations, got %d", len(bins[types.CheckTypeVEX]))
 	}
 
-	if len(bins.vsa) != 0 {
-		t.Errorf("expected 0 VSA attestations, got %d", len(bins.vsa))
+	if len(bins[types.CheckTypeVSA]) != 0 {
+		t.Errorf("expected 0 VSA attestations, got %d", len(bins[types.CheckTypeVSA]))
 	}
 
-	if len(bins.notation) != 0 {
-		t.Errorf("expected 0 Notation attestations, got %d", len(bins.notation))
+	if len(bins[types.CheckTypeNotation]) != 0 {
+		t.Errorf("expected 0 Notation attestations, got %d", len(bins[types.CheckTypeNotation]))
 	}
 }
 
@@ -142,7 +142,10 @@ func TestBinAttestationsCosignSignatureSilent(t *testing.T) {
 
 	bins := binAttestations(context.Background(), attestations, "ghcr.io/org/img:latest")
 
-	if len(bins.slsa) != 0 || len(bins.vex) != 0 || len(bins.vsa) != 0 || len(bins.sbom) != 0 {
+	if len(bins[types.CheckTypeSLSA]) != 0 ||
+		len(bins[types.CheckTypeVEX]) != 0 ||
+		len(bins[types.CheckTypeVSA]) != 0 ||
+		len(bins[types.CheckTypeSBOM]) != 0 {
 		t.Error("cosign signature should not be binned")
 	}
 
@@ -164,8 +167,8 @@ func TestBinAttestationsSLSAV02(t *testing.T) {
 
 	bins := binAttestations(context.Background(), attestations, "")
 
-	if len(bins.slsa) != 1 {
-		t.Errorf("expected 1 SLSA attestation for v0.2, got %d", len(bins.slsa))
+	if len(bins[types.CheckTypeSLSA]) != 1 {
+		t.Errorf("expected 1 SLSA attestation for v0.2, got %d", len(bins[types.CheckTypeSLSA]))
 	}
 }
 
@@ -195,27 +198,27 @@ func TestBinAttestationsNotation(t *testing.T) {
 
 	bins := binAttestations(context.Background(), attestations, "")
 
-	if len(bins.slsa) != 1 {
-		t.Errorf("expected 1 SLSA attestation, got %d", len(bins.slsa))
+	if len(bins[types.CheckTypeSLSA]) != 1 {
+		t.Errorf("expected 1 SLSA attestation, got %d", len(bins[types.CheckTypeSLSA]))
 	}
 
-	if len(bins.vex) != 1 {
-		t.Errorf("expected 1 VEX attestation, got %d", len(bins.vex))
+	if len(bins[types.CheckTypeVEX]) != 1 {
+		t.Errorf("expected 1 VEX attestation, got %d", len(bins[types.CheckTypeVEX]))
 	}
 
-	if len(bins.vsa) != 0 {
-		t.Errorf("expected 0 VSA attestations, got %d", len(bins.vsa))
+	if len(bins[types.CheckTypeVSA]) != 0 {
+		t.Errorf("expected 0 VSA attestations, got %d", len(bins[types.CheckTypeVSA]))
 	}
 
-	if len(bins.notation) != 1 {
-		t.Errorf("expected 1 Notation attestation, got %d", len(bins.notation))
+	if len(bins[types.CheckTypeNotation]) != 1 {
+		t.Errorf("expected 1 Notation attestation, got %d", len(bins[types.CheckTypeNotation]))
 	}
 
-	if string(bins.notation[0].Payload) != "notation-ref" {
+	if string(bins[types.CheckTypeNotation][0].Payload) != "notation-ref" {
 		t.Errorf(
 			"expected notation payload %q, got %q",
 			"notation-ref",
-			string(bins.notation[0].Payload),
+			string(bins[types.CheckTypeNotation][0].Payload),
 		)
 	}
 }
@@ -243,22 +246,25 @@ func TestBinAttestationsCycloneDX(t *testing.T) {
 
 	bins := binAttestations(context.Background(), attestations, "")
 
-	if len(bins.vex) != 2 {
-		t.Errorf("expected 2 VEX attestations (OpenVEX + CycloneDX), got %d", len(bins.vex))
+	if len(bins[types.CheckTypeVEX]) != 2 {
+		t.Errorf(
+			"expected 2 VEX attestations (OpenVEX + CycloneDX), got %d",
+			len(bins[types.CheckTypeVEX]),
+		)
 	}
 
-	if len(bins.slsa) != 1 {
-		t.Errorf("expected 1 SLSA attestation, got %d", len(bins.slsa))
+	if len(bins[types.CheckTypeSLSA]) != 1 {
+		t.Errorf("expected 1 SLSA attestation, got %d", len(bins[types.CheckTypeSLSA]))
 	}
 
-	if len(bins.vsa) != 0 {
-		t.Errorf("expected 0 VSA attestations, got %d", len(bins.vsa))
+	if len(bins[types.CheckTypeVSA]) != 0 {
+		t.Errorf("expected 0 VSA attestations, got %d", len(bins[types.CheckTypeVSA]))
 	}
 
-	if len(bins.sbom) != 1 {
+	if len(bins[types.CheckTypeSBOM]) != 1 {
 		t.Errorf(
 			"expected 1 SBOM attestation (CycloneDX), got %d",
-			len(bins.sbom),
+			len(bins[types.CheckTypeSBOM]),
 		)
 	}
 }
@@ -276,12 +282,12 @@ func TestBinAttestationsSPDX(t *testing.T) {
 
 	bins := binAttestations(context.Background(), attestations, "")
 
-	if len(bins.sbom) != 1 {
-		t.Errorf("expected 1 SBOM attestation, got %d", len(bins.sbom))
+	if len(bins[types.CheckTypeSBOM]) != 1 {
+		t.Errorf("expected 1 SBOM attestation, got %d", len(bins[types.CheckTypeSBOM]))
 	}
 
-	if len(bins.vex) != 0 {
-		t.Errorf("expected 0 VEX attestations, got %d", len(bins.vex))
+	if len(bins[types.CheckTypeVEX]) != 0 {
+		t.Errorf("expected 0 VEX attestations, got %d", len(bins[types.CheckTypeVEX]))
 	}
 }
 

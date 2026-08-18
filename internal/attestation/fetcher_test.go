@@ -2251,3 +2251,74 @@ func TestMultiRootStaleCallback(t *testing.T) {
 		t.Errorf("expected stale callback to fire for each cache (2), got %d", callCount)
 	}
 }
+
+func TestSetTransportCacheAndGet(t *testing.T) {
+	t.Parallel()
+
+	fetcher := attestation.NewOCIFetcher()
+
+	if fetcher.TransportCache() != nil {
+		t.Error("expected nil transport cache on new fetcher")
+	}
+
+	cache := registry.NewTransportCacheOrNil(nil)
+	fetcher.SetTransportCache(cache)
+
+	got := fetcher.TransportCache()
+	if got != cache {
+		t.Error("expected transport cache to match what was set")
+	}
+}
+
+func TestSetTransportCacheReplace(t *testing.T) {
+	t.Parallel()
+
+	fetcher := attestation.NewOCIFetcher()
+
+	first := registry.NewTransportCacheOrNil(nil)
+	fetcher.SetTransportCache(first)
+
+	second := registry.NewTransportCacheOrNil(nil)
+	fetcher.SetTransportCache(second)
+
+	got := fetcher.TransportCache()
+	if got != second {
+		t.Error("expected transport cache to be replaced")
+	}
+}
+
+func TestIsMultiRootDefault(t *testing.T) {
+	t.Parallel()
+
+	fetcher := attestation.NewOCIFetcher()
+
+	if fetcher.IsMultiRoot() {
+		t.Error("expected IsMultiRoot=false on default fetcher")
+	}
+}
+
+func TestIsMultiRootWithMultipleRoots(t *testing.T) {
+	t.Parallel()
+
+	sources := []attestation.RootSourceConfig{
+		{Name: "test1", TUFMirror: "https://tuf.example.com/root.json", TUFRootBytes: nil},
+		{Name: "test2", TUFMirror: "https://tuf2.example.com/root.json", TUFRootBytes: nil},
+	}
+
+	fetcher := attestation.NewOCIFetcherWithMultipleRoots(sources)
+
+	if !fetcher.IsMultiRoot() {
+		t.Error("expected IsMultiRoot=true with multiple roots")
+	}
+}
+
+func TestWarmNoRootCaches(t *testing.T) {
+	t.Parallel()
+
+	fetcher := attestation.NewOCIFetcher()
+
+	err := fetcher.Warm(context.Background())
+	if err != nil {
+		t.Fatalf("expected no error warming fetcher with no root caches, got: %v", err)
+	}
+}

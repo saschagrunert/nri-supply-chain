@@ -42,61 +42,100 @@ func missingPolicyOrAllow(action types.Action) types.Action {
 	return types.ActionAllow
 }
 
+//nolint:gochecknoglobals // static accessor registry per check type
+var missingPolicyAccessors = map[types.CheckType]func(*Sections) types.Action{
+	types.CheckTypeSLSA: func(s *Sections) types.Action {
+		if s.SLSA != nil {
+			return s.SLSA.MissingPolicy
+		}
+
+		return ""
+	},
+	types.CheckTypeVEX: func(s *Sections) types.Action {
+		if s.VEX != nil {
+			return s.VEX.MissingPolicy
+		}
+
+		return ""
+	},
+	types.CheckTypeVSA: func(s *Sections) types.Action {
+		if s.VSA != nil {
+			return s.VSA.MissingPolicy
+		}
+
+		return ""
+	},
+	types.CheckTypeNotation: func(s *Sections) types.Action {
+		if s.Notation != nil {
+			return s.Notation.MissingPolicy
+		}
+
+		return ""
+	},
+	types.CheckTypeSBOM: func(s *Sections) types.Action {
+		if s.SBOM != nil {
+			return s.SBOM.MissingPolicy
+		}
+
+		return ""
+	},
+	types.CheckTypeSCAI: func(s *Sections) types.Action {
+		if s.SCAI != nil {
+			return s.SCAI.MissingPolicy
+		}
+
+		return ""
+	},
+	types.CheckTypeSource: func(s *Sections) types.Action {
+		if s.Source != nil {
+			return s.Source.MissingPolicy
+		}
+
+		return ""
+	},
+	types.CheckTypeBuildEnv: func(s *Sections) types.Action {
+		if s.BuildEnv != nil {
+			return s.BuildEnv.MissingPolicy
+		}
+
+		return ""
+	},
+	types.CheckTypeVulnScan: func(s *Sections) types.Action {
+		if s.VulnScan != nil {
+			return s.VulnScan.MissingPolicy
+		}
+
+		return ""
+	},
+	types.CheckTypeTestResult: func(s *Sections) types.Action {
+		if s.TestResult != nil {
+			return s.TestResult.MissingPolicy
+		}
+
+		return ""
+	},
+	types.CheckTypeRelease: func(s *Sections) types.Action {
+		if s.Release != nil {
+			return s.Release.MissingPolicy
+		}
+
+		return ""
+	},
+	types.CheckTypeRuntimeTrace: func(s *Sections) types.Action {
+		if s.RuntimeTrace != nil {
+			return s.RuntimeTrace.MissingPolicy
+		}
+
+		return ""
+	},
+}
+
 // MissingPolicyFor returns the effective missing-attestation policy for
-// the given check type. New attestation types only need a case here
-// (and in AttestationCheckTypes) instead of a dedicated method.
-func (p *Policy) MissingPolicyFor( //nolint:cyclop // one case per type
-	ct types.CheckType,
-) types.Action {
-	switch ct { //nolint:exhaustive // only attestation types have missing policies
-	case types.CheckTypeSLSA:
-		if p.SLSA != nil {
-			return missingPolicyOrAllow(p.SLSA.MissingPolicy)
-		}
-	case types.CheckTypeVEX:
-		if p.VEX != nil {
-			return missingPolicyOrAllow(p.VEX.MissingPolicy)
-		}
-	case types.CheckTypeVSA:
-		if p.VSA != nil {
-			return missingPolicyOrAllow(p.VSA.MissingPolicy)
-		}
-	case types.CheckTypeNotation:
-		if p.Notation != nil {
-			return missingPolicyOrAllow(p.Notation.MissingPolicy)
-		}
-	case types.CheckTypeSBOM:
-		if p.SBOM != nil {
-			return missingPolicyOrAllow(p.SBOM.MissingPolicy)
-		}
-	case types.CheckTypeSCAI:
-		if p.SCAI != nil {
-			return missingPolicyOrAllow(p.SCAI.MissingPolicy)
-		}
-	case types.CheckTypeSource:
-		if p.Source != nil {
-			return missingPolicyOrAllow(p.Source.MissingPolicy)
-		}
-	case types.CheckTypeBuildEnv:
-		if p.BuildEnv != nil {
-			return missingPolicyOrAllow(p.BuildEnv.MissingPolicy)
-		}
-	case types.CheckTypeVulnScan:
-		if p.VulnScan != nil {
-			return missingPolicyOrAllow(p.VulnScan.MissingPolicy)
-		}
-	case types.CheckTypeTestResult:
-		if p.TestResult != nil {
-			return missingPolicyOrAllow(p.TestResult.MissingPolicy)
-		}
-	case types.CheckTypeRelease:
-		if p.Release != nil {
-			return missingPolicyOrAllow(p.Release.MissingPolicy)
-		}
-	case types.CheckTypeRuntimeTrace:
-		if p.RuntimeTrace != nil {
-			return missingPolicyOrAllow(p.RuntimeTrace.MissingPolicy)
-		}
+// the given check type. New attestation types only need an entry in
+// missingPolicyAccessors (and in AttestationCheckTypes).
+func (p *Policy) MissingPolicyFor(ct types.CheckType) types.Action {
+	if accessor, ok := missingPolicyAccessors[ct]; ok {
+		return missingPolicyOrAllow(accessor(&p.Sections))
 	}
 
 	return types.ActionAllow

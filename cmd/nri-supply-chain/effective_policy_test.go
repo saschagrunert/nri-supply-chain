@@ -17,6 +17,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"path/filepath"
 	"testing"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
@@ -198,6 +199,64 @@ func TestRunEffectivePolicyNoImageRuleMatch(t *testing.T) {
 
 	if out.RuleIndex != -1 {
 		t.Errorf("RuleIndex = %d, want -1", out.RuleIndex)
+	}
+}
+
+func TestRunEffectivePolicyNamespaceFlag(t *testing.T) {
+	t.Parallel()
+
+	policyDir := t.TempDir()
+	writeValidationPolicy(t, policyDir, "default.json",
+		`{"slsa": {"missingPolicy": "warn"}}`)
+	writeValidationPolicy(t, policyDir, "custom-ns.json",
+		`{"inherits": true, "slsa": {"missingPolicy": "deny"}}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = policyDir
+
+	var buf bytes.Buffer
+
+	code := runEffectivePolicy(&buf, "custom-ns", "", cfg)
+	if code != exitSuccess {
+		t.Fatalf("expected exit code %d, got %d", exitSuccess, code)
+	}
+
+	var out effectivePolicyOutput
+
+	err := json.Unmarshal(buf.Bytes(), &out)
+	if err != nil {
+		t.Fatalf("invalid JSON: %v\nraw: %s", err, buf.String())
+	}
+
+	if out.Namespace != "custom-ns" {
+		t.Errorf("Namespace = %q, want %q", out.Namespace, "custom-ns")
+	}
+
+	if out.Source != policySourceNamespace {
+		t.Errorf("Source = %q, want %q", out.Source, policySourceNamespace)
+	}
+}
+
+func TestNewEffectivePolicyCmdViaRoot(t *testing.T) {
+	t.Parallel()
+
+	policyDir := t.TempDir()
+	writeValidationPolicy(t, policyDir, "default.json",
+		`{"slsa": {"missingPolicy": "warn"}}`)
+
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	writeTestConfig(t, configPath, policyDir, "warn")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		testFlagConfig, configPath,
+		cmdEffectivePolicy, "-n", "test-ns",
+	})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

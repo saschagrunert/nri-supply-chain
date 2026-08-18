@@ -1215,6 +1215,81 @@ func TestRunVerifyBatchTableOutput(t *testing.T) {
 	}
 }
 
+func TestChecksFromNil(t *testing.T) {
+	t.Parallel()
+
+	got := checksFrom(nil)
+	if got != nil {
+		t.Errorf("expected nil, got %v", got)
+	}
+}
+
+func TestChecksFromNonNil(t *testing.T) {
+	t.Parallel()
+
+	result := &internaltypes.Result{
+		Allowed: true,
+		Reason:  "ok",
+		CheckResults: []internaltypes.CheckResult{
+			*internaltypes.PassResult(internaltypes.CheckTypeSLSA, "verified"),
+		},
+	}
+
+	got := checksFrom(result)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 check result, got %d", len(got))
+	}
+
+	if got[0].Type != internaltypes.CheckTypeSLSA {
+		t.Errorf("expected SLSA check type, got %q", got[0].Type)
+	}
+}
+
+func TestColorModeAllCases(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		mode string
+		want string
+	}{
+		{string(config.ModeDisabled), string(config.ModeDisabled)},
+		{string(config.ModeWarn), string(config.ModeWarn)},
+		{string(config.ModeEnforce), string(config.ModeEnforce)},
+		{"unknown-mode", "unknown-mode"},
+	}
+
+	for _, test := range tests {
+		got := colorMode(test.mode)
+		if !strings.Contains(got, test.mode) {
+			t.Errorf("colorMode(%q) = %q, expected to contain %q", test.mode, got, test.mode)
+		}
+	}
+}
+
+func TestColorStatusAllCases(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		status internaltypes.CheckStatus
+		want   string
+	}{
+		{internaltypes.StatusPass, string(internaltypes.StatusPass)},
+		{internaltypes.StatusWarn, string(internaltypes.StatusWarn)},
+		{internaltypes.StatusFail, string(internaltypes.StatusFail)},
+		{"other-status", "other-status"},
+	}
+
+	for _, test := range tests {
+		got := colorStatus(test.status)
+		if !strings.Contains(got, string(test.status)) {
+			t.Errorf(
+				"colorStatus(%q) = %q, expected to contain %q",
+				test.status, got, test.status,
+			)
+		}
+	}
+}
+
 func TestLogVerbosePreamble(t *testing.T) {
 	t.Parallel()
 
