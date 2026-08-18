@@ -6,6 +6,7 @@ nri-supply-chain plugin.
 <!-- toc -->
 
 - [Operational Config](#operational-config)
+  - [Runtime reload](#runtime-reload)
 - [Private Sigstore Instances](#private-sigstore-instances)
   - [Multiple Sigstore Trusted Roots](#multiple-sigstore-trusted-roots)
 - [Registries](#registries)
@@ -76,6 +77,20 @@ circuit_breaker_cooldown = "30s"
 
 See [operations.md](operations.md) for the metrics reference, config reload
 behavior, and health/readiness probes.
+
+### Runtime reload
+
+The plugin reloads its configuration on SIGHUP or when the config file changes
+on disk. Most fields take effect immediately. The following fields require a
+full restart:
+
+| Field            | Reason                                      |
+| ---------------- | ------------------------------------------- |
+| `config_version` | Schema version is structural                |
+| `metrics_addr`   | The HTTP listener is already bound at start |
+
+When a non-reloadable field changes during a reload, the plugin logs a warning
+and keeps the original value.
 
 ## Private Sigstore Instances
 

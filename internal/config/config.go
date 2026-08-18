@@ -395,7 +395,7 @@ func (c *Config) ApplyModeDefaults(fetchFailurePolicyExplicit bool) {
 	if c.FetchFailurePolicy == types.ActionWarn {
 		c.FetchFailurePolicy = types.ActionDeny
 
-		slog.Warn("enforce mode: fetch_failure_policy defaulting to deny")
+		slog.Info("Enforce mode: fetch_failure_policy defaulting to deny")
 	}
 }
 

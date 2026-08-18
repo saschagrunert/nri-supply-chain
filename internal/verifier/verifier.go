@@ -180,7 +180,7 @@ func resolveNodeName() string {
 		return ""
 	}
 
-	slog.Warn("NODE_NAME not set, falling back to hostname",
+	slog.Debug("NODE_NAME not set, falling back to hostname",
 		"hostname", hostname)
 
 	return hostname
@@ -207,6 +207,11 @@ func (v *Verifier) Stop() {
 	defer v.mu.Unlock()
 
 	v.state.Load().cache.Stop()
+}
+
+// CurrentConfig returns the current configuration snapshot.
+func (v *Verifier) CurrentConfig() *config.Config {
+	return v.state.Load().config
 }
 
 // Enforcing returns true if the global verification mode is enforce.

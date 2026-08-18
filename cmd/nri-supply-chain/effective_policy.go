@@ -69,7 +69,7 @@ func newEffectivePolicyCmd(configPath, logLevel *string) *cobra.Command {
 
 			initLogging(effectiveLogLevel(*logLevel, cfg.LogLevel), true)
 
-			slog.Info("Using config", "path", *configPath)
+			slog.Debug("Using config", "path", *configPath)
 
 			code := runEffectivePolicy(os.Stdout, namespace, image, cfg)
 			if code != 0 {

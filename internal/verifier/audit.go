@@ -109,17 +109,6 @@ func logResult(
 	result *types.Result,
 	info *auditInfo,
 ) {
-	if len(result.CheckResults) == 0 {
-		decision := "denied"
-		if result.Allowed {
-			decision = "allowed"
-		}
-
-		logAuditDecision(ctx, logger, imageRef, digest, namespace, decision, result.Reason, info)
-
-		return
-	}
-
 	for _, checkResult := range result.CheckResults {
 		event := &auditEvent{ //nolint:exhaustruct // remaining fields set by applyAuditInfo
 			Image:     imageRef,
@@ -131,8 +120,15 @@ func logResult(
 			Detail:    checkResult.Detail,
 		}
 		applyAuditInfo(event, info)
-		logger.InfoContext(ctx, auditMessage, event.logAttrs()...)
+		logger.DebugContext(ctx, auditMessage, event.logAttrs()...)
 	}
+
+	decision := "denied"
+	if result.Allowed {
+		decision = "allowed"
+	}
+
+	logAuditDecision(ctx, logger, imageRef, digest, namespace, decision, result.Reason, info)
 }
 
 func logAuditDecision(

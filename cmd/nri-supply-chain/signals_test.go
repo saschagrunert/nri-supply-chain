@@ -15,11 +15,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -731,6 +733,86 @@ func (m *mockPluginReloader) SetTransportCache(cache *registry.TransportCache) {
 
 func (m *mockPluginReloader) TransportCache() *registry.TransportCache {
 	return m.transportCache
+}
+
+//nolint:paralleltest // mutates slog.SetDefault
+func TestWarnNonReloadableChangesMetricsAddr(t *testing.T) {
+	var buf bytes.Buffer
+
+	prev := slog.Default()
+
+	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
+	slog.SetDefault(slog.New(handler))
+
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	current := config.DefaultConfig()
+	proposed := config.DefaultConfig()
+	proposed.MetricsAddr = "0.0.0.0:8080"
+
+	warnNonReloadableChanges(current, proposed)
+
+	output := buf.String()
+
+	if !strings.Contains(output, "metrics_addr changed but requires restart") {
+		t.Errorf("expected metrics_addr warning, got: %s", output)
+	}
+}
+
+//nolint:paralleltest // mutates slog.SetDefault
+func TestWarnNonReloadableChangesConfigVersion(t *testing.T) {
+	var buf bytes.Buffer
+
+	prev := slog.Default()
+
+	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
+	slog.SetDefault(slog.New(handler))
+
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	current := config.DefaultConfig()
+	proposed := config.DefaultConfig()
+	proposed.ConfigVersion = 2
+
+	warnNonReloadableChanges(current, proposed)
+
+	output := buf.String()
+
+	if !strings.Contains(output, "config_version changed but requires restart") {
+		t.Errorf("expected config_version warning, got: %s", output)
+	}
+}
+
+//nolint:paralleltest // mutates slog.SetDefault
+func TestWarnNonReloadableChangesNoWarningOnReloadableChange(t *testing.T) {
+	var buf bytes.Buffer
+
+	prev := slog.Default()
+
+	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
+	slog.SetDefault(slog.New(handler))
+
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	current := config.DefaultConfig()
+	proposed := config.DefaultConfig()
+	proposed.Verification = config.ModeEnforce
+
+	warnNonReloadableChanges(current, proposed)
+
+	output := buf.String()
+
+	if strings.Contains(output, "requires restart") {
+		t.Errorf("expected no non-reloadable warning for reloadable field change, got: %s", output)
+	}
+}
+
+func TestWarnNonReloadableChangesNilConfigs(t *testing.T) {
+	t.Parallel()
+
+	warnNonReloadableChanges(nil, config.DefaultConfig())
+	warnNonReloadableChanges(config.DefaultConfig(), nil)
+	warnNonReloadableChanges(nil, nil)
 }
 
 func TestUpdatePluginRegistries(t *testing.T) {

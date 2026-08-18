@@ -70,7 +70,7 @@ func newVerifyCmd(configPath, logLevel *string) *cobra.Command {
 
 			initLogging(level, true)
 
-			slog.Info("Using config", "path", *configPath)
+			slog.Debug("Using config", "path", *configPath)
 
 			if verbose {
 				logVerbosePreamble(cmd.ErrOrStderr(), args, namespace, cfg)

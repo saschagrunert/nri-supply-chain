@@ -70,7 +70,7 @@ func newInspectCmd(configPath, logLevel *string) *cobra.Command {
 
 			initLogging(effectiveLogLevel(*logLevel, cfg.LogLevel), true)
 
-			slog.Info("Using config", "path", *configPath)
+			slog.Debug("Using config", "path", *configPath)
 
 			code := runInspect(os.Stdout, args[0], outputFormat, cfg)
 			if code != 0 {
