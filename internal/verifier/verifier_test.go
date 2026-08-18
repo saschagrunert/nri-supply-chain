@@ -3101,3 +3101,133 @@ func TestNewLocalPolicyFailureStillFails(t *testing.T) {
 		t.Error("expected error for local policy load failure")
 	}
 }
+
+func TestVerifyAllowlistSkipsVerification(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{
+		"trust": {"builders": [{"id": "test", "maxLevel": 3}]},
+		"slsa": {"missingPolicy": "deny"}
+	}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+	cfg.PolicyDir = dir
+	cfg.AllowlistDigests = []string{testDigest}
+
+	met := metrics.New()
+
+	verif, err := verifier.New(t.Context(), cfg, met, nil)
+	testutil.AssertNoError(t, err)
+
+	result, err := verif.Verify(
+		context.Background(),
+		"nginx:latest",
+		testDigest, "", "default", "",
+	)
+	testutil.AssertNoError(t, err)
+
+	if !result.Allowed {
+		t.Errorf("expected allowlisted image to be allowed, got denied: %s",
+			result.Reason)
+	}
+
+	if !strings.Contains(result.Reason, "allowlisted") {
+		t.Errorf("expected reason to mention allowlisted, got %q", result.Reason)
+	}
+
+	skipped := promtestutil.ToFloat64(
+		met.VerificationSkippedTotal.WithLabelValues("allowlisted", "default"),
+	)
+	if skipped < 1 {
+		t.Errorf("expected VerificationSkippedTotal(allowlisted) >= 1, got %v", skipped)
+	}
+}
+
+func TestVerifyNonAllowlistedDigestStillVerifies(t *testing.T) {
+	t.Parallel()
+
+	otherDigest := "sha256:" +
+		"0000000000000000000000000000000000000000000000000000000000000000"
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{
+		"trust": {"builders": [{"id": "test", "maxLevel": 3}]},
+		"slsa": {"missingPolicy": "deny"}
+	}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+	cfg.PolicyDir = dir
+	cfg.AllowlistDigests = []string{otherDigest}
+
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	_, err = verif.Verify(
+		context.Background(),
+		"nginx:latest",
+		testDigest, "", "default", "",
+	)
+
+	if !errors.Is(err, verifier.ErrVerificationFailed) {
+		t.Errorf(
+			"expected non-allowlisted image to go through verification (and fail), got %v",
+			err,
+		)
+	}
+}
+
+func TestReloadAllowlistBypassesVerification(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{
+		"trust": {"builders": [{"id": "test", "maxLevel": 3}]},
+		"slsa": {"missingPolicy": "deny"}
+	}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+	cfg.PolicyDir = dir
+
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	_, err = verif.Verify(
+		context.Background(),
+		"nginx:latest",
+		testDigest, "", "default", "",
+	)
+
+	if !errors.Is(err, verifier.ErrVerificationFailed) {
+		t.Fatalf("expected verification failure before reload, got %v", err)
+	}
+
+	reloadCfg := config.DefaultConfig()
+	reloadCfg.Verification = config.ModeEnforce
+	reloadCfg.PolicyDir = dir
+	reloadCfg.AllowlistDigests = []string{testDigest}
+
+	err = verif.Reload(t.Context(), reloadCfg)
+	testutil.AssertNoError(t, err)
+
+	result, err := verif.Verify(
+		context.Background(),
+		"nginx:latest",
+		testDigest, "", "default", "",
+	)
+	testutil.AssertNoError(t, err)
+
+	if !result.Allowed {
+		t.Errorf(
+			"expected allowlisted image to be allowed after reload, got denied: %s",
+			result.Reason,
+		)
+	}
+
+	if !strings.Contains(result.Reason, "allowlisted") {
+		t.Errorf("expected reason to mention allowlisted, got %q", result.Reason)
+	}
+}

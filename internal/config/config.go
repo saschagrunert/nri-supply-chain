@@ -320,6 +320,12 @@ type Config struct {
 	// CacheMaxEntries is the maximum number of entries in the verification
 	// result cache. Defaults to 10,000, minimum 100, maximum 1,000,000.
 	CacheMaxEntries int `toml:"cache_max_entries"`
+	// AllowlistDigests is a global list of trusted image digests that skip
+	// verification in all namespaces, overriding per-namespace policies.
+	// Each entry can be a bare digest ("sha256:abc123...") or a full OCI
+	// reference ("image@sha256:abc123..."). The digest is extracted and
+	// used for matching. Reloaded with the config on SIGHUP.
+	AllowlistDigests []string `toml:"allowlist_digests"`
 }
 
 // DefaultConfig returns the default configuration.
@@ -356,6 +362,7 @@ func DefaultConfig() *Config {
 		},
 		MaxAttestationSize: DefaultMaxAttestationSize,
 		CacheMaxEntries:    defaultCacheMaxEntries,
+		AllowlistDigests:   nil,
 	}
 }
 

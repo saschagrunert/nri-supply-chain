@@ -36,6 +36,8 @@ const (
 const (
 	testPrefixDockerIO = "docker.io"
 	testPrefixGHCR     = "ghcr.io"
+
+	testDigestSHA256 = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
 )
 
 const (
@@ -3187,4 +3189,129 @@ func TestConfigValidateCacheMaxEntries(t *testing.T) {
 		err := cfg.Validate()
 		testutil.AssertNoError(t, err)
 	})
+}
+
+func TestConfigValidateAllowlistDigests(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty is valid", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+
+		err := cfg.Validate()
+		testutil.AssertNoError(t, err)
+	})
+
+	t.Run("valid SHA-256 digest", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.AllowlistDigests = []string{
+			testDigestSHA256,
+		}
+
+		err := cfg.Validate()
+		testutil.AssertNoError(t, err)
+	})
+
+	t.Run("valid SHA-384 digest", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.AllowlistDigests = []string{
+			"sha384:" + "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+		}
+
+		err := cfg.Validate()
+		testutil.AssertNoError(t, err)
+	})
+
+	t.Run("invalid digest rejected", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.AllowlistDigests = []string{"not-a-digest"}
+
+		err := cfg.Validate()
+		testutil.AssertError(t, err)
+		testutil.AssertErrorIs(t, err, config.ErrAllowlistDigestInvalid)
+	})
+
+	t.Run("duplicate digest rejected", func(t *testing.T) {
+		t.Parallel()
+
+		digest := testDigestSHA256
+		cfg := config.DefaultConfig()
+		cfg.AllowlistDigests = []string{digest, digest}
+
+		err := cfg.Validate()
+		testutil.AssertError(t, err)
+		testutil.AssertErrorIs(t, err, config.ErrAllowlistDigestInvalid)
+	})
+
+	t.Run("short hash rejected", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.AllowlistDigests = []string{"sha256:abc123"}
+
+		err := cfg.Validate()
+		testutil.AssertError(t, err)
+		testutil.AssertErrorIs(t, err, config.ErrAllowlistDigestInvalid)
+	})
+
+	t.Run("full OCI reference with digest accepted", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.AllowlistDigests = []string{
+			"docker.io/library/nginx@sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+		}
+
+		err := cfg.Validate()
+		testutil.AssertNoError(t, err)
+	})
+
+	t.Run("reference without digest rejected", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.AllowlistDigests = []string{"docker.io/library/nginx:latest"}
+
+		err := cfg.Validate()
+		testutil.AssertError(t, err)
+		testutil.AssertErrorIs(t, err, config.ErrAllowlistDigestInvalid)
+	})
+
+	t.Run("duplicate digest via different references rejected", func(t *testing.T) {
+		t.Parallel()
+
+		digest := testDigestSHA256
+		cfg := config.DefaultConfig()
+		cfg.AllowlistDigests = []string{
+			digest,
+			"docker.io/library/nginx@" + digest,
+		}
+
+		err := cfg.Validate()
+		testutil.AssertError(t, err)
+		testutil.AssertErrorIs(t, err, config.ErrAllowlistDigestInvalid)
+	})
+}
+
+func TestConfigAllowlistDigestsTOML(t *testing.T) {
+	t.Parallel()
+
+	tomlStr := `
+verification = "disabled"
+policy_dir = "/tmp/policies"
+allowlist_digests = [
+  "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+  "docker.io/library/nginx@sha256:b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3",
+]
+`
+	cfg, err := config.LoadFromString(tomlStr)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqual(t, 2, len(cfg.AllowlistDigests))
 }

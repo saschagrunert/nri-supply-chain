@@ -56,6 +56,25 @@ func ParseDigest(digest string) (algo, hash string) {
 	return parts[0], parts[1]
 }
 
+// ExtractDigest returns the bare digest from an entry that is either a bare
+// digest ("sha256:abc...") or a full OCI reference with a digest component
+// ("docker.io/library/nginx@sha256:abc..."). Returns "" if the entry contains
+// no valid digest.
+func ExtractDigest(entry string) string {
+	candidate := entry
+
+	if idx := strings.LastIndex(entry, "@"); idx >= 0 {
+		candidate = entry[idx+1:]
+	}
+
+	algo, _ := ParseDigest(candidate)
+	if algo == "" {
+		return ""
+	}
+
+	return candidate
+}
+
 // MatchDigestInMap returns true if imageDigest matches a key-value pair in the
 // given digest map (algorithm -> hex hash).
 func MatchDigestInMap(imageDigest string, subjectDigests map[string]string) bool {

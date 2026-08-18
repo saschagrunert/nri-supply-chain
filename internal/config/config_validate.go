@@ -72,6 +72,8 @@ func (c *Config) Validate() error {
 		errs = append(errs, err)
 	}
 
+	errs = append(errs, c.validateAllowlistDigests()...)
+
 	return errors.Join(errs...)
 }
 
@@ -804,4 +806,31 @@ func warnIssuersWithoutSANPatterns(cfg *Config, valid bool) {
 				"any identity from the configured issuers will be accepted",
 		)
 	}
+}
+
+func (c *Config) validateAllowlistDigests() []error {
+	var errs []error
+
+	seen := make(map[string]struct{}, len(c.AllowlistDigests))
+
+	for _, entry := range c.AllowlistDigests {
+		digest := types.ExtractDigest(entry)
+		if digest == "" {
+			errs = append(errs, fmt.Errorf(
+				"%w: %q", ErrAllowlistDigestInvalid, entry,
+			))
+
+			continue
+		}
+
+		if _, dup := seen[digest]; dup {
+			errs = append(errs, fmt.Errorf(
+				"%w: duplicate digest in %q", ErrAllowlistDigestInvalid, entry,
+			))
+		}
+
+		seen[digest] = struct{}{}
+	}
+
+	return errs
 }
