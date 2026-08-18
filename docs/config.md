@@ -350,20 +350,24 @@ digest is found, the plugin reloads all policies from the updated image
 atomically. The verification cache is invalidated on reload to ensure the new
 policies take effect immediately.
 
-**Authentication.** The plugin authenticates to OCI registries using
-`authn.DefaultKeychain` from the
-[go-containerregistry](https://github.com/google/go-containerregistry) library.
-This keychain checks credentials in the following order:
+**Authentication.** The plugin authenticates to OCI registries using a
+multi-keychain that chains several credential sources. Credentials are resolved
+in the following order (first match wins):
 
 1. Docker config file (`~/.docker/config.json`, or the path in the
    `DOCKER_CONFIG` environment variable)
 2. Podman auth file (`$XDG_RUNTIME_DIR/containers/auth.json`)
-3. Credential helpers configured in the Docker/Podman config (for example,
-   `docker-credential-gcr`, `docker-credential-ecr-login`)
+3. Credential helpers configured in the Docker/Podman config
+4. Google Cloud (GCR / Artifact Registry) application default credentials
+5. AWS ECR credential helper (uses the standard AWS credential chain)
+6. Azure ACR credential helper (uses the Azure SDK default credential chain:
+   environment variables, workload identity, managed identity, Azure CLI)
 
 No additional configuration is needed when the node already has registry
-credentials configured for image pulls. The same credentials are used for
-fetching policy artifacts.
+credentials configured for image pulls. On cloud-managed Kubernetes clusters,
+the built-in cloud provider keychains authenticate automatically using the
+node's service account or workload identity. The same credentials are used for
+fetching images, attestations, and policy artifacts.
 
 To build and push an OCI policy artifact, use a tool like `oras` or
 `go-containerregistry` to create an image with one layer per policy file:

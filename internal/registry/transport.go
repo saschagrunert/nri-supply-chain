@@ -29,7 +29,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
@@ -425,7 +424,7 @@ func OptionsForRegistries(
 }
 
 // ResolveWithRegistries resolves an image reference to its digest using
-// per-registry transport configuration. Falls back to the default keychain
+// per-registry transport configuration. Falls back to the multi-keychain
 // when no registry matches. When a mirror is configured and the mirror is
 // unreachable, the resolution is retried against the original registry.
 // The returned fallbackUsed flag is true when the mirror was unreachable
@@ -434,7 +433,7 @@ func ResolveWithRegistries(
 	ctx context.Context, imageRef string, cache *TransportCache,
 ) (digest, indexDigest string, fallbackUsed bool, err error) {
 	if cache == nil {
-		digest, indexDigest, err = ResolveWithDefaultKeychain(ctx, imageRef)
+		digest, indexDigest, err = ResolveWithKeychain(ctx, imageRef)
 
 		return digest, indexDigest, false, err
 	}
@@ -444,7 +443,7 @@ func ResolveWithRegistries(
 		return "", "", false, fmt.Errorf("building registry options: %w", err)
 	}
 
-	opts := []remote.Option{remote.WithAuthFromKeychain(authn.DefaultKeychain)}
+	opts := []remote.Option{AuthOption()}
 	if transportOpt != nil {
 		opts = append(opts, transportOpt)
 	}
@@ -459,7 +458,7 @@ func ResolveWithRegistries(
 		)
 
 		fallbackOpts := []remote.Option{
-			remote.WithAuthFromKeychain(authn.DefaultKeychain),
+			AuthOption(),
 			fallback.TransportOpt,
 		}
 

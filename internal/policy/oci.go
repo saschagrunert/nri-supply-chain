@@ -24,7 +24,6 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	ociV1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -224,7 +223,7 @@ func (f *OCIFetcher) buildRemoteOptions(
 	ctx context.Context, imageRef string,
 ) ([]remote.Option, error) {
 	opts := []remote.Option{
-		remote.WithAuthFromKeychain(authn.DefaultKeychain),
+		registry.AuthOption(),
 		remote.WithContext(ctx),
 	}
 

@@ -29,3 +29,21 @@ const (
 	TransportTLSTimeout    = transportTLSTimeout
 	TransportExpectTimeout = transportExpectTimeout
 )
+
+//nolint:gochecknoglobals // test exports
+var (
+	// IsACRHost exports isACRHost for testing.
+	IsACRHost = isACRHost
+
+	// ExchangeACRToken exports exchangeACRToken for testing.
+	ExchangeACRToken = exchangeACRToken
+
+	// NewACRHelper exports newACRHelper for testing.
+	NewACRHelper = newACRHelper
+
+	// ErrNotACR exports errNotACR for testing.
+	ErrNotACR = errNotACR
+
+	// StripScheme exports stripScheme for testing.
+	StripScheme = stripScheme
+)
