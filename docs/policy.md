@@ -1269,6 +1269,7 @@ Each rule is an object with:
 | `buildenv.verified`            | bool   | Whether build environment verification passed     |
 | `buildenv.properties`          | string | Comma-separated property names                    |
 | `buildenv.propertyCount`       | int    | Number of environment properties                  |
+| `buildenv.propertyValues`      | map    | Property name-value pairs (`map[string]string`)   |
 | `vulnscan.verified`            | bool   | Whether vulnerability scan verification passed    |
 | `vulnscan.scanner`             | string | Scanner URI                                       |
 | `vulnscan.vulnCount`           | int    | Number of vulnerabilities found                   |

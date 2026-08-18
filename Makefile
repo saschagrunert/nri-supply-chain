@@ -141,7 +141,7 @@ e2e: build $(KUBERNIX) $(COSIGN) $(CRANE) ## Run bats e2e tests (requires root a
 ##@ Verification
 
 .PHONY: verify-all
-verify-all: lint verify-shfmt verify-shellcheck verify-mdtoc verify-jsonschema verify-tidy verify-dependencies govulncheck verify-prettier verify-typos ## Run all verification targets
+verify-all: lint verify-shfmt verify-shellcheck verify-mdtoc verify-jsonschema verify-tidy verify-vendor verify-dependencies govulncheck verify-prettier verify-typos ## Run all verification targets
 
 .PHONY: lint
 lint: $(GOLANGCI_LINT) ## Run golangci-lint
@@ -193,6 +193,15 @@ verify-jsonschema: build ## Verify JSON Schemas in docs match CLI output
 verify-tidy: ## Verify go.mod is tidy
 	$(GO) mod tidy
 	git diff --exit-code go.mod go.sum
+
+.PHONY: vendor
+vendor: ## Update vendor directory
+	$(GO) mod vendor
+
+.PHONY: verify-vendor
+verify-vendor: ## Verify vendor directory is in sync
+	$(GO) mod vendor
+	git diff --exit-code vendor/
 
 .PHONY: verify-dependencies
 verify-dependencies: $(ZEITGEIST) ## Verify external dependencies

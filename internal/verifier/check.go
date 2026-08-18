@@ -126,8 +126,14 @@ func runVSAAndParallelChecks(
 	return result
 }
 
+const maxRegistryHostLen = 253
+
 func registryHost(parsed name.Reference, parseErr error, imageRef string) string {
 	if parseErr != nil {
+		if len(imageRef) > maxRegistryHostLen {
+			return imageRef[:maxRegistryHostLen]
+		}
+
 		return imageRef
 	}
 
