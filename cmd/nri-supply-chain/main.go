@@ -45,6 +45,7 @@ const (
 
 	cmdVersion    = "version"
 	cmdVerify     = "verify"
+	cmdPreview    = "preview"
 	cmdValidate   = "validate"
 	cmdJSONSchema = "json-schema"
 )
@@ -123,6 +124,7 @@ func newRootCmd() *cobra.Command {
 
 	root.AddCommand(
 		newVerifyCmd(&configPath, &logLevel),
+		newPreviewCmd(&configPath, &logLevel),
 		newValidateCmd(&configPath, &logLevel),
 		newEffectivePolicyCmd(&configPath, &logLevel),
 		newInspectCmd(&configPath, &logLevel),
