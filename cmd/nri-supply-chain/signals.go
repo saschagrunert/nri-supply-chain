@@ -132,6 +132,7 @@ func handleReload(
 
 	applyLogLevel(newCfg.LogLevel)
 	newCfg.WarnInsecureRegistries()
+	warnNonReloadableChanges(verif.CurrentConfig(), newCfg)
 
 	reloadErr := verif.Reload(ctx, newCfg)
 	if reloadErr != nil {
@@ -147,6 +148,26 @@ func handleReload(
 			plug.SetDigestResolveTimeout(newCfg.DigestResolveTimeout.Duration)
 			updatePluginRegistries(plug, newCfg.Registries, verif.TransportCache())
 		}
+	}
+}
+
+func warnNonReloadableChanges(current, proposed *config.Config) {
+	if current == nil || proposed == nil {
+		return
+	}
+
+	if current.MetricsAddr != proposed.MetricsAddr {
+		slog.Warn("metrics_addr changed but requires restart to take effect",
+			"current", current.MetricsAddr,
+			"proposed", proposed.MetricsAddr,
+		)
+	}
+
+	if current.ConfigVersion != proposed.ConfigVersion {
+		slog.Warn("config_version changed but requires restart to take effect",
+			"current", current.ConfigVersion,
+			"proposed", proposed.ConfigVersion,
+		)
 	}
 }
 

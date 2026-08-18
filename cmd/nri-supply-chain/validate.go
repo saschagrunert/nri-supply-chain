@@ -47,7 +47,7 @@ func newValidateCmd(configPath, logLevel *string) *cobra.Command {
 
 			initLogging(effectiveLogLevel(*logLevel, cfg.LogLevel), true)
 
-			slog.Info("Using config", "path", *configPath)
+			slog.Debug("Using config", "path", *configPath)
 
 			code := runValidation(cfg)
 			if code != 0 {

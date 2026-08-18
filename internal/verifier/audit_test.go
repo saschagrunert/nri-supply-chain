@@ -149,7 +149,7 @@ func TestLogResultSerializesControlCharacters(t *testing.T) {
 
 	var buf bytes.Buffer
 
-	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	result := &types.Result{
 		Allowed: true,
@@ -177,9 +177,14 @@ func TestLogResultSerializesControlCharacters(t *testing.T) {
 		t.Fatal("expected log output")
 	}
 
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) == 0 {
+		t.Fatal("expected at least one log line")
+	}
+
 	var parsed map[string]any
 
-	testutil.AssertNoError(t, json.Unmarshal([]byte(output), &parsed))
+	testutil.AssertNoError(t, json.Unmarshal([]byte(lines[0]), &parsed))
 
 	image, ok := parsed["image"].(string)
 	if !ok {
