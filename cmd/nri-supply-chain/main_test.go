@@ -146,6 +146,50 @@ func newDisabledPlugin(t *testing.T) *plugin.Plugin {
 	return plugin.New(v, met, "", 30*time.Second, 5*time.Second, nil)
 }
 
+func TestShouldUseConfigFile(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty path", func(t *testing.T) {
+		t.Parallel()
+
+		if shouldUseConfigFile("") {
+			t.Error("expected false for empty path")
+		}
+	})
+
+	t.Run("non-default path", func(t *testing.T) {
+		t.Parallel()
+
+		if !shouldUseConfigFile("/custom/config.toml") {
+			t.Error("expected true for non-default path")
+		}
+	})
+
+	t.Run("default path missing", func(t *testing.T) {
+		t.Parallel()
+
+		if shouldUseConfigFile(defaultConfigPath) {
+			t.Error("expected false when default config file does not exist")
+		}
+	})
+
+	t.Run("default path exists", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.toml")
+
+		err := os.WriteFile(configPath, []byte(""), 0o600)
+		if err != nil {
+			t.Fatalf("writing config: %v", err)
+		}
+
+		if !shouldUseConfigFile(configPath) {
+			t.Error("expected true when config file exists")
+		}
+	})
+}
+
 func TestLoadConfig(t *testing.T) {
 	t.Parallel()
 
@@ -907,6 +951,45 @@ func TestLogLevelDynamic(t *testing.T) {
 	// The same handler should now reflect the new level.
 	if !handler.Enabled(context.Background(), slog.LevelDebug) {
 		t.Error("expected debug to be enabled after dynamic level change")
+	}
+}
+
+func TestLoadPoliciesLocalSource(t *testing.T) {
+	t.Parallel()
+
+	policyDir := t.TempDir()
+	writeValidationPolicy(t, policyDir, "default.json",
+		`{"slsa": {"missingPolicy": "warn"}}`)
+
+	cfg := config.DefaultConfig()
+	cfg.PolicyDir = policyDir
+
+	policies, digest, err := loadPolicies(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if digest != "" {
+		t.Errorf("expected empty digest for local source, got %q", digest)
+	}
+
+	if len(policies) == 0 {
+		t.Fatal("expected at least one policy")
+	}
+}
+
+func TestLoadPoliciesLocalSourceError(t *testing.T) {
+	t.Parallel()
+
+	policyDir := t.TempDir()
+	writeValidationPolicy(t, policyDir, "bad.json", `{invalid json}`)
+
+	cfg := config.DefaultConfig()
+	cfg.PolicyDir = policyDir
+
+	_, _, err := loadPolicies(cfg)
+	if err == nil {
+		t.Fatal("expected error for invalid policy file")
 	}
 }
 

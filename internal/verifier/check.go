@@ -90,21 +90,21 @@ func runChecks(
 	bins := binAttestations(ctx, attestations, imageRef)
 
 	return runVSAAndParallelChecks(
-		ctx, &bins, pol, state.metrics, imageRef, attestDigest, namespace, parsedRef,
+		ctx, bins, pol, state.metrics, imageRef, attestDigest, namespace, parsedRef,
 	)
 }
 
 func runVSAAndParallelChecks(
-	ctx context.Context, bins *attestationBins,
+	ctx context.Context, bins attestationBins,
 	pol *policy.Policy, met *metrics.Metrics,
 	imageRef, digest, namespace string, parsedRef name.Reference,
 ) *types.Result {
-	vsaResult := checkVSA(ctx, bins.vsa, pol, imageRef, digest, met, parsedRef)
+	vsaResult := checkVSA(ctx, bins[types.CheckTypeVSA], pol, imageRef, digest, met, parsedRef)
 	if vsaResult != nil {
 		return vsaResult
 	}
 
-	if len(bins.vsa) == 0 {
+	if len(bins[types.CheckTypeVSA]) == 0 {
 		denied := checkVSAMissing(pol, imageRef, met)
 		if denied != nil {
 			return denied
@@ -113,7 +113,7 @@ func runVSAAndParallelChecks(
 
 	result := runParallelChecks(ctx, bins, pol, met, imageRef, digest, parsedRef)
 
-	if len(bins.vsa) == 0 {
+	if len(bins[types.CheckTypeVSA]) == 0 {
 		prependVSAWarning(result, pol, "no VSA attestation found for image "+imageRef)
 	}
 
@@ -356,7 +356,7 @@ func checkVSA(
 
 //nolint:funlen // table-driven dispatch over all check types
 func runParallelChecks(
-	ctx context.Context, bins *attestationBins,
+	ctx context.Context, bins attestationBins,
 	pol *policy.Policy, met *metrics.Metrics,
 	imageRef, digest string,
 	parsedRef name.Reference,
@@ -367,99 +367,101 @@ func runParallelChecks(
 	}{
 		{types.CheckTypeSLSA, func() *types.CheckResult {
 			return runAttestationCheck(
-				ctx, types.CheckTypeSLSA, bins.slsa, pol, met, imageRef,
+				ctx, types.CheckTypeSLSA, bins[types.CheckTypeSLSA], pol, met, imageRef,
 				func() (*types.CheckResult, error) {
-					return slsa.VerifyMultiple(ctx, bins.slsa, pol, digest)
+					return slsa.VerifyMultiple(ctx, bins[types.CheckTypeSLSA], pol, digest)
 				})
 		}},
 		{types.CheckTypeVEX, func() *types.CheckResult {
 			return runAttestationCheck(
-				ctx, types.CheckTypeVEX, bins.vex, pol, met, imageRef,
+				ctx, types.CheckTypeVEX, bins[types.CheckTypeVEX], pol, met, imageRef,
 				func() (*types.CheckResult, error) {
 					return vex.VerifyMultiple(
-						ctx, extractPayloads(bins.vex),
+						ctx, extractPayloads(bins[types.CheckTypeVEX]),
 						pol, imageRef, digest, parsedRef,
 					)
 				})
 		}},
 		{types.CheckTypeNotation, func() *types.CheckResult {
 			return runAttestationCheck(
-				ctx, types.CheckTypeNotation, bins.notation, pol, met, imageRef,
+				ctx, types.CheckTypeNotation, bins[types.CheckTypeNotation], pol, met, imageRef,
 				func() (*types.CheckResult, error) {
 					return notation.VerifyMultiple(
-						ctx, bins.notation, imageRef, digest, pol,
+						ctx, bins[types.CheckTypeNotation], imageRef, digest, pol,
 					)
 				})
 		}},
 		{types.CheckTypeSBOM, func() *types.CheckResult {
 			return runAttestationCheck(
-				ctx, types.CheckTypeSBOM, bins.sbom, pol, met, imageRef,
+				ctx, types.CheckTypeSBOM, bins[types.CheckTypeSBOM], pol, met, imageRef,
 				func() (*types.CheckResult, error) {
 					return sbom.VerifyMultiple(
-						ctx, extractPayloads(bins.sbom), pol, digest,
+						ctx, extractPayloads(bins[types.CheckTypeSBOM]), pol, digest,
 					)
 				})
 		}},
 		{types.CheckTypeSCAI, func() *types.CheckResult {
 			return runAttestationCheck(
-				ctx, types.CheckTypeSCAI, bins.scai, pol, met, imageRef,
+				ctx, types.CheckTypeSCAI, bins[types.CheckTypeSCAI], pol, met, imageRef,
 				func() (*types.CheckResult, error) {
 					return scai.VerifyMultiple(
-						ctx, extractPayloads(bins.scai), pol, digest,
+						ctx, extractPayloads(bins[types.CheckTypeSCAI]), pol, digest,
 					)
 				})
 		}},
 		{types.CheckTypeSource, func() *types.CheckResult {
 			return runAttestationCheck(
-				ctx, types.CheckTypeSource, bins.source, pol, met, imageRef,
+				ctx, types.CheckTypeSource, bins[types.CheckTypeSource], pol, met, imageRef,
 				func() (*types.CheckResult, error) {
 					return source.VerifyMultiple(
-						ctx, extractPayloads(bins.source), pol, digest,
+						ctx, extractPayloads(bins[types.CheckTypeSource]), pol, digest,
 					)
 				})
 		}},
 		{types.CheckTypeBuildEnv, func() *types.CheckResult {
 			return runAttestationCheck(
-				ctx, types.CheckTypeBuildEnv, bins.buildenv, pol, met, imageRef,
+				ctx, types.CheckTypeBuildEnv, bins[types.CheckTypeBuildEnv], pol, met, imageRef,
 				func() (*types.CheckResult, error) {
 					return buildenv.VerifyMultiple(
-						ctx, extractPayloads(bins.buildenv), pol, digest,
+						ctx, extractPayloads(bins[types.CheckTypeBuildEnv]), pol, digest,
 					)
 				})
 		}},
 		{types.CheckTypeVulnScan, func() *types.CheckResult {
 			return runAttestationCheck(
-				ctx, types.CheckTypeVulnScan, bins.vulnscan, pol, met, imageRef,
+				ctx, types.CheckTypeVulnScan, bins[types.CheckTypeVulnScan], pol, met, imageRef,
 				func() (*types.CheckResult, error) {
 					return vulnscan.VerifyMultiple(
-						ctx, extractPayloads(bins.vulnscan), pol, digest,
+						ctx, extractPayloads(bins[types.CheckTypeVulnScan]), pol, digest,
 					)
 				})
 		}},
 		{types.CheckTypeTestResult, func() *types.CheckResult {
 			return runAttestationCheck(
-				ctx, types.CheckTypeTestResult, bins.testresult, pol, met, imageRef,
+				ctx, types.CheckTypeTestResult, bins[types.CheckTypeTestResult], pol, met, imageRef,
 				func() (*types.CheckResult, error) {
 					return testresult.VerifyMultiple(
-						ctx, extractPayloads(bins.testresult), pol, digest,
+						ctx, extractPayloads(bins[types.CheckTypeTestResult]), pol, digest,
 					)
 				})
 		}},
 		{types.CheckTypeRelease, func() *types.CheckResult {
 			return runAttestationCheck(
-				ctx, types.CheckTypeRelease, bins.release, pol, met, imageRef,
+				ctx, types.CheckTypeRelease, bins[types.CheckTypeRelease], pol, met, imageRef,
 				func() (*types.CheckResult, error) {
 					return release.VerifyMultiple(
-						ctx, extractPayloads(bins.release), pol, digest,
+						ctx, extractPayloads(bins[types.CheckTypeRelease]), pol, digest,
 					)
 				})
 		}},
 		{types.CheckTypeRuntimeTrace, func() *types.CheckResult {
+			atts := bins[types.CheckTypeRuntimeTrace]
+
 			return runAttestationCheck(
-				ctx, types.CheckTypeRuntimeTrace, bins.runtimetrace, pol, met, imageRef,
+				ctx, types.CheckTypeRuntimeTrace, atts, pol, met, imageRef,
 				func() (*types.CheckResult, error) {
 					return runtimetrace.VerifyMultiple(
-						ctx, extractPayloads(bins.runtimetrace), pol, digest,
+						ctx, extractPayloads(atts), pol, digest,
 					)
 				})
 		}},
@@ -503,61 +505,56 @@ func runParallelCheck(
 	*result = checkFunc()
 }
 
-type attestationBins struct {
-	vsa          []attestation.VerifiedAttestation
-	slsa         []attestation.VerifiedAttestation
-	vex          []attestation.VerifiedAttestation
-	notation     []attestation.VerifiedAttestation
-	sbom         []attestation.VerifiedAttestation
-	scai         []attestation.VerifiedAttestation
-	source       []attestation.VerifiedAttestation
-	buildenv     []attestation.VerifiedAttestation
-	vulnscan     []attestation.VerifiedAttestation
-	testresult   []attestation.VerifiedAttestation
-	release      []attestation.VerifiedAttestation
-	runtimetrace []attestation.VerifiedAttestation
-}
+// attestationBins maps check types to their matching attestations.
+type attestationBins map[types.CheckType][]attestation.VerifiedAttestation
 
-func binAttestations( //nolint:cyclop // additional predicate type adds a branch
-	ctx context.Context, attestations []attestation.VerifiedAttestation, imageRef string,
+func binAttestations( //nolint:cyclop,funlen // additional predicate type adds a branch
+	ctx context.Context,
+	attestations []attestation.VerifiedAttestation,
+	imageRef string,
 ) attestationBins {
-	var bins attestationBins
+	bins := make(attestationBins)
+	add := func(ct types.CheckType, att attestation.VerifiedAttestation) {
+		bins[ct] = append(bins[ct], att)
+	}
 
 	for idx := range attestations {
-		// Route by signature type first: Notation signatures carry
-		// signature manifests, not in-toto attestation payloads.
-		if attestations[idx].SignatureType == attestation.SignatureTypeNotation {
-			bins.notation = append(bins.notation, attestations[idx])
+		att := attestations[idx]
+
+		if att.SignatureType == attestation.SignatureTypeNotation {
+			add(types.CheckTypeNotation, att)
 
 			continue
 		}
 
-		switch attestations[idx].PredicateType {
+		switch att.PredicateType {
 		case attestation.PredicateVSA:
-			bins.vsa = append(bins.vsa, attestations[idx])
-		case attestation.PredicateSLSAProvenanceV1, attestation.PredicateSLSAProvenanceV02:
-			bins.slsa = append(bins.slsa, attestations[idx])
+			add(types.CheckTypeVSA, att)
+		case attestation.PredicateSLSAProvenanceV1,
+			attestation.PredicateSLSAProvenanceV02:
+			add(types.CheckTypeSLSA, att)
 		case attestation.PredicateOpenVEX:
-			bins.vex = append(bins.vex, attestations[idx])
+			add(types.CheckTypeVEX, att)
 		case attestation.PredicateCycloneDX:
-			bins.vex = append(bins.vex, attestations[idx])
-			bins.sbom = append(bins.sbom, attestations[idx])
+			add(types.CheckTypeVEX, att)
+			add(types.CheckTypeSBOM, att)
 		case attestation.PredicateSPDX:
-			bins.sbom = append(bins.sbom, attestations[idx])
+			add(types.CheckTypeSBOM, att)
 		case attestation.PredicateSCAI:
-			bins.scai = append(bins.scai, attestations[idx])
+			add(types.CheckTypeSCAI, att)
 		case attestation.PredicateSLSASourceV1:
-			bins.source = append(bins.source, attestations[idx])
+			add(types.CheckTypeSource, att)
 		case attestation.PredicateBuildEnv:
-			bins.buildenv = append(bins.buildenv, attestations[idx])
-		case attestation.PredicateVulnScan, attestation.PredicateVulnScanV02:
-			bins.vulnscan = append(bins.vulnscan, attestations[idx])
+			add(types.CheckTypeBuildEnv, att)
+		case attestation.PredicateVulnScan,
+			attestation.PredicateVulnScanV02:
+			add(types.CheckTypeVulnScan, att)
 		case attestation.PredicateTestResult:
-			bins.testresult = append(bins.testresult, attestations[idx])
+			add(types.CheckTypeTestResult, att)
 		case attestation.PredicateRelease:
-			bins.release = append(bins.release, attestations[idx])
+			add(types.CheckTypeRelease, att)
 		case attestation.PredicateRuntimeTrace:
-			bins.runtimetrace = append(bins.runtimetrace, attestations[idx])
+			add(types.CheckTypeRuntimeTrace, att)
 		case attestation.PredicateCosignSignature:
 			slog.DebugContext(ctx,
 				"Skipping bare cosign signature attestation",
@@ -566,7 +563,7 @@ func binAttestations( //nolint:cyclop // additional predicate type adds a branch
 		default:
 			slog.WarnContext(ctx,
 				"Skipping attestation with unrecognized predicate type",
-				"predicateType", attestations[idx].PredicateType,
+				"predicateType", att.PredicateType,
 				"image", imageRef,
 			)
 		}

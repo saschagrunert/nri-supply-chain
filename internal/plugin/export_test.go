@@ -74,7 +74,7 @@ func ExportDefaultDigestResolver(
 		prewarmMu:            sync.Mutex{},
 		prewarmCancel:        nil,
 		transportCache:       atomic.Pointer[registry.TransportCache]{},
-		containerTimes:       sync.Map{},
+		containerTimes:       newContainerTimeMap(),
 	}
 
 	return plug.registryAwareResolver(ctx, imageRef)
@@ -114,12 +114,5 @@ func (p *Plugin) ExportStoreContainerTime(containerID string, t time.Time) {
 
 // ExportLoadContainerTime loads the creation timestamp for a container ID.
 func (p *Plugin) ExportLoadContainerTime(containerID string) (time.Time, bool) {
-	val, ok := p.containerTimes.Load(containerID)
-	if !ok {
-		return time.Time{}, false
-	}
-
-	t, ok := val.(time.Time)
-
-	return t, ok
+	return p.containerTimes.Load(containerID)
 }
