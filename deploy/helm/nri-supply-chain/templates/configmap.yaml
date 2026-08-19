@@ -1,0 +1,83 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "nri-supply-chain.fullname" . }}
+  namespace: {{ include "nri-supply-chain.namespace" . }}
+  labels:
+    {{- include "nri-supply-chain.labels" . | nindent 4 }}
+data:
+  config.toml: |
+    config_version = 1
+    verification = {{ .Values.config.verification | quote }}
+    fetch_timeout = {{ .Values.config.fetchTimeout | quote }}
+    digest_resolve_timeout = {{ .Values.config.digestResolveTimeout | quote }}
+    {{- with .Values.config.fetchFailurePolicy }}
+    fetch_failure_policy = {{ . | quote }}
+    {{- end }}
+    cache_ttl = {{ .Values.config.cacheTTL | quote }}
+    cache_failure_ttl = {{ .Values.config.cacheFailureTTL | quote }}
+    policy_dir = "/etc/nri-supply-chain/policies"
+    metrics_addr = {{ .Values.config.metricsAddr | quote }}
+    circuit_breaker_threshold = {{ .Values.config.circuitBreakerThreshold }}
+    circuit_breaker_cooldown = {{ .Values.config.circuitBreakerCooldown | quote }}
+    verification_timeout = {{ .Values.config.verificationTimeout | quote }}
+    fetch_rate_limit = {{ .Values.config.fetchRateLimit }}
+    max_attestation_size = {{ .Values.config.maxAttestationSize }}
+    cache_max_entries = {{ .Values.config.cacheMaxEntries }}
+    {{- with .Values.config.allowlistDigests }}
+    allowlist_digests = {{ . | toJson }}
+    {{- end }}
+    {{- with .Values.config.logLevel }}
+    log_level = {{ . | quote }}
+    {{- end }}
+    {{- with .Values.config.policy }}
+    [policy]
+    source = {{ .source | quote }}
+    {{- with .ociRef }}
+    oci_ref = {{ . | quote }}
+    {{- end }}
+    poll_interval = {{ .pollInterval | quote }}
+    {{- with .issuers }}
+    issuers = {{ . | toJson }}
+    {{- end }}
+    {{- with .sanPatterns }}
+    san_patterns = {{ . | toJson }}
+    {{- end }}
+    {{- with .keys }}
+    keys = {{ . | toJson }}
+    {{- end }}
+    {{- end }}
+    {{- with .Values.config.sigstore }}
+    {{- if .enabled }}
+    [sigstore]
+    include_public_root = {{ .includePublicRoot }}
+    {{- range .roots }}
+    [[sigstore.roots]]
+    name = {{ .name | quote }}
+    tuf_mirror = {{ .tufMirror | quote }}
+    {{- with .tufRoot }}
+    tuf_root = {{ . | quote }}
+    {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- range .Values.config.registries }}
+    [[registries]]
+    prefix = {{ .prefix | quote }}
+    {{- with .mirror }}
+    mirror = {{ . | quote }}
+    {{- end }}
+    {{- with .caCert }}
+    ca_cert = {{ . | quote }}
+    {{- end }}
+    {{- if .insecure }}
+    insecure = true
+    {{- end }}
+    {{- end }}
+    {{- with .Values.config.extraConfig }}
+    {{- . | nindent 4 }}
+    {{- end }}
+  {{- range $name, $policy := .Values.policies }}
+  {{ $name }}: |
+    {{- $policy | nindent 4 }}
+  {{- end }}

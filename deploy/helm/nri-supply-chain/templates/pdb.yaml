@@ -1,0 +1,14 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "nri-supply-chain.fullname" . }}
+  namespace: {{ include "nri-supply-chain.namespace" . }}
+  labels:
+    {{- include "nri-supply-chain.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  selector:
+    matchLabels:
+      {{- include "nri-supply-chain.selectorLabels" . | nindent 6 }}
+{{- end }}

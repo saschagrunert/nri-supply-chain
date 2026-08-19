@@ -8,6 +8,7 @@ configurations for the nri-supply-chain plugin.
 - [Pre-installed NRI Plugin](#pre-installed-nri-plugin)
 - [External NRI Plugin](#external-nri-plugin)
 - [Kubernetes DaemonSet](#kubernetes-daemonset)
+  - [Helm Chart](#helm-chart)
 - [Systemd Service](#systemd-service)
 - [DEB/RPM Packages](#debrpm-packages)
 - [Container Image](#container-image)
@@ -52,6 +53,23 @@ ServiceAccount, ConfigMap with example config and policy, NetworkPolicy,
 PodDisruptionBudget, and the DaemonSet.
 Edit the ConfigMap to match your environment before deploying. See
 [config.md](config.md) for the full field reference.
+
+### Helm Chart
+
+The Helm chart provides a parameterized DaemonSet deployment:
+
+```console
+helm upgrade --install nri-supply-chain deploy/helm/nri-supply-chain \
+  --namespace nri-supply-chain --create-namespace \
+  --set config.verification=enforce \
+  --set-file policies.default\\.json=./default.json
+```
+
+It exposes operational configuration, local or OCI policy sources, registry
+mirrors, resource settings, node selectors, tolerations, NetworkPolicy, and
+optional Prometheus Operator resources. See
+[`deploy/helm/nri-supply-chain/README.md`](../deploy/helm/nri-supply-chain/README.md)
+for the values reference and security notes.
 
 ## Systemd Service
 

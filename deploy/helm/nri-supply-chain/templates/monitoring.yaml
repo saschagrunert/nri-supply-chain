@@ -1,0 +1,79 @@
+{{- if and .Values.monitoring.serviceMonitor.enabled (not .Values.service.enabled) }}
+{{- fail "service.enabled must be true when monitoring.serviceMonitor.enabled is true" }}
+{{- end }}
+{{- if .Values.monitoring.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "nri-supply-chain.fullname" . }}
+  namespace: {{ include "nri-supply-chain.namespace" . }}
+  labels:
+    {{- include "nri-supply-chain.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "nri-supply-chain.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ .Values.monitoring.serviceMonitor.interval }}
+      {{- with .Values.monitoring.serviceMonitor.scrapeTimeout }}
+      scrapeTimeout: {{ . }}
+      {{- end }}
+{{- end }}
+{{- if .Values.monitoring.prometheusRule.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "nri-supply-chain.fullname" . }}
+  namespace: {{ include "nri-supply-chain.namespace" . }}
+  labels:
+    {{- include "nri-supply-chain.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: nri-supply-chain
+      rules:
+        - alert: NRISupplyChainVerificationFailures
+          expr: sum(rate(nri_supply_chain_verification_total{result="fail"}[5m])) > {{ .Values.monitoring.prometheusRule.failureRateThreshold }}
+          for: 5m
+          labels: {severity: warning}
+          annotations:
+            summary: Supply-chain verification failures detected.
+        - alert: NRISupplyChainCircuitBreakerOpen
+          expr: increase(nri_supply_chain_circuit_breaker_trips_total[5m]) > 0
+          for: {{ .Values.monitoring.prometheusRule.circuitBreakerFor }}
+          labels: {severity: warning}
+          annotations:
+            summary: Registry circuit breaker is open.
+        - alert: NRISupplyChainHighFetchErrorRate
+          expr: sum(rate(nri_supply_chain_fetch_errors_total[5m])) > {{ .Values.monitoring.prometheusRule.fetchErrorRateThreshold }}
+          for: {{ .Values.monitoring.prometheusRule.fetchErrorFor }}
+          labels: {severity: warning}
+          annotations:
+            summary: Sustained attestation fetch errors from the registry.
+        - alert: NRISupplyChainVerificationInterrupted
+          expr: sum(increase(nri_supply_chain_verification_interrupted_total[5m])) > 0
+          for: {{ .Values.monitoring.prometheusRule.verificationInterruptedFor }}
+          labels: {severity: warning}
+          annotations:
+            summary: Verifications are being interrupted by context cancellation.
+        - alert: NRISupplyChainHighVerificationLatency
+          expr: histogram_quantile(0.99, sum(rate(nri_supply_chain_verification_duration_seconds_bucket[5m])) by (le)) > {{ .Values.monitoring.prometheusRule.verificationLatencyThresholdSeconds }}
+          for: {{ .Values.monitoring.prometheusRule.verificationLatencyFor }}
+          labels: {severity: warning}
+          annotations:
+            summary: Verification p99 latency exceeds the configured threshold.
+        - alert: NRISupplyChainConfigReloadFailure
+          expr: increase(nri_supply_chain_config_reload_errors_total[15m]) > 0
+          for: {{ .Values.monitoring.prometheusRule.reloadFailureFor }}
+          labels: {severity: warning}
+          annotations:
+            summary: Supply-chain plugin configuration reload is failing.
+{{- end }}

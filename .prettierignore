@@ -13,6 +13,7 @@ Dockerfile.goreleaser
 *.toml
 *.service
 *.sh
+deploy/helm/nri-supply-chain/templates/
 LICENSE
 OWNERS
 SECURITY_CONTACTS

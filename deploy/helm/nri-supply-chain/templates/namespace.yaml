@@ -1,0 +1,8 @@
+{{- if .Values.namespace.create }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "nri-supply-chain.namespace" . }}
+  labels:
+    {{- include "nri-supply-chain.labels" . | nindent 4 }}
+{{- end }}

@@ -189,6 +189,11 @@ verify-jsonschema: build ## Verify JSON Schemas in docs match CLI output
 		exit 1; \
 	fi
 
+.PHONY: verify-helm
+verify-helm: ## Lint and render the Helm chart (requires Helm 3)
+	helm lint --strict deploy/helm/nri-supply-chain
+	helm template nri-supply-chain deploy/helm/nri-supply-chain --namespace nri-supply-chain > /dev/null
+
 .PHONY: verify-tidy
 verify-tidy: ## Verify go.mod is tidy
 	$(GO) mod tidy
