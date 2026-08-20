@@ -1398,3 +1398,35 @@ func TestVerifyMultipleMixedFormatsWithAffected(t *testing.T) {
 		t.Error("expected fail when CycloneDX doc has exploitable status")
 	}
 }
+
+func TestVerifyCancelledContext(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := vex.Verify(ctx, nil, nil, "", "", nil)
+	if err == nil {
+		t.Fatal("expected error for cancelled context")
+	}
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got: %v", err)
+	}
+}
+
+func TestVerifyMultipleCancelledContext(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := vex.VerifyMultiple(ctx, [][]byte{[]byte("a")}, nil, "", "", nil)
+	if err == nil {
+		t.Fatal("expected error for cancelled context")
+	}
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got: %v", err)
+	}
+}

@@ -117,6 +117,11 @@ type Metadata struct {
 func Verify(
 	ctx context.Context, att []byte, pol *policy.Policy, imageDigest string,
 ) (*types.CheckResult, error) {
+	ctxErr := ctx.Err()
+	if ctxErr != nil {
+		return nil, fmt.Errorf("verification cancelled: %w", ctxErr)
+	}
+
 	var header struct {
 		PredicateType string `json:"predicateType"`
 	}
@@ -342,6 +347,11 @@ func VerifyMultiple(
 	)
 
 	for idx := range attestations {
+		ctxErr := ctx.Err()
+		if ctxErr != nil {
+			return nil, fmt.Errorf("verification cancelled: %w", ctxErr)
+		}
+
 		result, err := Verify(ctx, attestations[idx].Payload, pol, imageDigest)
 		if err != nil {
 			parseErrors = append(parseErrors, err.Error())

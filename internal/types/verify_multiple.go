@@ -14,12 +14,17 @@
 
 package types
 
-import "strings"
+import (
+	"context"
+	"fmt"
+	"strings"
+)
 
 // VerifyMultipleWithMerge verifies multiple attestations, collecting failures
 // and merging metadata from passing results. This is the common pattern used
 // by scai, buildenv, vulnscan, and testresult packages.
 func VerifyMultipleWithMerge( //nolint:cyclop // shared helper consolidating 4 duplicated implementations
+	ctx context.Context,
 	checkType CheckType,
 	label string,
 	passDetail string,
@@ -35,6 +40,11 @@ func VerifyMultipleWithMerge( //nolint:cyclop // shared helper consolidating 4 d
 	)
 
 	for _, att := range attestations {
+		ctxErr := ctx.Err()
+		if ctxErr != nil {
+			return nil, fmt.Errorf("verification cancelled: %w", ctxErr)
+		}
+
 		result, err := verifyOne(att)
 		if err != nil {
 			verifyErrors = append(verifyErrors, err.Error())

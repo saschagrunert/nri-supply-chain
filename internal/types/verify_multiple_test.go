@@ -15,6 +15,7 @@
 package types_test
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -47,12 +48,39 @@ func sumMerge(dst, src map[string]any) {
 	}
 }
 
+func TestVerifyMultipleWithMergeCancelledContext(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	attestations := [][]byte{[]byte("a1")}
+
+	_, err := types.VerifyMultipleWithMerge(ctx,
+		types.CheckTypeSLSA, testLabel, testPassDetail,
+		attestations,
+		func(_ []byte) (*types.CheckResult, error) {
+			t.Fatal("verifyOne should not be called with cancelled context")
+
+			return nil, nil
+		},
+		noopMerge,
+	)
+	if err == nil {
+		t.Fatal("expected error for cancelled context")
+	}
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got: %v", err)
+	}
+}
+
 func TestVerifyMultipleWithMergeAllPass(t *testing.T) {
 	t.Parallel()
 
 	attestations := [][]byte{[]byte("a1"), []byte("a2")}
 
-	result, err := types.VerifyMultipleWithMerge(
+	result, err := types.VerifyMultipleWithMerge(context.Background(),
 		types.CheckTypeSLSA, testLabel, testPassDetail,
 		attestations,
 		func(_ []byte) (*types.CheckResult, error) {
@@ -77,7 +105,7 @@ func TestVerifyMultipleWithMergeOneFails(t *testing.T) {
 	attestations := [][]byte{[]byte("good"), []byte("bad")}
 	callCount := 0
 
-	result, err := types.VerifyMultipleWithMerge(
+	result, err := types.VerifyMultipleWithMerge(context.Background(),
 		types.CheckTypeSLSA, testLabel, testPassDetail,
 		attestations,
 		func(att []byte) (*types.CheckResult, error) {
@@ -103,7 +131,7 @@ func TestVerifyMultipleWithMergeAllErrors(t *testing.T) {
 
 	attestations := [][]byte{[]byte("e1"), []byte("e2")}
 
-	result, err := types.VerifyMultipleWithMerge(
+	result, err := types.VerifyMultipleWithMerge(context.Background(),
 		types.CheckTypeSCAI, testLabel, testPassDetail,
 		attestations,
 		func(_ []byte) (*types.CheckResult, error) {
@@ -120,7 +148,7 @@ func TestVerifyMultipleWithMergeAllErrors(t *testing.T) {
 func TestVerifyMultipleWithMergeEmpty(t *testing.T) {
 	t.Parallel()
 
-	result, err := types.VerifyMultipleWithMerge(
+	result, err := types.VerifyMultipleWithMerge(context.Background(),
 		types.CheckTypeSLSA, testLabel, testPassDetail,
 		nil,
 		func(_ []byte) (*types.CheckResult, error) {
@@ -139,7 +167,7 @@ func TestVerifyMultipleWithMergeErrorAndPass(t *testing.T) {
 
 	attestations := [][]byte{[]byte("err"), []byte("ok")}
 
-	result, err := types.VerifyMultipleWithMerge(
+	result, err := types.VerifyMultipleWithMerge(context.Background(),
 		types.CheckTypeVulnScan, testLabel, testPassDetail,
 		attestations,
 		func(att []byte) (*types.CheckResult, error) {
@@ -161,7 +189,7 @@ func TestVerifyMultipleWithMergeMetadataMerged(t *testing.T) {
 
 	attestations := [][]byte{[]byte("a"), []byte("b"), []byte("c")}
 
-	result, err := types.VerifyMultipleWithMerge(
+	result, err := types.VerifyMultipleWithMerge(context.Background(),
 		types.CheckTypeBuildEnv, testLabel, testPassDetail,
 		attestations,
 		func(_ []byte) (*types.CheckResult, error) {
@@ -184,7 +212,7 @@ func TestVerifyMultipleWithMergeFailedMetadataNotMerged(t *testing.T) {
 
 	attestations := [][]byte{[]byte("a")}
 
-	result, err := types.VerifyMultipleWithMerge(
+	result, err := types.VerifyMultipleWithMerge(context.Background(),
 		types.CheckTypeSLSA, testLabel, testPassDetail,
 		attestations,
 		func(_ []byte) (*types.CheckResult, error) {

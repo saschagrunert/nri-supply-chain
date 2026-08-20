@@ -480,3 +480,35 @@ func TestVerifyUntrustedRegistryDetailMessage(t *testing.T) {
 		t.Errorf("purl metadata = %v, want %s", result.Metadata["purl"], testPURL)
 	}
 }
+
+func TestVerifyCancelledContext(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := release.Verify(ctx, nil, nil, "")
+	if err == nil {
+		t.Fatal("expected error for cancelled context")
+	}
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got: %v", err)
+	}
+}
+
+func TestVerifyMultipleCancelledContext(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := release.VerifyMultiple(ctx, [][]byte{[]byte("a")}, nil, "")
+	if err == nil {
+		t.Fatal("expected error for cancelled context")
+	}
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got: %v", err)
+	}
+}

@@ -80,7 +80,7 @@ func handleFetchError(
 func checkVSAMissing(
 	pol *policy.Policy, imageRef string, met *metrics.Metrics,
 ) *types.Result {
-	missingPolicy := pol.VSAMissingPolicy()
+	missingPolicy := pol.MissingPolicyFor(types.CheckTypeVSA)
 
 	met.VerificationDuration.WithLabelValues(string(types.CheckTypeVSA)).Observe(0)
 
@@ -102,7 +102,7 @@ func checkVSAMissing(
 }
 
 func prependVSAWarning(result *types.Result, pol *policy.Policy, detail string) {
-	if pol.VSAMissingPolicy() != types.ActionWarn {
+	if pol.MissingPolicyFor(types.CheckTypeVSA) != types.ActionWarn {
 		return
 	}
 

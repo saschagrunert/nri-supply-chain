@@ -48,10 +48,15 @@ type envProperty struct {
 }
 
 // Verify checks a single build environment attestation against the given policy.
-func Verify( //nolint:revive // ctx reserved for future context-aware logging
+func Verify(
 	ctx context.Context,
 	att []byte, pol *policy.Policy, imageDigest string,
 ) (*types.CheckResult, error) {
+	ctxErr := ctx.Err()
+	if ctxErr != nil {
+		return nil, fmt.Errorf("verification cancelled: %w", ctxErr)
+	}
+
 	predicate, err := intoto.VerifySubjectAndExtractPredicate(att, imageDigest)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidBuildEnv, err)
@@ -68,7 +73,7 @@ func VerifyMultiple(
 ) (*types.CheckResult, error) {
 	//nolint:wrapcheck // VerifyMultipleWithMerge returns domain errors
 	return types.VerifyMultipleWithMerge(
-		checkType, "build environment", "build environment verification passed",
+		ctx, checkType, "build environment", "build environment verification passed",
 		attestations,
 		func(att []byte) (*types.CheckResult, error) {
 			return Verify(ctx, att, pol, imageDigest)
