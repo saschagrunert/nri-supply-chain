@@ -104,14 +104,23 @@ func (v *Verifier) applyPolicyUpdate(
 	policies map[string]*policy.Policy,
 	newHashes map[string]string,
 ) {
+	snap, err := newSnapshot(state.config, policies, newHashes, state.metrics, state.fetcher)
+	if err != nil {
+		slog.ErrorContext(ctx, "Failed to create snapshot during policy update",
+			"error", err)
+
+		return
+	}
+
 	state.cache.Stop()
 
 	resetVerificationCaches()
 
-	snap := newSnapshot(state.config, policies, newHashes, state.metrics, state.fetcher)
 	snap.circuitBreakers = state.circuitBreakers
 	snap.fetchSem = state.fetchSem
 	snap.auditLogger = state.auditLogger
+	snap.guacClient = state.guacClient
+	snap.guacBreaker = state.guacBreaker
 
 	v.state.Store(snap)
 	v.policyHashes = newHashes

@@ -96,6 +96,8 @@ func runChecks(
 		defer releaseSlots()
 	}
 
+	guacCh := startGUACQuery(ctx, state, digest, imageRef)
+
 	attestations, attestDigest, fetchErr := timedFetchAttestations(
 		ctx, state, imageRef, digest, indexDigest, pol, host, parsedRef,
 	)
@@ -109,10 +111,12 @@ func runChecks(
 		breaker.RecordSuccess()
 	}
 
+	guacResult := <-guacCh
+
 	bins := binAttestations(ctx, attestations, imageRef)
 
 	return runVSAAndParallelChecks(
-		ctx, bins, pol, state.metrics, imageRef, attestDigest, namespace, parsedRef,
+		ctx, bins, pol, state.metrics, imageRef, attestDigest, namespace, parsedRef, guacResult,
 	)
 }
 
@@ -120,6 +124,7 @@ func runVSAAndParallelChecks(
 	ctx context.Context, bins attestationBins,
 	pol *policy.Policy, met *metrics.Metrics,
 	imageRef, digest, namespace string, parsedRef name.Reference,
+	guacResult *types.CheckResult,
 ) *types.Result {
 	vsaResult := checkVSA(ctx, bins[types.CheckTypeVSA], pol, imageRef, digest, met, parsedRef)
 	if vsaResult != nil {
@@ -134,6 +139,11 @@ func runVSAAndParallelChecks(
 	}
 
 	result := runParallelChecks(ctx, bins, pol, met, imageRef, digest, parsedRef)
+
+	if guacResult != nil {
+		result.CheckResults = append(result.CheckResults, *guacResult)
+		applyCheckResult(result, guacResult)
+	}
 
 	if len(bins[types.CheckTypeVSA]) == 0 {
 		prependVSAWarning(result, pol, "no VSA attestation found for image "+imageRef)

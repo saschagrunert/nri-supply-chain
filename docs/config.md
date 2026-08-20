@@ -6,6 +6,7 @@ nri-supply-chain plugin.
 <!-- toc -->
 
 - [Operational Config](#operational-config)
+  - [GUAC](#guac)
   - [Runtime reload](#runtime-reload)
 - [Private Sigstore Instances](#private-sigstore-instances)
   - [Multiple Sigstore Trusted Roots](#multiple-sigstore-trusted-roots)
@@ -80,6 +81,41 @@ circuit_breaker_cooldown = "30s"
 | `max_attestation_size`      | `10485760` (10 MiB)              | Maximum allowed size in bytes for a single attestation bundle. Min 1 MiB, max 100 MiB.                                                                                                                                             |
 | `cache_max_entries`         | `10000`                          | Maximum number of entries in the verification result cache. Min 100, max 1,000,000.                                                                                                                                                |
 | `allowlist_digests`         | `[]`                             | Global list of trusted image digests that skip verification in all namespaces, overriding per-namespace policies. Accepts bare digests (`sha256:...`) or full references (`image@sha256:...`). Reloaded with the config on SIGHUP. |
+
+### GUAC
+
+[GUAC](https://guac.sh/) (Graph for Understanding Artifact Composition) can be
+used as a supplemental data source for vulnerability correlation, dependency
+analysis, and Scorecard queries. GUAC is not an attestation format; it runs as
+a separate service that the plugin queries in parallel with the OCI attestation
+fetch.
+
+```toml
+[guac]
+endpoint = "http://guac.internal:8080"
+# auth_token_path = "/var/run/secrets/guac/token"
+# ca_cert = "/etc/guac/ca.pem"
+# timeout = "5s"
+# fallback_policy = "warn"
+# max_dependencies = 5
+# checks = ["certify_vuln", "certify_scorecard", "is_dependency"]
+```
+
+GUAC is enabled when `endpoint` is set (no separate toggle).
+
+| Field              | Default                                                  | Description                                                                                                                                        |
+| ------------------ | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `endpoint`         | (empty)                                                  | GUAC API base URL. Setting this enables GUAC queries.                                                                                              |
+| `auth_token_path`  | (empty)                                                  | Absolute path to a bearer token file. Re-read on each request to support K8s secret rotation.                                                      |
+| `ca_cert`          | (empty)                                                  | Absolute path to a PEM-encoded CA certificate for TLS verification against a private CA.                                                           |
+| `timeout`          | `5s`                                                     | Per-query timeout for GUAC API requests. Max 30s.                                                                                                  |
+| `fallback_policy`  | `warn`                                                   | Behavior when GUAC is unreachable: `allow` (skip), `warn` (default), `deny` (fail)                                                                 |
+| `checks`           | `["certify_vuln", "certify_scorecard", "is_dependency"]` | Which GUAC query types to run. See [verification.md](verification.md#guac-graph-for-understanding-artifact-composition) for details on each check. |
+| `max_dependencies` | `5`                                                      | Maximum number of dependency PURLs returned from the dependency query (1-20)                                                                       |
+
+The GUAC client has its own circuit breaker (separate from the per-registry
+breakers) using the global `circuit_breaker_threshold` and
+`circuit_breaker_cooldown` settings.
 
 See [operations.md](operations.md) for the metrics reference, config reload
 behavior, and health/readiness probes.

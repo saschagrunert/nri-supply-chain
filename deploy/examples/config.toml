@@ -86,6 +86,19 @@ circuit_breaker_cooldown = "30s"
 # tuf_mirror = "https://tuf-repo.github.com"
 # tuf_root = "/etc/sigstore/github-tuf-root.json"
 
+# GUAC (Graph for Understanding Artifact Composition) supplemental data source.
+# Queries a GUAC server in parallel with the OCI attestation fetch for
+# transitive dependency analysis, vulnerability correlation, and Scorecard.
+# GUAC is enabled when endpoint is set (no separate toggle).
+# [guac]
+# endpoint = "http://guac.internal:8080"
+# auth_token_path = "/var/run/secrets/guac/token"
+# ca_cert = "/etc/guac/ca.pem"
+# timeout = "5s"
+# fallback_policy = "warn"
+# max_dependencies = 5
+# checks = ["certify_vuln", "certify_scorecard", "is_dependency"]
+
 # Registry mirror with automatic fallback to the original registry.
 # When the mirror is unreachable, requests fall back to ghcr.io.
 # [[registries]]

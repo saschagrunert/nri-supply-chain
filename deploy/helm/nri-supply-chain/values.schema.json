@@ -124,6 +124,7 @@
           "type": "array",
           "items": { "$ref": "#/definitions/registry" }
         },
+        "guac": { "$ref": "#/definitions/guac" },
         "extraConfig": { "type": "string" }
       }
     },
@@ -168,6 +169,24 @@
         "mirror": { "type": "string" },
         "caCert": { "type": "string" },
         "insecure": { "type": "boolean" }
+      }
+    },
+    "guac": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "endpoint": { "type": "string" },
+        "authTokenPath": { "type": "string" },
+        "caCert": { "type": "string" },
+        "timeout": { "type": "string" },
+        "fallbackPolicy": { "enum": ["allow", "warn", "deny"] },
+        "maxDependencies": { "type": "integer", "minimum": 1, "maximum": 20 },
+        "checks": {
+          "type": "array",
+          "items": {
+            "enum": ["certify_vuln", "certify_scorecard", "is_dependency"]
+          }
+        }
       }
     },
     "service": {

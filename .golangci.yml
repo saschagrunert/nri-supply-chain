@@ -186,12 +186,18 @@ linters:
         - 'github\.com/saschagrunert/nri-supply-chain/internal/cel\..*'
         - 'github\.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported\.TokenRequestOptions'
         - 'github\.com/saschagrunert/nri-supply-chain/internal/registry\.acrHelper'
+        - 'github\.com/saschagrunert/nri-supply-chain/internal/config\.GUACConfig'
+        - 'github\.com/saschagrunert/nri-supply-chain/internal/verifier\.snapshot'
+        - 'github\.com/saschagrunert/nri-supply-chain/internal/guac\..*'
         - 'github\.com/saschagrunert/nri-supply-chain/internal/policy\..*'
         - 'github\.com/sigstore/sigstore-go/.*'
         - 'github\.com/sigstore/sigstore/.*'
         - 'github\.com/spf13/cobra\.Command'
         - 'log/slog\.HandlerOptions'
+        - 'crypto/tls\.Config'
+        - 'net/http\.Client'
         - 'net/http\.Server'
+        - 'net/http\.Transport'
     gocritic:
       enable-all: true
     goheader:

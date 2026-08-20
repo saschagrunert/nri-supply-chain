@@ -66,6 +66,8 @@ const (
 	CheckTypeRelease CheckType = "release"
 	// CheckTypeRuntimeTrace is the runtime trace check type.
 	CheckTypeRuntimeTrace CheckType = "runtimetrace"
+	// CheckTypeGUAC is the GUAC supplemental data check type.
+	CheckTypeGUAC CheckType = "guac"
 )
 
 // AttestationCheckTypes lists all check types that correspond to

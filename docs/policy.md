@@ -1292,6 +1292,14 @@ Each rule is an object with:
 | `runtimetrace.networkCount`    | int    | Number of network log entries                     |
 | `runtimetrace.fileAccessCount` | int    | Number of file access entries                     |
 | `runtimetrace.fileNames`       | string | Comma-separated file names from file accesses     |
+| `guac.available`               | bool   | Whether the GUAC server was reachable             |
+| `guac.vulnerabilities`         | list   | Direct vulnerabilities (id, package)              |
+| `guac.transitive_vulns`        | list   | Transitive vulnerabilities (same fields)          |
+| `guac.scorecard.aggregate`     | float  | OpenSSF Scorecard aggregate score                 |
+| `guac.scorecard.checks`        | map    | Individual Scorecard check scores                 |
+| `guac.scorecard.source`        | string | Source repository from the Scorecard              |
+| `guac.dependencies`            | list   | Transitive dependency PURLs (truncated by max)    |
+| `guac.dependency_count`        | int    | Total transitive dependencies (before truncation) |
 
 Standard string functions are available via `ext.Strings()`: `startsWith`,
 `endsWith`, `contains`, `matches`.

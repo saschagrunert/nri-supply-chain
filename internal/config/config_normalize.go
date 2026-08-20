@@ -17,6 +17,8 @@ package config
 import (
 	"log/slog"
 	"strings"
+
+	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
 // Normalize clamps fields to valid ranges. Call after Validate.
@@ -42,6 +44,13 @@ func (c *Config) Normalize() {
 	}
 
 	c.normalizeRegistryPrefixes()
+	c.normalizeGUAC()
+}
+
+func (c *Config) normalizeGUAC() {
+	if c.Guac.Enabled() && c.Guac.FallbackPolicy == "" {
+		c.Guac.FallbackPolicy = types.ActionWarn
+	}
 }
 
 // normalizeCacheTTLs clamps cache TTL fields and warns about edge cases.

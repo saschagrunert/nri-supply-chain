@@ -187,7 +187,7 @@ func getDefaultTransport() *http.Transport {
 }
 
 func newTLSConfig(insecure bool) *tls.Config {
-	return &tls.Config{ //nolint:exhaustruct // only setting relevant fields
+	return &tls.Config{
 		MinVersion:         tls.VersionTLS12,
 		InsecureSkipVerify: insecure, //nolint:gosec // controlled by user config
 	}
@@ -199,7 +199,7 @@ func newHTTPTransport(tlsCfg *tls.Config) *http.Transport {
 		KeepAlive: transportKeepAlive,
 	}
 
-	return &http.Transport{ //nolint:exhaustruct // only setting relevant fields
+	return &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		DialContext:           dialer.DialContext,
 		TLSClientConfig:       tlsCfg,

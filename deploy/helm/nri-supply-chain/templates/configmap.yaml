@@ -61,6 +61,22 @@ data:
     {{- end }}
     {{- end }}
     {{- end }}
+    {{- with .Values.config.guac }}
+    {{- if .endpoint }}
+    [guac]
+    endpoint = {{ .endpoint | quote }}
+    {{- with .authTokenPath }}
+    auth_token_path = {{ . | quote }}
+    {{- end }}
+    {{- with .caCert }}
+    ca_cert = {{ . | quote }}
+    {{- end }}
+    timeout = {{ .timeout | default "5s" | quote }}
+    fallback_policy = {{ .fallbackPolicy | default "warn" | quote }}
+    max_dependencies = {{ .maxDependencies | default 5 }}
+    checks = {{ .checks | default (list "certify_vuln" "certify_scorecard" "is_dependency") | toJson }}
+    {{- end }}
+    {{- end }}
     {{- range .Values.config.registries }}
     [[registries]]
     prefix = {{ .prefix | quote }}

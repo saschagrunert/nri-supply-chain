@@ -88,6 +88,14 @@ const (
 	defaultPollInterval = 5 * time.Minute
 	minPollInterval     = 30 * time.Second
 
+	defaultGUACTimeout        = 5 * time.Second
+	maxGUACTimeout            = 30 * time.Second
+	defaultGUACMaxDeps        = 5
+	maxGUACMaxDeps            = 20
+	guacCheckCertifyVuln      = "certify_vuln"
+	guacCheckCertifyScorecard = "certify_scorecard"
+	guacCheckIsDependency     = "is_dependency"
+
 	minAttestationSize = 1 << 20   // 1 MiB
 	maxAttestationSize = 100 << 20 // 100 MiB
 	// DefaultMaxAttestationSize is the default maximum attestation bundle
@@ -326,6 +334,47 @@ type Config struct {
 	// reference ("image@sha256:abc123..."). The digest is extracted and
 	// used for matching. Reloaded with the config on SIGHUP.
 	AllowlistDigests []string `toml:"allowlist_digests"`
+	// Guac configures GUAC (Graph for Understanding Artifact Composition)
+	// as a supplemental verification data source for transitive dependency
+	// analysis, vulnerability correlation, and Scorecard queries.
+	Guac GUACConfig `toml:"guac"`
+}
+
+// GUACConfig configures the GUAC supplemental data source.
+// GUAC is enabled when Endpoint is set (no separate "enabled" toggle).
+type GUACConfig struct {
+	// Endpoint is the GUAC API base URL (e.g. "http://guac.internal:8080").
+	// Setting this enables GUAC queries during verification.
+	Endpoint string `toml:"endpoint"`
+	// AuthTokenPath is the filesystem path to a bearer token file.
+	// The token is re-read on each request to support K8s secret rotation.
+	AuthTokenPath string `toml:"auth_token_path"`
+	// CACertPath is the path to a PEM-encoded CA certificate for TLS
+	// verification against a GUAC server with a private CA.
+	CACertPath string `toml:"ca_cert"`
+	// Timeout is the per-query timeout for GUAC API requests.
+	Timeout Duration `toml:"timeout"`
+	// FallbackPolicy controls behavior when GUAC is unreachable or returns
+	// an error. Valid values: "allow" (skip), "warn" (default), "deny" (fail).
+	FallbackPolicy types.Action `toml:"fallback_policy"`
+	// Checks lists which GUAC query types to run. Valid values:
+	// "certify_vuln", "certify_scorecard", "is_dependency".
+	Checks []string `toml:"checks"`
+	// MaxDependencies limits how many dependency PURLs are returned from
+	// the GUAC dependency query. Must be between 1 and 20.
+	MaxDependencies int `toml:"max_dependencies"`
+}
+
+// Enabled returns true when GUAC is configured (endpoint is set).
+func (g *GUACConfig) Enabled() bool {
+	return g.Endpoint != ""
+}
+
+// GUACValidChecks is the set of recognized GUAC check names.
+var GUACValidChecks = []string{ //nolint:gochecknoglobals // immutable registry
+	guacCheckCertifyVuln,
+	guacCheckCertifyScorecard,
+	guacCheckIsDependency,
 }
 
 // DefaultConfig returns the default configuration.
@@ -363,6 +412,16 @@ func DefaultConfig() *Config {
 		MaxAttestationSize: DefaultMaxAttestationSize,
 		CacheMaxEntries:    defaultCacheMaxEntries,
 		AllowlistDigests:   nil,
+		Guac: GUACConfig{
+			Timeout:        Duration{Duration: defaultGUACTimeout},
+			FallbackPolicy: types.ActionWarn,
+			Checks: []string{
+				guacCheckCertifyVuln,
+				guacCheckCertifyScorecard,
+				guacCheckIsDependency,
+			},
+			MaxDependencies: defaultGUACMaxDeps,
+		},
 	}
 }
 

@@ -12,6 +12,8 @@ events on [CRI-O](https://cri-o.io) or [containerd](https://containerd.io) and
 verifies SLSA provenance, VEX, VSA, Notation signatures, SBOM, SCAI,
 Source Track, Build Environment, Vulnerability Scan, and Test Result
 attestations, and CEL policy expressions before a container is allowed to run.
+It also integrates with [GUAC](https://guac.sh/) for transitive dependency
+analysis, vulnerability correlation, and OpenSSF Scorecard queries.
 
 Runtime-level enforcement cannot be bypassed by misconfigured admission
 webhooks, disabled policy controllers, or direct kubelet API calls. The plugin
@@ -259,6 +261,7 @@ flowchart TD
     Exclude{"Matches exclude\npattern?"}
     Rules["Per-image rule\nresolution"]
     Cache{"Cache hit?"}
+    GUAC["GUAC query\n(parallel)"]
     Fetch["Fetch attestations\n(OCI Referrers API +\ncosign tag fallback)"]
     VSA{"Trusted VSA?"}
     Parallel["SLSA + VEX + Notation + SBOM + SCAI\n+ Source + BuildEnv + VulnScan\n+ TestResult + Release\n+ RuntimeTrace (parallel)"]
@@ -267,6 +270,7 @@ flowchart TD
     Allow["Allow container"]
     Reject["Reject container"]
     Registry["OCI Registry"]
+    GUACServer["GUAC Server"]
 
     Runtime --> NRI --> Plugin --> Extract --> Policy --> Include
     Include -- no --> Allow
@@ -274,12 +278,14 @@ flowchart TD
     Exclude -- yes --> Allow
     Exclude -- no --> Rules --> Cache
     Cache -- hit --> Enforce
-    Cache -- miss --> Fetch
+    Cache -- miss --> GUAC & Fetch
+    GUAC <--> GUACServer
     Fetch <--> Registry
     Fetch --> VSA
-    VSA -- "PASSED" --> Enforce
+    VSA -- "PASSED (GUAC discarded)" --> Enforce
     VSA -- "FAILED" --> Enforce
     VSA -- "untrusted / stale / missing" --> Parallel
+    GUAC --> Parallel
     Parallel --> CEL --> Enforce
     Enforce -- pass --> Allow
     Enforce -- "fail (enforce mode)" --> Reject
@@ -305,7 +311,7 @@ restarted, avoiding a cold-cache fetch penalty.
 
 The plugin verifies SLSA provenance, VEX, VSA, Notation, SBOM, SCAI, Source
 Track, Build Environment, Vulnerability Scan, and Test Result attestations
-with optional CEL policy expressions. It extracts
+with optional CEL policy expressions and GUAC integration. It extracts
 image references and digests from CRI-O or containerd NRI annotations,
 resolves missing digests via registry HEAD requests, and applies per-namespace
 policies. VSA from a trusted verifier can short-circuit all other checks.
