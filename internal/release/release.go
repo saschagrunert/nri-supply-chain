@@ -47,10 +47,15 @@ type releasePredicate struct {
 }
 
 // Verify checks a single release attestation against the given policy.
-func Verify( //nolint:revive // ctx reserved for future context-aware logging
+func Verify(
 	ctx context.Context,
 	att []byte, pol *policy.Policy, imageDigest string,
 ) (*types.CheckResult, error) {
+	ctxErr := ctx.Err()
+	if ctxErr != nil {
+		return nil, fmt.Errorf("verification cancelled: %w", ctxErr)
+	}
+
 	predicate, err := intoto.VerifySubjectAndExtractPredicate(att, imageDigest)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidRelease, err)
@@ -70,6 +75,11 @@ func VerifyMultiple(
 	)
 
 	for _, att := range attestations {
+		ctxErr := ctx.Err()
+		if ctxErr != nil {
+			return nil, fmt.Errorf("verification cancelled: %w", ctxErr)
+		}
+
 		result, err := Verify(ctx, att, pol, imageDigest)
 		if err != nil {
 			parseErrors = append(parseErrors, err.Error())

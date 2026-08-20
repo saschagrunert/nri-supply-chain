@@ -125,83 +125,78 @@ func warnPermissiveFetchPolicy(ctx context.Context, cfg *config.Config) {
 
 //nolint:funlen // one entry per check type
 func warnPermissiveMissingPolicies(ctx context.Context, label string, pol *policy.Policy) {
-	checks := []struct {
+	type checkEntry struct {
 		name, artifact, logKey, setting string
 		enabled                         bool
-		action                          types.Action
-	}{
+		checkType                       types.CheckType
+	}
+
+	checks := []checkEntry{
 		{
-			"SLSA", "SLSA provenance attestations", "slsa_missing_policy", "missingPolicy",
-			true, pol.SLSAMissingPolicy(),
+			"SLSA", "SLSA provenance attestations",
+			"slsa_missing_policy", "missingPolicy",
+			true, types.CheckTypeSLSA,
 		},
 		{
-			"VEX", "VEX attestations", "vex_missing_policy", "vex.missingPolicy",
-			true, pol.VEXMissingPolicy(),
+			"VEX", "VEX attestations",
+			"vex_missing_policy", "vex.missingPolicy",
+			true, types.CheckTypeVEX,
 		},
 		{
-			"Notation", "Notation signatures", "notation_missing_policy", "notation.missingPolicy",
-			pol.Notation != nil, pol.NotationMissingPolicy(),
+			"Notation", "Notation signatures",
+			"notation_missing_policy", "notation.missingPolicy",
+			pol.Notation != nil, types.CheckTypeNotation,
 		},
 		{
-			"SBOM", "SBOM attestations", "sbom_missing_policy", "sbom.missingPolicy",
-			pol.SBOM != nil, pol.SBOMMissingPolicy(),
+			"SBOM", "SBOM attestations",
+			"sbom_missing_policy", "sbom.missingPolicy",
+			pol.SBOM != nil, types.CheckTypeSBOM,
 		},
 		{
-			"VSA", "VSA attestations", "vsa_missing_policy", "vsa.missingPolicy",
-			pol.VSA != nil, pol.VSAMissingPolicy(),
+			"VSA", "VSA attestations",
+			"vsa_missing_policy", "vsa.missingPolicy",
+			pol.VSA != nil, types.CheckTypeVSA,
 		},
 		{
-			"SCAI", "SCAI attestations", "scai_missing_policy", "scai.missingPolicy",
-			pol.SCAI != nil, pol.SCAIMissingPolicy(),
+			"SCAI", "SCAI attestations",
+			"scai_missing_policy", "scai.missingPolicy",
+			pol.SCAI != nil, types.CheckTypeSCAI,
 		},
 		{
-			"Source", "source attestations", "source_missing_policy", "source.missingPolicy",
-			pol.Source != nil, pol.SourceMissingPolicy(),
+			"Source", "source attestations",
+			"source_missing_policy", "source.missingPolicy",
+			pol.Source != nil, types.CheckTypeSource,
 		},
 		{
-			"BuildEnv",
-			"build environment attestations",
-			"buildenv_missing_policy",
-			"buildEnv.missingPolicy",
-			pol.BuildEnv != nil,
-			pol.BuildEnvMissingPolicy(),
+			"BuildEnv", "build environment attestations",
+			"buildenv_missing_policy", "buildEnv.missingPolicy",
+			pol.BuildEnv != nil, types.CheckTypeBuildEnv,
 		},
 		{
-			"VulnScan",
-			"vulnerability scan attestations",
-			"vulnscan_missing_policy",
-			"vulnScan.missingPolicy",
-			pol.VulnScan != nil,
-			pol.VulnScanMissingPolicy(),
+			"VulnScan", "vulnerability scan attestations",
+			"vulnscan_missing_policy", "vulnScan.missingPolicy",
+			pol.VulnScan != nil, types.CheckTypeVulnScan,
 		},
 		{
-			"TestResult",
-			"test result attestations",
-			"testresult_missing_policy",
-			"testResult.missingPolicy",
-			pol.TestResult != nil,
-			pol.TestResultMissingPolicy(),
+			"TestResult", "test result attestations",
+			"testresult_missing_policy", "testResult.missingPolicy",
+			pol.TestResult != nil, types.CheckTypeTestResult,
 		},
 		{
-			"Release",
-			"release attestations",
-			"release_missing_policy",
-			"release.missingPolicy",
-			pol.Release != nil,
-			pol.ReleaseMissingPolicy(),
+			"Release", "release attestations",
+			"release_missing_policy", "release.missingPolicy",
+			pol.Release != nil, types.CheckTypeRelease,
 		},
 		{
-			"RuntimeTrace",
-			"runtime trace attestations",
-			"runtimetrace_missing_policy",
-			"runtimeTrace.missingPolicy",
-			pol.RuntimeTrace != nil,
-			pol.RuntimeTraceMissingPolicy(),
+			"RuntimeTrace", "runtime trace attestations",
+			"runtimetrace_missing_policy", "runtimeTrace.missingPolicy",
+			pol.RuntimeTrace != nil, types.CheckTypeRuntimeTrace,
 		},
 	}
 
 	for _, chk := range checks {
-		if !chk.enabled || chk.action != types.ActionAllow {
+		action := pol.MissingPolicyFor(chk.checkType)
+		if !chk.enabled || action != types.ActionAllow {
 			continue
 		}
 
@@ -210,7 +205,7 @@ func warnPermissiveMissingPolicies(ctx context.Context, label string, pol *polic
 				"containers without %s; consider setting %s=deny",
 				chk.name, chk.artifact, chk.setting),
 			"policy", label,
-			chk.logKey, chk.action,
+			chk.logKey, action,
 		)
 	}
 }

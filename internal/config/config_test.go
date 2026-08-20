@@ -3315,3 +3315,100 @@ allowlist_digests = [
 	testutil.AssertNoError(t, err)
 	testutil.AssertEqual(t, 2, len(cfg.AllowlistDigests))
 }
+
+func TestConfigValidateFetchFailurePolicyAllowInEnforceMode(t *testing.T) {
+	t.Parallel()
+
+	t.Run("allow accepted in enforce mode with warning", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeEnforce
+		cfg.FetchFailurePolicy = types.ActionAllow
+
+		err := cfg.Validate()
+		testutil.AssertNoError(t, err)
+	})
+
+	t.Run("allow accepted in warn mode", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.FetchFailurePolicy = types.ActionAllow
+
+		err := cfg.Validate()
+		testutil.AssertNoError(t, err)
+	})
+
+	t.Run("deny accepted in enforce mode", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeEnforce
+		cfg.FetchFailurePolicy = types.ActionDeny
+
+		err := cfg.Validate()
+		testutil.AssertNoError(t, err)
+	})
+}
+
+func TestConfigValidateIssuersWithoutSANPatternsInEnforceMode(t *testing.T) {
+	t.Parallel()
+
+	t.Run("rejected in enforce mode", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeEnforce
+		cfg.Policy.Source = config.PolicySourceOCI
+		cfg.Policy.OCIRef = testOCIRef
+		cfg.Policy.Issuers = []string{testIssuerGoogle}
+
+		err := cfg.Validate()
+		testutil.AssertErrorIs(t, err, config.ErrIssuersWithoutSANPatternsInEnforce)
+	})
+
+	t.Run("accepted in warn mode", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.Policy.Source = config.PolicySourceOCI
+		cfg.Policy.OCIRef = testOCIRef
+		cfg.Policy.Issuers = []string{testIssuerGoogle}
+
+		err := cfg.Validate()
+		if errors.Is(err, config.ErrIssuersWithoutSANPatternsInEnforce) {
+			t.Error("should not reject in warn mode")
+		}
+	})
+
+	t.Run("accepted with SAN patterns in enforce mode", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeEnforce
+		cfg.Policy.Source = config.PolicySourceOCI
+		cfg.Policy.OCIRef = testOCIRef
+		cfg.Policy.Issuers = []string{testIssuerGoogle}
+		cfg.Policy.SANPatterns = []string{testSANPattern}
+
+		err := cfg.Validate()
+		if errors.Is(err, config.ErrIssuersWithoutSANPatternsInEnforce) {
+			t.Error("should not reject when SAN patterns are provided")
+		}
+	})
+
+	t.Run("accepted without issuers in enforce mode", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeEnforce
+
+		err := cfg.Validate()
+		if errors.Is(err, config.ErrIssuersWithoutSANPatternsInEnforce) {
+			t.Error("should not reject when no issuers are configured")
+		}
+	})
+}

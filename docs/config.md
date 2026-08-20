@@ -351,8 +351,9 @@ san_patterns = ["policy-signer@myorg.iam.gserviceaccount.com"]
 
 The `issuers` and `keys` fields are mutually exclusive: set `issuers` for
 keyless (OIDC-based) verification or `keys` for key-based verification, but not
-both. The `san_patterns` field requires `issuers` to be set. Key paths must be
-absolute.
+both. The `san_patterns` field requires `issuers` to be set. In enforce mode,
+configuring `issuers` without `san_patterns` is rejected at validation. Key
+paths must be absolute.
 
 When trust material is configured but the policy source is not `oci`, a warning
 is logged but no error is returned (signature verification only applies to OCI

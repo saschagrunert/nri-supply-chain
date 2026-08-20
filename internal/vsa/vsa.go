@@ -108,13 +108,18 @@ type VerifyResult struct {
 // Verify checks a VSA attestation against the given policy.
 // HardReject is true when a trusted verifier reports FAILED, preventing fallback to direct verification.
 // When parsedImageRef is non-nil it is used instead of re-parsing imageRef.
-func Verify( //nolint:revive // ctx reserved for future context-aware logging
+func Verify( //nolint:cyclop,funlen // ctx cancellation check adds a branch and lines
 	ctx context.Context,
 	att []byte,
 	pol *policy.Policy,
 	imageRef string,
 	parsedImageRef name.Reference,
 ) (*VerifyResult, error) {
+	ctxErr := ctx.Err()
+	if ctxErr != nil {
+		return nil, fmt.Errorf("verification cancelled: %w", ctxErr)
+	}
+
 	var stmt Statement
 
 	err := json.Unmarshal(att, &stmt)

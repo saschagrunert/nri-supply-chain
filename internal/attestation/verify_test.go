@@ -512,27 +512,10 @@ func TestResetPEMKeyCacheClearsEntries(t *testing.T) {
 		t.Fatalf("writing replacement key: %v", err)
 	}
 
-	// Without reset, the cached (old) key is still returned.
-	cachedKey, err := attestation.ExportLoadPublicKeyFromPEM(keyPath)
-	if err != nil {
-		t.Fatalf("load before reset: %v", err)
-	}
-
-	cachedDER, err := x509.MarshalPKIXPublicKey(cachedKey)
-	if err != nil {
-		t.Fatalf("marshalling cached key: %v", err)
-	}
-
-	if bytes.Equal(cachedDER, newPubDER) {
-		t.Fatal("cache returned the new key before reset")
-	}
-
-	attestation.ResetPEMKeyCache()
-
-	// After reset, the new key is loaded from disk.
+	// Content-hash-based cache detects the file change immediately.
 	freshKey, err := attestation.ExportLoadPublicKeyFromPEM(keyPath)
 	if err != nil {
-		t.Fatalf("load after reset: %v", err)
+		t.Fatalf("load after overwrite: %v", err)
 	}
 
 	freshDER, err := x509.MarshalPKIXPublicKey(freshKey)
@@ -541,6 +524,23 @@ func TestResetPEMKeyCacheClearsEntries(t *testing.T) {
 	}
 
 	if !bytes.Equal(freshDER, newPubDER) {
+		t.Fatal("expected new key after file overwrite, got stale cached key")
+	}
+
+	// ResetPEMKeyCache still works (clears all entries).
+	attestation.ResetPEMKeyCache()
+
+	reloadedKey, err := attestation.ExportLoadPublicKeyFromPEM(keyPath)
+	if err != nil {
+		t.Fatalf("load after reset: %v", err)
+	}
+
+	reloadedDER, err := x509.MarshalPKIXPublicKey(reloadedKey)
+	if err != nil {
+		t.Fatalf("marshalling reloaded key: %v", err)
+	}
+
+	if !bytes.Equal(reloadedDER, newPubDER) {
 		t.Fatal("expected new key after cache reset, got stale cached key")
 	}
 }

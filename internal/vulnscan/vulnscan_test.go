@@ -880,3 +880,19 @@ func TestVerifyIgnoreCVEsWithMinSeverity(t *testing.T) {
 		t.Errorf("expected pass when all CVEs are ignored, got: %s", result.Detail)
 	}
 }
+
+func TestVerifyCancelledContext(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := vulnscan.Verify(ctx, nil, nil, "")
+	if err == nil {
+		t.Fatal("expected error for cancelled context")
+	}
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got: %v", err)
+	}
+}

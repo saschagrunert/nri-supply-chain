@@ -145,6 +145,11 @@ func verifySignatures(
 	var failReasons []string
 
 	for idx := range signatures {
+		ctxErr := ctx.Err()
+		if ctxErr != nil {
+			return nil, fmt.Errorf("verification cancelled: %w", ctxErr)
+		}
+
 		result := verifySignatureEntry(
 			ctx,
 			notationVerifier,

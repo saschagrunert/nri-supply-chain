@@ -17,10 +17,8 @@ package sbom
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"maps"
 	"strings"
 
@@ -32,12 +30,6 @@ import (
 const checkType = types.CheckTypeSBOM
 
 const noAssertionLicense = "NOASSERTION"
-
-const (
-	severityRankMedium   = 2
-	severityRankHigh     = 3
-	severityRankCritical = 4
-)
 
 var (
 	// ErrInvalidSBOM indicates the SBOM document could not be parsed.
@@ -57,84 +49,7 @@ var (
 
 	// ErrComponentNotAllowed indicates the SBOM contains a component not in the allow list.
 	ErrComponentNotAllowed = errors.New("component not in allow list")
-
-	// errNotSPDX indicates the document is not a valid SPDX 2.x document.
-	errNotSPDX = errors.New("no packages found, not a valid SPDX document")
-
-	// errNotSPDX3 indicates the document is not a valid SPDX 3.0 document.
-	errNotSPDX3 = errors.New("not a valid SPDX 3.0 document")
-
-	// errNotCycloneDX indicates the document is not a valid CycloneDX document.
-	errNotCycloneDX = errors.New("no components found, not a valid CycloneDX document")
 )
-
-// spdxDocument represents the subset of an SPDX 2.3 JSON document needed for
-// license and component deny-list checks.
-type spdxDocument struct {
-	SPDXVersion string        `json:"spdxVersion"`
-	Packages    []spdxPackage `json:"packages"`
-}
-
-type spdxPackage struct {
-	Name             string            `json:"name"`
-	LicenseConcluded string            `json:"licenseConcluded"`
-	LicenseDeclared  string            `json:"licenseDeclared"`
-	ExternalRefs     []spdxExternalRef `json:"externalRefs"`
-	Checksums        []spdxChecksum    `json:"checksums"`
-}
-
-type spdxExternalRef struct {
-	ReferenceCategory string `json:"referenceCategory"`
-	ReferenceType     string `json:"referenceType"`
-	ReferenceLocator  string `json:"referenceLocator"`
-}
-
-type spdxChecksum struct {
-	Algorithm string `json:"algorithm"`
-	Value     string `json:"checksumValue"`
-}
-
-// severityRank maps CVSS severity strings to numeric ranks for comparison.
-var severityRank = map[string]int{ //nolint:gochecknoglobals // immutable lookup table
-	"none":     0,
-	"low":      1,
-	"medium":   severityRankMedium,
-	"high":     severityRankHigh,
-	"critical": severityRankCritical,
-}
-
-// cyclonedxBOM represents the subset of a CycloneDX 1.x JSON BOM needed
-// for license and component deny-list checks.
-type cyclonedxBOM struct {
-	Components      []cyclonedxComponent     `json:"components"`
-	Vulnerabilities []cyclonedxVulnerability `json:"vulnerabilities"`
-}
-
-type cyclonedxVulnerability struct {
-	ID      string            `json:"id"`
-	Ratings []cyclonedxRating `json:"ratings"`
-}
-
-type cyclonedxRating struct {
-	Score    *float64 `json:"score"`
-	Severity string   `json:"severity"`
-	Method   string   `json:"method"`
-}
-
-type cyclonedxComponent struct {
-	Name     string             `json:"name"`
-	PURL     string             `json:"purl"`
-	Licenses []cyclonedxLicense `json:"licenses"`
-}
-
-type cyclonedxLicense struct {
-	License *cyclonedxLicenseRef `json:"license,omitempty"`
-}
-
-type cyclonedxLicenseRef struct {
-	ID   string `json:"id,omitempty"`
-	Name string `json:"name,omitempty"`
-}
 
 type sbomData struct {
 	licenses       []string
@@ -146,10 +61,15 @@ type sbomData struct {
 }
 
 // Verify checks a single SBOM attestation against the given policy.
-func Verify( //nolint:revive // ctx reserved for future context-aware logging
+func Verify(
 	ctx context.Context,
 	att []byte, pol *policy.Policy, imageDigest string,
 ) (*types.CheckResult, error) {
+	ctxErr := ctx.Err()
+	if ctxErr != nil {
+		return nil, fmt.Errorf("verification cancelled: %w", ctxErr)
+	}
+
 	predicate, err := intoto.VerifySubjectAndExtractPredicate(att, imageDigest)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidSBOM, err)
@@ -172,6 +92,11 @@ func VerifyMultiple( //nolint:cyclop // metadata accumulation adds branches
 	)
 
 	for _, att := range attestations {
+		ctxErr := ctx.Err()
+		if ctxErr != nil {
+			return nil, fmt.Errorf("verification cancelled: %w", ctxErr)
+		}
+
 		result, err := Verify(ctx, att, pol, imageDigest)
 		if err != nil {
 			verifyErrors = append(verifyErrors, err.Error())
@@ -303,208 +228,6 @@ func formatAllowed(pol *policy.Policy, format string) bool {
 	}
 
 	return false
-}
-
-func parseSPDX(data []byte) (sbomData, error) {
-	var doc spdxDocument
-
-	err := json.Unmarshal(data, &doc)
-	if err != nil {
-		return sbomData{}, fmt.Errorf("parsing SPDX: %w", err)
-	}
-
-	if doc.SPDXVersion == "" || len(doc.Packages) == 0 {
-		return sbomData{}, errNotSPDX
-	}
-
-	var result sbomData
-
-	for idx := range doc.Packages {
-		pkg := &doc.Packages[idx]
-		result.licenses = appendSPDXLicenses(result.licenses, pkg)
-		result.purls = appendSPDXPURLs(result.purls, pkg)
-	}
-
-	uniqueLicenses := make(map[string]struct{}, len(result.licenses))
-	for _, lic := range result.licenses {
-		uniqueLicenses[lic] = struct{}{}
-	}
-
-	result.componentCount = len(doc.Packages)
-	result.licenseCount = len(uniqueLicenses)
-
-	return result, nil
-}
-
-func appendSPDXLicenses(licenses []string, pkg *spdxPackage) []string {
-	if pkg.LicenseConcluded != "" && pkg.LicenseConcluded != noAssertionLicense {
-		licenses = append(licenses, pkg.LicenseConcluded)
-	}
-
-	if pkg.LicenseDeclared != "" && pkg.LicenseDeclared != noAssertionLicense {
-		licenses = append(licenses, pkg.LicenseDeclared)
-	}
-
-	return licenses
-}
-
-func appendSPDXPURLs(purls []string, pkg *spdxPackage) []string {
-	for idx := range pkg.ExternalRefs {
-		ref := &pkg.ExternalRefs[idx]
-
-		if ref.ReferenceType == "purl" && ref.ReferenceLocator != "" {
-			purls = append(purls, ref.ReferenceLocator)
-		}
-	}
-
-	return purls
-}
-
-func parseCycloneDX(data []byte) (sbomData, error) {
-	var bom cyclonedxBOM
-
-	err := json.Unmarshal(data, &bom)
-	if err != nil {
-		return sbomData{}, fmt.Errorf("parsing CycloneDX: %w", err)
-	}
-
-	if len(bom.Components) == 0 {
-		return sbomData{}, errNotCycloneDX
-	}
-
-	var result sbomData
-
-	uniqueLicenses := make(map[string]struct{})
-
-	for idx := range bom.Components {
-		comp := &bom.Components[idx]
-
-		for lidx := range comp.Licenses {
-			lic := &comp.Licenses[lidx]
-			if lic.License == nil {
-				continue
-			}
-
-			if lic.License.ID != "" {
-				result.licenses = append(result.licenses, lic.License.ID)
-				uniqueLicenses[lic.License.ID] = struct{}{}
-			} else if lic.License.Name != "" {
-				result.licenses = append(result.licenses, lic.License.Name)
-				uniqueLicenses[lic.License.Name] = struct{}{}
-			}
-		}
-
-		if comp.PURL != "" {
-			result.purls = append(result.purls, comp.PURL)
-		}
-	}
-
-	result.componentCount = len(bom.Components)
-	result.licenseCount = len(uniqueLicenses)
-	result.vulns = bom.Vulnerabilities
-
-	return result, nil
-}
-
-// spdx3Document represents an SPDX 3.0 JSON-LD document. SPDX 3.0 uses
-// a flat element graph with typed entries instead of nested packages.
-type spdx3Document struct {
-	Context  string         `json:"@context,omitempty"`
-	Type     string         `json:"@type,omitempty"`
-	SpdxID   string         `json:"spdxId,omitempty"` //nolint:tagliatelle // SPDX spec field name
-	SpecVer  string         `json:"specVersion,omitempty"`
-	Elements []spdx3Element `json:"@graph,omitempty"`
-}
-
-type spdx3Element struct {
-	Type                string               `json:"@type,omitempty"`
-	Name                string               `json:"name,omitempty"`
-	ExternalIdentifiers []spdx3ExtIdentifier `json:"externalIdentifier,omitempty"`
-	DeclaredLicense     string               `json:"declaredLicense,omitempty"`
-	ConcludedLicense    string               `json:"concludedLicense,omitempty"`
-}
-
-type spdx3ExtIdentifier struct {
-	Type       string `json:"@type,omitempty"`
-	IDType     string `json:"externalIdentifierType,omitempty"`
-	Identifier string `json:"identifier,omitempty"`
-}
-
-func parseSPDX3(data []byte) (sbomData, error) { //nolint:cyclop // iterates element types
-	var doc spdx3Document
-
-	err := json.Unmarshal(data, &doc)
-	if err != nil {
-		return sbomData{}, fmt.Errorf("parsing SPDX 3.0: %w", err)
-	}
-
-	if !isSPDX3(&doc) {
-		return sbomData{}, errNotSPDX3
-	}
-
-	var result sbomData
-
-	uniqueLicenses := make(map[string]struct{})
-	packageCount := 0
-
-	for idx := range doc.Elements {
-		elem := &doc.Elements[idx]
-
-		if !isSPDX3Package(elem.Type) {
-			continue
-		}
-
-		packageCount++
-
-		if elem.ConcludedLicense != "" && elem.ConcludedLicense != noAssertionLicense {
-			result.licenses = append(result.licenses, elem.ConcludedLicense)
-			uniqueLicenses[elem.ConcludedLicense] = struct{}{}
-		}
-
-		if elem.DeclaredLicense != "" && elem.DeclaredLicense != noAssertionLicense {
-			result.licenses = append(result.licenses, elem.DeclaredLicense)
-			uniqueLicenses[elem.DeclaredLicense] = struct{}{}
-		}
-
-		for eidx := range elem.ExternalIdentifiers {
-			eid := &elem.ExternalIdentifiers[eidx]
-			if isSPDX3PURL(eid) && eid.Identifier != "" {
-				result.purls = append(result.purls, eid.Identifier)
-			}
-		}
-	}
-
-	if packageCount == 0 {
-		return sbomData{}, errNotSPDX3
-	}
-
-	result.componentCount = packageCount
-	result.licenseCount = len(uniqueLicenses)
-
-	return result, nil
-}
-
-func isSPDX3(doc *spdx3Document) bool {
-	if strings.HasPrefix(doc.SpecVer, "3.") {
-		return true
-	}
-
-	if strings.Contains(doc.Context, "spdx.org") && len(doc.Elements) > 0 {
-		return true
-	}
-
-	return false
-}
-
-func isSPDX3Package(elemType string) bool {
-	return strings.EqualFold(elemType, "software_SoftwarePackage") ||
-		strings.EqualFold(elemType, "SoftwarePackage") ||
-		strings.EqualFold(elemType, "software:SoftwarePackage")
-}
-
-func isSPDX3PURL(eid *spdx3ExtIdentifier) bool {
-	return strings.EqualFold(eid.IDType, "packageUrl") ||
-		strings.EqualFold(eid.IDType, "purl")
 }
 
 func checkDenyLists(
@@ -717,173 +440,6 @@ func componentInList(purl string, list []string) bool {
 	}
 
 	return false
-}
-
-type vulnAggregate struct {
-	maxScore    float64
-	maxSeverity string
-}
-
-func checkCVSSThresholds(
-	vulns []cyclonedxVulnerability, cvssPolicy *policy.SBOMCVSSPolicy,
-) *types.CheckResult {
-	cached, meta := computeVulnAggregates(vulns)
-
-	violation := findThresholdViolation(vulns, cached, cvssPolicy)
-	if violation != "" {
-		result := check.Fail(violation)
-		result.Metadata = meta
-
-		return result
-	}
-
-	result := check.Pass()
-	result.Metadata = meta
-
-	return result
-}
-
-// computeVulnAggregates computes statistics across ALL vulnerabilities,
-// including ignored CVEs, so they remain visible in CEL rules.
-func computeVulnAggregates(
-	vulns []cyclonedxVulnerability,
-) (cached []vulnAggregate, meta map[string]any) {
-	var (
-		globalMaxScore float64
-		criticalCount  int64
-		highCount      int64
-		mediumCount    int64
-	)
-
-	cached = make([]vulnAggregate, len(vulns))
-
-	for idx := range vulns {
-		score, sev := aggregateRatings(vulns[idx].Ratings)
-		cached[idx] = vulnAggregate{maxScore: score, maxSeverity: sev}
-
-		if score > globalMaxScore {
-			globalMaxScore = score
-		}
-
-		switch sevRank := severityRank[strings.ToLower(sev)]; {
-		case sevRank >= severityRankCritical:
-			criticalCount++
-		case sevRank >= severityRankHigh:
-			highCount++
-		case sevRank >= severityRankMedium:
-			mediumCount++
-		}
-	}
-
-	meta = map[string]any{
-		"cvssMax":           globalMaxScore,
-		"cvssCriticalCount": criticalCount,
-		"cvssHighCount":     highCount,
-		"cvssMediumCount":   mediumCount,
-	}
-
-	return cached, meta
-}
-
-func findThresholdViolation(
-	vulns []cyclonedxVulnerability,
-	cached []vulnAggregate,
-	cvssPolicy *policy.SBOMCVSSPolicy,
-) string {
-	ignoredCVEs := make(map[string]bool, len(cvssPolicy.IgnoreCVEs))
-	for _, cve := range cvssPolicy.IgnoreCVEs {
-		ignoredCVEs[cve] = true
-	}
-
-	minSeverityRank := 0
-	if cvssPolicy.MinSeverity != "" {
-		minSeverityRank = severityRank[strings.ToLower(cvssPolicy.MinSeverity)]
-	}
-
-	for idx := range vulns {
-		if ignoredCVEs[vulns[idx].ID] {
-			continue
-		}
-
-		agg := &cached[idx]
-		exceeded := false
-
-		if cvssPolicy.MaxScore != nil && agg.maxScore > *cvssPolicy.MaxScore {
-			exceeded = true
-		}
-
-		vulnSevRank := severityRank[strings.ToLower(agg.maxSeverity)]
-		if cvssPolicy.MinSeverity != "" && vulnSevRank >= minSeverityRank {
-			exceeded = true
-		}
-
-		if exceeded {
-			return fmt.Sprintf(
-				"CVSS threshold exceeded: %s (score %.1f, severity %s)",
-				vulns[idx].ID, agg.maxScore, strings.ToLower(agg.maxSeverity),
-			)
-		}
-	}
-
-	return ""
-}
-
-func aggregateRatings(ratings []cyclonedxRating) (maxScore float64, maxSeverity string) {
-	maxSevRank := -1
-
-	for idx := range ratings {
-		rating := &ratings[idx]
-
-		if rating.Score != nil && *rating.Score > maxScore {
-			maxScore = *rating.Score
-		}
-
-		sev := strings.ToLower(rating.Severity)
-
-		rank, known := severityRank[sev]
-		if !known && rating.Severity != "" {
-			slog.Warn("Unrecognized CVSS severity, treating as none",
-				"severity", rating.Severity)
-		}
-
-		if rank > maxSevRank {
-			maxSevRank = rank
-			maxSeverity = rating.Severity
-		}
-	}
-
-	if maxSeverity == "" {
-		maxSeverity = "none"
-	}
-
-	return maxScore, maxSeverity
-}
-
-func mergeCVSSMeta(dst, src map[string]any) { //nolint:cyclop // type assertions on known keys
-	for key, val := range src {
-		existing, hasPrev := dst[key]
-		if !hasPrev {
-			dst[key] = val
-
-			continue
-		}
-
-		switch key {
-		case "cvssMax":
-			if srcScore, ok := val.(float64); ok {
-				if dstScore, ok := existing.(float64); ok && srcScore > dstScore {
-					dst[key] = srcScore
-				}
-			}
-		case "cvssCriticalCount", "cvssHighCount", "cvssMediumCount":
-			if srcCount, ok := val.(int64); ok {
-				if dstCount, ok := existing.(int64); ok {
-					dst[key] = dstCount + srcCount
-				}
-			}
-		default:
-		}
-	}
 }
 
 var check = types.Checker{ //nolint:gochecknoglobals,gosec // package-scoped helper

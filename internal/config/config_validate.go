@@ -406,6 +406,13 @@ func (c *Config) validateFetchAndCache() error {
 		errs = append(errs, fmt.Errorf("validating config: %w", err))
 	}
 
+	if c.Verification == ModeEnforce && c.FetchFailurePolicy == types.ActionAllow {
+		slog.Warn(
+			"fetch_failure_policy \"allow\" in enforce mode lets unverified " +
+				"containers through on fetch errors; consider \"deny\" or \"warn\"",
+		)
+	}
+
 	errs = append(errs, c.validateTimeoutFields()...)
 
 	err = c.validateCacheFields()
@@ -733,7 +740,11 @@ func (c *Config) validatePolicySignatureFields() []error {
 	errs = append(errs, validatePolicySignatureEntries(&c.Policy)...)
 	errs = append(errs, validatePolicyKeyPaths(c.Policy.Keys)...)
 	warnSignatureSourceMismatch(c, len(errs) == 0)
-	warnIssuersWithoutSANPatterns(c, len(errs) == 0)
+
+	sanErr := warnOrRejectIssuersWithoutSANPatterns(c, len(errs) == 0)
+	if sanErr != nil {
+		errs = append(errs, sanErr)
+	}
 
 	return errs
 }
@@ -795,17 +806,23 @@ func warnSignatureSourceMismatch(cfg *Config, valid bool) {
 	}
 }
 
-func warnIssuersWithoutSANPatterns(cfg *Config, valid bool) {
+func warnOrRejectIssuersWithoutSANPatterns(cfg *Config, valid bool) error {
 	if !valid || !cfg.Policy.SignatureVerificationRequired() {
-		return
+		return nil
 	}
 
 	if len(cfg.Policy.Issuers) > 0 && len(cfg.Policy.SANPatterns) == 0 {
+		if cfg.Verification == ModeEnforce {
+			return ErrIssuersWithoutSANPatternsInEnforce
+		}
+
 		slog.Warn(
 			"policy.issuers is set without policy.san_patterns; " +
 				"any identity from the configured issuers will be accepted",
 		)
 	}
+
+	return nil
 }
 
 func (c *Config) validateAllowlistDigests() []error {

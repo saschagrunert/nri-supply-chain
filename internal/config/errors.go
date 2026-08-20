@@ -215,4 +215,11 @@ var (
 
 	// ErrAllowlistDigestInvalid indicates an allowlist_digests entry is not a valid OCI digest.
 	ErrAllowlistDigestInvalid = errors.New("invalid allowlist digest")
+
+	// ErrIssuersWithoutSANPatternsInEnforce indicates that policy.issuers is
+	// set without policy.san_patterns in enforce mode, which accepts any
+	// certificate identity from the configured issuers.
+	ErrIssuersWithoutSANPatternsInEnforce = errors.New(
+		"policy.issuers requires policy.san_patterns in enforce mode",
+	)
 )

@@ -43,6 +43,28 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/vulnscan"
 )
 
+// payloadVerifyFunc is the shared signature for attestation check packages
+// that operate on raw payloads (as opposed to SLSA/VEX/Notation which need
+// additional parameters).
+type payloadVerifyFunc func(
+	ctx context.Context, payloads [][]byte,
+	pol *policy.Policy, imageDigest string,
+) (*types.CheckResult, error)
+
+var payloadVerifiers = []struct { //nolint:gochecknoglobals // immutable registry
+	checkType types.CheckType
+	verify    payloadVerifyFunc
+}{
+	{types.CheckTypeSBOM, sbom.VerifyMultiple},
+	{types.CheckTypeSCAI, scai.VerifyMultiple},
+	{types.CheckTypeSource, source.VerifyMultiple},
+	{types.CheckTypeBuildEnv, buildenv.VerifyMultiple},
+	{types.CheckTypeVulnScan, vulnscan.VerifyMultiple},
+	{types.CheckTypeTestResult, testresult.VerifyMultiple},
+	{types.CheckTypeRelease, release.VerifyMultiple},
+	{types.CheckTypeRuntimeTrace, runtimetrace.VerifyMultiple},
+}
+
 func runChecks(
 	ctx context.Context, state *snapshot,
 	pol *policy.Policy, imageRef, digest, indexDigest, namespace string,
@@ -150,7 +172,7 @@ func runChecksWithoutFetcher(
 ) *types.Result {
 	detail := "no attestation fetcher configured for image " + imageRef
 
-	vsaMissing := pol.VSAMissingPolicy()
+	vsaMissing := pol.MissingPolicyFor(types.CheckTypeVSA)
 
 	met.VerificationDuration.WithLabelValues(string(types.CheckTypeVSA)).Observe(0)
 
@@ -354,25 +376,27 @@ func checkVSA(
 	return nil
 }
 
-//nolint:funlen // table-driven dispatch over all check types
-func runParallelChecks(
+func runParallelChecks( //nolint:funlen // table-driven dispatch over all check types
 	ctx context.Context, bins attestationBins,
 	pol *policy.Policy, met *metrics.Metrics,
 	imageRef, digest string,
 	parsedRef name.Reference,
 ) *types.Result {
-	checks := []struct {
+	type checkEntry struct {
 		checkType types.CheckType
 		fn        func() *types.CheckResult
-	}{
-		{types.CheckTypeSLSA, func() *types.CheckResult {
+	}
+
+	checks := make([]checkEntry, 0, 3+len(payloadVerifiers)) //nolint:mnd // 3 = SLSA+VEX+Notation
+	checks = append(checks,
+		checkEntry{types.CheckTypeSLSA, func() *types.CheckResult {
 			return runAttestationCheck(
 				ctx, types.CheckTypeSLSA, bins[types.CheckTypeSLSA], pol, met, imageRef,
 				func() (*types.CheckResult, error) {
 					return slsa.VerifyMultiple(ctx, bins[types.CheckTypeSLSA], pol, digest)
 				})
 		}},
-		{types.CheckTypeVEX, func() *types.CheckResult {
+		checkEntry{types.CheckTypeVEX, func() *types.CheckResult {
 			return runAttestationCheck(
 				ctx, types.CheckTypeVEX, bins[types.CheckTypeVEX], pol, met, imageRef,
 				func() (*types.CheckResult, error) {
@@ -382,7 +406,7 @@ func runParallelChecks(
 					)
 				})
 		}},
-		{types.CheckTypeNotation, func() *types.CheckResult {
+		checkEntry{types.CheckTypeNotation, func() *types.CheckResult {
 			return runAttestationCheck(
 				ctx, types.CheckTypeNotation, bins[types.CheckTypeNotation], pol, met, imageRef,
 				func() (*types.CheckResult, error) {
@@ -391,80 +415,16 @@ func runParallelChecks(
 					)
 				})
 		}},
-		{types.CheckTypeSBOM, func() *types.CheckResult {
-			return runAttestationCheck(
-				ctx, types.CheckTypeSBOM, bins[types.CheckTypeSBOM], pol, met, imageRef,
-				func() (*types.CheckResult, error) {
-					return sbom.VerifyMultiple(
-						ctx, extractPayloads(bins[types.CheckTypeSBOM]), pol, digest,
-					)
-				})
-		}},
-		{types.CheckTypeSCAI, func() *types.CheckResult {
-			return runAttestationCheck(
-				ctx, types.CheckTypeSCAI, bins[types.CheckTypeSCAI], pol, met, imageRef,
-				func() (*types.CheckResult, error) {
-					return scai.VerifyMultiple(
-						ctx, extractPayloads(bins[types.CheckTypeSCAI]), pol, digest,
-					)
-				})
-		}},
-		{types.CheckTypeSource, func() *types.CheckResult {
-			return runAttestationCheck(
-				ctx, types.CheckTypeSource, bins[types.CheckTypeSource], pol, met, imageRef,
-				func() (*types.CheckResult, error) {
-					return source.VerifyMultiple(
-						ctx, extractPayloads(bins[types.CheckTypeSource]), pol, digest,
-					)
-				})
-		}},
-		{types.CheckTypeBuildEnv, func() *types.CheckResult {
-			return runAttestationCheck(
-				ctx, types.CheckTypeBuildEnv, bins[types.CheckTypeBuildEnv], pol, met, imageRef,
-				func() (*types.CheckResult, error) {
-					return buildenv.VerifyMultiple(
-						ctx, extractPayloads(bins[types.CheckTypeBuildEnv]), pol, digest,
-					)
-				})
-		}},
-		{types.CheckTypeVulnScan, func() *types.CheckResult {
-			return runAttestationCheck(
-				ctx, types.CheckTypeVulnScan, bins[types.CheckTypeVulnScan], pol, met, imageRef,
-				func() (*types.CheckResult, error) {
-					return vulnscan.VerifyMultiple(
-						ctx, extractPayloads(bins[types.CheckTypeVulnScan]), pol, digest,
-					)
-				})
-		}},
-		{types.CheckTypeTestResult, func() *types.CheckResult {
-			return runAttestationCheck(
-				ctx, types.CheckTypeTestResult, bins[types.CheckTypeTestResult], pol, met, imageRef,
-				func() (*types.CheckResult, error) {
-					return testresult.VerifyMultiple(
-						ctx, extractPayloads(bins[types.CheckTypeTestResult]), pol, digest,
-					)
-				})
-		}},
-		{types.CheckTypeRelease, func() *types.CheckResult {
-			return runAttestationCheck(
-				ctx, types.CheckTypeRelease, bins[types.CheckTypeRelease], pol, met, imageRef,
-				func() (*types.CheckResult, error) {
-					return release.VerifyMultiple(
-						ctx, extractPayloads(bins[types.CheckTypeRelease]), pol, digest,
-					)
-				})
-		}},
-		{types.CheckTypeRuntimeTrace, func() *types.CheckResult {
-			atts := bins[types.CheckTypeRuntimeTrace]
+	)
 
+	for _, pv := range payloadVerifiers {
+		checks = append(checks, checkEntry{pv.checkType, func() *types.CheckResult {
 			return runAttestationCheck(
-				ctx, types.CheckTypeRuntimeTrace, atts, pol, met, imageRef,
+				ctx, pv.checkType, bins[pv.checkType], pol, met, imageRef,
 				func() (*types.CheckResult, error) {
-					return runtimetrace.VerifyMultiple(
-						ctx, extractPayloads(atts), pol, digest,
-					)
+					return pv.verify(ctx, extractPayloads(bins[pv.checkType]), pol, digest)
 				})
-		}},
+		}})
 	}
 
 	results := make([]*types.CheckResult, len(checks))

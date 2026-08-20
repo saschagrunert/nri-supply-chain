@@ -62,6 +62,11 @@ func Verify(
 	att []byte, pol *policy.Policy, imageRef, imageDigest string,
 	parsedImageRef name.Reference,
 ) (*types.CheckResult, error) {
+	ctxErr := ctx.Err()
+	if ctxErr != nil {
+		return nil, fmt.Errorf("verification cancelled: %w", ctxErr)
+	}
+
 	predicate, err := intoto.VerifySubjectAndExtractPredicate(att, imageDigest)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidVEX, err)
@@ -202,7 +207,7 @@ func buildResult(
 // VerifyMultiple checks multiple VEX documents. Most restrictive wins:
 // any affected statement causes failure.
 // When parsedImageRef is non-nil it is used instead of re-parsing imageRef.
-func VerifyMultiple(
+func VerifyMultiple( //nolint:cyclop,funlen // ctx cancellation check adds a branch and lines
 	ctx context.Context,
 	attestations [][]byte,
 	pol *policy.Policy,
@@ -217,6 +222,11 @@ func VerifyMultiple(
 	)
 
 	for _, att := range attestations {
+		ctxErr := ctx.Err()
+		if ctxErr != nil {
+			return nil, fmt.Errorf("verification cancelled: %w", ctxErr)
+		}
+
 		result, err := Verify(ctx, att, pol, imageRef, imageDigest, parsedImageRef)
 		if err != nil {
 			parseErrors = append(parseErrors, err.Error())

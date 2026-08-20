@@ -259,18 +259,21 @@ func buildKeyMaterial(keys []TrustedKeyRef) (*root.TrustedPublicKeyMaterial, err
 }
 
 func loadPublicKeyFromPEM(path string) (crypto.PublicKey, error) {
-	if cached, ok := pemKeyCache.Load(path); ok {
-		key, castOK := cached.(crypto.PublicKey)
-		if !castOK {
-			pemKeyCache.Delete(path)
-		} else {
-			return key, nil
-		}
-	}
-
 	data, err := fileutil.ReadLimited(path, fileutil.MaxCredentialFileSize)
 	if err != nil {
 		return nil, fmt.Errorf("reading PEM file: %w", err)
+	}
+
+	contentHash := sha256.Sum256(data)
+	cacheKey := path + "\x00" + hex.EncodeToString(contentHash[:])
+
+	if cached, ok := pemKeyCache.Load(cacheKey); ok {
+		key, castOK := cached.(crypto.PublicKey)
+		if !castOK {
+			pemKeyCache.Delete(cacheKey)
+		} else {
+			return key, nil
+		}
 	}
 
 	block, _ := pem.Decode(data)
@@ -280,14 +283,14 @@ func loadPublicKeyFromPEM(path string) (crypto.PublicKey, error) {
 
 	pub, pkixErr := x509.ParsePKIXPublicKey(block.Bytes)
 	if pkixErr == nil {
-		pemKeyCache.Store(path, pub)
+		pemKeyCache.Store(cacheKey, pub)
 
 		return pub, nil
 	}
 
 	rsaKey, rsaErr := x509.ParsePKCS1PublicKey(block.Bytes)
 	if rsaErr == nil {
-		pemKeyCache.Store(path, rsaKey)
+		pemKeyCache.Store(cacheKey, rsaKey)
 
 		return rsaKey, nil
 	}
