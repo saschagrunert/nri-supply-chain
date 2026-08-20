@@ -33,6 +33,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/cache"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
+	"github.com/saschagrunert/nri-supply-chain/internal/guac"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/registry"
@@ -67,6 +68,8 @@ type snapshot struct {
 	hostSem          *hostSemMap
 	auditLogger      *slog.Logger
 	allowlistDigests map[string]struct{}
+	guacClient       *guac.Client
+	guacBreaker      *attestation.CircuitBreaker
 }
 
 // Verifier performs supply chain attestation verification on container images.
@@ -129,7 +132,10 @@ func New(
 		WarnWarnModeDefaults(ctx, &cfgCopy, policies)
 	}
 
-	snap := newSnapshot(&cfgCopy, policies, hashes, met, fetcher)
+	snap, err := newSnapshot(&cfgCopy, policies, hashes, met, fetcher)
+	if err != nil {
+		return nil, err
+	}
 
 	verif := &Verifier{ //nolint:exhaustruct // zero-value fields are intentional
 		policyHashes: hashes,
@@ -150,8 +156,8 @@ func newSnapshot(
 	hashes map[string]string,
 	met *metrics.Metrics,
 	fetcher attestation.Fetcher,
-) *snapshot {
-	return &snapshot{
+) (*snapshot, error) {
+	snap := &snapshot{
 		config:       cfg,
 		policies:     policies,
 		policyHashes: hashes,
@@ -170,6 +176,26 @@ func newSnapshot(
 		auditLogger:      slog.Default(),
 		allowlistDigests: buildAllowlistMap(cfg.AllowlistDigests),
 	}
+
+	if cfg.Guac.Enabled() {
+		guacClient, err := guac.NewClient(
+			cfg.Guac.Endpoint,
+			cfg.Guac.AuthTokenPath,
+			cfg.Guac.CACertPath,
+			cfg.Guac.Timeout.Duration,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("creating GUAC client: %w", err)
+		}
+
+		snap.guacClient = guacClient
+		snap.guacBreaker = attestation.NewCircuitBreaker(
+			cfg.CircuitBreakerThreshold,
+			cfg.CircuitBreakerCooldown.Duration,
+		)
+	}
+
+	return snap, nil
 }
 
 func buildAllowlistMap(entries []string) map[string]struct{} {

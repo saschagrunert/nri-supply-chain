@@ -222,4 +222,42 @@ var (
 	ErrIssuersWithoutSANPatternsInEnforce = errors.New(
 		"policy.issuers requires policy.san_patterns in enforce mode",
 	)
+
+	// ErrGUACEndpointInvalid indicates the GUAC endpoint URL is not valid.
+	ErrGUACEndpointInvalid = errors.New("invalid guac.endpoint URL")
+
+	// ErrGUACTimeoutNotPositive indicates a non-positive GUAC timeout.
+	ErrGUACTimeoutNotPositive = errors.New("guac.timeout must be positive")
+
+	// ErrGUACTimeoutTooHigh indicates the GUAC timeout exceeds the maximum.
+	ErrGUACTimeoutTooHigh = errors.New("guac.timeout exceeds maximum")
+
+	// ErrGUACInvalidFallbackPolicy indicates an unrecognized GUAC fallback policy.
+	ErrGUACInvalidFallbackPolicy = errors.New(
+		`guac.fallback_policy must be "allow", "warn", or "deny"`,
+	)
+
+	// ErrGUACInvalidCheck indicates an unrecognized GUAC check name.
+	ErrGUACInvalidCheck = errors.New("invalid guac.checks entry")
+
+	// ErrGUACChecksEmpty indicates no GUAC checks are configured when endpoint is set.
+	ErrGUACChecksEmpty = errors.New("guac.checks must not be empty when guac.endpoint is set")
+
+	// ErrGUACMaxDepsRange indicates the max dependencies count is out of range.
+	ErrGUACMaxDepsRange = errors.New("guac.max_dependencies must be between 1 and 20")
+
+	// ErrGUACAuthTokenPathNotAbsolute indicates the auth token path is not absolute.
+	ErrGUACAuthTokenPathNotAbsolute = errors.New("guac.auth_token_path must be an absolute path")
+
+	// ErrGUACAuthTokenNotRegularFile indicates the auth token path is not a regular file.
+	ErrGUACAuthTokenNotRegularFile = errors.New("guac.auth_token_path must be a regular file")
+
+	// ErrGUACCACertPathNotAbsolute indicates the CA cert path is not absolute.
+	ErrGUACCACertPathNotAbsolute = errors.New("guac.ca_cert path must be an absolute path")
+
+	// ErrGUACCACertNotFound indicates the CA cert file does not exist.
+	ErrGUACCACertNotFound = errors.New("guac.ca_cert file not found")
+
+	// ErrGUACCACertNotRegularFile indicates the CA cert path is not a regular file.
+	ErrGUACCACertNotRegularFile = errors.New("guac.ca_cert must be a regular file")
 )

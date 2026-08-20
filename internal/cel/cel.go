@@ -115,6 +115,7 @@ func initEnvironment() (*cel.Env, error) {
 			cel.Variable("testresult", cel.MapType(cel.StringType, cel.DynType)),
 			cel.Variable("release", cel.MapType(cel.StringType, cel.DynType)),
 			cel.Variable("runtimetrace", cel.MapType(cel.StringType, cel.DynType)),
+			cel.Variable("guac", cel.MapType(cel.StringType, cel.DynType)),
 			ext.Strings(),
 		)
 	})
@@ -343,6 +344,7 @@ func BuildVars(
 		"testresult":   buildTestResultVars(results[types.CheckTypeTestResult]),
 		"release":      buildReleaseVars(results[types.CheckTypeRelease]),
 		"runtimetrace": buildRuntimeTraceVars(results[types.CheckTypeRuntimeTrace]),
+		"guac":         buildGUACVars(results[types.CheckTypeGUAC]),
 	}
 }
 
@@ -604,6 +606,46 @@ func buildRuntimeTraceVars(result *types.CheckResult) map[string]any {
 		vars[varVerified] = result.Passed
 		extractStringMeta(result.Metadata, vars, "monitorType", "fileNames")
 		extractInt64Meta(result.Metadata, vars, "processCount", "networkCount", "fileAccessCount")
+	}
+
+	return vars
+}
+
+func buildGUACVars(result *types.CheckResult) map[string]any {
+	vars := map[string]any{
+		"available":        false,
+		"vulnerabilities":  []any{},
+		"transitive_vulns": []any{},
+		"scorecard": map[string]any{
+			"aggregate": float64(0),
+			"checks":    map[string]any{},
+			"source":    "",
+		},
+		"dependencies":     []any{},
+		"dependency_count": int64(0),
+	}
+
+	if result == nil || result.Metadata == nil {
+		return vars
+	}
+
+	extractBoolMeta(result.Metadata, vars, "available")
+	extractInt64Meta(result.Metadata, vars, "dependency_count")
+
+	if v, ok := result.Metadata["vulnerabilities"].([]any); ok {
+		vars["vulnerabilities"] = v
+	}
+
+	if v, ok := result.Metadata["transitive_vulns"].([]any); ok {
+		vars["transitive_vulns"] = v
+	}
+
+	if v, ok := result.Metadata["scorecard"].(map[string]any); ok {
+		vars["scorecard"] = v
+	}
+
+	if v, ok := result.Metadata["dependencies"].([]any); ok {
+		vars["dependencies"] = v
 	}
 
 	return vars

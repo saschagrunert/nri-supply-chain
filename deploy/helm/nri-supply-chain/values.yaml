@@ -92,6 +92,17 @@ config:
     includePublicRoot: true
     roots: []
   registries: []
+  guac:
+    endpoint: ""
+    authTokenPath: ""
+    caCert: ""
+    timeout: 5s
+    fallbackPolicy: warn
+    maxDependencies: 5
+    checks:
+      - certify_vuln
+      - certify_scorecard
+      - is_dependency
   # Appended verbatim to config.toml for forward-compatible configuration.
   extraConfig: ""
 

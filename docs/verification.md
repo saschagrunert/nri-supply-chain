@@ -21,6 +21,7 @@ by the nri-supply-chain plugin.
   - [Test Result](#test-result)
   - [Release](#release)
   - [Runtime Trace](#runtime-trace)
+  - [GUAC (Graph for Understanding Artifact Composition)](#guac-graph-for-understanding-artifact-composition)
 - [Other Standards](#other-standards)
 
 <!-- /toc -->
@@ -75,7 +76,12 @@ When a container is created, the plugin performs verification in this order:
 6. **Cache check**: If a cached result exists for this image digest and is
    within the configured TTL, returns it immediately.
 
-7. **Attestation fetch**: Discovers attestations via the OCI Referrers API.
+7. **GUAC query** (if enabled): A GUAC query is started in a background
+   goroutine before the OCI attestation fetch. The query runs in parallel
+   with the fetch and its result is collected after the fetch completes.
+   See [config.md](config.md#guac) for configuration.
+
+8. **Attestation fetch**: Discovers attestations via the OCI Referrers API.
    Filters for DSSE-enveloped Sigstore bundles, verifies each bundle's
    signature (keyless or key-based), and extracts payloads. Unsigned or
    incorrectly signed bundles are discarded. If the Referrers API returns no
@@ -84,7 +90,7 @@ When a container is created, the plugin performs verification in this order:
    repository. The same signature verification applies to cosign tag
    attestations.
 
-8. **VSA-first evaluation**:
+9. **VSA-first evaluation**:
    - If a trusted PASSED VSA is found, skip all parallel checks (SLSA, VEX,
      Notation, SBOM, SCAI, Source, BuildEnv, VulnScan, TestResult, Release,
      RuntimeTrace) and
@@ -93,24 +99,30 @@ When a container is created, the plugin performs verification in this order:
    - If no VSA is found, or the VSA is from an untrusted verifier or stale,
      fall through to direct verification.
 
-9. **Parallel verification**: When VSA does not short-circuit, SLSA provenance,
-   VEX, Notation signature, SBOM, SCAI, Source Track, Build Environment,
-   Vulnerability Scan, Test Result, Release, and Runtime Trace checks run
-   concurrently.
+10. **Parallel verification**: When VSA does not short-circuit, SLSA provenance,
+    VEX, Notation signature, SBOM, SCAI, Source Track, Build Environment,
+    Vulnerability Scan, Test Result, Release, and Runtime Trace checks run
+    concurrently.
 
-10. **CEL policy evaluation**: If the policy defines CEL rules, they are
+11. **CEL policy evaluation**: If the policy defines CEL rules, they are
     evaluated against the combined check results. CEL rules can enforce
     cross-check constraints (e.g., require both SLSA and VEX to pass).
 
-11. **Enforcement**: In `enforce` mode, failed verification rejects the
+12. **Enforcement**: In `enforce` mode, failed verification rejects the
     container. In `warn` mode, failures are logged but allowed.
 
-12. **Caching**: The result is cached for future lookups.
+13. **Caching**: The result is cached for future lookups.
 
 Latency model:
 
-- With trusted VSA: `fetch + VSA verify`
-- Without VSA: `fetch + max(SLSA, VEX, Notation, SBOM, SCAI, Source, BuildEnv, VulnScan, TestResult, Release, RuntimeTrace) + CEL eval`
+- With trusted VSA: `max(fetch, GUAC query) + VSA verify`
+- Without VSA: `max(fetch, GUAC query) + max(SLSA, VEX, Notation, SBOM, SCAI, Source, BuildEnv, VulnScan, TestResult, Release, RuntimeTrace) + CEL eval`
+
+When GUAC is enabled, its query runs in parallel with the OCI attestation
+fetch, so it does not add latency unless the GUAC query is slower than the
+fetch. Note that when a trusted VSA short-circuits verification, the GUAC
+result is discarded (GUAC data is only used in CEL evaluation, which VSA
+bypasses).
 
 ## Container Annotations
 
@@ -270,6 +282,42 @@ trace attestations exist, all must pass (all-must-pass semantics) and metadata
 is merged across documents. See
 [policy.md](policy.md#runtime-trace-verification) for the field reference.
 
+### GUAC (Graph for Understanding Artifact Composition)
+
+[GUAC](https://guac.sh/) is an OpenSSF project that aggregates software supply
+chain metadata into a queryable graph. Unlike the other verification types
+above, GUAC is not an OCI attestation format. It is a supplemental data source
+that the plugin queries in parallel with the OCI attestation fetch.
+
+When enabled via the `[guac]` config section (see [config.md](config.md#guac)),
+the plugin queries a GUAC server for three types of information:
+
+- **certify_vuln**: Vulnerability data correlated across the dependency graph,
+  split into direct and transitive vulnerabilities. Each entry includes the
+  vulnerability ID and the affected package identifier.
+- **certify_scorecard**: OpenSSF Scorecard results aggregated by GUAC (uses an
+  unscoped filter, returning the first scorecard found).
+- **is_dependency**: Transitive dependency enumeration, limited by the
+  `max_dependencies` config setting.
+
+GUAC query results are exposed as CEL variables in the `guac.*` namespace (see
+[policy.md](policy.md#cel-object) for the variable reference). A GUAC query
+failure is handled according to `fallback_policy`: `allow` (skip silently),
+`warn` (default, log and continue), or `deny` (fail the check).
+
+GUAC results do not affect the pass/fail outcome of other verification types.
+They provide supplemental context that CEL rules can use for policy decisions.
+
+**Why supplemental, not a replacement:** OCI attestations and GUAC serve
+different trust models. OCI attestations are cryptographically signed,
+tamper-evident, and authoritative for a single image ("this image has SLSA
+provenance from builder X"). GUAC is authoritative for cross-artifact
+relationships that no single attestation can express ("this image depends on
+package Y, which has vulnerability Z"). The two data sources have different
+failure modes and update cadences; keeping them separate with independent
+fallback policies reflects that. CEL rules combine both perspectives, for
+example: `slsa.verified && guac.transitive_vulns.size() == 0`.
+
 ## Other Standards
 
 The supply chain ecosystem includes several related formats and frameworks
@@ -278,7 +326,3 @@ that the plugin does not currently support:
 - **[SARIF](https://sarifweb.azurewebsites.net/)** (Static Analysis Results
   Interchange Format): a standardized format for security scanner results that
   could complement VEX by providing detailed finding data.
-- **[GUAC](https://guac.sh/)** (Graph for Understanding Artifact Composition):
-  a framework for aggregating and querying software supply chain metadata. Not
-  an attestation format itself, but a potential integration point for policy
-  decisions.

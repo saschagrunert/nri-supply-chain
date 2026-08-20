@@ -74,6 +74,11 @@ func (c *Config) Validate() error {
 
 	errs = append(errs, c.validateAllowlistDigests()...)
 
+	err = c.validateGUACConfig()
+	if err != nil {
+		errs = append(errs, err)
+	}
+
 	return errors.Join(errs...)
 }
 
@@ -91,6 +96,7 @@ func (c *Config) ValidateRuntime() error {
 
 	errs = append(errs, c.validatePolicyKeysRuntime()...)
 	errs = append(errs, c.validateRegistryCACertsRuntime()...)
+	errs = append(errs, c.validateGUACConfigRuntime()...)
 
 	return errors.Join(errs...)
 }
@@ -847,6 +853,94 @@ func (c *Config) validateAllowlistDigests() []error {
 		}
 
 		seen[digest] = struct{}{}
+	}
+
+	return errs
+}
+
+func (c *Config) validateGUACConfig() error { //nolint:cyclop // sequential field checks
+	guacCfg := &c.Guac
+
+	if !guacCfg.Enabled() {
+		return nil
+	}
+
+	var errs []error
+
+	u, err := url.Parse(guacCfg.Endpoint)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		errs = append(errs, fmt.Errorf("%w: %s", ErrGUACEndpointInvalid, guacCfg.Endpoint))
+	}
+
+	if guacCfg.Timeout.Duration <= 0 {
+		errs = append(errs, ErrGUACTimeoutNotPositive)
+	} else if guacCfg.Timeout.Duration > maxGUACTimeout {
+		errs = append(errs, fmt.Errorf("%w: %s (max %s)",
+			ErrGUACTimeoutTooHigh, guacCfg.Timeout.Duration, maxGUACTimeout))
+	}
+
+	switch guacCfg.FallbackPolicy {
+	case types.ActionAllow, types.ActionWarn, types.ActionDeny:
+	case "":
+	default:
+		errs = append(errs, fmt.Errorf("%w: %q",
+			ErrGUACInvalidFallbackPolicy, guacCfg.FallbackPolicy))
+	}
+
+	if len(guacCfg.Checks) == 0 {
+		errs = append(errs, ErrGUACChecksEmpty)
+	} else {
+		for _, check := range guacCfg.Checks {
+			if !slices.Contains(GUACValidChecks, check) {
+				errs = append(errs, fmt.Errorf("%w: %q", ErrGUACInvalidCheck, check))
+			}
+		}
+	}
+
+	if guacCfg.MaxDependencies < 1 || guacCfg.MaxDependencies > maxGUACMaxDeps {
+		errs = append(errs, fmt.Errorf("%w: got %d",
+			ErrGUACMaxDepsRange, guacCfg.MaxDependencies))
+	}
+
+	if guacCfg.AuthTokenPath != "" && !filepath.IsAbs(guacCfg.AuthTokenPath) {
+		errs = append(errs, ErrGUACAuthTokenPathNotAbsolute)
+	}
+
+	if guacCfg.CACertPath != "" && !filepath.IsAbs(guacCfg.CACertPath) {
+		errs = append(errs, ErrGUACCACertPathNotAbsolute)
+	}
+
+	return errors.Join(errs...)
+}
+
+func (c *Config) validateGUACConfigRuntime() []error {
+	if !c.Guac.Enabled() {
+		return nil
+	}
+
+	var errs []error
+
+	if c.Guac.AuthTokenPath != "" {
+		// Use os.Stat (not Lstat) because K8s mounts secrets as symlinks.
+		info, err := os.Stat(c.Guac.AuthTokenPath)
+		if err != nil {
+			slog.Warn("GUAC auth token file not found, token auth will be unavailable",
+				"path", c.Guac.AuthTokenPath, "error", err)
+		} else if !info.Mode().IsRegular() {
+			errs = append(errs, fmt.Errorf("%w: %s",
+				ErrGUACAuthTokenNotRegularFile, c.Guac.AuthTokenPath))
+		}
+	}
+
+	if c.Guac.CACertPath != "" {
+		info, err := os.Lstat(c.Guac.CACertPath)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%w: %s",
+				ErrGUACCACertNotFound, c.Guac.CACertPath))
+		} else if !info.Mode().IsRegular() {
+			errs = append(errs, fmt.Errorf("%w: %s",
+				ErrGUACCACertNotRegularFile, c.Guac.CACertPath))
+		}
 	}
 
 	return errs

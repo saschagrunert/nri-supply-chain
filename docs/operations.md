@@ -47,6 +47,7 @@ The plugin exposes Prometheus metrics at the configured
 | `nri_supply_chain_container_lifetime_seconds`      | Histogram | `namespace`                   | Duration containers run before removal (buckets: exponential 0.5s \* 2^n, n=0..20)                   |
 | `nri_supply_chain_cel_evaluation_duration_seconds` | Histogram |                               | CEL rule evaluation latency                                                                          |
 | `nri_supply_chain_policy_reloads_total`            | Counter   |                               | OCI policy update events (poller-driven reloads)                                                     |
+| `nri_supply_chain_guac_query_duration_seconds`     | Histogram | `type`                        | GUAC API query latency                                                                               |
 
 When `include` is configured, the include check runs before the exclude check.
 Images that do not match any include pattern are counted as `not_included` even
@@ -129,7 +130,7 @@ when cache-affecting config fields changed (`verification`, `policy_dir`,
 `cache_ttl`, `cache_failure_ttl`, `cache_max_entries`, `fetch_failure_policy`,
 `fetch_timeout`, `sigstore` (including `tuf_mirror`, `tuf_root`, `roots`,
 `include_public_root`), `registries`, `policy.source`, `policy.oci_ref`,
-`policy.issuers`, `policy.san_patterns`, `policy.keys`) or
+`policy.issuers`, `policy.san_patterns`, `policy.keys`, `guac`) or
 when the content of any policy file
 changed. If the config and policies are identical, the cache is preserved. To
 force a cache clear when nothing else needs to change, temporarily modify
@@ -202,7 +203,7 @@ all container verification outcomes.
   `cache_failure_ttl`, `cache_max_entries`, `fetch_failure_policy`,
   `fetch_timeout`, `sigstore` (including `tuf_mirror`, `tuf_root`, `roots`,
   `include_public_root`), `registries`, `policy.source`, `policy.oci_ref`,
-  `policy.issuers`, `policy.san_patterns`, `policy.keys`) or policy file
+  `policy.issuers`, `policy.san_patterns`, `policy.keys`, `guac`) or policy file
   contents have changed. A SIGHUP with unchanged config and policies does not
   clear the cache. To force a clear, change `cache_ttl` temporarily before
   sending SIGHUP.

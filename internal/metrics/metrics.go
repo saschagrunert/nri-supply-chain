@@ -93,7 +93,9 @@ type Metrics struct {
 	PolicyReloadsTotal prometheus.Counter
 	// CELEvaluationDuration measures CEL rule evaluation latency.
 	CELEvaluationDuration prometheus.Histogram
-	registry              *prometheus.Registry
+	// GUACQueryDuration measures GUAC query latency by check type.
+	GUACQueryDuration *prometheus.HistogramVec
+	registry          *prometheus.Registry
 }
 
 // New creates and registers all supply chain verification metrics.
@@ -181,6 +183,15 @@ func New() *Metrics {
 			Help:      "Duration of CEL rule evaluation in seconds.",
 			Buckets:   prometheus.DefBuckets,
 		}),
+		GUACQueryDuration: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Namespace: namespace,
+				Name:      "guac_query_duration_seconds",
+				Help:      "Duration of GUAC API queries in seconds.",
+				Buckets:   prometheus.DefBuckets,
+			},
+			[]string{labelType},
+		),
 		registry: prometheus.NewRegistry(),
 	}
 
@@ -352,6 +363,7 @@ func (m *Metrics) register() {
 		m.ContainerLifetime,
 		m.PolicyReloadsTotal,
 		m.CELEvaluationDuration,
+		m.GUACQueryDuration,
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{
 			PidFn:        nil,
 			Namespace:    "",

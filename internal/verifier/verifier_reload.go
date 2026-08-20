@@ -16,6 +16,8 @@ package verifier
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -24,6 +26,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/cache"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/glob"
+	"github.com/saschagrunert/nri-supply-chain/internal/guac"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 	"github.com/saschagrunert/nri-supply-chain/internal/slsa"
@@ -115,6 +118,15 @@ func (v *Verifier) applyReload(
 
 	hostSem := resetCachesIfChanged(current.hostSem, policiesChanged)
 
+	guacClient, guacBreaker, guacErr := reloadGUACClient(current, cfgCopy)
+	if guacErr != nil {
+		slog.ErrorContext(ctx, "Failed to reload GUAC client, keeping previous",
+			"error", guacErr)
+
+		guacClient = current.guacClient
+		guacBreaker = current.guacBreaker
+	}
+
 	v.state.Store(&snapshot{
 		config:           cfgCopy,
 		policies:         policies,
@@ -127,6 +139,8 @@ func (v *Verifier) applyReload(
 		hostSem:          hostSem,
 		auditLogger:      current.auditLogger,
 		allowlistDigests: buildAllowlistMap(cfgCopy.AllowlistDigests),
+		guacClient:       guacClient,
+		guacBreaker:      guacBreaker,
 	})
 	v.policyHashes = newHashes
 }
@@ -256,7 +270,8 @@ func cacheAffectingFieldsChanged(prev, next *config.Config) bool {
 		config.SigstoreConfigChanged(&prev.Sigstore, &next.Sigstore) ||
 		config.RegistriesChanged(prev.Registries, next.Registries) ||
 		policySourceChanged(prev, next) ||
-		prev.CacheMaxEntries != next.CacheMaxEntries
+		prev.CacheMaxEntries != next.CacheMaxEntries ||
+		guacConfigChanged(prev, next)
 }
 
 func cacheTimingsChanged(prev, next *config.Config) bool {
@@ -271,4 +286,41 @@ func policySourceChanged(prev, next *config.Config) bool {
 		!slices.Equal(prev.Policy.Issuers, next.Policy.Issuers) ||
 		!slices.Equal(prev.Policy.SANPatterns, next.Policy.SANPatterns) ||
 		!slices.Equal(prev.Policy.Keys, next.Policy.Keys)
+}
+
+func reloadGUACClient(
+	prev *snapshot, cfg *config.Config,
+) (*guac.Client, *attestation.CircuitBreaker, error) {
+	if !cfg.Guac.Enabled() {
+		return nil, nil, nil
+	}
+
+	if prev.guacClient != nil && !guacConfigChanged(prev.config, cfg) {
+		return prev.guacClient, prev.guacBreaker, nil
+	}
+
+	guacClient, err := guac.NewClient(
+		cfg.Guac.Endpoint,
+		cfg.Guac.AuthTokenPath,
+		cfg.Guac.CACertPath,
+		cfg.Guac.Timeout.Duration,
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("creating GUAC client: %w", err)
+	}
+
+	return guacClient, attestation.NewCircuitBreaker(
+		cfg.CircuitBreakerThreshold,
+		cfg.CircuitBreakerCooldown.Duration,
+	), nil
+}
+
+func guacConfigChanged(prev, next *config.Config) bool {
+	return prev.Guac.Endpoint != next.Guac.Endpoint ||
+		prev.Guac.AuthTokenPath != next.Guac.AuthTokenPath ||
+		prev.Guac.CACertPath != next.Guac.CACertPath ||
+		prev.Guac.Timeout.Duration != next.Guac.Timeout.Duration ||
+		prev.Guac.FallbackPolicy != next.Guac.FallbackPolicy ||
+		prev.Guac.MaxDependencies != next.Guac.MaxDependencies ||
+		!slices.Equal(prev.Guac.Checks, next.Guac.Checks)
 }
