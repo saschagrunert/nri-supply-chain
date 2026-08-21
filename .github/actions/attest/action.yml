@@ -189,35 +189,35 @@ runs:
         GH_TOKEN: ${{ github.token }}
         CI_RUN_ID: ${{ inputs.ci-run-id }}
       run: |
-        TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-        GO_VERSION=$(go version 2>/dev/null | awk '{print $3}' || echo "unknown")
         CI_RUN="${CI_RUN_ID:-${{ github.event.workflow_run.id }}}"
 
-        SUITES='[]'
-        CI_RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-
-        if [ -n "$CI_RUN" ]; then
-          CI_RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${CI_RUN}"
-          SUITES=$(gh api --paginate \
-            "repos/${{ github.repository }}/actions/runs/${CI_RUN}/jobs" \
-            --jq '[.jobs[] | select(.name | test("test|lint|fuzz"; "i")) | {
-              name: .name,
-              result: (if .conclusion == "success" then "pass" elif .conclusion == "failure" then "fail" else .conclusion end),
-              startedAt: .started_at,
-              completedAt: .completed_at,
-              durationSeconds: (if .started_at and .completed_at then
-                (((.completed_at | fromdateiso8601) - (.started_at | fromdateiso8601)))
-              else null end)
-            }]' 2>/dev/null || echo '[]')
+        if [ -z "$CI_RUN" ]; then
+          echo "No CI run ID available, skipping test result attestation"
+          exit 0
         fi
 
-        if [ -n "$CI_RUN" ] && [ "$SUITES" = "[]" ]; then
-          echo "::warning::No test/lint/fuzz jobs found for run ${CI_RUN} (fetch failed or no matching jobs), marking as unknown"
+        TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        GO_VERSION=$(go version 2>/dev/null | awk '{print $3}' || echo "unknown")
+        CI_RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${CI_RUN}"
+
+        SUITES=$(gh api --paginate \
+          "repos/${{ github.repository }}/actions/runs/${CI_RUN}/jobs" \
+          --jq '.jobs[] | select(.name | test("test|lint|fuzz"; "i")) | {
+            name: .name,
+            result: (if .conclusion == "success" then "pass" elif .conclusion == "failure" then "fail" else .conclusion end),
+            startedAt: .started_at,
+            completedAt: .completed_at,
+            durationSeconds: (if .started_at and .completed_at then
+              (((.completed_at | fromdateiso8601) - (.started_at | fromdateiso8601)))
+            else null end)
+          }' 2>/dev/null | jq -s '.' || echo '[]')
+
+        if [ "$SUITES" = "[]" ]; then
+          echo "::warning::No test/lint/fuzz jobs found for run ${CI_RUN}, skipping test result attestation"
+          exit 0
         fi
 
-        OVERALL=$(echo "$SUITES" | jq -r 'if length == 0 then "unknown"
-          elif all(.result == "pass") then "pass"
-          else "fail" end')
+        OVERALL=$(echo "$SUITES" | jq -r 'if all(.result == "pass") then "pass" else "fail" end')
 
         jq -n \
           --arg result "$OVERALL" \
