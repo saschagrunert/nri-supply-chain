@@ -103,10 +103,8 @@ func TestVerify(t *testing.T) {
 			name: "trusted registry pattern passes",
 			doc:  validPredicate(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					Release: &policy.ReleasePolicy{
-						TrustedRegistries: []string{testTrustedRegistry},
-					},
+				Release: &policy.ReleasePolicy{
+					TrustedRegistries: []string{testTrustedRegistry},
 				},
 			},
 			wantPassed: true,
@@ -116,10 +114,8 @@ func TestVerify(t *testing.T) {
 			name: "untrusted registry pattern fails",
 			doc:  validPredicate(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					Release: &policy.ReleasePolicy{
-						TrustedRegistries: []string{"pkg:npm/*"},
-					},
+				Release: &policy.ReleasePolicy{
+					TrustedRegistries: []string{"pkg:npm/*"},
 				},
 			},
 			wantPassed: false,
@@ -129,10 +125,8 @@ func TestVerify(t *testing.T) {
 			name: "requirePackageId passes when present",
 			doc:  validPredicate(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					Release: &policy.ReleasePolicy{
-						RequirePackageID: true,
-					},
+				Release: &policy.ReleasePolicy{
+					RequirePackageID: true,
 				},
 			},
 			wantPassed: true,
@@ -144,10 +138,8 @@ func TestVerify(t *testing.T) {
 				PURL: testPURL,
 			},
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					Release: &policy.ReleasePolicy{
-						RequirePackageID: true,
-					},
+				Release: &policy.ReleasePolicy{
+					RequirePackageID: true,
 				},
 			},
 			wantPassed: false,
@@ -292,10 +284,8 @@ func TestVerifyMultiple(t *testing.T) {
 				},
 			},
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					Release: &policy.ReleasePolicy{
-						TrustedRegistries: []string{testTrustedRegistry},
-					},
+				Release: &policy.ReleasePolicy{
+					TrustedRegistries: []string{testTrustedRegistry},
 				},
 			},
 			wantPassed: true,
@@ -309,10 +299,8 @@ func TestVerifyMultiple(t *testing.T) {
 				},
 			},
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					Release: &policy.ReleasePolicy{
-						TrustedRegistries: []string{testTrustedRegistry},
-					},
+				Release: &policy.ReleasePolicy{
+					TrustedRegistries: []string{testTrustedRegistry},
 				},
 			},
 			wantPassed: false,
@@ -439,10 +427,8 @@ func TestVerifyEmptyPURL(t *testing.T) {
 		t.Parallel()
 
 		result, err := release.Verify(context.Background(), att, &policy.Policy{
-			Sections: policy.Sections{
-				Release: &policy.ReleasePolicy{
-					TrustedRegistries: []string{testTrustedRegistry},
-				},
+			Release: &policy.ReleasePolicy{
+				TrustedRegistries: []string{testTrustedRegistry},
 			},
 		}, testDigest)
 		testutil.AssertNoError(t, err)
@@ -459,10 +445,8 @@ func TestVerifyUntrustedRegistryDetailMessage(t *testing.T) {
 	att := wrapInToto(t, validPredicate(), testDigest)
 
 	result, err := release.Verify(context.Background(), att, &policy.Policy{
-		Sections: policy.Sections{
-			Release: &policy.ReleasePolicy{
-				TrustedRegistries: []string{"pkg:npm/*"},
-			},
+		Release: &policy.ReleasePolicy{
+			TrustedRegistries: []string{"pkg:npm/*"},
 		},
 	}, testDigest)
 	testutil.AssertNoError(t, err)

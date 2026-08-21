@@ -164,10 +164,8 @@ func TestVerify(t *testing.T) {
 			name: "score below threshold passes",
 			doc:  validDoc(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					VulnScan: &policy.VulnScanPolicy{
-						MaxScore: new(7.0),
-					},
+				VulnScan: &policy.VulnScanPolicy{
+					MaxScore: new(7.0),
 				},
 			},
 			wantPassed: true,
@@ -177,10 +175,8 @@ func TestVerify(t *testing.T) {
 			name: "score above threshold fails",
 			doc:  criticalDoc(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					VulnScan: &policy.VulnScanPolicy{
-						MaxScore: new(7.0),
-					},
+				VulnScan: &policy.VulnScanPolicy{
+					MaxScore: new(7.0),
 				},
 			},
 			wantPassed: false,
@@ -190,10 +186,8 @@ func TestVerify(t *testing.T) {
 			name: "severity below threshold passes",
 			doc:  validDoc(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					VulnScan: &policy.VulnScanPolicy{
-						MinSeverity: "high",
-					},
+				VulnScan: &policy.VulnScanPolicy{
+					MinSeverity: "high",
 				},
 			},
 			wantPassed: true,
@@ -203,10 +197,8 @@ func TestVerify(t *testing.T) {
 			name: "severity meets threshold fails",
 			doc:  criticalDoc(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					VulnScan: &policy.VulnScanPolicy{
-						MinSeverity: "high",
-					},
+				VulnScan: &policy.VulnScanPolicy{
+					MinSeverity: "high",
 				},
 			},
 			wantPassed: false,
@@ -216,11 +208,9 @@ func TestVerify(t *testing.T) {
 			name: "ignored CVE bypasses threshold",
 			doc:  criticalDoc(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					VulnScan: &policy.VulnScanPolicy{
-						MaxScore:   new(7.0),
-						IgnoreCVEs: []string{testCVE3, testCVE1},
-					},
+				VulnScan: &policy.VulnScanPolicy{
+					MaxScore:   new(7.0),
+					IgnoreCVEs: []string{testCVE3, testCVE1},
 				},
 			},
 			wantPassed: true,
@@ -230,11 +220,9 @@ func TestVerify(t *testing.T) {
 			name: "clean scan with strict policy passes",
 			doc:  cleanDoc(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					VulnScan: &policy.VulnScanPolicy{
-						MaxScore:    new(0.0),
-						MinSeverity: "low",
-					},
+				VulnScan: &policy.VulnScanPolicy{
+					MaxScore:    new(0.0),
+					MinSeverity: "low",
 				},
 			},
 			wantPassed: true,
@@ -402,10 +390,8 @@ func TestVerifyThresholdDetailMessage(t *testing.T) {
 	att := wrapInToto(t, criticalDoc(), testDigest)
 
 	result, err := vulnscan.Verify(context.Background(), att, &policy.Policy{
-		Sections: policy.Sections{
-			VulnScan: &policy.VulnScanPolicy{
-				MaxScore: new(7.0),
-			},
+		VulnScan: &policy.VulnScanPolicy{
+			MaxScore: new(7.0),
 		},
 	}, testDigest)
 	testutil.AssertNoError(t, err)
@@ -467,10 +453,8 @@ func TestVerifyMultiple(t *testing.T) {
 			name: "any threshold exceeded fails",
 			docs: []vulnScanDoc{criticalDoc()},
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					VulnScan: &policy.VulnScanPolicy{
-						MaxScore: new(7.0),
-					},
+				VulnScan: &policy.VulnScanPolicy{
+					MaxScore: new(7.0),
 				},
 			},
 			wantPassed: false,
@@ -644,11 +628,9 @@ func TestVerifyFreshness(t *testing.T) {
 				Result:   scanResult{Vulnerabilities: []vuln{}},
 			},
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					VulnScan: &policy.VulnScanPolicy{
-						MaxAge:         "1h",
-						MaxAgeDuration: time.Hour,
-					},
+				VulnScan: &policy.VulnScanPolicy{
+					MaxAge:         "1h",
+					MaxAgeDuration: time.Hour,
 				},
 			},
 			wantPassed: false,
@@ -664,11 +646,9 @@ func TestVerifyFreshness(t *testing.T) {
 				Result:   scanResult{Vulnerabilities: []vuln{}},
 			},
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					VulnScan: &policy.VulnScanPolicy{
-						MaxAge:         "1h",
-						MaxAgeDuration: time.Hour,
-					},
+				VulnScan: &policy.VulnScanPolicy{
+					MaxAge:         "1h",
+					MaxAgeDuration: time.Hour,
 				},
 			},
 			wantPassed: true,
@@ -678,11 +658,9 @@ func TestVerifyFreshness(t *testing.T) {
 			name: "no timestamp with maxAge fails",
 			doc:  cleanDoc(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					VulnScan: &policy.VulnScanPolicy{
-						MaxAge:         "1h",
-						MaxAgeDuration: time.Hour,
-					},
+				VulnScan: &policy.VulnScanPolicy{
+					MaxAge:         "1h",
+					MaxAgeDuration: time.Hour,
 				},
 			},
 			wantPassed: false,
@@ -729,10 +707,8 @@ func TestVerifyScoreWithoutScoreField(t *testing.T) {
 	att := wrapInToto(t, doc, testDigest)
 
 	result, err := vulnscan.Verify(context.Background(), att, &policy.Policy{
-		Sections: policy.Sections{
-			VulnScan: &policy.VulnScanPolicy{
-				MinSeverity: testSevCritical,
-			},
+		VulnScan: &policy.VulnScanPolicy{
+			MinSeverity: testSevCritical,
 		},
 	}, testDigest)
 	testutil.AssertNoError(t, err)
@@ -814,10 +790,8 @@ func TestVerifyMultiplePassAndFail(t *testing.T) {
 		context.Background(),
 		attestations,
 		&policy.Policy{
-			Sections: policy.Sections{
-				VulnScan: &policy.VulnScanPolicy{
-					MaxScore: new(7.0),
-				},
+			VulnScan: &policy.VulnScanPolicy{
+				MaxScore: new(7.0),
 			},
 		},
 		testDigest,
@@ -845,10 +819,8 @@ func TestVerifyUnknownSeverityTreatedAsNone(t *testing.T) {
 	att := wrapInToto(t, doc, testDigest)
 
 	result, err := vulnscan.Verify(context.Background(), att, &policy.Policy{
-		Sections: policy.Sections{
-			VulnScan: &policy.VulnScanPolicy{
-				MinSeverity: testSevLow,
-			},
+		VulnScan: &policy.VulnScanPolicy{
+			MinSeverity: testSevLow,
 		},
 	}, testDigest)
 	testutil.AssertNoError(t, err)
@@ -867,11 +839,9 @@ func TestVerifyIgnoreCVEsWithMinSeverity(t *testing.T) {
 	att := wrapInToto(t, criticalDoc(), testDigest)
 
 	result, err := vulnscan.Verify(context.Background(), att, &policy.Policy{
-		Sections: policy.Sections{
-			VulnScan: &policy.VulnScanPolicy{
-				MinSeverity: testSevHigh,
-				IgnoreCVEs:  []string{testCVE3, testCVE1},
-			},
+		VulnScan: &policy.VulnScanPolicy{
+			MinSeverity: testSevHigh,
+			IgnoreCVEs:  []string{testCVE3, testCVE1},
 		},
 	}, testDigest)
 	testutil.AssertNoError(t, err)

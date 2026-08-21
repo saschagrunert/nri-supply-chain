@@ -202,11 +202,9 @@ func TestVerify(t *testing.T) {
 			name: "SPDX with denied license fails",
 			doc:  validSPDXDoc(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						License: &policy.SBOMLicensePolicy{
-							Deny: []string{testLicenseMIT},
-						},
+				SBOM: &policy.SBOMPolicy{
+					License: &policy.SBOMLicensePolicy{
+						Deny: []string{testLicenseMIT},
 					},
 				},
 			},
@@ -217,11 +215,9 @@ func TestVerify(t *testing.T) {
 			name: "license deny list is case-insensitive",
 			doc:  validSPDXDoc(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						License: &policy.SBOMLicensePolicy{
-							Deny: []string{"mit"},
-						},
+				SBOM: &policy.SBOMPolicy{
+					License: &policy.SBOMLicensePolicy{
+						Deny: []string{"mit"},
 					},
 				},
 			},
@@ -232,11 +228,9 @@ func TestVerify(t *testing.T) {
 			name: "SPDX with denied component fails",
 			doc:  validSPDXDoc(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						Component: &policy.SBOMComponentPolicy{
-							Deny: []string{testLibPURL},
-						},
+				SBOM: &policy.SBOMPolicy{
+					Component: &policy.SBOMComponentPolicy{
+						Deny: []string{testLibPURL},
 					},
 				},
 			},
@@ -247,11 +241,9 @@ func TestVerify(t *testing.T) {
 			name: "component deny list uses prefix match",
 			doc:  validSPDXDoc(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						Component: &policy.SBOMComponentPolicy{
-							Deny: []string{"pkg:npm/mylib"},
-						},
+				SBOM: &policy.SBOMPolicy{
+					Component: &policy.SBOMComponentPolicy{
+						Deny: []string{"pkg:npm/mylib"},
 					},
 				},
 			},
@@ -262,11 +254,9 @@ func TestVerify(t *testing.T) {
 			name: "non-matching component deny list passes",
 			doc:  validSPDXDoc(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						Component: &policy.SBOMComponentPolicy{
-							Deny: []string{"pkg:npm/other@2.0.0"},
-						},
+				SBOM: &policy.SBOMPolicy{
+					Component: &policy.SBOMComponentPolicy{
+						Deny: []string{"pkg:npm/other@2.0.0"},
 					},
 				},
 			},
@@ -277,11 +267,9 @@ func TestVerify(t *testing.T) {
 			name: "non-matching license deny list passes",
 			doc:  validSPDXDoc(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						License: &policy.SBOMLicensePolicy{
-							Deny: []string{"AGPL-3.0"},
-						},
+				SBOM: &policy.SBOMPolicy{
+					License: &policy.SBOMLicensePolicy{
+						Deny: []string{"AGPL-3.0"},
 					},
 				},
 			},
@@ -292,11 +280,9 @@ func TestVerify(t *testing.T) {
 			name: "CycloneDX with denied license fails",
 			doc:  validCycloneDXDoc(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						License: &policy.SBOMLicensePolicy{
-							Deny: []string{testLicenseMIT},
-						},
+				SBOM: &policy.SBOMPolicy{
+					License: &policy.SBOMLicensePolicy{
+						Deny: []string{testLicenseMIT},
 					},
 				},
 			},
@@ -307,11 +293,9 @@ func TestVerify(t *testing.T) {
 			name: "CycloneDX with denied component fails",
 			doc:  validCycloneDXDoc(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						Component: &policy.SBOMComponentPolicy{
-							Deny: []string{testLibPURL},
-						},
+				SBOM: &policy.SBOMPolicy{
+					Component: &policy.SBOMComponentPolicy{
+						Deny: []string{testLibPURL},
 					},
 				},
 			},
@@ -322,10 +306,8 @@ func TestVerify(t *testing.T) {
 			name: "SPDX denied when format restricted to cyclonedx",
 			doc:  validSPDXDoc(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						Formats: []string{testFormatCycloneDX},
-					},
+				SBOM: &policy.SBOMPolicy{
+					Formats: []string{testFormatCycloneDX},
 				},
 			},
 			wantPassed: false,
@@ -335,10 +317,8 @@ func TestVerify(t *testing.T) {
 			name: "CycloneDX denied when format restricted to spdx",
 			doc:  validCycloneDXDoc(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						Formats: []string{testFormatSPDX},
-					},
+				SBOM: &policy.SBOMPolicy{
+					Formats: []string{testFormatSPDX},
 				},
 			},
 			wantPassed: false,
@@ -348,10 +328,8 @@ func TestVerify(t *testing.T) {
 			name: "SPDX allowed when format list includes spdx",
 			doc:  validSPDXDoc(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						Formats: []string{testFormatSPDX, testFormatCycloneDX},
-					},
+				SBOM: &policy.SBOMPolicy{
+					Formats: []string{testFormatSPDX, testFormatCycloneDX},
 				},
 			},
 			wantPassed: true,
@@ -540,11 +518,9 @@ func TestVerifySPDXLicenseFields(t *testing.T) {
 		att := wrapInToto(t, doc, testDigest)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			Sections: policy.Sections{
-				SBOM: &policy.SBOMPolicy{
-					License: &policy.SBOMLicensePolicy{
-						Deny: []string{"GPL-3.0"},
-					},
+			SBOM: &policy.SBOMPolicy{
+				License: &policy.SBOMLicensePolicy{
+					Deny: []string{"GPL-3.0"},
 				},
 			},
 		}, testDigest)
@@ -573,11 +549,9 @@ func TestVerifySPDXLicenseFields(t *testing.T) {
 		att := wrapInToto(t, doc, testDigest)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			Sections: policy.Sections{
-				SBOM: &policy.SBOMPolicy{
-					License: &policy.SBOMLicensePolicy{
-						Deny: []string{testLicenseNone},
-					},
+			SBOM: &policy.SBOMPolicy{
+				License: &policy.SBOMLicensePolicy{
+					Deny: []string{testLicenseNone},
 				},
 			},
 		}, testDigest)
@@ -606,11 +580,9 @@ func TestVerifySPDXLicenseFields(t *testing.T) {
 		att := wrapInToto(t, doc, testDigest)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			Sections: policy.Sections{
-				SBOM: &policy.SBOMPolicy{
-					License: &policy.SBOMLicensePolicy{
-						Deny: []string{testLicenseGPL3Only},
-					},
+			SBOM: &policy.SBOMPolicy{
+				License: &policy.SBOMLicensePolicy{
+					Deny: []string{testLicenseGPL3Only},
 				},
 			},
 		}, testDigest)
@@ -639,11 +611,9 @@ func TestVerifySPDXLicenseFields(t *testing.T) {
 		att := wrapInToto(t, doc, testDigest)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			Sections: policy.Sections{
-				SBOM: &policy.SBOMPolicy{
-					License: &policy.SBOMLicensePolicy{
-						Deny: []string{testLicenseGPL3Only},
-					},
+			SBOM: &policy.SBOMPolicy{
+				License: &policy.SBOMLicensePolicy{
+					Deny: []string{testLicenseGPL3Only},
 				},
 			},
 		}, testDigest)
@@ -672,11 +642,9 @@ func TestVerifySPDXLicenseFields(t *testing.T) {
 		att := wrapInToto(t, doc, testDigest)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			Sections: policy.Sections{
-				SBOM: &policy.SBOMPolicy{
-					License: &policy.SBOMLicensePolicy{
-						Deny: []string{testLicenseGPL2Only},
-					},
+			SBOM: &policy.SBOMPolicy{
+				License: &policy.SBOMLicensePolicy{
+					Deny: []string{testLicenseGPL2Only},
 				},
 			},
 		}, testDigest)
@@ -705,11 +673,9 @@ func TestVerifySPDXLicenseFields(t *testing.T) {
 		att := wrapInToto(t, doc, testDigest)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			Sections: policy.Sections{
-				SBOM: &policy.SBOMPolicy{
-					License: &policy.SBOMLicensePolicy{
-						Allow: []string{testLicenseGPL2Only},
-					},
+			SBOM: &policy.SBOMPolicy{
+				License: &policy.SBOMLicensePolicy{
+					Allow: []string{testLicenseGPL2Only},
 				},
 			},
 		}, testDigest)
@@ -738,11 +704,9 @@ func TestVerifySPDXLicenseFields(t *testing.T) {
 		att := wrapInToto(t, doc, testDigest)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			Sections: policy.Sections{
-				SBOM: &policy.SBOMPolicy{
-					License: &policy.SBOMLicensePolicy{
-						Deny: []string{testLicenseGPL3Only},
-					},
+			SBOM: &policy.SBOMPolicy{
+				License: &policy.SBOMLicensePolicy{
+					Deny: []string{testLicenseGPL3Only},
 				},
 			},
 		}, testDigest)
@@ -774,11 +738,9 @@ func TestVerifyCycloneDXLicenseName(t *testing.T) {
 	att := wrapInToto(t, doc, testDigest)
 
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-		Sections: policy.Sections{
-			SBOM: &policy.SBOMPolicy{
-				License: &policy.SBOMLicensePolicy{
-					Deny: []string{"GNU General Public License v3.0"},
-				},
+		SBOM: &policy.SBOMPolicy{
+			License: &policy.SBOMLicensePolicy{
+				Deny: []string{"GNU General Public License v3.0"},
 			},
 		},
 	}, testDigest)
@@ -899,11 +861,9 @@ func TestVerifyMultiple(t *testing.T) {
 			name: "any denied license fails",
 			docs: []any{validSPDXDoc(), validCycloneDXDoc()},
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						License: &policy.SBOMLicensePolicy{
-							Deny: []string{testLicenseMIT},
-						},
+				SBOM: &policy.SBOMPolicy{
+					License: &policy.SBOMLicensePolicy{
+						Deny: []string{testLicenseMIT},
 					},
 				},
 			},
@@ -988,10 +948,8 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		}
 
 		result, err := sbom.VerifyMultiple(context.Background(), attestations, &policy.Policy{
-			Sections: policy.Sections{
-				SBOM: &policy.SBOMPolicy{
-					Formats: []string{testFormatCycloneDX},
-				},
+			SBOM: &policy.SBOMPolicy{
+				Formats: []string{testFormatCycloneDX},
 			},
 		}, testDigest)
 		testutil.AssertNoError(t, err)
@@ -1063,11 +1021,9 @@ func TestVerifyLicenseAllowList(t *testing.T) {
 		att := wrapInToto(t, validSPDXDoc(), testDigest)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			Sections: policy.Sections{
-				SBOM: &policy.SBOMPolicy{
-					License: &policy.SBOMLicensePolicy{
-						Allow: []string{testLicenseMIT, testLicenseApache2},
-					},
+			SBOM: &policy.SBOMPolicy{
+				License: &policy.SBOMLicensePolicy{
+					Allow: []string{testLicenseMIT, testLicenseApache2},
 				},
 			},
 		}, testDigest)
@@ -1084,11 +1040,9 @@ func TestVerifyLicenseAllowList(t *testing.T) {
 		att := wrapInToto(t, validSPDXDoc(), testDigest)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			Sections: policy.Sections{
-				SBOM: &policy.SBOMPolicy{
-					License: &policy.SBOMLicensePolicy{
-						Allow: []string{testLicenseApache2, "BSD-3-Clause"},
-					},
+			SBOM: &policy.SBOMPolicy{
+				License: &policy.SBOMLicensePolicy{
+					Allow: []string{testLicenseApache2, "BSD-3-Clause"},
 				},
 			},
 		}, testDigest)
@@ -1109,12 +1063,10 @@ func TestVerifyLicenseAllowList(t *testing.T) {
 		att := wrapInToto(t, validSPDXDoc(), testDigest)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			Sections: policy.Sections{
-				SBOM: &policy.SBOMPolicy{
-					License: &policy.SBOMLicensePolicy{
-						Deny:  []string{testLicenseMIT},
-						Allow: []string{testLicenseMIT},
-					},
+			SBOM: &policy.SBOMPolicy{
+				License: &policy.SBOMLicensePolicy{
+					Deny:  []string{testLicenseMIT},
+					Allow: []string{testLicenseMIT},
 				},
 			},
 		}, testDigest)
@@ -1135,11 +1087,9 @@ func TestVerifyLicenseAllowList(t *testing.T) {
 		att := wrapInToto(t, validSPDXDoc(), testDigest)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			Sections: policy.Sections{
-				SBOM: &policy.SBOMPolicy{
-					License: &policy.SBOMLicensePolicy{
-						Allow: []string{},
-					},
+			SBOM: &policy.SBOMPolicy{
+				License: &policy.SBOMLicensePolicy{
+					Allow: []string{},
 				},
 			},
 		}, testDigest)
@@ -1156,11 +1106,9 @@ func TestVerifyLicenseAllowList(t *testing.T) {
 		att := wrapInToto(t, validSPDXDoc(), testDigest)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			Sections: policy.Sections{
-				SBOM: &policy.SBOMPolicy{
-					License: &policy.SBOMLicensePolicy{
-						Allow: []string{"mit"},
-					},
+			SBOM: &policy.SBOMPolicy{
+				License: &policy.SBOMLicensePolicy{
+					Allow: []string{"mit"},
 				},
 			},
 		}, testDigest)
@@ -1181,11 +1129,9 @@ func TestVerifyComponentAllowList(t *testing.T) {
 		att := wrapInToto(t, validSPDXDoc(), testDigest)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			Sections: policy.Sections{
-				SBOM: &policy.SBOMPolicy{
-					Component: &policy.SBOMComponentPolicy{
-						Allow: []string{testLibPURL},
-					},
+			SBOM: &policy.SBOMPolicy{
+				Component: &policy.SBOMComponentPolicy{
+					Allow: []string{testLibPURL},
 				},
 			},
 		}, testDigest)
@@ -1202,11 +1148,9 @@ func TestVerifyComponentAllowList(t *testing.T) {
 		att := wrapInToto(t, validSPDXDoc(), testDigest)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			Sections: policy.Sections{
-				SBOM: &policy.SBOMPolicy{
-					Component: &policy.SBOMComponentPolicy{
-						Allow: []string{"pkg:npm/other@2.0.0"},
-					},
+			SBOM: &policy.SBOMPolicy{
+				Component: &policy.SBOMComponentPolicy{
+					Allow: []string{"pkg:npm/other@2.0.0"},
 				},
 			},
 		}, testDigest)
@@ -1227,12 +1171,10 @@ func TestVerifyComponentAllowList(t *testing.T) {
 		att := wrapInToto(t, validSPDXDoc(), testDigest)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			Sections: policy.Sections{
-				SBOM: &policy.SBOMPolicy{
-					Component: &policy.SBOMComponentPolicy{
-						Deny:  []string{testLibPURL},
-						Allow: []string{testLibPURL},
-					},
+			SBOM: &policy.SBOMPolicy{
+				Component: &policy.SBOMComponentPolicy{
+					Deny:  []string{testLibPURL},
+					Allow: []string{testLibPURL},
 				},
 			},
 		}, testDigest)
@@ -1253,11 +1195,9 @@ func TestVerifyComponentAllowList(t *testing.T) {
 		att := wrapInToto(t, validSPDXDoc(), testDigest)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			Sections: policy.Sections{
-				SBOM: &policy.SBOMPolicy{
-					Component: &policy.SBOMComponentPolicy{
-						Allow: []string{"pkg:npm/mylib"},
-					},
+			SBOM: &policy.SBOMPolicy{
+				Component: &policy.SBOMComponentPolicy{
+					Allow: []string{"pkg:npm/mylib"},
 				},
 			},
 		}, testDigest)
@@ -1274,11 +1214,9 @@ func TestVerifyComponentAllowList(t *testing.T) {
 		att := wrapInToto(t, validSPDXDoc(), testDigest)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			Sections: policy.Sections{
-				SBOM: &policy.SBOMPolicy{
-					Component: &policy.SBOMComponentPolicy{
-						Allow: []string{},
-					},
+			SBOM: &policy.SBOMPolicy{
+				Component: &policy.SBOMComponentPolicy{
+					Allow: []string{},
 				},
 			},
 		}, testDigest)
@@ -1312,11 +1250,9 @@ func TestVerifyCVSSThresholdExceeded(t *testing.T) {
 	att := wrapInToto(t, doc, testDigest)
 
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-		Sections: policy.Sections{
-			SBOM: &policy.SBOMPolicy{
-				CVSS: &policy.SBOMCVSSPolicy{
-					MaxScore: new(7.0),
-				},
+		SBOM: &policy.SBOMPolicy{
+			CVSS: &policy.SBOMCVSSPolicy{
+				MaxScore: new(7.0),
 			},
 		},
 	}, testDigest)
@@ -1350,11 +1286,9 @@ func TestVerifyCVSSThresholdUnder(t *testing.T) {
 	att := wrapInToto(t, doc, testDigest)
 
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-		Sections: policy.Sections{
-			SBOM: &policy.SBOMPolicy{
-				CVSS: &policy.SBOMCVSSPolicy{
-					MaxScore: new(7.0),
-				},
+		SBOM: &policy.SBOMPolicy{
+			CVSS: &policy.SBOMCVSSPolicy{
+				MaxScore: new(7.0),
 			},
 		},
 	}, testDigest)
@@ -1380,12 +1314,10 @@ func TestVerifyCVSSIgnoredCVE(t *testing.T) {
 	att := wrapInToto(t, doc, testDigest)
 
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-		Sections: policy.Sections{
-			SBOM: &policy.SBOMPolicy{
-				CVSS: &policy.SBOMCVSSPolicy{
-					MaxScore:   new(7.0),
-					IgnoreCVEs: []string{"CVE-2024-9999"},
-				},
+		SBOM: &policy.SBOMPolicy{
+			CVSS: &policy.SBOMCVSSPolicy{
+				MaxScore:   new(7.0),
+				IgnoreCVEs: []string{"CVE-2024-9999"},
 			},
 		},
 	}, testDigest)
@@ -1412,12 +1344,10 @@ func TestVerifyCVSSOrLogicScoreOnly(t *testing.T) {
 
 	// Exceeds maxScore but not minSeverity, should still flag.
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-		Sections: policy.Sections{
-			SBOM: &policy.SBOMPolicy{
-				CVSS: &policy.SBOMCVSSPolicy{
-					MaxScore:    new(7.0),
-					MinSeverity: testSeverityCritical,
-				},
+		SBOM: &policy.SBOMPolicy{
+			CVSS: &policy.SBOMCVSSPolicy{
+				MaxScore:    new(7.0),
+				MinSeverity: testSeverityCritical,
 			},
 		},
 	}, testDigest)
@@ -1444,12 +1374,10 @@ func TestVerifyCVSSOrLogicSeverityOnly(t *testing.T) {
 
 	// Does not exceed maxScore but exceeds minSeverity, should flag.
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-		Sections: policy.Sections{
-			SBOM: &policy.SBOMPolicy{
-				CVSS: &policy.SBOMCVSSPolicy{
-					MaxScore:    new(7.0),
-					MinSeverity: testSeverityHigh,
-				},
+		SBOM: &policy.SBOMPolicy{
+			CVSS: &policy.SBOMCVSSPolicy{
+				MaxScore:    new(7.0),
+				MinSeverity: testSeverityHigh,
 			},
 		},
 	}, testDigest)
@@ -1468,11 +1396,9 @@ func TestVerifyCVSSEmptyVulnerabilities(t *testing.T) {
 	att := wrapInToto(t, doc, testDigest)
 
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-		Sections: policy.Sections{
-			SBOM: &policy.SBOMPolicy{
-				CVSS: &policy.SBOMCVSSPolicy{
-					MaxScore: new(7.0),
-				},
+		SBOM: &policy.SBOMPolicy{
+			CVSS: &policy.SBOMCVSSPolicy{
+				MaxScore: new(7.0),
 			},
 		},
 	}, testDigest)
@@ -1492,11 +1418,9 @@ func TestVerifyCVSSSkippedForSPDX(t *testing.T) {
 
 	// CVSS settings are present but should be ignored for SPDX.
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-		Sections: policy.Sections{
-			SBOM: &policy.SBOMPolicy{
-				CVSS: &policy.SBOMCVSSPolicy{
-					MaxScore: new(0.0),
-				},
+		SBOM: &policy.SBOMPolicy{
+			CVSS: &policy.SBOMCVSSPolicy{
+				MaxScore: new(0.0),
 			},
 		},
 	}, testDigest)
@@ -1535,11 +1459,9 @@ func TestVerifyCVSSMetadataPopulated(t *testing.T) {
 
 	// Use a high threshold so all pass, but metadata still gets populated.
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-		Sections: policy.Sections{
-			SBOM: &policy.SBOMPolicy{
-				CVSS: &policy.SBOMCVSSPolicy{
-					MaxScore: new(10.0),
-				},
+		SBOM: &policy.SBOMPolicy{
+			CVSS: &policy.SBOMCVSSPolicy{
+				MaxScore: new(10.0),
 			},
 		},
 	}, testDigest)
@@ -1600,10 +1522,8 @@ func TestVerifyCVSSEmptyRatings(t *testing.T) {
 	att := wrapInToto(t, doc, testDigest)
 
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-		Sections: policy.Sections{
-			SBOM: &policy.SBOMPolicy{
-				CVSS: &policy.SBOMCVSSPolicy{MaxScore: new(7.0)},
-			},
+		SBOM: &policy.SBOMPolicy{
+			CVSS: &policy.SBOMCVSSPolicy{MaxScore: new(7.0)},
 		},
 	}, testDigest)
 	testutil.AssertNoError(t, err)
@@ -1640,10 +1560,8 @@ func TestVerifyMultipleCVSSMetadata(t *testing.T) {
 	}
 
 	result, err := sbom.VerifyMultiple(context.Background(), attestations, &policy.Policy{
-		Sections: policy.Sections{
-			SBOM: &policy.SBOMPolicy{
-				CVSS: &policy.SBOMCVSSPolicy{MaxScore: new(10.0)},
-			},
+		SBOM: &policy.SBOMPolicy{
+			CVSS: &policy.SBOMCVSSPolicy{MaxScore: new(10.0)},
 		},
 	}, testDigest)
 	testutil.AssertNoError(t, err)
@@ -1699,11 +1617,9 @@ func TestVerifyCVSSMinSeverityOnly(t *testing.T) {
 	att := wrapInToto(t, doc, testDigest)
 
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-		Sections: policy.Sections{
-			SBOM: &policy.SBOMPolicy{
-				CVSS: &policy.SBOMCVSSPolicy{
-					MinSeverity: testSeverityHigh,
-				},
+		SBOM: &policy.SBOMPolicy{
+			CVSS: &policy.SBOMCVSSPolicy{
+				MinSeverity: testSeverityHigh,
 			},
 		},
 	}, testDigest)
@@ -1730,11 +1646,9 @@ func TestVerifyCVSSMultiRatingAggregation(t *testing.T) {
 	att := wrapInToto(t, doc, testDigest)
 
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-		Sections: policy.Sections{
-			SBOM: &policy.SBOMPolicy{
-				CVSS: &policy.SBOMCVSSPolicy{
-					MaxScore: new(7.0),
-				},
+		SBOM: &policy.SBOMPolicy{
+			CVSS: &policy.SBOMCVSSPolicy{
+				MaxScore: new(7.0),
 			},
 		},
 	}, testDigest)
@@ -1764,11 +1678,9 @@ func TestVerifyCVSSNilScoreSeverityOnly(t *testing.T) {
 	att := wrapInToto(t, doc, testDigest)
 
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-		Sections: policy.Sections{
-			SBOM: &policy.SBOMPolicy{
-				CVSS: &policy.SBOMCVSSPolicy{
-					MinSeverity: testSeverityHigh,
-				},
+		SBOM: &policy.SBOMPolicy{
+			CVSS: &policy.SBOMCVSSPolicy{
+				MinSeverity: testSeverityHigh,
 			},
 		},
 	}, testDigest)
@@ -1803,11 +1715,9 @@ func TestVerifyCVSSUnrecognizedSeverity(t *testing.T) {
 	att := wrapInToto(t, doc, testDigest)
 
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-		Sections: policy.Sections{
-			SBOM: &policy.SBOMPolicy{
-				CVSS: &policy.SBOMCVSSPolicy{
-					MaxScore: new(7.0),
-				},
+		SBOM: &policy.SBOMPolicy{
+			CVSS: &policy.SBOMCVSSPolicy{
+				MaxScore: new(7.0),
 			},
 		},
 	}, testDigest)
@@ -1923,11 +1833,9 @@ func TestVerifySPDX3LicenseDenyList(t *testing.T) {
 	att := wrapInToto(t, doc, testDigest)
 
 	pol := &policy.Policy{
-		Sections: policy.Sections{
-			SBOM: &policy.SBOMPolicy{
-				License: &policy.SBOMLicensePolicy{
-					Deny: []string{testLicenseMIT},
-				},
+		SBOM: &policy.SBOMPolicy{
+			License: &policy.SBOMLicensePolicy{
+				Deny: []string{testLicenseMIT},
 			},
 		},
 	}
@@ -2020,11 +1928,9 @@ func TestVerifySPDX3NoAssertionLicenseSkipped(t *testing.T) {
 	att := wrapInToto(t, doc, testDigest)
 
 	pol := &policy.Policy{
-		Sections: policy.Sections{
-			SBOM: &policy.SBOMPolicy{
-				License: &policy.SBOMLicensePolicy{
-					Deny: []string{testLicenseNone},
-				},
+		SBOM: &policy.SBOMPolicy{
+			License: &policy.SBOMLicensePolicy{
+				Deny: []string{testLicenseNone},
 			},
 		},
 	}

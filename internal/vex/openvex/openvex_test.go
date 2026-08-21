@@ -31,17 +31,15 @@ const (
 
 func validDoc(status openvexlib.Status) openvexlib.VEX {
 	return openvexlib.VEX{
-		Metadata: openvexlib.Metadata{
-			Context: testVEXContext,
-			ID:      "https://openvex.dev/docs/example/vex-1",
-		},
+		Context: testVEXContext,
+		ID:      "https://openvex.dev/docs/example/vex-1",
 		Statements: []openvexlib.Statement{
 			{
 				Vulnerability: openvexlib.Vulnerability{
 					Name: "CVE-2024-1234",
 				},
 				Products: []openvexlib.Product{
-					{Component: openvexlib.Component{ID: testDigest}},
+					{ID: testDigest},
 				},
 				Status: status,
 			},
@@ -133,10 +131,8 @@ func TestVerifyEmptyStatements(t *testing.T) {
 	t.Parallel()
 
 	doc := openvexlib.VEX{
-		Metadata: openvexlib.Metadata{
-			Context: testVEXContext,
-			ID:      "https://openvex.dev/docs/example/vex-empty",
-		},
+		Context:    testVEXContext,
+		ID:         "https://openvex.dev/docs/example/vex-empty",
 		Statements: []openvexlib.Statement{},
 	}
 	data := testutil.MustMarshal(t, doc)
@@ -159,10 +155,8 @@ func TestVerifyStatementWithNoProducts(t *testing.T) {
 	t.Parallel()
 
 	doc := openvexlib.VEX{
-		Metadata: openvexlib.Metadata{
-			Context: testVEXContext,
-			ID:      "https://openvex.dev/docs/example/vex-no-products",
-		},
+		Context: testVEXContext,
+		ID:      "https://openvex.dev/docs/example/vex-no-products",
 		Statements: []openvexlib.Statement{
 			{
 				Vulnerability: openvexlib.Vulnerability{
@@ -189,43 +183,41 @@ func TestVerifyMultipleStatementsMixedStatuses(t *testing.T) {
 	t.Parallel()
 
 	doc := openvexlib.VEX{
-		Metadata: openvexlib.Metadata{
-			Context: testVEXContext,
-			ID:      "https://openvex.dev/docs/example/vex-mixed",
-		},
+		Context: testVEXContext,
+		ID:      "https://openvex.dev/docs/example/vex-mixed",
 		Statements: []openvexlib.Statement{
 			{
 				Vulnerability: openvexlib.Vulnerability{Name: "CVE-2024-0001"},
 				Products: []openvexlib.Product{
-					{Component: openvexlib.Component{ID: testDigest}},
+					{ID: testDigest},
 				},
 				Status: openvexlib.StatusAffected,
 			},
 			{
 				Vulnerability: openvexlib.Vulnerability{Name: "CVE-2024-0002"},
 				Products: []openvexlib.Product{
-					{Component: openvexlib.Component{ID: testDigest}},
+					{ID: testDigest},
 				},
 				Status: openvexlib.StatusNotAffected,
 			},
 			{
 				Vulnerability: openvexlib.Vulnerability{Name: "CVE-2024-0003"},
 				Products: []openvexlib.Product{
-					{Component: openvexlib.Component{ID: testDigest}},
+					{ID: testDigest},
 				},
 				Status: openvexlib.StatusUnderInvestigation,
 			},
 			{
 				Vulnerability: openvexlib.Vulnerability{Name: "CVE-2024-0004"},
 				Products: []openvexlib.Product{
-					{Component: openvexlib.Component{ID: testDigest}},
+					{ID: testDigest},
 				},
 				Status: openvexlib.StatusFixed,
 			},
 			{
 				Vulnerability: openvexlib.Vulnerability{Name: "CVE-2024-0005"},
 				Products: []openvexlib.Product{
-					{Component: openvexlib.Component{ID: testDigest}},
+					{ID: testDigest},
 				},
 				Status: openvexlib.StatusAffected,
 			},
@@ -261,15 +253,13 @@ func TestVerifyMatchByPURL(t *testing.T) {
 	testPURL := "pkg:oci/myimage@sha256:abcdef1234567890"
 
 	doc := openvexlib.VEX{
-		Metadata: openvexlib.Metadata{
-			Context: testVEXContext,
-			ID:      "https://openvex.dev/docs/example/vex-purl",
-		},
+		Context: testVEXContext,
+		ID:      "https://openvex.dev/docs/example/vex-purl",
 		Statements: []openvexlib.Statement{
 			{
 				Vulnerability: openvexlib.Vulnerability{Name: "CVE-2024-5678"},
 				Products: []openvexlib.Product{
-					{Component: openvexlib.Component{ID: testPURL}},
+					{ID: testPURL},
 				},
 				Status: openvexlib.StatusAffected,
 			},
@@ -294,15 +284,13 @@ func TestVerifyProductDoesNotMatchDigest(t *testing.T) {
 	otherDigest := "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
 	doc := openvexlib.VEX{
-		Metadata: openvexlib.Metadata{
-			Context: testVEXContext,
-			ID:      "https://openvex.dev/docs/example/vex-no-match",
-		},
+		Context: testVEXContext,
+		ID:      "https://openvex.dev/docs/example/vex-no-match",
 		Statements: []openvexlib.Statement{
 			{
 				Vulnerability: openvexlib.Vulnerability{Name: "CVE-2024-7777"},
 				Products: []openvexlib.Product{
-					{Component: openvexlib.Component{ID: otherDigest}},
+					{ID: otherDigest},
 				},
 				Status: openvexlib.StatusAffected,
 			},
@@ -324,15 +312,13 @@ func TestVerifyVulnerabilityWithNoName(t *testing.T) {
 	t.Parallel()
 
 	doc := openvexlib.VEX{
-		Metadata: openvexlib.Metadata{
-			Context: testVEXContext,
-			ID:      "https://openvex.dev/docs/example/vex-no-name",
-		},
+		Context: testVEXContext,
+		ID:      "https://openvex.dev/docs/example/vex-no-name",
 		Statements: []openvexlib.Statement{
 			{
 				Vulnerability: openvexlib.Vulnerability{Name: ""},
 				Products: []openvexlib.Product{
-					{Component: openvexlib.Component{ID: testDigest}},
+					{ID: testDigest},
 				},
 				Status: openvexlib.StatusAffected,
 			},

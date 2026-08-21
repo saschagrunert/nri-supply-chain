@@ -2234,9 +2234,7 @@ func TestResolveImagePolicyNoRules(t *testing.T) {
 	t.Parallel()
 
 	pol := &policy.Policy{
-		Sections: policy.Sections{
-			SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
-		},
+		SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
 	}
 
 	resolved, ruleIdx := verifier.ResolveImagePolicy(
@@ -2256,15 +2254,11 @@ func TestResolveImagePolicyRuleMatch(t *testing.T) {
 	t.Parallel()
 
 	pol := &policy.Policy{
-		Sections: policy.Sections{
-			SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
-		},
+		SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
 		Rules: []policy.ImageRule{
 			{
 				Images: []string{"ghcr.io/myorg/**"},
-				Sections: policy.Sections{
-					SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionAllow},
-				},
+				SLSA:   &policy.SLSAPolicy{MissingPolicy: types.ActionAllow},
 			},
 		},
 	}
@@ -2290,15 +2284,11 @@ func TestResolveImagePolicyNoMatch(t *testing.T) {
 	t.Parallel()
 
 	pol := &policy.Policy{
-		Sections: policy.Sections{
-			SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
-		},
+		SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
 		Rules: []policy.ImageRule{
 			{
 				Images: []string{"ghcr.io/specific/**"},
-				Sections: policy.Sections{
-					SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionAllow},
-				},
+				SLSA:   &policy.SLSAPolicy{MissingPolicy: types.ActionAllow},
 			},
 		},
 	}

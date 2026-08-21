@@ -117,10 +117,8 @@ func TestVerify(t *testing.T) {
 			name: "required attribute present passes",
 			doc:  validReport(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					SCAI: &policy.SCAIPolicy{
-						RequiredAttributes: []string{testAttrCodeReview},
-					},
+				SCAI: &policy.SCAIPolicy{
+					RequiredAttributes: []string{testAttrCodeReview},
 				},
 			},
 			wantPassed: true,
@@ -130,10 +128,8 @@ func TestVerify(t *testing.T) {
 			name: "required attribute missing fails",
 			doc:  validReport(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					SCAI: &policy.SCAIPolicy{
-						RequiredAttributes: []string{testAttrFuzzTested},
-					},
+				SCAI: &policy.SCAIPolicy{
+					RequiredAttributes: []string{testAttrFuzzTested},
 				},
 			},
 			wantPassed: false,
@@ -143,10 +139,8 @@ func TestVerify(t *testing.T) {
 			name: "forbidden attribute absent passes",
 			doc:  validReport(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					SCAI: &policy.SCAIPolicy{
-						ForbiddenAttributes: []string{testAttrKnownVulnerable},
-					},
+				SCAI: &policy.SCAIPolicy{
+					ForbiddenAttributes: []string{testAttrKnownVulnerable},
 				},
 			},
 			wantPassed: true,
@@ -156,10 +150,8 @@ func TestVerify(t *testing.T) {
 			name: "forbidden attribute present fails",
 			doc:  validReport(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					SCAI: &policy.SCAIPolicy{
-						ForbiddenAttributes: []string{testAttrPassedTests},
-					},
+				SCAI: &policy.SCAIPolicy{
+					ForbiddenAttributes: []string{testAttrPassedTests},
 				},
 			},
 			wantPassed: false,
@@ -169,10 +161,8 @@ func TestVerify(t *testing.T) {
 			name: "require evidence passes when all have evidence",
 			doc:  validReport(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					SCAI: &policy.SCAIPolicy{
-						RequireEvidence: true,
-					},
+				SCAI: &policy.SCAIPolicy{
+					RequireEvidence: true,
 				},
 			},
 			wantPassed: true,
@@ -186,10 +176,8 @@ func TestVerify(t *testing.T) {
 				},
 			},
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					SCAI: &policy.SCAIPolicy{
-						RequireEvidence: true,
-					},
+				SCAI: &policy.SCAIPolicy{
+					RequireEvidence: true,
 				},
 			},
 			wantPassed: false,
@@ -199,10 +187,8 @@ func TestVerify(t *testing.T) {
 			name: "attribute matching is case-insensitive",
 			doc:  validReport(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					SCAI: &policy.SCAIPolicy{
-						RequiredAttributes: []string{"passed_code_review"},
-					},
+				SCAI: &policy.SCAIPolicy{
+					RequiredAttributes: []string{"passed_code_review"},
 				},
 			},
 			wantPassed: true,
@@ -344,9 +330,7 @@ func TestVerifyEvidenceEdgeCases(t *testing.T) {
 		att := wrapInToto(t, doc, testDigest)
 
 		result, err := scai.Verify(context.Background(), att, &policy.Policy{
-			Sections: policy.Sections{
-				SCAI: &policy.SCAIPolicy{RequireEvidence: true},
-			},
+			SCAI: &policy.SCAIPolicy{RequireEvidence: true},
 		}, testDigest)
 		testutil.AssertNoError(t, err)
 
@@ -366,9 +350,7 @@ func TestVerifyEvidenceEdgeCases(t *testing.T) {
 		att := wrapInToto(t, doc, testDigest)
 
 		result, err := scai.Verify(context.Background(), att, &policy.Policy{
-			Sections: policy.Sections{
-				SCAI: &policy.SCAIPolicy{RequireEvidence: true},
-			},
+			SCAI: &policy.SCAIPolicy{RequireEvidence: true},
 		}, testDigest)
 		testutil.AssertNoError(t, err)
 
@@ -399,10 +381,8 @@ func TestVerifyMultiple(t *testing.T) {
 			name: "any forbidden attribute fails",
 			docs: []scaiReport{validReport()},
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					SCAI: &policy.SCAIPolicy{
-						ForbiddenAttributes: []string{testAttrPassedTests},
-					},
+				SCAI: &policy.SCAIPolicy{
+					ForbiddenAttributes: []string{testAttrPassedTests},
 				},
 			},
 			wantPassed: false,
@@ -616,10 +596,8 @@ func TestVerifyForbiddenDetailMessage(t *testing.T) {
 	att := wrapInToto(t, validReport(), testDigest)
 
 	result, err := scai.Verify(context.Background(), att, &policy.Policy{
-		Sections: policy.Sections{
-			SCAI: &policy.SCAIPolicy{
-				ForbiddenAttributes: []string{testAttrPassedTests},
-			},
+		SCAI: &policy.SCAIPolicy{
+			ForbiddenAttributes: []string{testAttrPassedTests},
 		},
 	}, testDigest)
 	testutil.AssertNoError(t, err)
@@ -665,10 +643,8 @@ func TestVerifyEmptyAttributes(t *testing.T) {
 		t.Parallel()
 
 		result, err := scai.Verify(context.Background(), att, &policy.Policy{
-			Sections: policy.Sections{
-				SCAI: &policy.SCAIPolicy{
-					RequiredAttributes: []string{testAttrCodeReview},
-				},
+			SCAI: &policy.SCAIPolicy{
+				RequiredAttributes: []string{testAttrCodeReview},
 			},
 		}, testDigest)
 		testutil.AssertNoError(t, err)
@@ -682,10 +658,8 @@ func TestVerifyEmptyAttributes(t *testing.T) {
 		t.Parallel()
 
 		result, err := scai.Verify(context.Background(), att, &policy.Policy{
-			Sections: policy.Sections{
-				SCAI: &policy.SCAIPolicy{
-					RequireEvidence: true,
-				},
+			SCAI: &policy.SCAIPolicy{
+				RequireEvidence: true,
 			},
 		}, testDigest)
 		testutil.AssertNoError(t, err)
@@ -702,10 +676,8 @@ func TestVerifyRequiredDetailMessage(t *testing.T) {
 	att := wrapInToto(t, validReport(), testDigest)
 
 	result, err := scai.Verify(context.Background(), att, &policy.Policy{
-		Sections: policy.Sections{
-			SCAI: &policy.SCAIPolicy{
-				RequiredAttributes: []string{testAttrFuzzTested},
-			},
+		SCAI: &policy.SCAIPolicy{
+			RequiredAttributes: []string{testAttrFuzzTested},
 		},
 	}, testDigest)
 	testutil.AssertNoError(t, err)

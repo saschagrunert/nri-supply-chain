@@ -55,17 +55,15 @@ type inTotoSubj struct {
 
 func validVEXDoc(status openvex.Status) openvex.VEX {
 	return openvex.VEX{
-		Metadata: openvex.Metadata{
-			Context: testVEXContext,
-			ID:      "https://openvex.dev/docs/example/vex-1",
-		},
+		Context: testVEXContext,
+		ID:      "https://openvex.dev/docs/example/vex-1",
 		Statements: []openvex.Statement{
 			{
 				Vulnerability: openvex.Vulnerability{
 					Name: "CVE-2024-1234",
 				},
 				Products: []openvex.Product{
-					{Component: openvex.Component{ID: testDigest}},
+					{ID: testDigest},
 				},
 				Status: status,
 			},
@@ -128,9 +126,7 @@ func TestVerify(t *testing.T) {
 			name: "affected fails with VEX policy",
 			doc:  validVEXDoc(openvex.StatusAffected),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					VEX: &policy.VEXPolicy{},
-				},
+				VEX: &policy.VEXPolicy{},
 			},
 			wantPassed: false,
 			wantStatus: types.StatusFail,
@@ -146,9 +142,7 @@ func TestVerify(t *testing.T) {
 			name: "under investigation warn",
 			doc:  validVEXDoc(openvex.StatusUnderInvestigation),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					VEX: &policy.VEXPolicy{UnderInvestigationPolicy: types.ActionWarn},
-				},
+				VEX: &policy.VEXPolicy{UnderInvestigationPolicy: types.ActionWarn},
 			},
 			wantPassed: true,
 			wantStatus: types.StatusWarn,
@@ -157,9 +151,7 @@ func TestVerify(t *testing.T) {
 			name: "under investigation deny",
 			doc:  validVEXDoc(openvex.StatusUnderInvestigation),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					VEX: &policy.VEXPolicy{UnderInvestigationPolicy: types.ActionDeny},
-				},
+				VEX: &policy.VEXPolicy{UnderInvestigationPolicy: types.ActionDeny},
 			},
 			wantPassed: false,
 			wantStatus: types.StatusFail,
@@ -206,7 +198,7 @@ func TestVerify(t *testing.T) {
 					{
 						Vulnerability: openvex.Vulnerability{Name: "CVE-2024-5678"},
 						Products: []openvex.Product{
-							{Component: openvex.Component{ID: testDigest}},
+							{ID: testDigest},
 						},
 						Status: openvex.StatusAffected,
 					},
@@ -227,10 +219,10 @@ func TestVerify(t *testing.T) {
 					{
 						Vulnerability: openvex.Vulnerability{Name: "CVE-2024-5678"},
 						Products: []openvex.Product{
-							{Component: openvex.Component{
+							{
 								ID: "sha256:ffffffffffffffffffffffffffffffff" +
 									"ffffffffffffffffffffffffffffffff",
-							}},
+							},
 						},
 						Status: openvex.StatusAffected,
 					},
@@ -251,9 +243,9 @@ func TestVerify(t *testing.T) {
 					{
 						Vulnerability: openvex.Vulnerability{Name: "CVE-2024-9999"},
 						Products: []openvex.Product{
-							{Component: openvex.Component{
+							{
 								ID: "pkg:oci/nginx@" + testDigest + "?repository_url=index.docker.io/library",
-							}},
+							},
 						},
 						Status: openvex.StatusAffected,
 					},
@@ -498,17 +490,15 @@ func multiStatusVEXDoc(statuses ...openvex.Status) openvex.VEX {
 				),
 			},
 			Products: []openvex.Product{
-				{Component: openvex.Component{ID: testDigest}},
+				{ID: testDigest},
 			},
 			Status: status,
 		})
 	}
 
 	return openvex.VEX{
-		Metadata: openvex.Metadata{
-			Context: testVEXContext,
-			ID:      "https://openvex.dev/docs/example/vex-multi-status",
-		},
+		Context:    testVEXContext,
+		ID:         "https://openvex.dev/docs/example/vex-multi-status",
 		Statements: stmts,
 	}
 }
@@ -520,15 +510,13 @@ func TestVerifyStatementEdgeCases(t *testing.T) {
 		t.Parallel()
 
 		doc := openvex.VEX{
-			Metadata: openvex.Metadata{
-				Context: testVEXContext,
-				ID:      "https://openvex.dev/docs/example/vex-noname",
-			},
+			Context: testVEXContext,
+			ID:      "https://openvex.dev/docs/example/vex-noname",
 			Statements: []openvex.Statement{
 				{
 					Vulnerability: openvex.Vulnerability{},
 					Products: []openvex.Product{
-						{Component: openvex.Component{ID: testDigest}},
+						{ID: testDigest},
 					},
 					Status: openvex.StatusAffected,
 				},
@@ -608,9 +596,7 @@ func TestVerifyStatementEdgeCases(t *testing.T) {
 		result, err := vex.Verify(
 			context.Background(), att,
 			&policy.Policy{
-				Sections: policy.Sections{
-					VEX: &policy.VEXPolicy{UnderInvestigationPolicy: "unknown_action"},
-				},
+				VEX: &policy.VEXPolicy{UnderInvestigationPolicy: "unknown_action"},
 			},
 			testImageRef, testDigest,
 			nil,
@@ -712,9 +698,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		result, err := vex.VerifyMultiple(
 			context.Background(), attestations,
 			&policy.Policy{
-				Sections: policy.Sections{
-					VEX: &policy.VEXPolicy{UnderInvestigationPolicy: types.ActionWarn},
-				},
+				VEX: &policy.VEXPolicy{UnderInvestigationPolicy: types.ActionWarn},
 			},
 			testImageRef, testDigest,
 			nil,
@@ -827,15 +811,13 @@ func TestVerifyPURLSingleSegmentRepo(t *testing.T) {
 	purl := "pkg:oci/myimage@" + digest + "?repository_url=quay.io"
 
 	doc := openvex.VEX{
-		Metadata: openvex.Metadata{
-			Context: testVEXContext,
-			ID:      "https://openvex.dev/docs/example/vex-single-seg",
-		},
+		Context: testVEXContext,
+		ID:      "https://openvex.dev/docs/example/vex-single-seg",
 		Statements: []openvex.Statement{
 			{
 				Vulnerability: openvex.Vulnerability{Name: "CVE-2024-8888"},
 				Products: []openvex.Product{
-					{Component: openvex.Component{ID: purl}},
+					{ID: purl},
 				},
 				Status: openvex.StatusAffected,
 			},
@@ -1289,9 +1271,7 @@ func TestVerifyCycloneDXInTriageWithDenyPolicy(t *testing.T) {
 	result, err := vex.Verify(
 		context.Background(), att,
 		&policy.Policy{
-			Sections: policy.Sections{
-				VEX: &policy.VEXPolicy{UnderInvestigationPolicy: types.ActionDeny},
-			},
+			VEX: &policy.VEXPolicy{UnderInvestigationPolicy: types.ActionDeny},
 		},
 		testImageRef, testDigest,
 		nil,

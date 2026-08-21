@@ -605,19 +605,17 @@ func TestBuildFetchOptsPropagatesTimeBounds(t *testing.T) {
 	na := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	pol := &policy.Policy{
-		Sections: policy.Sections{
-			Trust: &policy.TrustPolicy{
-				Verifiers: []policy.TrustedVerifier{
-					{
-						ID:            "https://example.com/v",
-						Keys:          []string{"/key/a.pub", "/key/b.pub"},
-						NotBeforeTime: nb,
-						NotAfterTime:  na,
-					},
-					{
-						ID:   "https://example.com/v2",
-						Keys: []string{"/key/c.pub"},
-					},
+		Trust: &policy.TrustPolicy{
+			Verifiers: []policy.TrustedVerifier{
+				{
+					ID:            "https://example.com/v",
+					Keys:          []string{"/key/a.pub", "/key/b.pub"},
+					NotBeforeTime: nb,
+					NotAfterTime:  na,
+				},
+				{
+					ID:   "https://example.com/v2",
+					Keys: []string{"/key/c.pub"},
 				},
 			},
 		},

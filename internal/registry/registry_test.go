@@ -100,12 +100,10 @@ func TestResolveIndexDigestMatchingPlatform(t *testing.T) {
 	pushIndex(t, server, "match:latest",
 		mutate.IndexAddendum{
 			Add: img,
-			Descriptor: v1.Descriptor{
-				Platform: &v1.Platform{
-					Architecture: runtime.GOARCH,
-					OS:           runtime.GOOS,
-					Variant:      registry.PlatformVariant(runtime.GOARCH),
-				},
+			Platform: &v1.Platform{
+				Architecture: runtime.GOARCH,
+				OS:           runtime.GOOS,
+				Variant:      registry.PlatformVariant(runtime.GOARCH),
 			},
 		},
 	)
@@ -133,16 +131,12 @@ func TestResolveIndexDigestMultiplePlatforms(t *testing.T) {
 
 	idx := pushIndex(t, server, "multi:latest",
 		mutate.IndexAddendum{
-			Add: amdImg,
-			Descriptor: v1.Descriptor{
-				Platform: &v1.Platform{Architecture: "amd64", OS: "linux"},
-			},
+			Add:      amdImg,
+			Platform: &v1.Platform{Architecture: "amd64", OS: "linux"},
 		},
 		mutate.IndexAddendum{
-			Add: armImg,
-			Descriptor: v1.Descriptor{
-				Platform: &v1.Platform{Architecture: "arm64", OS: "linux", Variant: "v8"},
-			},
+			Add:      armImg,
+			Platform: &v1.Platform{Architecture: "arm64", OS: "linux", Variant: "v8"},
 		},
 	)
 
@@ -177,10 +171,8 @@ func TestResolveIndexDigestNoPlatformMatch(t *testing.T) {
 
 	pushIndex(t, server, "nomatch:latest",
 		mutate.IndexAddendum{
-			Add: img,
-			Descriptor: v1.Descriptor{
-				Platform: &v1.Platform{Architecture: "s390x", OS: "zos"},
-			},
+			Add:      img,
+			Platform: &v1.Platform{Architecture: "s390x", OS: "zos"},
 		},
 	)
 
@@ -266,12 +258,10 @@ func TestResolveDigestManifestList(t *testing.T) {
 	idx := pushIndex(t, server, "multiarch:latest",
 		mutate.IndexAddendum{
 			Add: img,
-			Descriptor: v1.Descriptor{
-				Platform: &v1.Platform{
-					Architecture: runtime.GOARCH,
-					OS:           runtime.GOOS,
-					Variant:      registry.PlatformVariant(runtime.GOARCH),
-				},
+			Platform: &v1.Platform{
+				Architecture: runtime.GOARCH,
+				OS:           runtime.GOOS,
+				Variant:      registry.PlatformVariant(runtime.GOARCH),
 			},
 		},
 	)

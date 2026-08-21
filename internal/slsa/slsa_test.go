@@ -129,11 +129,9 @@ func TestVerify(t *testing.T) {
 				return testutil.MustMarshal(t, validStatement())
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: []policy.TrustedBuilder{
-							{ID: testBuilderID, MaxLevel: 2},
-						},
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: testBuilderID, MaxLevel: 2},
 					},
 				},
 			},
@@ -151,11 +149,9 @@ func TestVerify(t *testing.T) {
 				return testutil.MustMarshal(t, validStatementV02())
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: []policy.TrustedBuilder{
-							{ID: testBuilderID, MaxLevel: 2},
-						},
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: testBuilderID, MaxLevel: 2},
 					},
 				},
 			},
@@ -173,13 +169,11 @@ func TestVerify(t *testing.T) {
 				return testutil.MustMarshal(t, validStatementV02())
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: []policy.TrustedBuilder{
-							{ID: testBuilderID},
-						},
-						Sources: []string{testSourceGlob},
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: testBuilderID},
 					},
+					Sources: []string{testSourceGlob},
 				},
 			},
 			digest:     testDigest,
@@ -199,13 +193,11 @@ func TestVerify(t *testing.T) {
 				return testutil.MustMarshal(t, stmt)
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: []policy.TrustedBuilder{
-							{ID: testBuilderID},
-						},
-						Sources: []string{testSourceGlob},
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: testBuilderID},
 					},
+					Sources: []string{testSourceGlob},
 				},
 			},
 			digest:     testDigest,
@@ -222,10 +214,8 @@ func TestVerify(t *testing.T) {
 				return testutil.MustMarshal(t, validStatementV02())
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Sources: []string{"https://github.com/other-org/*"},
-					},
+				Trust: &policy.TrustPolicy{
+					Sources: []string{"https://github.com/other-org/*"},
 				},
 			},
 			digest:     testDigest,
@@ -299,11 +289,9 @@ func TestVerify(t *testing.T) {
 				return testutil.MustMarshal(t, validStatement())
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: []policy.TrustedBuilder{
-							{ID: "https://other-builder.example.com", MaxLevel: 3},
-						},
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: "https://other-builder.example.com", MaxLevel: 3},
 					},
 				},
 			},
@@ -335,13 +323,11 @@ func TestVerify(t *testing.T) {
 				return testutil.MustMarshal(t, validStatement())
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: []policy.TrustedBuilder{
-							{ID: testBuilderID, MaxLevel: 2},
-						},
-						BuildTypes: []string{"https://other.example.com/build/v1"},
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: testBuilderID, MaxLevel: 2},
 					},
+					BuildTypes: []string{"https://other.example.com/build/v1"},
 				},
 			},
 			digest:     testDigest,
@@ -358,14 +344,12 @@ func TestVerify(t *testing.T) {
 				return testutil.MustMarshal(t, validStatement())
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: []policy.TrustedBuilder{
-							{ID: testBuilderID, MaxLevel: 2},
-						},
-						BuildTypes: []string{
-							"https://actions.github.io/buildtypes/workflow/v1",
-						},
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: testBuilderID, MaxLevel: 2},
+					},
+					BuildTypes: []string{
+						"https://actions.github.io/buildtypes/workflow/v1",
 					},
 				},
 			},
@@ -383,13 +367,11 @@ func TestVerify(t *testing.T) {
 				return testutil.MustMarshal(t, validStatement())
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: []policy.TrustedBuilder{
-							{ID: testBuilderID, MaxLevel: 2},
-						},
-						Sources: []string{"https://github.com/other-org/*"},
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: testBuilderID, MaxLevel: 2},
 					},
+					Sources: []string{"https://github.com/other-org/*"},
 				},
 			},
 			digest:     testDigest,
@@ -406,13 +388,11 @@ func TestVerify(t *testing.T) {
 				return testutil.MustMarshal(t, validStatement())
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: []policy.TrustedBuilder{
-							{ID: testBuilderID, MaxLevel: 2},
-						},
-						Sources: []string{testSourceGlob},
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: testBuilderID, MaxLevel: 2},
 					},
+					Sources: []string{testSourceGlob},
 				},
 			},
 			digest:     testDigest,
@@ -434,13 +414,11 @@ func TestVerify(t *testing.T) {
 				return testutil.MustMarshal(t, stmt)
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: []policy.TrustedBuilder{
-							{ID: testBuilderID, MaxLevel: 2},
-						},
-						Sources: []string{testSourceGlob},
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: testBuilderID, MaxLevel: 2},
 					},
+					Sources: []string{testSourceGlob},
 				},
 			},
 			digest:     testDigest,
@@ -462,13 +440,11 @@ func TestVerify(t *testing.T) {
 				return testutil.MustMarshal(t, stmt)
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: []policy.TrustedBuilder{
-							{ID: testBuilderID, MaxLevel: 2},
-						},
-						Sources: []string{testSourceGlob},
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: testBuilderID, MaxLevel: 2},
 					},
+					Sources: []string{testSourceGlob},
 				},
 			},
 			digest:     testDigest,
@@ -488,15 +464,13 @@ func TestVerify(t *testing.T) {
 				return testutil.MustMarshal(t, stmt)
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: []policy.TrustedBuilder{
-							{ID: testBuilderID, MaxLevel: 2},
-						},
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: testBuilderID, MaxLevel: 2},
 					},
-					SLSA: &policy.SLSAPolicy{
-						RejectUnknownParameters: true,
-					},
+				},
+				SLSA: &policy.SLSAPolicy{
+					RejectUnknownParameters: true,
 				},
 			},
 			digest:     testDigest,
@@ -516,15 +490,13 @@ func TestVerify(t *testing.T) {
 				return testutil.MustMarshal(t, stmt)
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: []policy.TrustedBuilder{
-							{ID: testBuilderID, MaxLevel: 2},
-						},
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: testBuilderID, MaxLevel: 2},
 					},
-					SLSA: &policy.SLSAPolicy{
-						RejectUnknownParameters: false,
-					},
+				},
+				SLSA: &policy.SLSAPolicy{
+					RejectUnknownParameters: false,
 				},
 			},
 			digest:     testDigest,
@@ -550,15 +522,13 @@ func TestVerify(t *testing.T) {
 				return testutil.MustMarshal(t, stmt)
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: []policy.TrustedBuilder{
-							{ID: testBuilderID, MaxLevel: 2},
-						},
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: testBuilderID, MaxLevel: 2},
 					},
-					SLSA: &policy.SLSAPolicy{
-						RejectUnknownParameters: true,
-					},
+				},
+				SLSA: &policy.SLSAPolicy{
+					RejectUnknownParameters: true,
 				},
 			},
 			digest:     testDigest,
@@ -580,16 +550,14 @@ func TestVerify(t *testing.T) {
 				return testutil.MustMarshal(t, stmt)
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: []policy.TrustedBuilder{
-							{ID: testBuilderID, MaxLevel: 2},
-						},
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: testBuilderID, MaxLevel: 2},
 					},
-					SLSA: &policy.SLSAPolicy{
-						RejectUnknownParameters: true,
-						KnownParameters:         []string{testCustomParamKey},
-					},
+				},
+				SLSA: &policy.SLSAPolicy{
+					RejectUnknownParameters: true,
+					KnownParameters:         []string{testCustomParamKey},
 				},
 			},
 			digest:     testDigest,
@@ -612,16 +580,14 @@ func TestVerify(t *testing.T) {
 				return testutil.MustMarshal(t, stmt)
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: []policy.TrustedBuilder{
-							{ID: testBuilderID, MaxLevel: 2},
-						},
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: testBuilderID, MaxLevel: 2},
 					},
-					SLSA: &policy.SLSAPolicy{
-						RejectUnknownParameters: true,
-						KnownParameters:         []string{testCustomParamKey},
-					},
+				},
+				SLSA: &policy.SLSAPolicy{
+					RejectUnknownParameters: true,
+					KnownParameters:         []string{testCustomParamKey},
 				},
 			},
 			digest:     testDigest,
@@ -668,11 +634,9 @@ func TestVerify(t *testing.T) {
 				return testutil.MustMarshal(t, stmt)
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					SLSA: &policy.SLSAPolicy{
-						MaxAge:         testMaxAge,
-						MaxAgeDuration: 24 * time.Hour,
-					},
+				SLSA: &policy.SLSAPolicy{
+					MaxAge:         testMaxAge,
+					MaxAgeDuration: 24 * time.Hour,
 				},
 			},
 			digest:     testDigest,
@@ -693,11 +657,9 @@ func TestVerify(t *testing.T) {
 				return testutil.MustMarshal(t, stmt)
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					SLSA: &policy.SLSAPolicy{
-						MaxAge:         testMaxAge,
-						MaxAgeDuration: 24 * time.Hour,
-					},
+				SLSA: &policy.SLSAPolicy{
+					MaxAge:         testMaxAge,
+					MaxAgeDuration: 24 * time.Hour,
 				},
 			},
 			digest:     testDigest,
@@ -728,11 +690,9 @@ func TestVerify(t *testing.T) {
 				return testutil.MustMarshal(t, validStatement())
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					SLSA: &policy.SLSAPolicy{
-						MaxAge:         testMaxAge,
-						MaxAgeDuration: 24 * time.Hour,
-					},
+				SLSA: &policy.SLSAPolicy{
+					MaxAge:         testMaxAge,
+					MaxAgeDuration: 24 * time.Hour,
 				},
 			},
 			digest:     testDigest,
@@ -789,16 +749,14 @@ func TestVerify(t *testing.T) {
 				return testutil.MustMarshal(t, stmt)
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: []policy.TrustedBuilder{
-							{ID: testBuilderID},
-						},
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: testBuilderID},
 					},
-					SLSA: &policy.SLSAPolicy{
-						MaxAge:         testMaxAge,
-						MaxAgeDuration: 24 * time.Hour,
-					},
+				},
+				SLSA: &policy.SLSAPolicy{
+					MaxAge:         testMaxAge,
+					MaxAgeDuration: 24 * time.Hour,
 				},
 			},
 			digest:     testDigest,
@@ -819,16 +777,14 @@ func TestVerify(t *testing.T) {
 				return testutil.MustMarshal(t, stmt)
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: []policy.TrustedBuilder{
-							{ID: testBuilderID},
-						},
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: testBuilderID},
 					},
-					SLSA: &policy.SLSAPolicy{
-						MaxAge:         testMaxAge,
-						MaxAgeDuration: 24 * time.Hour,
-					},
+				},
+				SLSA: &policy.SLSAPolicy{
+					MaxAge:         testMaxAge,
+					MaxAgeDuration: 24 * time.Hour,
 				},
 			},
 			digest:     testDigest,
@@ -845,16 +801,14 @@ func TestVerify(t *testing.T) {
 				return testutil.MustMarshal(t, validStatementV02())
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: []policy.TrustedBuilder{
-							{ID: testBuilderID},
-						},
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: testBuilderID},
 					},
-					SLSA: &policy.SLSAPolicy{
-						MaxAge:         testMaxAge,
-						MaxAgeDuration: 24 * time.Hour,
-					},
+				},
+				SLSA: &policy.SLSAPolicy{
+					MaxAge:         testMaxAge,
+					MaxAgeDuration: 24 * time.Hour,
 				},
 			},
 			digest:     testDigest,
@@ -875,11 +829,9 @@ func TestVerify(t *testing.T) {
 				return testutil.MustMarshal(t, stmt)
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					SLSA: &policy.SLSAPolicy{
-						MaxAge:         "8760h",
-						MaxAgeDuration: 8760 * time.Hour,
-					},
+				SLSA: &policy.SLSAPolicy{
+					MaxAge:         "8760h",
+					MaxAgeDuration: 8760 * time.Hour,
 				},
 			},
 			digest:     testDigest,
@@ -900,16 +852,14 @@ func TestVerify(t *testing.T) {
 				return testutil.MustMarshal(t, stmt)
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: []policy.TrustedBuilder{
-							{ID: testBuilderID},
-						},
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: testBuilderID},
 					},
-					SLSA: &policy.SLSAPolicy{
-						MaxAge:         "8760h",
-						MaxAgeDuration: 8760 * time.Hour,
-					},
+				},
+				SLSA: &policy.SLSAPolicy{
+					MaxAge:         "8760h",
+					MaxAgeDuration: 8760 * time.Hour,
 				},
 			},
 			digest:     testDigest,
@@ -926,11 +876,9 @@ func TestVerify(t *testing.T) {
 				return testutil.MustMarshal(t, validStatementV02())
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: []policy.TrustedBuilder{
-							{ID: testBuilderID},
-						},
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: testBuilderID},
 					},
 				},
 			},
@@ -1115,10 +1063,8 @@ func TestVerifyEdgeCases(t *testing.T) {
 			context.Background(),
 			testutil.MustMarshal(t, stmt),
 			&policy.Policy{
-				Sections: policy.Sections{
-					SLSA: &policy.SLSAPolicy{
-						RejectUnknownParameters: true,
-					},
+				SLSA: &policy.SLSAPolicy{
+					RejectUnknownParameters: true,
 				},
 			},
 			testDigest,
@@ -1149,13 +1095,11 @@ func TestVerifyEdgeCases(t *testing.T) {
 		result, err := slsa.Verify(context.Background(),
 			testutil.MustMarshal(t, validStatement()),
 			&policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: []policy.TrustedBuilder{
-							{ID: "https://other-builder.example.com", MaxLevel: 3},
-							{ID: testBuilderID, MaxLevel: 2},
-							{ID: "https://yet-another.example.com", MaxLevel: 1},
-						},
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: "https://other-builder.example.com", MaxLevel: 3},
+						{ID: testBuilderID, MaxLevel: 2},
+						{ID: "https://yet-another.example.com", MaxLevel: 1},
 					},
 				},
 			},
@@ -1174,11 +1118,9 @@ func TestVerifyEdgeCases(t *testing.T) {
 		result, err := slsa.Verify(context.Background(),
 			testutil.MustMarshal(t, stmt),
 			&policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: []policy.TrustedBuilder{
-							{ID: testBuilderID, MaxLevel: 2},
-						},
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: testBuilderID, MaxLevel: 2},
 					},
 				},
 			},
@@ -1194,13 +1136,11 @@ func TestVerifyEdgeCases(t *testing.T) {
 		result, err := slsa.Verify(context.Background(),
 			testutil.MustMarshal(t, validStatement()),
 			&policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Sources: []string{
-							"github.com/other/*",
-							"github.com/another/*",
-							testSourceGlob,
-						},
+				Trust: &policy.TrustPolicy{
+					Sources: []string{
+						"github.com/other/*",
+						"github.com/another/*",
+						testSourceGlob,
 					},
 				},
 			},
@@ -1219,10 +1159,8 @@ func TestVerifyEdgeCases(t *testing.T) {
 		result, err := slsa.Verify(context.Background(),
 			testutil.MustMarshal(t, stmt),
 			&policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Sources: []string{testSourceGlob},
-					},
+				Trust: &policy.TrustPolicy{
+					Sources: []string{testSourceGlob},
 				},
 			},
 			testDigest,
@@ -1237,9 +1175,7 @@ func TestVerifyEdgeCases(t *testing.T) {
 		result, err := slsa.Verify(context.Background(),
 			testutil.MustMarshal(t, validStatement()),
 			&policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{},
-				},
+				Trust: &policy.TrustPolicy{},
 			},
 			testDigest,
 		)
@@ -1253,12 +1189,10 @@ func TestVerifyEdgeCases(t *testing.T) {
 		result, err := slsa.Verify(context.Background(),
 			testutil.MustMarshal(t, validStatement()),
 			&policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						BuildTypes: []string{
-							"https://other.example.com/build/v1",
-							testBuildType,
-						},
+				Trust: &policy.TrustPolicy{
+					BuildTypes: []string{
+						"https://other.example.com/build/v1",
+						testBuildType,
 					},
 				},
 			},
@@ -1318,10 +1252,8 @@ func TestVerifyEdgeCases(t *testing.T) {
 		result, err := slsa.Verify(context.Background(),
 			testutil.MustMarshal(t, validStatement()),
 			&policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Sources: []string{testSource},
-					},
+				Trust: &policy.TrustPolicy{
+					Sources: []string{testSource},
 				},
 			},
 			testDigest,
@@ -1339,10 +1271,8 @@ func TestVerifyEdgeCases(t *testing.T) {
 		result, err := slsa.Verify(context.Background(),
 			testutil.MustMarshal(t, stmt),
 			&policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Sources: []string{testSourceGlob},
-					},
+				Trust: &policy.TrustPolicy{
+					Sources: []string{testSourceGlob},
 				},
 			},
 			testDigest,
@@ -1358,11 +1288,9 @@ func TestVerifyV02SourceNormalization(t *testing.T) {
 	t.Cleanup(slsa.ResetWarnings)
 
 	pol := &policy.Policy{
-		Sections: policy.Sections{
-			Trust: &policy.TrustPolicy{
-				Builders: []policy.TrustedBuilder{{ID: testBuilderID}},
-				Sources:  []string{testSourceGlob},
-			},
+		Trust: &policy.TrustPolicy{
+			Builders: []policy.TrustedBuilder{{ID: testBuilderID}},
+			Sources:  []string{testSourceGlob},
 		},
 	}
 
@@ -1440,11 +1368,9 @@ func TestVerifyMultiple(t *testing.T) {
 				}
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: []policy.TrustedBuilder{
-							{ID: testBuilderID, MaxLevel: 2},
-						},
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: testBuilderID, MaxLevel: 2},
 					},
 				},
 			},
@@ -1468,11 +1394,9 @@ func TestVerifyMultiple(t *testing.T) {
 				}
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: []policy.TrustedBuilder{
-							{ID: testBuilderID, MaxLevel: 2},
-						},
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: testBuilderID, MaxLevel: 2},
 					},
 				},
 			},
@@ -1509,11 +1433,9 @@ func TestVerifyMultiple(t *testing.T) {
 				}
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: []policy.TrustedBuilder{
-							{ID: testBuilderID, MaxLevel: 2},
-						},
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{
+						{ID: testBuilderID, MaxLevel: 2},
 					},
 				},
 			},
@@ -1567,11 +1489,9 @@ func TestVerifyMultiple(t *testing.T) {
 				}
 			},
 			policy: &policy.Policy{
-				Sections: policy.Sections{
-					SLSA: &policy.SLSAPolicy{
-						MaxAge:         testMaxAge,
-						MaxAgeDuration: 24 * time.Hour,
-					},
+				SLSA: &policy.SLSAPolicy{
+					MaxAge:         testMaxAge,
+					MaxAgeDuration: 24 * time.Hour,
 				},
 			},
 			wantPass:           true,
@@ -1639,11 +1559,9 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		}
 
 		result, err := slsa.VerifyMultiple(context.Background(), atts, &policy.Policy{
-			Sections: policy.Sections{
-				Trust: &policy.TrustPolicy{
-					Builders: []policy.TrustedBuilder{
-						{ID: testBuilderID, MaxLevel: 2},
-					},
+			Trust: &policy.TrustPolicy{
+				Builders: []policy.TrustedBuilder{
+					{ID: testBuilderID, MaxLevel: 2},
 				},
 			},
 		}, testDigest)
@@ -1719,11 +1637,9 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		}
 
 		result, err := slsa.VerifyMultiple(context.Background(), atts, &policy.Policy{
-			Sections: policy.Sections{
-				Trust: &policy.TrustPolicy{
-					Builders: []policy.TrustedBuilder{
-						{ID: testBuilderID, MaxLevel: 2},
-					},
+			Trust: &policy.TrustPolicy{
+				Builders: []policy.TrustedBuilder{
+					{ID: testBuilderID, MaxLevel: 2},
 				},
 			},
 		}, testDigest)

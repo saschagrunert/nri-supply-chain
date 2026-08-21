@@ -24,11 +24,9 @@ import (
 
 func BenchmarkMissingPolicyFor(b *testing.B) {
 	pol := &policy.Policy{
-		Sections: policy.Sections{
-			SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
-			VEX:  &policy.VEXPolicy{MissingPolicy: types.ActionWarn},
-			SBOM: &policy.SBOMPolicy{MissingPolicy: types.ActionDeny},
-		},
+		SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
+		VEX:  &policy.VEXPolicy{MissingPolicy: types.ActionWarn},
+		SBOM: &policy.SBOMPolicy{MissingPolicy: types.ActionDeny},
 	}
 
 	b.ResetTimer()
@@ -72,21 +70,19 @@ func BenchmarkEffectiveModeInherited(b *testing.B) {
 
 func BenchmarkPolicyHash(b *testing.B) {
 	pol := &policy.Policy{
-		Sections: policy.Sections{
-			Trust: &policy.TrustPolicy{
-				Builders: []policy.TrustedBuilder{{
-					ID: "https://github.com/slsa-framework/slsa-github-generator/" +
-						".github/workflows/generator_generic_slsa3.yml@refs/tags/v2.1.0",
-					MaxLevel: 3,
-				}},
-				Issuers:     []string{testGitHubIssuer},
-				SANPatterns: []string{testGitHubSANPattern},
-				Sources:     []string{testGitHubSANPattern},
-			},
-			SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
-			VEX:  &policy.VEXPolicy{MissingPolicy: types.ActionDeny},
-			SBOM: &policy.SBOMPolicy{MissingPolicy: types.ActionDeny},
+		Trust: &policy.TrustPolicy{
+			Builders: []policy.TrustedBuilder{{
+				ID: "https://github.com/slsa-framework/slsa-github-generator/" +
+					".github/workflows/generator_generic_slsa3.yml@refs/tags/v2.1.0",
+				MaxLevel: 3,
+			}},
+			Issuers:     []string{testGitHubIssuer},
+			SANPatterns: []string{testGitHubSANPattern},
+			Sources:     []string{testGitHubSANPattern},
 		},
+		SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
+		VEX:  &policy.VEXPolicy{MissingPolicy: types.ActionDeny},
+		SBOM: &policy.SBOMPolicy{MissingPolicy: types.ActionDeny},
 	}
 
 	b.ResetTimer()
@@ -98,22 +94,18 @@ func BenchmarkPolicyHash(b *testing.B) {
 
 func BenchmarkMergeWithDefault(b *testing.B) {
 	defaultPol := &policy.Policy{
-		Sections: policy.Sections{
-			Trust: &policy.TrustPolicy{
-				Issuers:     []string{testGitHubIssuer},
-				SANPatterns: []string{testGitHubSANPattern},
-			},
-			SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
-			VEX:  &policy.VEXPolicy{MissingPolicy: types.ActionWarn},
-			SBOM: &policy.SBOMPolicy{MissingPolicy: types.ActionAllow},
+		Trust: &policy.TrustPolicy{
+			Issuers:     []string{testGitHubIssuer},
+			SANPatterns: []string{testGitHubSANPattern},
 		},
+		SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
+		VEX:  &policy.VEXPolicy{MissingPolicy: types.ActionWarn},
+		SBOM: &policy.SBOMPolicy{MissingPolicy: types.ActionAllow},
 	}
 
 	nsPol := &policy.Policy{
 		Mode: config.ModeEnforce,
-		Sections: policy.Sections{
-			SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
-		},
+		SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
 	}
 
 	b.ResetTimer()
@@ -125,21 +117,17 @@ func BenchmarkMergeWithDefault(b *testing.B) {
 
 func BenchmarkApplyRule(b *testing.B) {
 	base := &policy.Policy{
-		Sections: policy.Sections{
-			Trust: &policy.TrustPolicy{
-				Issuers:     []string{testGitHubIssuer},
-				SANPatterns: []string{testGitHubSANPattern},
-			},
-			SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
-			VEX:  &policy.VEXPolicy{MissingPolicy: types.ActionWarn},
+		Trust: &policy.TrustPolicy{
+			Issuers:     []string{testGitHubIssuer},
+			SANPatterns: []string{testGitHubSANPattern},
 		},
+		SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
+		VEX:  &policy.VEXPolicy{MissingPolicy: types.ActionWarn},
 	}
 
 	rule := &policy.ImageRule{
 		Images: []string{"ghcr.io/saschagrunert/*"},
-		Sections: policy.Sections{
-			SBOM: &policy.SBOMPolicy{MissingPolicy: types.ActionDeny},
-		},
+		SBOM:   &policy.SBOMPolicy{MissingPolicy: types.ActionDeny},
 	}
 
 	b.ResetTimer()

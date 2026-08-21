@@ -143,15 +143,13 @@ func validVEXPayload(t *testing.T, status openvex.Status) []byte {
 	t.Helper()
 
 	doc := openvex.VEX{
-		Metadata: openvex.Metadata{
-			Context: "https://openvex.dev/ns/v0.2.0",
-			ID:      "https://openvex.dev/docs/example/vex-test",
-		},
+		Context: "https://openvex.dev/ns/v0.2.0",
+		ID:      "https://openvex.dev/docs/example/vex-test",
 		Statements: []openvex.Statement{
 			{
 				Vulnerability: openvex.Vulnerability{Name: "CVE-2024-1234"},
 				Products: []openvex.Product{
-					{Component: openvex.Component{ID: testFetchDigest}},
+					{ID: testFetchDigest},
 				},
 				Status: status,
 			},

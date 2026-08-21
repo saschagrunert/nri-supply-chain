@@ -30,22 +30,20 @@ func FuzzVerify(f *testing.F) {
 
 	f.Fuzz(func(_ *testing.T, envelope []byte, mediaType string) {
 		pol := &policy.Policy{
-			Sections: policy.Sections{
-				Notation: &policy.NotationPolicy{
-					TrustStores: []policy.NotationTrustStore{
-						{
-							Name:         "fuzz-store",
-							Type:         "ca",
-							Certificates: []string{"/nonexistent/cert.pem"},
-						},
+			Notation: &policy.NotationPolicy{
+				TrustStores: []policy.NotationTrustStore{
+					{
+						Name:         "fuzz-store",
+						Type:         "ca",
+						Certificates: []string{"/nonexistent/cert.pem"},
 					},
-					TrustPolicy: []policy.NotationTrustPolicyRule{
-						{
-							Name:              "fuzz-rule",
-							RegistryScopes:    []string{"*"},
-							TrustStores:       []string{"ca:fuzz-store"},
-							TrustedIdentities: []string{"*"},
-						},
+				},
+				TrustPolicy: []policy.NotationTrustPolicyRule{
+					{
+						Name:              "fuzz-rule",
+						RegistryScopes:    []string{"*"},
+						TrustStores:       []string{"ca:fuzz-store"},
+						TrustedIdentities: []string{"*"},
 					},
 				},
 			},

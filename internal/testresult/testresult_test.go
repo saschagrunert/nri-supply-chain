@@ -174,10 +174,8 @@ func TestVerify(t *testing.T) {
 			name: "required suite present and passing passes",
 			doc:  validDoc(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					TestResult: &policy.TestResultPolicy{
-						RequiredSuites: []string{testSuiteUnit},
-					},
+				TestResult: &policy.TestResultPolicy{
+					RequiredSuites: []string{testSuiteUnit},
 				},
 			},
 			wantPassed: true,
@@ -187,10 +185,8 @@ func TestVerify(t *testing.T) {
 			name: "required suite missing fails",
 			doc:  validDoc(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					TestResult: &policy.TestResultPolicy{
-						RequiredSuites: []string{testSuiteE2E},
-					},
+				TestResult: &policy.TestResultPolicy{
+					RequiredSuites: []string{testSuiteE2E},
 				},
 			},
 			wantPassed: false,
@@ -211,10 +207,8 @@ func TestVerify(t *testing.T) {
 				},
 			},
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					TestResult: &policy.TestResultPolicy{
-						RequiredSuites: []string{testSuiteUnit},
-					},
+				TestResult: &policy.TestResultPolicy{
+					RequiredSuites: []string{testSuiteUnit},
 				},
 			},
 			wantPassed: false,
@@ -244,10 +238,8 @@ func TestVerify(t *testing.T) {
 			name: "suite name matching is case-insensitive",
 			doc:  validDoc(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					TestResult: &policy.TestResultPolicy{
-						RequiredSuites: []string{"UNIT"},
-					},
+				TestResult: &policy.TestResultPolicy{
+					RequiredSuites: []string{"UNIT"},
 				},
 			},
 			wantPassed: true,
@@ -416,10 +408,8 @@ func TestVerifyRequiredSuiteDetailMessage(t *testing.T) {
 	att := wrapInToto(t, validDoc(), testDigest)
 
 	result, err := testresult.Verify(context.Background(), att, &policy.Policy{
-		Sections: policy.Sections{
-			TestResult: &policy.TestResultPolicy{
-				RequiredSuites: []string{testSuiteE2E},
-			},
+		TestResult: &policy.TestResultPolicy{
+			RequiredSuites: []string{testSuiteE2E},
 		},
 	}, testDigest)
 	testutil.AssertNoError(t, err)
@@ -466,10 +456,8 @@ func TestVerifyEmptySuites(t *testing.T) {
 		t.Parallel()
 
 		result, err := testresult.Verify(context.Background(), att, &policy.Policy{
-			Sections: policy.Sections{
-				TestResult: &policy.TestResultPolicy{
-					RequiredSuites: []string{testSuiteUnit},
-				},
+			TestResult: &policy.TestResultPolicy{
+				RequiredSuites: []string{testSuiteUnit},
 			},
 		}, testDigest)
 		testutil.AssertNoError(t, err)
@@ -761,11 +749,9 @@ func TestVerifyFreshness(t *testing.T) {
 				Metadata: &testMeta{FinishedOn: &staleTime},
 			},
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					TestResult: &policy.TestResultPolicy{
-						MaxAge:         "1h",
-						MaxAgeDuration: time.Hour,
-					},
+				TestResult: &policy.TestResultPolicy{
+					MaxAge:         "1h",
+					MaxAgeDuration: time.Hour,
 				},
 			},
 			wantPassed: false,
@@ -779,11 +765,9 @@ func TestVerifyFreshness(t *testing.T) {
 				Metadata: &testMeta{FinishedOn: &freshTime},
 			},
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					TestResult: &policy.TestResultPolicy{
-						MaxAge:         "1h",
-						MaxAgeDuration: time.Hour,
-					},
+				TestResult: &policy.TestResultPolicy{
+					MaxAge:         "1h",
+					MaxAgeDuration: time.Hour,
 				},
 			},
 			wantPassed: true,
@@ -796,11 +780,9 @@ func TestVerifyFreshness(t *testing.T) {
 				Suites: []testSuite{},
 			},
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					TestResult: &policy.TestResultPolicy{
-						MaxAge:         "1h",
-						MaxAgeDuration: time.Hour,
-					},
+				TestResult: &policy.TestResultPolicy{
+					MaxAge:         "1h",
+					MaxAgeDuration: time.Hour,
 				},
 			},
 			wantPassed: false,

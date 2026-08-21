@@ -32,10 +32,8 @@ func TestValidateVulnScan(t *testing.T) {
 		{
 			name: "maxScore out of range",
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					VulnScan: &policy.VulnScanPolicy{
-						MaxScore: new(11.0),
-					},
+				VulnScan: &policy.VulnScanPolicy{
+					MaxScore: new(11.0),
 				},
 			},
 			wantErr: policy.ErrVulnScanMaxScoreRange,
@@ -43,10 +41,8 @@ func TestValidateVulnScan(t *testing.T) {
 		{
 			name: "invalid minSeverity",
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					VulnScan: &policy.VulnScanPolicy{
-						MinSeverity: "moderate",
-					},
+				VulnScan: &policy.VulnScanPolicy{
+					MinSeverity: "moderate",
 				},
 			},
 			wantErr: policy.ErrVulnScanMinSeverityInvalid,
@@ -54,10 +50,8 @@ func TestValidateVulnScan(t *testing.T) {
 		{
 			name: "maxAge not positive", //nolint:goconst // repeated test name
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					VulnScan: &policy.VulnScanPolicy{
-						MaxAge: "-1h", //nolint:goconst // test input
-					},
+				VulnScan: &policy.VulnScanPolicy{
+					MaxAge: "-1h", //nolint:goconst // test input
 				},
 			},
 			wantErr: policy.ErrVulnScanMaxAgeNotPositive,
@@ -66,12 +60,10 @@ func TestValidateVulnScan(t *testing.T) {
 			name:    "valid vulnScan passes",
 			wantErr: nil,
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					VulnScan: &policy.VulnScanPolicy{
-						MaxScore:    new(7.0),
-						MinSeverity: "high",
-						MaxAge:      "24h",
-					},
+				VulnScan: &policy.VulnScanPolicy{
+					MaxScore:    new(7.0),
+					MinSeverity: "high",
+					MaxAge:      "24h",
 				},
 			},
 		},
@@ -105,10 +97,8 @@ func TestValidateSource(t *testing.T) {
 		{
 			name: "invalid source level",
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					Source: &policy.SourcePolicy{
-						MinimumLevel: 4,
-					},
+				Source: &policy.SourcePolicy{
+					MinimumLevel: 4,
 				},
 			},
 			wantErr: policy.ErrInvalidSourceLevel,
@@ -116,10 +106,8 @@ func TestValidateSource(t *testing.T) {
 		{
 			name: "maxAge not positive",
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					Source: &policy.SourcePolicy{
-						MaxAge: "-1h",
-					},
+				Source: &policy.SourcePolicy{
+					MaxAge: "-1h",
 				},
 			},
 			wantErr: policy.ErrSourceMaxAgeNotPositive,
@@ -128,11 +116,9 @@ func TestValidateSource(t *testing.T) {
 			name:    "valid source passes",
 			wantErr: nil,
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					Source: &policy.SourcePolicy{
-						MinimumLevel: 2,
-						MaxAge:       "12h",
-					},
+				Source: &policy.SourcePolicy{
+					MinimumLevel: 2,
+					MaxAge:       "12h",
 				},
 			},
 		},
@@ -166,11 +152,9 @@ func TestValidateBuildEnv(t *testing.T) {
 		{
 			name: "overlapping required and forbidden properties",
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					BuildEnv: &policy.BuildEnvPolicy{
-						RequiredProperties:  []string{"OS"},
-						ForbiddenProperties: []string{"os"},
-					},
+				BuildEnv: &policy.BuildEnvPolicy{
+					RequiredProperties:  []string{"OS"},
+					ForbiddenProperties: []string{"os"},
 				},
 			},
 			wantErr: policy.ErrBuildEnvOverlappingProperties,
@@ -179,11 +163,9 @@ func TestValidateBuildEnv(t *testing.T) {
 			name:    "valid buildEnv passes",
 			wantErr: nil,
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					BuildEnv: &policy.BuildEnvPolicy{
-						RequiredProperties:  []string{"OS", "ARCH"},
-						ForbiddenProperties: []string{"DEBUG_MODE"},
-					},
+				BuildEnv: &policy.BuildEnvPolicy{
+					RequiredProperties:  []string{"OS", "ARCH"},
+					ForbiddenProperties: []string{"DEBUG_MODE"},
 				},
 			},
 		},
@@ -217,10 +199,8 @@ func TestValidateTestResult(t *testing.T) {
 		{
 			name: "maxAge not positive",
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					TestResult: &policy.TestResultPolicy{
-						MaxAge: "-1h",
-					},
+				TestResult: &policy.TestResultPolicy{
+					MaxAge: "-1h",
 				},
 			},
 			wantErr: policy.ErrTestResultMaxAgeNotPositive,
@@ -229,11 +209,9 @@ func TestValidateTestResult(t *testing.T) {
 			name:    "valid testResult passes",
 			wantErr: nil,
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					TestResult: &policy.TestResultPolicy{
-						RequiredSuites: []string{"unit", "integration"},
-						MaxAge:         "6h",
-					},
+				TestResult: &policy.TestResultPolicy{
+					RequiredSuites: []string{"unit", "integration"},
+					MaxAge:         "6h",
 				},
 			},
 		},

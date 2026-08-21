@@ -139,10 +139,8 @@ func TestVerify(t *testing.T) {
 			name: "trusted monitor passes",
 			doc:  validPredicate(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					RuntimeTrace: &policy.RuntimeTracePolicy{
-						TrustedMonitors: []string{testTrustedPattern},
-					},
+				RuntimeTrace: &policy.RuntimeTracePolicy{
+					TrustedMonitors: []string{testTrustedPattern},
 				},
 			},
 			wantPassed: true,
@@ -152,10 +150,8 @@ func TestVerify(t *testing.T) {
 			name: "untrusted monitor fails",
 			doc:  validPredicate(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					RuntimeTrace: &policy.RuntimeTracePolicy{
-						TrustedMonitors: []string{"https://other.com/monitors/*"},
-					},
+				RuntimeTrace: &policy.RuntimeTracePolicy{
+					TrustedMonitors: []string{"https://other.com/monitors/*"},
 				},
 			},
 			wantPassed: false,
@@ -165,10 +161,8 @@ func TestVerify(t *testing.T) {
 			name: "forbidden file access pattern fails",
 			doc:  validPredicate(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					RuntimeTrace: &policy.RuntimeTracePolicy{
-						ForbiddenFilePatterns: []string{testForbiddenTmpGlob},
-					},
+				RuntimeTrace: &policy.RuntimeTracePolicy{
+					ForbiddenFilePatterns: []string{testForbiddenTmpGlob},
 				},
 			},
 			wantPassed: false,
@@ -178,10 +172,8 @@ func TestVerify(t *testing.T) {
 			name: "allowed file access passes",
 			doc:  validPredicate(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					RuntimeTrace: &policy.RuntimeTracePolicy{
-						ForbiddenFilePatterns: []string{"/etc/shadow"},
-					},
+				RuntimeTrace: &policy.RuntimeTracePolicy{
+					ForbiddenFilePatterns: []string{"/etc/shadow"},
 				},
 			},
 			wantPassed: true,
@@ -344,10 +336,8 @@ func TestVerifyMultiple(t *testing.T) {
 			name: "all must pass - forbidden file fails all",
 			docs: []tracePredicate{validPredicate()},
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					RuntimeTrace: &policy.RuntimeTracePolicy{
-						ForbiddenFilePatterns: []string{testForbiddenTmpGlob},
-					},
+				RuntimeTrace: &policy.RuntimeTracePolicy{
+					ForbiddenFilePatterns: []string{testForbiddenTmpGlob},
 				},
 			},
 			wantPassed: false,
@@ -544,11 +534,9 @@ func TestVerifyFreshness(t *testing.T) {
 				},
 			},
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					RuntimeTrace: &policy.RuntimeTracePolicy{
-						MaxAge:         "1h",
-						MaxAgeDuration: time.Hour,
-					},
+				RuntimeTrace: &policy.RuntimeTracePolicy{
+					MaxAge:         "1h",
+					MaxAgeDuration: time.Hour,
 				},
 			},
 			wantPassed: false,
@@ -565,11 +553,9 @@ func TestVerifyFreshness(t *testing.T) {
 				},
 			},
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					RuntimeTrace: &policy.RuntimeTracePolicy{
-						MaxAge:         "1h",
-						MaxAgeDuration: time.Hour,
-					},
+				RuntimeTrace: &policy.RuntimeTracePolicy{
+					MaxAge:         "1h",
+					MaxAgeDuration: time.Hour,
 				},
 			},
 			wantPassed: true,
@@ -583,11 +569,9 @@ func TestVerifyFreshness(t *testing.T) {
 				Metadata:   nil,
 			},
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					RuntimeTrace: &policy.RuntimeTracePolicy{
-						MaxAge:         "1h",
-						MaxAgeDuration: time.Hour,
-					},
+				RuntimeTrace: &policy.RuntimeTracePolicy{
+					MaxAge:         "1h",
+					MaxAgeDuration: time.Hour,
 				},
 			},
 			wantPassed: false,
@@ -630,10 +614,8 @@ func TestVerifyUntrustedMonitorDetailMessage(t *testing.T) {
 	att := wrapInToto(t, validPredicate(), testDigest)
 
 	result, err := runtimetrace.Verify(context.Background(), att, &policy.Policy{
-		Sections: policy.Sections{
-			RuntimeTrace: &policy.RuntimeTracePolicy{
-				TrustedMonitors: []string{"https://other.com/*"},
-			},
+		RuntimeTrace: &policy.RuntimeTracePolicy{
+			TrustedMonitors: []string{"https://other.com/*"},
 		},
 	}, testDigest)
 	testutil.AssertNoError(t, err)
@@ -657,10 +639,8 @@ func TestVerifyForbiddenFileDetailMessage(t *testing.T) {
 	att := wrapInToto(t, validPredicate(), testDigest)
 
 	result, err := runtimetrace.Verify(context.Background(), att, &policy.Policy{
-		Sections: policy.Sections{
-			RuntimeTrace: &policy.RuntimeTracePolicy{
-				ForbiddenFilePatterns: []string{testForbiddenTmpGlob},
-			},
+		RuntimeTrace: &policy.RuntimeTracePolicy{
+			ForbiddenFilePatterns: []string{testForbiddenTmpGlob},
 		},
 	}, testDigest)
 	testutil.AssertNoError(t, err)
@@ -695,10 +675,8 @@ func TestVerifyFileAccessURI(t *testing.T) {
 	att := wrapInToto(t, doc, testDigest)
 
 	result, err := runtimetrace.Verify(context.Background(), att, &policy.Policy{
-		Sections: policy.Sections{
-			RuntimeTrace: &policy.RuntimeTracePolicy{
-				ForbiddenFilePatterns: []string{"file:///etc/*"},
-			},
+		RuntimeTrace: &policy.RuntimeTracePolicy{
+			ForbiddenFilePatterns: []string{"file:///etc/*"},
 		},
 	}, testDigest)
 	testutil.AssertNoError(t, err)

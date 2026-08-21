@@ -431,16 +431,14 @@ func TestVerify(t *testing.T) {
 				t.Helper()
 
 				return &policy.Policy{
-					Sections: policy.Sections{
-						Notation: &policy.NotationPolicy{
-							TrustStores: nil,
-							TrustPolicy: []policy.NotationTrustPolicyRule{
-								{
-									Name:              "rule",
-									RegistryScopes:    []string{"*"},
-									TrustStores:       []string{"ca:store"},
-									TrustedIdentities: []string{"*"},
-								},
+					Notation: &policy.NotationPolicy{
+						TrustStores: nil,
+						TrustPolicy: []policy.NotationTrustPolicyRule{
+							{
+								Name:              "rule",
+								RegistryScopes:    []string{"*"},
+								TrustStores:       []string{"ca:store"},
+								TrustedIdentities: []string{"*"},
 							},
 						},
 					},
@@ -456,17 +454,15 @@ func TestVerify(t *testing.T) {
 				t.Helper()
 
 				return &policy.Policy{
-					Sections: policy.Sections{
-						Notation: &policy.NotationPolicy{
-							TrustStores: []policy.NotationTrustStore{
-								{
-									Name:         "store",
-									Type:         "ca",
-									Certificates: []string{testCertPlaceholder},
-								},
+					Notation: &policy.NotationPolicy{
+						TrustStores: []policy.NotationTrustStore{
+							{
+								Name:         "store",
+								Type:         "ca",
+								Certificates: []string{testCertPlaceholder},
 							},
-							TrustPolicy: nil,
 						},
+						TrustPolicy: nil,
 					},
 				}
 			},
@@ -480,9 +476,7 @@ func TestVerify(t *testing.T) {
 				t.Helper()
 
 				return &policy.Policy{
-					Sections: policy.Sections{
-						Notation: validNotationPolicy(t),
-					},
+					Notation: validNotationPolicy(t),
 				}
 			},
 			wantErr:  nil,
@@ -558,16 +552,14 @@ func TestVerifyMultiple(t *testing.T) {
 				t.Helper()
 
 				return &policy.Policy{
-					Sections: policy.Sections{
-						Notation: &policy.NotationPolicy{
-							TrustStores: nil,
-							TrustPolicy: []policy.NotationTrustPolicyRule{
-								{
-									Name:              "rule",
-									RegistryScopes:    []string{"*"},
-									TrustStores:       []string{"ca:store"},
-									TrustedIdentities: []string{"*"},
-								},
+					Notation: &policy.NotationPolicy{
+						TrustStores: nil,
+						TrustPolicy: []policy.NotationTrustPolicyRule{
+							{
+								Name:              "rule",
+								RegistryScopes:    []string{"*"},
+								TrustStores:       []string{"ca:store"},
+								TrustedIdentities: []string{"*"},
 							},
 						},
 					},
@@ -585,17 +577,15 @@ func TestVerifyMultiple(t *testing.T) {
 				t.Helper()
 
 				return &policy.Policy{
-					Sections: policy.Sections{
-						Notation: &policy.NotationPolicy{
-							TrustStores: []policy.NotationTrustStore{
-								{
-									Name:         "store",
-									Type:         "ca",
-									Certificates: []string{testCertPlaceholder},
-								},
+					Notation: &policy.NotationPolicy{
+						TrustStores: []policy.NotationTrustStore{
+							{
+								Name:         "store",
+								Type:         "ca",
+								Certificates: []string{testCertPlaceholder},
 							},
-							TrustPolicy: nil,
 						},
+						TrustPolicy: nil,
 					},
 				}
 			},
@@ -611,9 +601,7 @@ func TestVerifyMultiple(t *testing.T) {
 				t.Helper()
 
 				return &policy.Policy{
-					Sections: policy.Sections{
-						Notation: validNotationPolicy(t),
-					},
+					Notation: validNotationPolicy(t),
 				}
 			},
 			wantErr:    nil,
@@ -636,9 +624,7 @@ func TestVerifyMultiple(t *testing.T) {
 				t.Helper()
 
 				return &policy.Policy{
-					Sections: policy.Sections{
-						Notation: validNotationPolicy(t),
-					},
+					Notation: validNotationPolicy(t),
 				}
 			},
 			wantErr:    nil,
@@ -730,9 +716,7 @@ func TestVerifySubjectDigestCrossCheck(t *testing.T) {
 
 			ctx := context.Background()
 			pol := &policy.Policy{
-				Sections: policy.Sections{
-					Notation: validNotationPolicy(t),
-				},
+				Notation: validNotationPolicy(t),
 			}
 
 			result, err := Verify(ctx, tc.sig, testImageRef, testDigest, pol)

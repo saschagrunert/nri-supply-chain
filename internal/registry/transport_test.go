@@ -889,7 +889,9 @@ func TestIsConnectionError(t *testing.T) {
 		},
 		{
 			name: "x509 HostnameError",
-			err:  &x509.HostnameError{Host: "example.com"}, //nolint:exhaustruct_v5 // test needs Host
+			err: &x509.HostnameError{
+				Host: "example.com",
+			},
 			want: true,
 		},
 		{

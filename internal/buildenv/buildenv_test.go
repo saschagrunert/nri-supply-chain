@@ -134,10 +134,8 @@ func TestVerify(t *testing.T) {
 			name: "forbidden property absent passes",
 			doc:  validDoc(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					BuildEnv: &policy.BuildEnvPolicy{
-						ForbiddenProperties: []string{testPropDebug},
-					},
+				BuildEnv: &policy.BuildEnvPolicy{
+					ForbiddenProperties: []string{testPropDebug},
 				},
 			},
 			wantPassed: true,
@@ -147,10 +145,8 @@ func TestVerify(t *testing.T) {
 			name: "forbidden property present fails",
 			doc:  validDoc(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					BuildEnv: &policy.BuildEnvPolicy{
-						ForbiddenProperties: []string{testPropOS},
-					},
+				BuildEnv: &policy.BuildEnvPolicy{
+					ForbiddenProperties: []string{testPropOS},
 				},
 			},
 			wantPassed: false,
@@ -160,10 +156,8 @@ func TestVerify(t *testing.T) {
 			name: "property matching is case-insensitive",
 			doc:  validDoc(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					BuildEnv: &policy.BuildEnvPolicy{
-						RequiredProperties: []string{"LINUX"},
-					},
+				BuildEnv: &policy.BuildEnvPolicy{
+					RequiredProperties: []string{"LINUX"},
 				},
 			},
 			wantPassed: true,
@@ -292,10 +286,8 @@ func TestVerifyForbiddenDetailMessage(t *testing.T) {
 	att := wrapInToto(t, validDoc(), testDigest)
 
 	result, err := buildenv.Verify(context.Background(), att, &policy.Policy{
-		Sections: policy.Sections{
-			BuildEnv: &policy.BuildEnvPolicy{
-				ForbiddenProperties: []string{testPropOS},
-			},
+		BuildEnv: &policy.BuildEnvPolicy{
+			ForbiddenProperties: []string{testPropOS},
 		},
 	}, testDigest)
 	testutil.AssertNoError(t, err)
@@ -319,10 +311,8 @@ func TestVerifyRequiredDetailMessage(t *testing.T) {
 	att := wrapInToto(t, validDoc(), testDigest)
 
 	result, err := buildenv.Verify(context.Background(), att, &policy.Policy{
-		Sections: policy.Sections{
-			BuildEnv: &policy.BuildEnvPolicy{
-				RequiredProperties: []string{testPropDebug},
-			},
+		BuildEnv: &policy.BuildEnvPolicy{
+			RequiredProperties: []string{testPropDebug},
 		},
 	}, testDigest)
 	testutil.AssertNoError(t, err)
@@ -368,10 +358,8 @@ func TestVerifyEmptyEnvironment(t *testing.T) {
 		t.Parallel()
 
 		result, err := buildenv.Verify(context.Background(), att, &policy.Policy{
-			Sections: policy.Sections{
-				BuildEnv: &policy.BuildEnvPolicy{
-					RequiredProperties: []string{testPropOS},
-				},
+			BuildEnv: &policy.BuildEnvPolicy{
+				RequiredProperties: []string{testPropOS},
 			},
 		}, testDigest)
 		testutil.AssertNoError(t, err)
@@ -403,10 +391,8 @@ func TestVerifyMultiple(t *testing.T) {
 			name: "any forbidden property fails",
 			docs: []buildEnvDoc{validDoc()},
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					BuildEnv: &policy.BuildEnvPolicy{
-						ForbiddenProperties: []string{testPropOS},
-					},
+				BuildEnv: &policy.BuildEnvPolicy{
+					ForbiddenProperties: []string{testPropOS},
 				},
 			},
 			wantPassed: false,

@@ -123,10 +123,8 @@ func TestVerify(t *testing.T) {
 			name: "trusted source pattern passes",
 			doc:  validPredicate(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Sources: []string{testTrustedPattern},
-					},
+				Trust: &policy.TrustPolicy{
+					Sources: []string{testTrustedPattern},
 				},
 			},
 			wantPassed: true,
@@ -136,10 +134,8 @@ func TestVerify(t *testing.T) {
 			name: "untrusted source pattern fails",
 			doc:  validPredicate(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Sources: []string{"https://github.com/other/*"},
-					},
+				Trust: &policy.TrustPolicy{
+					Sources: []string{"https://github.com/other/*"},
 				},
 			},
 			wantPassed: false,
@@ -149,10 +145,8 @@ func TestVerify(t *testing.T) {
 			name: "source level meets minimum passes",
 			doc:  validPredicate(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					Source: &policy.SourcePolicy{
-						MinimumLevel: 2,
-					},
+				Source: &policy.SourcePolicy{
+					MinimumLevel: 2,
 				},
 			},
 			wantPassed: true,
@@ -162,10 +156,8 @@ func TestVerify(t *testing.T) {
 			name: "source level below minimum fails",
 			doc:  validPredicate(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					Source: &policy.SourcePolicy{
-						MinimumLevel: 3,
-					},
+				Source: &policy.SourcePolicy{
+					MinimumLevel: 3,
 				},
 			},
 			wantPassed: false,
@@ -182,10 +174,8 @@ func TestVerify(t *testing.T) {
 				},
 			},
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					Source: &policy.SourcePolicy{
-						MinimumLevel: 1,
-					},
+				Source: &policy.SourcePolicy{
+					MinimumLevel: 1,
 				},
 			},
 			wantPassed: false,
@@ -197,10 +187,8 @@ func TestVerify(t *testing.T) {
 				SourceLocations: []srcLocation{},
 			},
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Sources: []string{testTrustedPattern},
-					},
+				Trust: &policy.TrustPolicy{
+					Sources: []string{testTrustedPattern},
 				},
 			},
 			wantPassed: false,
@@ -330,10 +318,8 @@ func TestVerifyUntrustedSourceDetailMessage(t *testing.T) {
 	att := wrapInToto(t, validPredicate(), testDigest)
 
 	result, err := source.Verify(context.Background(), att, &policy.Policy{
-		Sections: policy.Sections{
-			Trust: &policy.TrustPolicy{
-				Sources: []string{"https://github.com/other/*"},
-			},
+		Trust: &policy.TrustPolicy{
+			Sources: []string{"https://github.com/other/*"},
 		},
 	}, testDigest)
 	testutil.AssertNoError(t, err)
@@ -357,10 +343,8 @@ func TestVerifyLevelDetailMessage(t *testing.T) {
 	att := wrapInToto(t, validPredicate(), testDigest)
 
 	result, err := source.Verify(context.Background(), att, &policy.Policy{
-		Sections: policy.Sections{
-			Source: &policy.SourcePolicy{
-				MinimumLevel: 3,
-			},
+		Source: &policy.SourcePolicy{
+			MinimumLevel: 3,
 		},
 	}, testDigest)
 	testutil.AssertNoError(t, err)
@@ -404,10 +388,8 @@ func TestVerifyMultiple(t *testing.T) {
 				},
 			},
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Sources: []string{testTrustedPattern},
-					},
+				Trust: &policy.TrustPolicy{
+					Sources: []string{testTrustedPattern},
 				},
 			},
 			wantPassed: true,
@@ -425,10 +407,8 @@ func TestVerifyMultiple(t *testing.T) {
 				},
 			},
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Sources: []string{testTrustedPattern},
-					},
+				Trust: &policy.TrustPolicy{
+					Sources: []string{testTrustedPattern},
 				},
 			},
 			wantPassed: false,
@@ -560,10 +540,8 @@ func TestVerifyEmptySourceLocations(t *testing.T) {
 		t.Parallel()
 
 		result, err := source.Verify(context.Background(), att, &policy.Policy{
-			Sections: policy.Sections{
-				Source: &policy.SourcePolicy{
-					MinimumLevel: 1,
-				},
+			Source: &policy.SourcePolicy{
+				MinimumLevel: 1,
 			},
 		}, testDigest)
 		testutil.AssertNoError(t, err)
@@ -602,11 +580,9 @@ func TestVerifyFreshness(t *testing.T) {
 				},
 			},
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					Source: &policy.SourcePolicy{
-						MaxAge:         "1h",
-						MaxAgeDuration: time.Hour,
-					},
+				Source: &policy.SourcePolicy{
+					MaxAge:         "1h",
+					MaxAgeDuration: time.Hour,
 				},
 			},
 			wantPassed: false,
@@ -627,11 +603,9 @@ func TestVerifyFreshness(t *testing.T) {
 				},
 			},
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					Source: &policy.SourcePolicy{
-						MaxAge:         "1h",
-						MaxAgeDuration: time.Hour,
-					},
+				Source: &policy.SourcePolicy{
+					MaxAge:         "1h",
+					MaxAgeDuration: time.Hour,
 				},
 			},
 			wantPassed: true,
@@ -641,11 +615,9 @@ func TestVerifyFreshness(t *testing.T) {
 			name: "no timestamp with maxAge fails",
 			doc:  validPredicate(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					Source: &policy.SourcePolicy{
-						MaxAge:         "1h",
-						MaxAgeDuration: time.Hour,
-					},
+				Source: &policy.SourcePolicy{
+					MaxAge:         "1h",
+					MaxAgeDuration: time.Hour,
 				},
 			},
 			wantPassed: false,
