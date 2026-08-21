@@ -24,7 +24,10 @@ import (
 	"strings"
 )
 
-const maxBundleTarSize = 1 << 30 // 1 GiB
+const (
+	maxBundleTarSize    = 1 << 30 // 1 GiB
+	maxBundleTarEntries = 10000
+)
 
 // Import extracts a bundle tar into the attestation store directory. Extraction
 // is atomic: the tar is first extracted to a temporary directory, validated,
@@ -100,6 +103,8 @@ func extractTarGz(bundlePath, storePath string) error {
 
 	var totalSize int64
 
+	var entryCount int
+
 	for {
 		header, readErr := tarReader.Next()
 		if readErr == io.EOF {
@@ -108,6 +113,11 @@ func extractTarGz(bundlePath, storePath string) error {
 
 		if readErr != nil {
 			return fmt.Errorf("reading tar: %w", readErr)
+		}
+
+		entryCount++
+		if entryCount > maxBundleTarEntries {
+			return fmt.Errorf("%w: %d", ErrBundleTooManyEntries, maxBundleTarEntries)
 		}
 
 		totalSize += header.Size

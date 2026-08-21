@@ -27,6 +27,7 @@ podAnnotations:
 podLabels: {}
 
 daemonSet:
+  minReadySeconds: 10
   updateStrategy:
     type: RollingUpdate
     rollingUpdate:

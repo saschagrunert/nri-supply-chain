@@ -73,4 +73,10 @@ var (
 
 	// ErrUnsupportedKeyType indicates the private key type is not supported for signing.
 	ErrUnsupportedKeyType = errors.New("private key does not implement crypto.Signer")
+
+	// ErrBundleTooManyEntries indicates the bundle tar contains too many entries.
+	ErrBundleTooManyEntries = errors.New("bundle exceeds maximum entry count")
+
+	// ErrUnsupportedDigestAlgorithm indicates a digest uses an unsupported hash algorithm.
+	ErrUnsupportedDigestAlgorithm = errors.New("unsupported digest algorithm")
 )

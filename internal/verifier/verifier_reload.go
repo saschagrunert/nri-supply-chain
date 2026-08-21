@@ -196,7 +196,10 @@ func resetCachesIfChanged(prevHostSem *hostSemMap, policiesChanged bool) *hostSe
 
 	resetVerificationCaches()
 
-	return &hostSemMap{m: sync.Map{}, count: atomic.Int64{}}
+	return &hostSemMap{
+		m: sync.Map{}, count: atomic.Int64{},
+		onOverflow: prevHostSem.onOverflow,
+	}
 }
 
 func reloadCache(prev *snapshot, cfg *config.Config, invalidated bool) *cache.Cache {
@@ -418,6 +421,10 @@ func reloadGUACClient(
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating GUAC client: %w", err)
+	}
+
+	if prev.guacClient != nil {
+		prev.guacClient.Close()
 	}
 
 	return guacClient, attestation.NewCircuitBreaker(

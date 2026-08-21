@@ -23,13 +23,7 @@ dependencies:
     version: 3.21.4
     refPaths:
       - path: .github/workflows/ci.yml
-        match: "HELM_IMAGE:.*alpine/helm:"
-
-  - name: helm-image-digest
-    version: sha256:82c0ce1b4196539946ed01bdfd9345cf74ca999b95d3074ce3f2f5ea45c96e80
-    refPaths:
-      - path: .github/workflows/ci.yml
-        match: "HELM_IMAGE:.*alpine/helm:"
+        match: "version: v3\\."
 
   - name: distroless
     version: debian13

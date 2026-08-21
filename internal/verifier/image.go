@@ -58,8 +58,9 @@ func acquireFetchSlots(
 const maxHostSemEntries = 1000
 
 type hostSemMap struct {
-	m     sync.Map
-	count atomic.Int64
+	m          sync.Map
+	count      atomic.Int64
+	onOverflow func()
 }
 
 func (hsm *hostSemMap) load(host string) (*semaphore.Weighted, bool) {
@@ -109,6 +110,10 @@ func acquireHostSem(hsm *hostSemMap, host string) *semaphore.Weighted {
 
 		slog.Warn("Per-host semaphore map at capacity, using untracked semaphore",
 			"host", host, "capacity", maxHostSemEntries)
+
+		if hsm.onOverflow != nil {
+			hsm.onOverflow()
+		}
 
 		return sem
 	}

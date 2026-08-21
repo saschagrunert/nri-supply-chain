@@ -48,7 +48,9 @@ metrics_addr = "127.0.0.1:9090"
 circuit_breaker_threshold = 5
 circuit_breaker_cooldown = "30s"
 # verification_timeout = "5m"
-# fetch_rate_limit = 50
+# check_timeout = "2m"
+# fetch_rate_limit = 0
+# audit_log = ""
 
 # allowlist_digests = [
 #   "sha256:a1b2c3d4...",
@@ -105,7 +107,7 @@ fetch.
 
 ```toml
 [guac]
-endpoint = "http://guac.internal:8080"
+endpoint = "https://guac.internal:8443"
 # auth_token_path = "/var/run/secrets/guac/token"
 # ca_cert = "/etc/guac/ca.pem"
 # timeout = "5s"

@@ -9,6 +9,9 @@ spec:
   selector:
     matchLabels:
       {{- include "nri-supply-chain.selectorLabels" . | nindent 6 }}
+  {{- with .Values.daemonSet.minReadySeconds }}
+  minReadySeconds: {{ . }}
+  {{- end }}
   updateStrategy:
     {{- toYaml .Values.daemonSet.updateStrategy | nindent 4 }}
   template:

@@ -70,6 +70,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "minReadySeconds": { "type": "integer", "minimum": 0 },
         "updateStrategy": { "type": "object" },
         "priorityClassName": { "type": "string" },
         "tolerations": { "type": "array", "items": { "type": "object" } },

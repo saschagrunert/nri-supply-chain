@@ -240,7 +240,7 @@ For a detailed introduction, see the [CNCF blog post](https://www.cncf.io/blog/2
 | CRI-O      | 1.28+ (NRI enabled) |
 | containerd | 1.7+ (NRI enabled)  |
 | NRI        | 0.6+                |
-| Go (build) | 1.26+               |
+| Go (build) | 1.27+               |
 
 NRI must be enabled in the container runtime configuration. See
 [Runtime Requirements](docs/deployment.md#runtime-requirements) for details.

@@ -117,7 +117,9 @@ type Metrics struct {
 	FeedFilesProcessedTotal *prometheus.CounterVec
 	// ContinuousVerifierLastRun is the unix timestamp of the last completed cycle.
 	ContinuousVerifierLastRun prometheus.Gauge
-	registry                  *prometheus.Registry
+	// HostSemOverflowTotal counts per-host semaphore overflow events.
+	HostSemOverflowTotal prometheus.Counter
+	registry             *prometheus.Registry
 }
 
 // New creates and registers all supply chain verification metrics.
@@ -269,6 +271,10 @@ func New() *Metrics {
 		ContinuousVerifierLastRun: newGauge(
 			"continuous_verifier_last_run",
 			"Unix timestamp of the last completed continuous verification cycle.",
+		),
+		HostSemOverflowTotal: newCounter(
+			"host_sem_overflow_total",
+			"Total number of per-host semaphore overflow events.",
 		),
 		registry: prometheus.NewRegistry(),
 	}
@@ -453,6 +459,7 @@ func (m *Metrics) register() {
 		m.RemediationErrorsTotal,
 		m.FeedFilesProcessedTotal,
 		m.ContinuousVerifierLastRun,
+		m.HostSemOverflowTotal,
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{
 			PidFn:        nil,
 			Namespace:    "",

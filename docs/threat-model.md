@@ -15,6 +15,7 @@ and residual risks.
   - [TB4: Plugin to Local Filesystem](#tb4-plugin-to-local-filesystem)
   - [TB5: Plugin to Kubernetes API](#tb5-plugin-to-kubernetes-api)
   - [TB6: Plugin to Bundle Store (Offline)](#tb6-plugin-to-bundle-store-offline)
+  - [TB7: Plugin to GUAC Service](#tb7-plugin-to-guac-service)
 - [Residual Risks](#residual-risks)
 - [Out of Scope](#out-of-scope)
 
@@ -46,6 +47,7 @@ and caches results to reduce registry load.
 | TB4 | Plugin to local filesystem        | Filesystem              | Unix permissions                                 |
 | TB5 | Plugin to Kubernetes API          | NRI annotations         | Runtime-injected, not user-set                   |
 | TB6 | Plugin to bundle store (offline)  | Filesystem              | Unix permissions + bundle manifest signatures    |
+| TB7 | Plugin to GUAC service            | HTTPS                   | Bearer token (file-based, K8s secret rotation)   |
 
 ## STRIDE Analysis
 
@@ -124,6 +126,20 @@ When the plugin is configured in `offline` or `prefer-bundle` mode, attestations
 | **Denial of service** | Stale or expired bundles block container creation in offline mode                         | `bundle_max_age` and `bundle_expiry_policy` control staleness handling; `bundle_staleness_total` metric tracks events; `prefer-bundle` mode falls back to registry when bundles are stale                                       |
 | **Denial of service** | Oversized blobs in a crafted bundle exhaust memory                                        | Individual blob reads capped at 100 MiB (`maxBlobReadSize`); bundle tar import capped at 1 GiB (`maxBundleTarSize`); declared blob size validated before read                                                                   |
 | **Elevation of priv** | Attacker with store write access serves attestations for images they do not control       | Sigstore bundle verification still binds each attestation to the image digest; a valid attestation for the wrong digest fails verification. Manifest signing prevents adding unauthorized image entries without the signing key |
+
+### TB7: Plugin to GUAC Service
+
+When `guac.endpoint` is configured, the plugin queries a GUAC instance for vulnerability, dependency, and Scorecard data. GUAC responses influence verification decisions (CEL policy evaluation) and can trigger remediation actions.
+
+| Category              | Threat                                                                    | Mitigation                                                                                                                                                                                       |
+| --------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Spoofing**          | Attacker impersonates the GUAC endpoint via DNS hijack or MITM            | TLS 1.2 minimum enforced on the GUAC HTTP transport; `ca_cert` supports private CAs; enforce mode rejects non-HTTPS endpoints                                                                    |
+| **Tampering**         | GUAC returns fabricated vulnerability or dependency data                  | GUAC data is supplemental; it does not override Sigstore verification. CEL policies control how GUAC data influences decisions. `fallback_policy` controls behavior when GUAC is unreachable     |
+| **Repudiation**       | GUAC denies having returned specific query results                        | Plugin logs GUAC query outcomes; audit log includes GUAC-derived check results. GUAC itself maintains its own ingestion provenance                                                               |
+| **Info disclosure**   | GUAC endpoint learns which image digests are running on the cluster       | Inherent to query-based enrichment; circuit breaker and caching reduce query frequency                                                                                                           |
+| **Info disclosure**   | Bearer token leaked via redirect to a third-party host                    | `CheckRedirect` strips the `Authorization` header when the redirect target host differs from the configured endpoint                                                                             |
+| **Denial of service** | GUAC outage blocks container creation                                     | Dedicated circuit breaker (`guacBreaker`) with configurable threshold and cooldown; `fallback_policy` defaults to `warn` (allow with warning); response size capped at 10 MiB; per-query timeout |
+| **Elevation of priv** | Attacker with GUAC write access injects false negative vulnerability data | GUAC data does not grant trust; it can only add findings (vulnerabilities, dependencies). A clean GUAC response does not bypass Sigstore attestation requirements                                |
 
 ## Residual Risks
 

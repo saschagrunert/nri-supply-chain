@@ -48,10 +48,18 @@ var (
 
 	// ErrGUACCACert indicates a failure loading the CA certificate.
 	ErrGUACCACert = errors.New("failed to load GUAC CA certificate")
+
+	// ErrTooManyRedirects indicates the HTTP client followed too many redirects.
+	ErrTooManyRedirects = errors.New("stopped after 10 redirects")
 )
 
 const (
-	maxResponseSize = 10 << 20 // 10 MiB
+	maxResponseSize       = 10 << 20 // 10 MiB
+	maxRedirects          = 10
+	transportMaxIdleConns = 100
+	transportIdleTimeout  = 90 * time.Second
+	transportTLSTimeout   = 10 * time.Second
+	transportContTimeout  = 1 * time.Second
 )
 
 // Client queries a GUAC instance for vulnerability, scorecard, and
@@ -75,44 +83,69 @@ func NewClient(endpoint, authTokenPath, caCertPath string, timeout time.Duration
 		return nil, err
 	}
 
+	parsedEndpoint, parseErr := url.Parse(endpoint)
+	if parseErr != nil {
+		return nil, fmt.Errorf("parsing GUAC endpoint: %w", parseErr)
+	}
+
+	endpointHost := parsedEndpoint.Host
+
 	return &Client{
 		endpoint:      strings.TrimRight(endpoint, "/"),
 		authTokenPath: authTokenPath,
 		httpClient: &http.Client{
 			Timeout:   timeout,
 			Transport: transport,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if len(via) >= maxRedirects {
+					return ErrTooManyRedirects
+				}
+
+				if req.URL.Host != endpointHost {
+					req.Header.Del("Authorization")
+				}
+
+				return nil
+			},
 		},
 	}, nil
 }
 
+// Close releases idle connections held by the underlying HTTP client.
+func (c *Client) Close() {
+	c.httpClient.CloseIdleConnections()
+}
+
 func buildTransport(caCertPath string) (http.RoundTripper, error) {
-	if caCertPath == "" {
-		return nil, nil //nolint:nilnil // nil transport uses http.DefaultTransport
+	var pool *x509.CertPool
+
+	if caCertPath != "" {
+		pemData, err := fileutil.ReadLimited(caCertPath, fileutil.MaxCredentialFileSize)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrGUACCACert, err)
+		}
+
+		pool, err = x509.SystemCertPool()
+		if err != nil {
+			pool = x509.NewCertPool()
+		}
+
+		if !pool.AppendCertsFromPEM(pemData) {
+			return nil, fmt.Errorf("%w: no valid certificates in %s", ErrGUACCACert, caCertPath)
+		}
 	}
 
-	pemData, err := fileutil.ReadLimited(caCertPath, fileutil.MaxCredentialFileSize)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrGUACCACert, err)
-	}
-
-	pool, err := x509.SystemCertPool()
-	if err != nil {
-		pool = x509.NewCertPool()
-	}
-
-	if !pool.AppendCertsFromPEM(pemData) {
-		return nil, fmt.Errorf("%w: no valid certificates in %s", ErrGUACCACert, caCertPath)
-	}
-
-	defaultTransport, ok := http.DefaultTransport.(*http.Transport)
-	if !ok {
-		return nil, fmt.Errorf("%w: unexpected default transport type", ErrGUACCACert)
-	}
-
-	transport := defaultTransport.Clone()
-	transport.TLSClientConfig = &tls.Config{
-		RootCAs:    pool,
-		MinVersion: tls.VersionTLS12,
+	transport := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          transportMaxIdleConns,
+		IdleConnTimeout:       transportIdleTimeout,
+		TLSHandshakeTimeout:   transportTLSTimeout,
+		ExpectContinueTimeout: transportContTimeout,
+		TLSClientConfig: &tls.Config{
+			RootCAs:    pool,
+			MinVersion: tls.VersionTLS12,
+		},
 	}
 
 	return transport, nil
@@ -419,9 +452,18 @@ func (c *Client) readAuthToken() (string, error) {
 const maxTruncatedBodyLen = 200
 
 func truncateBody(body []byte) string {
-	if len(body) <= maxTruncatedBodyLen {
-		return string(body)
+	sanitized := strings.Map(func(r rune) rune {
+		if r < ' ' && r != '\n' {
+			return ' '
+		}
+
+		return r
+	}, string(body))
+
+	runes := []rune(sanitized)
+	if len(runes) > maxTruncatedBodyLen {
+		return string(runes[:maxTruncatedBodyLen]) + "..."
 	}
 
-	return string(body[:maxTruncatedBodyLen]) + "..."
+	return sanitized
 }

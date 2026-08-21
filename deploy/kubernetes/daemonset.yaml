@@ -67,6 +67,7 @@ metadata:
   labels:
     app.kubernetes.io/name: nri-supply-chain
 spec:
+  minReadySeconds: 10
   selector:
     matchLabels:
       app.kubernetes.io/name: nri-supply-chain
@@ -198,7 +199,8 @@ spec:
         - port: 53
           protocol: TCP
     # Registry access (HTTP and HTTPS). Destination is unrestricted because
-    # container images may be pulled from any registry.
+    # container images may be pulled from any registry. In environments with
+    # known registries, restrict egress to specific CIDR ranges.
     - ports:
         - port: 80
           protocol: TCP

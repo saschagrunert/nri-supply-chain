@@ -162,6 +162,7 @@ linters:
             - github.com/sigstore/sigstore
             - golang.org/x/sync
             - golang.org/x/time
+            - google.golang.org/protobuf
     dogsled:
       max-blank-identifiers: 3
     exhaustruct_v5:

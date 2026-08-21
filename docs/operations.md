@@ -59,6 +59,7 @@ The plugin exposes Prometheus metrics at the configured
 | `nri_supply_chain_remediation_errors_total`        | Counter   | `action`                      | Failed remediation UpdateContainers calls. `action`: `update`, `partial`                             |
 | `nri_supply_chain_feed_files_processed_total`      | Counter   | `result`                      | Vulnerability feed files processed. `result`: `success`, `error`                                     |
 | `nri_supply_chain_continuous_verifier_last_run`    | Gauge     |                               | Unix timestamp of the last completed continuous verification cycle                                   |
+| `nri_supply_chain_host_sem_overflow_total`         | Counter   |                               | Per-host semaphore map overflow events (map at capacity, new host evicts oldest)                     |
 
 When `include` is configured, the include check runs before the exclude check.
 Images that do not match any include pattern are counted as `not_included` even

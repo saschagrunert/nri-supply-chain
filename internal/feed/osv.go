@@ -63,20 +63,16 @@ type OSVPackage struct {
 // ParseFile reads a single OSV JSON file and returns the set of affected
 // PURLs. The file may contain a single OSV entry or an array of entries.
 func ParseFile(path string) ([]string, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return nil, fmt.Errorf("stat feed file: %w", err)
+	linfo, lstatErr := os.Lstat(path)
+	if lstatErr != nil {
+		return nil, fmt.Errorf("stat feed file: %w", lstatErr)
 	}
 
-	if !info.Mode().IsRegular() {
+	if !linfo.Mode().IsRegular() {
 		return nil, fmt.Errorf("%w: %s", ErrFeedFileNotRegular, path)
 	}
 
-	if info.Size() > maxFeedFileSize {
-		return nil, fmt.Errorf("%w: %s (%d bytes)", ErrFeedFileTooLarge, path, info.Size())
-	}
-
-	file, err := os.Open(path) //nolint:gosec // path is validated above via Lstat
+	file, err := os.Open(path) //nolint:gosec // path validated via Lstat above
 	if err != nil {
 		return nil, fmt.Errorf("open feed file: %w", err)
 	}
@@ -87,6 +83,15 @@ func ParseFile(path string) ([]string, error) {
 			slog.Warn("Failed to close feed file", "file", path, "error", closeErr)
 		}
 	}()
+
+	info, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("stat feed file: %w", err)
+	}
+
+	if info.Size() > maxFeedFileSize {
+		return nil, fmt.Errorf("%w: %s (%d bytes)", ErrFeedFileTooLarge, path, info.Size())
+	}
 
 	return parsePURLs(io.LimitReader(file, maxFeedFileSize))
 }
