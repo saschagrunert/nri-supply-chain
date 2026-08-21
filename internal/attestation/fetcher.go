@@ -417,6 +417,11 @@ func (f *OCIFetcher) fetchOnce(
 		return f.cosignTagFallback(ctx, ref, digest, remoteOpts, fetchOpts)
 	}
 
+	// Collect baseline SBOMs after the bundle check so they don't mask
+	// verification failures.
+	baselineSBOMs := f.collectBaselineSBOMs(ctx, manifest.Manifests, ref, digest, remoteOpts)
+	attestations = append(attestations, baselineSBOMs...)
+
 	return attestations, nil
 }
 

@@ -51,11 +51,12 @@ type payloadVerifyFunc func(
 	pol *policy.Policy, imageDigest string,
 ) (*types.CheckResult, error)
 
+const checkTypeBaselineSBOM types.CheckType = "baseline-sbom"
+
 var payloadVerifiers = []struct { //nolint:gochecknoglobals // immutable registry
 	checkType types.CheckType
 	verify    payloadVerifyFunc
 }{
-	{types.CheckTypeSBOM, sbom.VerifyMultiple},
 	{types.CheckTypeSCAI, scai.VerifyMultiple},
 	{types.CheckTypeSource, source.VerifyMultiple},
 	{types.CheckTypeBuildEnv, buildenv.VerifyMultiple},
@@ -428,6 +429,20 @@ func runParallelChecks( //nolint:funlen // table-driven dispatch over all check 
 					)
 				})
 		}},
+		checkEntry{types.CheckTypeSBOM, func(ctx context.Context) *types.CheckResult {
+			return runAttestationCheck(
+				ctx, types.CheckTypeSBOM, bins[types.CheckTypeSBOM], pol, met, imageRef,
+				func() (*types.CheckResult, error) {
+					baselinePayloads := extractPayloads(bins[checkTypeBaselineSBOM])
+
+					return sbom.VerifyMultipleWithBaseline(
+						ctx,
+						extractPayloads(bins[types.CheckTypeSBOM]),
+						baselinePayloads,
+						pol, digest,
+					)
+				})
+		}},
 	)
 
 	for _, verifier := range payloadVerifiers {
@@ -538,6 +553,8 @@ func binAttestations( //nolint:cyclop,funlen // additional predicate type adds a
 			add(types.CheckTypeRelease, att)
 		case attestation.PredicateRuntimeTrace:
 			add(types.CheckTypeRuntimeTrace, att)
+		case attestation.PredicateBaselineSBOM:
+			add(checkTypeBaselineSBOM, att)
 		case attestation.PredicateCosignSignature:
 			slog.DebugContext(ctx,
 				"Skipping bare cosign signature attestation",

@@ -3408,6 +3408,51 @@ func TestPolicyValidateSBOM(t *testing.T) {
 			wantErr:     true,
 			expectedErr: policy.ErrEmptyValue,
 		},
+		{
+			name: "valid drift policy",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					SBOM: &policy.SBOMPolicy{
+						Drift: &policy.SBOMDriftPolicy{
+							MaxAdded:    new(5),
+							MaxRemoved:  new(3),
+							MaxModified: new(2),
+							MaxScore:    new(1.5),
+						},
+					},
+				},
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name: "drift maxAdded negative",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					SBOM: &policy.SBOMPolicy{
+						Drift: &policy.SBOMDriftPolicy{
+							MaxAdded: new(-1),
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrDriftThresholdNegative,
+		},
+		{
+			name: "drift maxScore negative",
+			policy: policy.Policy{
+				Sections: policy.Sections{
+					SBOM: &policy.SBOMPolicy{
+						Drift: &policy.SBOMDriftPolicy{
+							MaxScore: new(-0.5),
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			expectedErr: policy.ErrDriftThresholdNegative,
+		},
 	})
 }
 

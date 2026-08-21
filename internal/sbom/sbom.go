@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"strings"
 
@@ -51,9 +52,18 @@ var (
 	ErrComponentNotAllowed = errors.New("component not in allow list")
 )
 
+type sbomPackage struct {
+	PURL      string
+	Name      string
+	Version   string
+	Licenses  []string
+	Checksums map[string]string
+}
+
 type sbomData struct {
 	licenses       []string
 	purls          []string
+	Packages       []sbomPackage
 	format         string
 	componentCount int
 	licenseCount   int
@@ -93,12 +103,191 @@ func VerifyMultiple(
 	)
 }
 
+// VerifyMultipleWithBaseline checks multiple SBOM attestations and optionally
+// performs drift detection against baseline SBOM documents.
+func VerifyMultipleWithBaseline(
+	ctx context.Context,
+	attestations, baselinePayloads [][]byte,
+	pol *policy.Policy, imageDigest string,
+) (*types.CheckResult, error) {
+	verifyResult, err := verifyAllAttestations(ctx, attestations, pol, imageDigest)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(verifyResult.failDetails) > 0 {
+		return check.Fail(strings.Join(verifyResult.failDetails, "; ")), nil
+	}
+
+	if len(attestations) > 0 && !verifyResult.anyValid {
+		return check.Fail(
+			"all SBOM documents failed verification: " +
+				strings.Join(verifyResult.verifyErrors, "; "),
+		), nil
+	}
+
+	result := check.Pass()
+	result.Metadata = verifyResult.passedMeta
+
+	return applyDriftDetection(
+		result, verifyResult.currentPackages, baselinePayloads, pol,
+	), nil
+}
+
+type attestationVerifyResult struct {
+	failDetails     []string
+	verifyErrors    []string
+	anyValid        bool
+	passedMeta      map[string]any
+	currentPackages []sbomPackage
+}
+
+func verifyAllAttestations(
+	ctx context.Context,
+	attestations [][]byte, pol *policy.Policy, imageDigest string,
+) (*attestationVerifyResult, error) {
+	var verifyResult attestationVerifyResult
+
+	for _, att := range attestations {
+		ctxErr := ctx.Err()
+		if ctxErr != nil {
+			return nil, fmt.Errorf("verification cancelled: %w", ctxErr)
+		}
+
+		predicate, err := intoto.VerifySubjectAndExtractPredicate(att, imageDigest)
+		if err != nil {
+			verifyResult.verifyErrors = append(
+				verifyResult.verifyErrors,
+				fmt.Errorf("%w: %w", ErrInvalidSBOM, err).Error(),
+			)
+
+			continue
+		}
+
+		checkResult, data, verifyErr := verifySBOMPredicateWithData(predicate, pol)
+		if verifyErr != nil {
+			verifyResult.verifyErrors = append(verifyResult.verifyErrors, verifyErr.Error())
+
+			continue
+		}
+
+		verifyResult.anyValid = true
+
+		if !checkResult.Passed && checkResult.Status == types.StatusFail {
+			verifyResult.failDetails = append(verifyResult.failDetails, checkResult.Detail)
+		}
+
+		if checkResult.Passed {
+			verifyResult.currentPackages = append(
+				verifyResult.currentPackages, data.Packages...,
+			)
+
+			if checkResult.Metadata != nil {
+				if verifyResult.passedMeta == nil {
+					verifyResult.passedMeta = make(map[string]any)
+				}
+
+				mergeCVSSMeta(verifyResult.passedMeta, checkResult.Metadata)
+			}
+		}
+	}
+
+	return &verifyResult, nil
+}
+
+func applyDriftDetection(
+	result *types.CheckResult,
+	currentPackages []sbomPackage,
+	baselinePayloads [][]byte,
+	pol *policy.Policy,
+) *types.CheckResult {
+	driftCheck := runDriftDetection(currentPackages, baselinePayloads, pol)
+	if driftCheck == nil {
+		return result
+	}
+
+	if result.Metadata == nil {
+		result.Metadata = make(map[string]any)
+	}
+
+	if driftMeta, hasDrift := driftCheck.Metadata["drift"]; hasDrift {
+		result.Metadata["drift"] = driftMeta
+	}
+
+	if !driftCheck.Passed {
+		result.Passed = false
+		result.Status = driftCheck.Status
+		result.Detail = driftCheck.Detail
+
+		return result
+	}
+
+	return result
+}
+
+func runDriftDetection(
+	currentPackages []sbomPackage,
+	baselinePayloads [][]byte,
+	pol *policy.Policy,
+) *types.CheckResult {
+	if len(baselinePayloads) == 0 {
+		return nil
+	}
+
+	var baselinePackages []sbomPackage
+
+	for _, payload := range baselinePayloads {
+		data, err := extractSBOMData(payload, nil)
+		if err != nil {
+			slog.Warn("Failed to parse baseline SBOM, skipping", "error", err)
+
+			continue
+		}
+
+		baselinePackages = append(baselinePackages, data.Packages...)
+	}
+
+	if len(baselinePackages) == 0 {
+		slog.Warn(
+			"Baseline SBOM referrers found but none parsed, skipping drift detection",
+			"baselineCount", len(baselinePayloads),
+		)
+
+		return nil
+	}
+
+	drift := computeDrift(baselinePackages, currentPackages)
+	driftMeta := drift.ToMetadata()
+
+	if pol.SBOM != nil && pol.SBOM.Drift != nil {
+		thresholdResult := checkDriftThresholds(&drift, pol.SBOM.Drift)
+		if thresholdResult != nil {
+			thresholdResult.Metadata = map[string]any{"drift": driftMeta}
+
+			return thresholdResult
+		}
+	}
+
+	result := check.Pass()
+	result.Metadata = map[string]any{"drift": driftMeta}
+
+	return result
+}
+
 func verifySBOMPredicate(
 	predicate []byte, pol *policy.Policy,
 ) (*types.CheckResult, error) {
+	result, _, err := verifySBOMPredicateWithData(predicate, pol)
+
+	return result, err
+}
+
+func verifySBOMPredicateWithData(
+	predicate []byte, pol *policy.Policy,
+) (*types.CheckResult, sbomData, error) {
 	data, err := extractSBOMData(predicate, pol)
 	if err != nil {
-		return nil, err
+		return nil, sbomData{}, err
 	}
 
 	result := checkDenyLists(data.licenses, data.purls, pol)
@@ -109,7 +298,7 @@ func verifySBOMPredicate(
 	}
 
 	if !result.Passed {
-		return result, nil
+		return result, data, nil
 	}
 
 	if data.format == "cyclonedx" && pol.SBOM != nil && pol.SBOM.CVSS != nil {
@@ -117,13 +306,13 @@ func verifySBOMPredicate(
 		if !cvssResult.Passed {
 			maps.Copy(cvssResult.Metadata, result.Metadata)
 
-			return cvssResult, nil
+			return cvssResult, data, nil
 		}
 
 		maps.Copy(result.Metadata, cvssResult.Metadata)
 	}
 
-	return result, nil
+	return result, data, nil
 }
 
 func extractSBOMData(

@@ -109,6 +109,14 @@ const (
 
 	// NotationSignatureMediaType is the OCI artifact type for Notation signatures.
 	NotationSignatureMediaType = "application/vnd.cncf.notary.signature"
+
+	// BaselineSBOMArtifactType is the OCI artifact type for baseline SBOM documents
+	// used in drift detection.
+	BaselineSBOMArtifactType = "application/vnd.nri-supply-chain.sbom-baseline.v1+json"
+
+	// PredicateBaselineSBOM is the predicate type assigned to baseline SBOM attestations
+	// collected from OCI referrers for drift detection.
+	PredicateBaselineSBOM = "https://nri-supply-chain.dev/baseline-sbom/v1"
 )
 
 // SignatureType distinguishes signature formats for routing during verification.
