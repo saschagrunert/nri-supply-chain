@@ -20,13 +20,13 @@ dependencies:
         match: ^appVersion
 
   - name: helm
-    version: 3.17.3
+    version: 3.21.4
     refPaths:
       - path: .github/workflows/ci.yml
         match: "HELM_IMAGE:.*alpine/helm:"
 
   - name: helm-image-digest
-    version: sha256:d899e6316789fec04ee95300a18e454b7942539cbb3d89bde3e0655d6ca2e895
+    version: sha256:82c0ce1b4196539946ed01bdfd9345cf74ca999b95d3074ce3f2f5ea45c96e80
     refPaths:
       - path: .github/workflows/ci.yml
         match: "HELM_IMAGE:.*alpine/helm:"
@@ -40,7 +40,7 @@ dependencies:
         match: "FROM gcr.io/distroless/static-"
 
   - name: golang
-    version: 1.26.6
+    version: 1.27.0
     refPaths:
       - path: Dockerfile
         match: "FROM golang:"
@@ -48,7 +48,7 @@ dependencies:
         match: "^go "
 
   - name: golangci-lint
-    version: 2.12.2
+    version: 2.13.1
     refPaths:
       - path: Makefile
         match: ^GOLANGCI_LINT_VERSION
@@ -82,7 +82,7 @@ dependencies:
         match: ^SHELLCHECK_VERSION
 
   - name: kubernix
-    version: 0.3.4
+    version: 0.3.5
     refPaths:
       - path: Makefile
         match: ^KUBERNIX_VERSION
