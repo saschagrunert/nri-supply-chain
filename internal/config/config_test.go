@@ -3529,7 +3529,7 @@ func TestConfigValidateGUACEndpointScheme(t *testing.T) {
 		}
 	})
 
-	t.Run("http is accepted with warning in enforce mode", func(t *testing.T) {
+	t.Run("http is rejected in enforce mode", func(t *testing.T) {
 		t.Parallel()
 
 		cfg := config.DefaultConfig()
@@ -3540,8 +3540,8 @@ func TestConfigValidateGUACEndpointScheme(t *testing.T) {
 		cfg.Guac.MaxDependencies = 5
 
 		err := cfg.Validate()
-		if errors.Is(err, config.ErrGUACEndpointInvalid) {
-			t.Error("should accept http endpoint in enforce mode (with warning)")
+		if !errors.Is(err, config.ErrGUACEndpointNotHTTPS) {
+			t.Errorf("expected ErrGUACEndpointNotHTTPS, got %v", err)
 		}
 	})
 

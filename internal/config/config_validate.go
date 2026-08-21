@@ -289,6 +289,12 @@ func (c *Config) validateRegistry(
 			"%w: registries[%d] %q",
 			ErrInsecureRegistryInEnforceMode, idx, reg.Prefix,
 		))
+	} else if reg.Insecure && c.Verification == ModeWarn {
+		slog.Warn(
+			"Insecure registry in warn mode allows MITM on attestation transport; "+
+				"consider using ca_cert instead",
+			"registry", reg.Prefix,
+		)
 	}
 
 	return errs
@@ -867,15 +873,7 @@ func (c *Config) validateGUACConfig() error { //nolint:cyclop // sequential fiel
 
 	var errs []error
 
-	parsed, err := url.Parse(guacCfg.Endpoint)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		errs = append(errs, fmt.Errorf("%w: %s", ErrGUACEndpointInvalid, guacCfg.Endpoint))
-	} else if parsed.Scheme != "https" {
-		slog.Warn(
-			"GUAC endpoint does not use HTTPS, auth tokens will be sent in cleartext",
-			"endpoint", guacCfg.Endpoint,
-		)
-	}
+	errs = append(errs, c.validateGUACEndpointScheme(guacCfg)...)
 
 	if guacCfg.Timeout.Duration <= 0 {
 		errs = append(errs, ErrGUACTimeoutNotPositive)
@@ -916,6 +914,28 @@ func (c *Config) validateGUACConfig() error { //nolint:cyclop // sequential fiel
 	}
 
 	return errors.Join(errs...)
+}
+
+func (c *Config) validateGUACEndpointScheme(guacCfg *GUACConfig) []error {
+	parsed, err := url.Parse(guacCfg.Endpoint)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return []error{fmt.Errorf("%w: %s", ErrGUACEndpointInvalid, guacCfg.Endpoint)}
+	}
+
+	if parsed.Scheme != "https" {
+		if c.Verification == ModeEnforce {
+			return []error{fmt.Errorf(
+				"%w: %s", ErrGUACEndpointNotHTTPS, guacCfg.Endpoint,
+			)}
+		}
+
+		slog.Warn(
+			"GUAC endpoint does not use HTTPS, auth tokens will be sent in cleartext",
+			"endpoint", guacCfg.Endpoint,
+		)
+	}
+
+	return nil
 }
 
 func (c *Config) validateGUACConfigRuntime() []error {

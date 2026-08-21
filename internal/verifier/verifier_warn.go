@@ -16,7 +16,6 @@ package verifier
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
@@ -201,9 +200,10 @@ func warnPermissiveMissingPolicies(ctx context.Context, label string, pol *polic
 		}
 
 		slog.WarnContext(ctx,
-			fmt.Sprintf("enforce mode with default %s missing_policy=allow allows "+
-				"containers without %s; consider setting %s=deny",
-				chk.name, chk.artifact, chk.setting),
+			"enforce mode with default missing_policy=allow allows containers without attestation",
+			"check", chk.name,
+			"artifact", chk.artifact,
+			"setting", chk.setting,
 			"policy", label,
 			chk.logKey, action,
 		)

@@ -105,6 +105,44 @@ func TestVerifyBlobIntegrityCorrupt(t *testing.T) {
 	}
 }
 
+func TestVerifyBlobIntegrityUnsupportedAlgorithm(t *testing.T) {
+	t.Parallel()
+
+	payload := []byte(`{"predicateType":"test"}`)
+
+	manifest := &Manifest{ //nolint:exhaustruct_v5 // test data
+		Version:   1,
+		CreatedAt: time.Now().UTC(),
+		Images: map[string]*ImageEntry{
+			testImageDigest: { //nolint:exhaustruct_v5 // test data
+				Attestations: []AttestationEntry{{
+					PredicateType: testPredicateType,
+					BlobDigest:    "sha512:abcdef1234567890",
+					Size:          int64(len(payload)),
+					SignatureType: testSigType,
+				}},
+			},
+		},
+	}
+
+	dir := createTestStore(t, manifest, map[string][]byte{
+		blobDigest(payload): payload,
+	})
+
+	store, err := OpenStore(dir)
+	if err != nil {
+		t.Fatalf("OpenStore() error: %v", err)
+	}
+
+	integrityErr := VerifyBlobIntegrity(store)
+	if !errors.Is(integrityErr, ErrUnsupportedDigestAlgorithm) {
+		t.Fatalf(
+			"VerifyBlobIntegrity() error = %v, want %v",
+			integrityErr, ErrUnsupportedDigestAlgorithm,
+		)
+	}
+}
+
 func TestVerifyBlobIntegritySizeMismatch(t *testing.T) {
 	t.Parallel()
 

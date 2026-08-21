@@ -19,6 +19,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -248,6 +249,52 @@ func TestImportPathTraversalPrefixCollision(t *testing.T) {
 			err, ErrPathTraversal,
 		)
 	}
+}
+
+func TestImportEntryCountLimit(t *testing.T) {
+	t.Parallel()
+
+	tarPath := createManyEntriesTarGz(t, maxBundleTarEntries+1)
+	storePath := filepath.Join(t.TempDir(), "store")
+
+	err := Import(tarPath, storePath, "")
+	if !errors.Is(err, ErrBundleTooManyEntries) {
+		t.Fatalf("Import() error = %v, want %v", err, ErrBundleTooManyEntries)
+	}
+}
+
+func createManyEntriesTarGz(t *testing.T, count int) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	tarPath := filepath.Join(dir, "many-entries.tar.gz")
+
+	outFile, err := os.Create(tarPath) //nolint:gosec // test helper with temp paths
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = outFile.Close() }()
+
+	gzWriter := gzip.NewWriter(outFile)
+	defer func() { _ = gzWriter.Close() }()
+
+	tarWriter := tar.NewWriter(gzWriter)
+	defer func() { _ = tarWriter.Close() }()
+
+	for i := range count {
+		header := &tar.Header{ //nolint:exhaustruct_v5 // test data
+			Name: fmt.Sprintf("entry-%d", i),
+			Mode: 0o600,
+			Size: 0,
+		}
+
+		writeErr := tarWriter.WriteHeader(header)
+		if writeErr != nil {
+			t.Fatal(writeErr)
+		}
+	}
+
+	return tarPath
 }
 
 func TestImportSizeLimit(t *testing.T) {

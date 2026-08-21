@@ -19,12 +19,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"log/slog"
-	"maps"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/containerd/nri/pkg/api"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
@@ -89,9 +89,9 @@ func (p *Plugin) runVerificationCycle(
 	ctx context.Context, trigger string,
 	filterIDs map[string]struct{}, feedPURLs []string,
 ) {
-	mode, ok := p.remediationMode.Load().(config.RemediationMode)
-	if !ok {
-		mode = config.RemediationModeDisabled
+	mode := config.RemediationModeDisabled
+	if modePtr := p.remediationMode.Load(); modePtr != nil {
+		mode = *modePtr
 	}
 
 	snapshot := p.containers.SnapshotIDs()
@@ -316,7 +316,7 @@ func (p *Plugin) cooldownElapsed(cState *containerState) bool {
 	}
 
 	cooldown := config.DefaultRemediationCooldown
-	if cfg, ok := p.remediationConfig.Load().(config.RemediationConfig); ok &&
+	if cfg := p.remediationConfig.Load(); cfg != nil &&
 		cfg.Cooldown.Duration > 0 {
 		cooldown = cfg.Cooldown.Duration
 	}
@@ -381,7 +381,7 @@ func (p *Plugin) buildThrottleUpdate(
 }
 
 func (p *Plugin) throttlePercents() (cpuPercent, memPercent int) {
-	if cfg, ok := p.remediationConfig.Load().(config.RemediationConfig); ok {
+	if cfg := p.remediationConfig.Load(); cfg != nil {
 		cpuPercent = cfg.Throttle.CPUQuotaPercent
 		memPercent = cfg.Throttle.MemoryLimitPercent
 	}
@@ -417,136 +417,12 @@ func deepCopyLinuxResources(src *api.LinuxResources) *api.LinuxResources {
 		return nil
 	}
 
-	dst := &api.LinuxResources{}
-
-	if cpu := src.GetCpu(); cpu != nil {
-		dst.Cpu = deepCopyCPU(cpu)
-	}
-
-	if mem := src.GetMemory(); mem != nil {
-		dst.Memory = deepCopyMemory(mem)
-	}
-
-	for _, hl := range src.GetHugepageLimits() {
-		dst.HugepageLimits = append(dst.HugepageLimits,
-			&api.HugepageLimit{PageSize: hl.GetPageSize(), Limit: hl.GetLimit()})
-	}
-
-	if bc := src.GetBlockioClass(); bc != nil {
-		dst.BlockioClass = &api.OptionalString{Value: bc.GetValue()}
-	}
-
-	if rc := src.GetRdtClass(); rc != nil {
-		dst.RdtClass = &api.OptionalString{Value: rc.GetValue()}
-	}
-
-	if unified := src.GetUnified(); len(unified) > 0 {
-		dst.Unified = make(map[string]string, len(unified))
-		maps.Copy(dst.GetUnified(), unified)
-	}
-
-	dst.Devices = deepCopyDevices(src.GetDevices())
-
-	if pids := src.GetPids(); pids != nil {
-		dst.Pids = &api.LinuxPids{Limit: pids.GetLimit()}
-	}
-
-	return dst
-}
-
-func deepCopyDevices(devs []*api.LinuxDeviceCgroup) []*api.LinuxDeviceCgroup {
-	if len(devs) == 0 {
+	cloned, ok := proto.Clone(src).(*api.LinuxResources)
+	if !ok {
 		return nil
 	}
 
-	copied := make([]*api.LinuxDeviceCgroup, 0, len(devs))
-
-	for _, dev := range devs {
-		entry := &api.LinuxDeviceCgroup{
-			Allow:  dev.GetAllow(),
-			Type:   dev.GetType(),
-			Access: dev.GetAccess(),
-		}
-
-		if maj := dev.GetMajor(); maj != nil {
-			entry.Major = &api.OptionalInt64{Value: maj.GetValue()}
-		}
-
-		if minor := dev.GetMinor(); minor != nil {
-			entry.Minor = &api.OptionalInt64{Value: minor.GetValue()}
-		}
-
-		copied = append(copied, entry)
-	}
-
-	return copied
-}
-
-func deepCopyCPU(cpu *api.LinuxCPU) *api.LinuxCPU {
-	copied := &api.LinuxCPU{
-		Cpus: cpu.GetCpus(),
-		Mems: cpu.GetMems(),
-	}
-
-	if q := cpu.GetQuota(); q != nil {
-		copied.Quota = &api.OptionalInt64{Value: q.GetValue()}
-	}
-
-	if s := cpu.GetShares(); s != nil {
-		copied.Shares = &api.OptionalUInt64{Value: s.GetValue()}
-	}
-
-	if p := cpu.GetPeriod(); p != nil {
-		copied.Period = &api.OptionalUInt64{Value: p.GetValue()}
-	}
-
-	if rt := cpu.GetRealtimeRuntime(); rt != nil {
-		copied.RealtimeRuntime = &api.OptionalInt64{Value: rt.GetValue()}
-	}
-
-	if rp := cpu.GetRealtimePeriod(); rp != nil {
-		copied.RealtimePeriod = &api.OptionalUInt64{Value: rp.GetValue()}
-	}
-
-	return copied
-}
-
-func deepCopyMemory(mem *api.LinuxMemory) *api.LinuxMemory {
-	copied := &api.LinuxMemory{}
-
-	if l := mem.GetLimit(); l != nil {
-		copied.Limit = &api.OptionalInt64{Value: l.GetValue()}
-	}
-
-	if r := mem.GetReservation(); r != nil {
-		copied.Reservation = &api.OptionalInt64{Value: r.GetValue()}
-	}
-
-	if s := mem.GetSwap(); s != nil {
-		copied.Swap = &api.OptionalInt64{Value: s.GetValue()}
-	}
-
-	if k := mem.GetKernel(); k != nil {
-		copied.Kernel = &api.OptionalInt64{Value: k.GetValue()}
-	}
-
-	if kt := mem.GetKernelTcp(); kt != nil {
-		copied.KernelTcp = &api.OptionalInt64{Value: kt.GetValue()}
-	}
-
-	if sw := mem.GetSwappiness(); sw != nil {
-		copied.Swappiness = &api.OptionalUInt64{Value: sw.GetValue()}
-	}
-
-	if dok := mem.GetDisableOomKiller(); dok != nil {
-		copied.DisableOomKiller = &api.OptionalBool{Value: dok.GetValue()}
-	}
-
-	if uh := mem.GetUseHierarchy(); uh != nil {
-		copied.UseHierarchy = &api.OptionalBool{Value: uh.GetValue()}
-	}
-
-	return copied
+	return cloned
 }
 
 func (p *Plugin) applyUpdates(updates []*api.ContainerUpdate) {
@@ -588,7 +464,7 @@ func (p *Plugin) updateTrackedContainerGauge() {
 }
 
 func (p *Plugin) batchSize() int {
-	if cfg, ok := p.remediationConfig.Load().(config.RemediationConfig); ok && cfg.BatchSize > 0 {
+	if cfg := p.remediationConfig.Load(); cfg != nil && cfg.BatchSize > 0 {
 		return cfg.BatchSize
 	}
 

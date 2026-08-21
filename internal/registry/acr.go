@@ -16,6 +16,7 @@ package registry
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -54,11 +55,13 @@ type cachedRefreshToken struct {
 }
 
 type acrHelper struct {
-	client  *http.Client
-	credMu  sync.Mutex
-	cred    *azidentity.DefaultAzureCredential
-	tokenMu sync.Mutex
-	tokens  map[string]cachedRefreshToken
+	client      *http.Client
+	credMu      sync.Mutex
+	cred        *azidentity.DefaultAzureCredential
+	tokenMu     sync.Mutex
+	tokens      map[string]cachedRefreshToken
+	defaultOnce sync.Once
+	defaultHTTP *http.Client
 }
 
 func newACRHelper() *acrHelper {
@@ -149,12 +152,35 @@ func (a *acrHelper) cacheToken(host, refreshToken string) {
 	}
 }
 
+const (
+	acrHTTPClientTimeout     = 30 * time.Second
+	acrTransportMaxIdleConns = 100
+	acrTransportIdleTimeout  = 90 * time.Second
+	acrTransportTLSTimeout   = 10 * time.Second
+	acrTransportContTimeout  = 1 * time.Second
+)
+
 func (a *acrHelper) httpClient() *http.Client {
 	if a.client != nil {
 		return a.client
 	}
 
-	return http.DefaultClient
+	a.defaultOnce.Do(func() {
+		a.defaultHTTP = &http.Client{
+			Timeout: acrHTTPClientTimeout,
+			Transport: &http.Transport{
+				Proxy:                 http.ProxyFromEnvironment,
+				ForceAttemptHTTP2:     true,
+				MaxIdleConns:          acrTransportMaxIdleConns,
+				IdleConnTimeout:       acrTransportIdleTimeout,
+				TLSHandshakeTimeout:   acrTransportTLSTimeout,
+				ExpectContinueTimeout: acrTransportContTimeout,
+				TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
+			},
+		}
+	})
+
+	return a.defaultHTTP
 }
 
 func stripScheme(serverURL string) string {

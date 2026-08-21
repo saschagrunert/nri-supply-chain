@@ -43,12 +43,15 @@ jobs:
     name: verify / helm
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    env:
-      HELM_IMAGE: docker.io/alpine/helm:3.21.4@sha256:82c0ce1b4196539946ed01bdfd9345cf74ca999b95d3074ce3f2f5ea45c96e80
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.21.4
       - name: Lint and render chart
-        run: docker run --rm --entrypoint /bin/sh -v "$PWD:/work" -w /work "$HELM_IMAGE" -c 'helm lint --strict deploy/helm/nri-supply-chain && helm template nri-supply-chain deploy/helm/nri-supply-chain --namespace nri-supply-chain > /dev/null'
+        run: |
+          helm lint --strict deploy/helm/nri-supply-chain
+          helm template nri-supply-chain deploy/helm/nri-supply-chain --namespace nri-supply-chain > /dev/null
 
   test-unit:
     name: test / unit
@@ -240,7 +243,7 @@ jobs:
       - uses: crate-ci/typos@8a48f81b6c64dcfea44b3633223084c4be58ac5f # v1.49.0
 
   snapshot:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

@@ -145,7 +145,7 @@ write_plugin_config_guac_unreachable() {
 		metrics_addr = ":9090"
 
 		[guac]
-		endpoint = "http://127.0.0.1:1"
+		endpoint = "https://127.0.0.1:1"
 		timeout = "1s"
 		fallback_policy = "${fallback}"
 		checks = ["certify_vuln"]

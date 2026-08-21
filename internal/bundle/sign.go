@@ -23,11 +23,11 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
-	"os"
 
 	"github.com/sigstore/sigstore/pkg/cryptoutils"
 	"github.com/sigstore/sigstore/pkg/signature"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/fileutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
@@ -71,7 +71,7 @@ func SignManifest(manifest *Manifest, keyPath string) error {
 
 //nolint:ireturn // wraps sigstore signer
 func loadSignerWithKeyHash(keyPath string) (signature.Signer, error) {
-	data, err := os.ReadFile(keyPath) //nolint:gosec // path from user-provided key file
+	data, err := fileutil.ReadLimited(keyPath, fileutil.MaxCredentialFileSize)
 	if err != nil {
 		return nil, fmt.Errorf("reading signing key file: %w", err)
 	}
@@ -137,7 +137,7 @@ func VerifyManifestSignature(manifest *Manifest, keyPath string) error {
 }
 
 func loadPublicKey(path string) (crypto.PublicKey, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // path from user-provided key file
+	data, err := fileutil.ReadLimited(path, fileutil.MaxCredentialFileSize)
 	if err != nil {
 		return nil, fmt.Errorf("reading public key file: %w", err)
 	}

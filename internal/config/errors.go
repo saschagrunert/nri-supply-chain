@@ -237,6 +237,12 @@ var (
 	// ErrGUACEndpointInvalid indicates the GUAC endpoint URL is not valid.
 	ErrGUACEndpointInvalid = errors.New("invalid guac.endpoint URL")
 
+	// ErrGUACEndpointNotHTTPS indicates the GUAC endpoint does not use HTTPS
+	// in enforce mode, which would send auth tokens in cleartext.
+	ErrGUACEndpointNotHTTPS = errors.New(
+		"guac.endpoint must use HTTPS in enforce mode",
+	)
+
 	// ErrGUACTimeoutNotPositive indicates a non-positive GUAC timeout.
 	ErrGUACTimeoutNotPositive = errors.New("guac.timeout must be positive")
 

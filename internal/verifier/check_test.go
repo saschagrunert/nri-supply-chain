@@ -538,7 +538,7 @@ func TestRunParallelCheckPanicRecovery(t *testing.T) {
 func TestAcquireHostSemSameHost(t *testing.T) {
 	t.Parallel()
 
-	hsm := &hostSemMap{
+	hsm := &hostSemMap{ //nolint:exhaustruct_v5 // test data
 		m:     sync.Map{},
 		count: atomic.Int64{},
 	}
@@ -558,7 +558,7 @@ func TestAcquireHostSemSameHost(t *testing.T) {
 func TestAcquireHostSemOverflow(t *testing.T) {
 	t.Parallel()
 
-	hsm := &hostSemMap{
+	hsm := &hostSemMap{ //nolint:exhaustruct_v5 // test data
 		m:     sync.Map{},
 		count: atomic.Int64{},
 	}

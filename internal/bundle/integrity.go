@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // VerifyBlobIntegrity checks that all blobs referenced by the manifest exist
@@ -64,18 +65,25 @@ func VerifyBlobIntegrity(store *Store) error {
 	return errors.Join(errs...)
 }
 
+const sha256Prefix = "sha256:"
+
 func verifyBlob(store *Store, digestStr string, expectedSize int64) error {
+	if !strings.HasPrefix(digestStr, sha256Prefix) {
+		return fmt.Errorf(
+			"%w: expected %q prefix, got %q",
+			ErrUnsupportedDigestAlgorithm,
+			sha256Prefix,
+			digestStr,
+		)
+	}
+
 	data, err := store.readBlob(digestStr, expectedSize)
 	if err != nil {
 		return err
 	}
 
 	actualHash := sha256.Sum256(data)
-
-	expectedHash := digestStr
-	if len(expectedHash) > 7 && expectedHash[:7] == "sha256:" {
-		expectedHash = expectedHash[7:]
-	}
+	expectedHash := digestStr[len(sha256Prefix):]
 
 	actualHex := hex.EncodeToString(actualHash[:])
 	if actualHex != expectedHash {

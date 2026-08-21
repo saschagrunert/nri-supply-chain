@@ -176,8 +176,11 @@ func newSnapshot(
 			cfg.CircuitBreakerThreshold,
 			cfg.CircuitBreakerCooldown.Duration,
 		),
-		fetchSem:         semaphore.NewWeighted(maxConcurrentFetches),
-		hostSem:          &hostSemMap{m: sync.Map{}, count: atomic.Int64{}},
+		fetchSem: semaphore.NewWeighted(maxConcurrentFetches),
+		hostSem: &hostSemMap{
+			m: sync.Map{}, count: atomic.Int64{},
+			onOverflow: func() { met.HostSemOverflowTotal.Inc() },
+		},
 		auditLogger:      auditLogger,
 		auditLogFile:     auditLogFile,
 		allowlistDigests: buildAllowlistMap(cfg.AllowlistDigests),
@@ -265,6 +268,10 @@ func (v *Verifier) Stop() {
 	snap := v.state.Load()
 	snap.cache.Stop()
 	closeAuditLogFile(snap.auditLogFile)
+
+	if snap.guacClient != nil {
+		snap.guacClient.Close()
+	}
 }
 
 // CurrentConfig returns the current configuration snapshot.

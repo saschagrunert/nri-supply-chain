@@ -132,8 +132,8 @@ type Plugin struct {
 	containers           *containerRegistry
 	reverifyTrigger      chan struct{} // buffered(1); signals on-demand re-verify
 	feedTrigger          chan []string // buffered(1); carries feed PURLs for filtered re-verify
-	remediationMode      atomic.Value  // stores config.RemediationMode
-	remediationConfig    atomic.Value  // stores config.RemediationConfig
+	remediationMode      atomic.Pointer[config.RemediationMode]
+	remediationConfig    atomic.Pointer[config.RemediationConfig]
 	stubUpdater          StubUpdater
 	stubMu               sync.RWMutex
 	feedMu               sync.Mutex
@@ -157,7 +157,9 @@ func New(
 
 	plug.fetchTimeout.Store(int64(fetchTimeout))
 	plug.digestResolveTimeout.Store(int64(digestResolveTimeout))
-	plug.remediationMode.Store(config.RemediationModeDisabled)
+
+	disabledMode := config.RemediationModeDisabled
+	plug.remediationMode.Store(&disabledMode)
 
 	if cache != nil {
 		plug.transportCache.Store(cache)
@@ -509,13 +511,15 @@ func (p *Plugin) SetStub(s StubUpdater) {
 // SetRemediationMode updates the current remediation mode. Called during
 // config reload.
 func (p *Plugin) SetRemediationMode(mode config.RemediationMode) {
-	p.remediationMode.Store(mode)
+	m := mode
+	p.remediationMode.Store(&m)
 }
 
 // SetRemediationConfig stores the full remediation config for use by the
 // continuous verifier. Called during startup and config reload.
 func (p *Plugin) SetRemediationConfig(cfg *config.RemediationConfig) {
-	p.remediationConfig.Store(*cfg)
+	c := *cfg
+	p.remediationConfig.Store(&c)
 }
 
 // TriggerReverify sends a non-blocking signal to the continuous verifier
@@ -532,7 +536,7 @@ func (p *Plugin) TriggerReverify() {
 // re-verified. If a previous trigger is pending, the PURLs are merged.
 // Respects the on_new_cve trigger config; returns immediately when disabled.
 func (p *Plugin) TriggerFeedReverify(purls []string) {
-	if cfg, ok := p.remediationConfig.Load().(config.RemediationConfig); ok {
+	if cfg := p.remediationConfig.Load(); cfg != nil {
 		if !cfg.Triggers.OnNewCVE {
 			return
 		}
