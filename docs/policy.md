@@ -28,6 +28,7 @@ patterns for the nri-supply-chain plugin.
     - [<code>sbom.license</code> (object)](#sbomlicense-object)
     - [<code>sbom.component</code> (object)](#sbomcomponent-object)
     - [<code>sbom.cvss</code> (object)](#sbomcvss-object)
+    - [<code>sbom.drift</code> (object)](#sbomdrift-object)
   - [<code>scai</code> (object)](#scai-object)
   - [<code>source</code> (object)](#source-object)
   - [<code>buildEnv</code> (object)](#buildenv-object)
@@ -559,6 +560,24 @@ nri-supply-chain json-schema policy
       "additionalProperties": false,
       "type": "object"
     },
+    "SBOMDriftPolicy": {
+      "properties": {
+        "maxAdded": {
+          "type": "integer"
+        },
+        "maxRemoved": {
+          "type": "integer"
+        },
+        "maxModified": {
+          "type": "integer"
+        },
+        "maxScore": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "SBOMLicensePolicy": {
       "properties": {
         "deny": {
@@ -597,6 +616,9 @@ nri-supply-chain json-schema policy
         },
         "cvss": {
           "$ref": "#/$defs/SBOMCVSSPolicy"
+        },
+        "drift": {
+          "$ref": "#/$defs/SBOMDriftPolicy"
         }
       },
       "additionalProperties": false,
@@ -992,6 +1014,7 @@ SPDX and CycloneDX SBOM attestations attached to container images.
 | `license`       | object | (none)  | License allow/deny list settings (see below)                           |
 | `component`     | object | (none)  | Component allow/deny list settings (see below)                         |
 | `cvss`          | object | (none)  | CVSS vulnerability scoring thresholds (CycloneDX only, see below)      |
+| `drift`         | object | (none)  | SBOM drift detection thresholds for baseline comparison (see below)    |
 
 #### `sbom.license` (object)
 
@@ -1028,6 +1051,25 @@ still contribute to aggregate statistics for visibility in CEL rules.
 
 When both `maxScore` and `minSeverity` are set, a vulnerability is flagged if
 either condition is met (OR logic, not AND).
+
+#### `sbom.drift` (object)
+
+SBOM drift detection compares an image's current SBOM against a known-good
+baseline SBOM stored as an OCI artifact (artifact type
+`application/vnd.nri-supply-chain.sbom-baseline.v1+json`). Drift detection
+flags unexpected package additions, removals, version changes, checksum
+mismatches, and license changes that signature verification alone cannot catch.
+Packages are matched by PURL; packages without a PURL are ignored.
+
+| Field         | Type   | Default | Description                                                                                  |
+| ------------- | ------ | ------- | -------------------------------------------------------------------------------------------- |
+| `maxAdded`    | int    | (none)  | Maximum number of added packages allowed before failing                                      |
+| `maxRemoved`  | int    | (none)  | Maximum number of removed packages allowed before failing                                    |
+| `maxModified` | int    | (none)  | Maximum number of modified packages allowed before failing                                   |
+| `maxScore`    | number | (none)  | Maximum drift score allowed. Computed as `(added*3 + modified*2 + removed) / baseline_count` |
+
+When no baseline SBOM referrer is found for an image, drift detection is
+skipped (no failure). All thresholds must be non-negative.
 
 ### `scai` (object)
 
@@ -1268,6 +1310,12 @@ Each rule is an object with:
 | `sbom.cvssCriticalCount`       | int    | Number of critical-severity vulnerabilities       |
 | `sbom.cvssHighCount`           | int    | Number of high-severity vulnerabilities           |
 | `sbom.cvssMediumCount`         | int    | Number of medium-severity vulnerabilities         |
+| `sbom.drift.detected`          | bool   | Whether any drift was detected                    |
+| `sbom.drift.addedCount`        | int    | Number of packages added vs baseline              |
+| `sbom.drift.removedCount`      | int    | Number of packages removed vs baseline            |
+| `sbom.drift.modifiedCount`     | int    | Number of packages modified vs baseline           |
+| `sbom.drift.addedPackages`     | list   | PURLs of added packages                           |
+| `sbom.drift.score`             | float  | Weighted drift score                              |
 | `scai.verified`                | bool   | Whether SCAI verification passed                  |
 | `scai.attributes`              | string | Comma-separated attribute names                   |
 | `scai.attributeCount`          | int    | Number of attributes                              |
@@ -1599,6 +1647,15 @@ Checks performed:
   contribute to aggregate statistics (cvssMax, cvssCriticalCount, cvssHighCount,
   cvssMediumCount) exposed as CEL variables. SPDX documents do not carry
   vulnerability data, so CVSS checks are silently skipped for SPDX.
+
+- **Drift detection**: When a baseline SBOM is attached as an OCI referrer
+  (artifact type `application/vnd.nri-supply-chain.sbom-baseline.v1+json`),
+  the current SBOM is compared against it using PURL as the package identity
+  key. Added, removed, and modified packages are counted and a weighted drift
+  score is computed. When `sbom.drift` thresholds are configured, exceeding
+  any threshold causes failure. Drift results are always exposed as CEL
+  variables (`sbom.drift.*`) regardless of whether thresholds are set.
+  If no baseline referrer is found, drift detection is skipped.
 
 When multiple SBOM attestations exist, any denied license or component in any
 document causes failure. CVSS metadata from passing attestations is accumulated

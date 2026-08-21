@@ -38,6 +38,127 @@ func isNotationCandidate(artifactType string) bool {
 	return artifactType == NotationSignatureMediaType
 }
 
+func isBaselineSBOM(artifactType string) bool {
+	return artifactType == BaselineSBOMArtifactType
+}
+
+func (f *OCIFetcher) collectBaselineSBOMs(
+	ctx context.Context,
+	manifests []ociV1.Descriptor, ref name.Digest, digest string,
+	remoteOpts []remote.Option,
+) []VerifiedAttestation {
+	var (
+		attsMu sync.Mutex
+		atts   []VerifiedAttestation
+	)
+
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(maxConcurrentCollectFetch)
+
+	for idx := range manifests {
+		if !isBaselineSBOM(manifests[idx].ArtifactType) {
+			continue
+		}
+
+		desc := &manifests[idx]
+
+		group.Go(func() error {
+			att, ok := f.fetchBaselineSBOM(groupCtx, desc, ref, digest, remoteOpts)
+			if !ok {
+				return nil
+			}
+
+			appendAttestation(&attsMu, &atts, &att)
+
+			return nil
+		})
+	}
+
+	_ = group.Wait()
+
+	return atts
+}
+
+func (f *OCIFetcher) fetchBaselineSBOM( //nolint:funlen // mirrors fetchNotationSignature
+	ctx context.Context,
+	desc *ociV1.Descriptor,
+	ref name.Digest, digest string,
+	remoteOpts []remote.Option,
+) (VerifiedAttestation, bool) {
+	baseRef := ref.Context().Digest(desc.Digest.String())
+
+	img, err := f.fetchImage(baseRef, remoteOpts...)
+	if err != nil {
+		slog.WarnContext(ctx, "Failed to fetch baseline SBOM image",
+			"digest", desc.Digest.String(),
+			"error", err,
+		)
+
+		return VerifiedAttestation{}, false
+	}
+
+	layers, err := img.Layers()
+	if err != nil || len(layers) == 0 {
+		slog.WarnContext(ctx, "Baseline SBOM has no layers",
+			"digest", desc.Digest.String(),
+			"error", err,
+		)
+
+		return VerifiedAttestation{}, false
+	}
+
+	reader, err := layers[0].Uncompressed()
+	if err != nil {
+		slog.WarnContext(ctx, "Failed to read baseline SBOM layer",
+			"digest", desc.Digest.String(),
+			"error", err,
+		)
+
+		return VerifiedAttestation{}, false
+	}
+
+	defer func() {
+		closeErr := reader.Close()
+		if closeErr != nil {
+			slog.WarnContext(ctx, "Failed to close baseline SBOM layer reader",
+				"error", closeErr,
+			)
+		}
+	}()
+
+	maxSize := f.maxAttestationSize.Load()
+
+	data, err := io.ReadAll(io.LimitReader(reader, maxSize+1))
+	if err != nil {
+		slog.WarnContext(ctx, "Failed to read baseline SBOM data",
+			"digest", desc.Digest.String(),
+			"error", err,
+		)
+
+		return VerifiedAttestation{}, false
+	}
+
+	if int64(len(data)) > maxSize {
+		slog.WarnContext(ctx, "Baseline SBOM exceeds size limit",
+			"size", len(data),
+			"limit", maxSize,
+		)
+
+		return VerifiedAttestation{}, false
+	}
+
+	slog.DebugContext(ctx, "Collected baseline SBOM without bundle verification",
+		"digest", desc.Digest.String(),
+		"size", len(data),
+	)
+
+	return VerifiedAttestation{
+		PredicateType: PredicateBaselineSBOM,
+		Payload:       data,
+		Digest:        digest,
+	}, true
+}
+
 func (f *OCIFetcher) collectNotationSignatures(
 	ctx context.Context,
 	manifests []ociV1.Descriptor, ref name.Digest, digest string,

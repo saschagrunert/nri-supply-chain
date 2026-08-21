@@ -243,6 +243,11 @@ var (
 		`sbom.cvss.minSeverity must be "low", "medium", "high", or "critical"`,
 	)
 
+	// ErrDriftThresholdNegative indicates a drift threshold is negative.
+	ErrDriftThresholdNegative = errors.New(
+		"sbom.drift threshold values must be non-negative",
+	)
+
 	// ErrSCAIOverlappingAttributes indicates the same attribute appears in both
 	// requiredAttributes and forbiddenAttributes.
 	ErrSCAIOverlappingAttributes = errors.New(
@@ -500,6 +505,8 @@ type SBOMPolicy struct {
 	Component *SBOMComponentPolicy `json:"component,omitempty"`
 	// CVSS contains CVSS vulnerability scoring threshold settings.
 	CVSS *SBOMCVSSPolicy `json:"cvss,omitempty"`
+	// Drift contains SBOM drift detection settings for baseline comparison.
+	Drift *SBOMDriftPolicy `json:"drift,omitempty"`
 }
 
 // SBOMCVSSPolicy contains CVSS vulnerability scoring thresholds.
@@ -514,6 +521,19 @@ type SBOMCVSSPolicy struct {
 	MinSeverity string `json:"minSeverity,omitempty"`
 	// IgnoreCVEs is a list of CVE IDs to exclude from threshold checks (exact match).
 	IgnoreCVEs []string `json:"ignoreCVEs,omitempty"` //nolint:tagliatelle // CVEs is an acronym
+}
+
+// SBOMDriftPolicy contains SBOM drift detection threshold settings.
+type SBOMDriftPolicy struct {
+	// MaxAdded is the maximum number of added packages allowed before failing.
+	MaxAdded *int `json:"maxAdded,omitempty"`
+	// MaxRemoved is the maximum number of removed packages allowed before failing.
+	MaxRemoved *int `json:"maxRemoved,omitempty"`
+	// MaxModified is the maximum number of modified packages allowed before failing.
+	MaxModified *int `json:"maxModified,omitempty"`
+	// MaxScore is the maximum drift score allowed (0.0+). The score is computed as:
+	// (added*3 + modified*2 + removed) / baseline_count.
+	MaxScore *float64 `json:"maxScore,omitempty"`
 }
 
 // SBOMLicensePolicy contains license allow/deny list settings.

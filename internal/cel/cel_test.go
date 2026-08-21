@@ -90,6 +90,14 @@ const (
 	testMonitorFalco    = "falco"
 	testPropHermetic    = "HERMETIC"
 
+	metaDrift         = "drift"
+	metaDriftDetected = "detected"
+	metaDriftAdded    = "addedCount"
+	metaDriftRemoved  = "removedCount"
+	metaDriftModified = "modifiedCount"
+	metaDriftPkgs     = "addedPackages"
+	metaDriftScore    = "score"
+
 	exprMatchGHCR        = "image.registry == 'ghcr.io'"
 	exprSLSAVerified     = "slsa.verified == true"
 	exprVEXVerified      = "vex.verified == true"
@@ -1338,6 +1346,158 @@ func TestEvaluateSBOMCVSSVariables(t *testing.T) {
 		result := celengine.Evaluate(compiled, vars)
 		if !result.Passed {
 			t.Errorf("expected pass with default CVSS values, got: %s", result.Detail)
+		}
+	})
+}
+
+func TestEvaluateSBOMDriftVariables(t *testing.T) {
+	t.Parallel()
+
+	t.Run("drift detected with added packages", func(t *testing.T) {
+		t.Parallel()
+
+		rules := []celengine.Rule{
+			{Require: "sbom.drift.detected == false", Message: "no drift allowed"},
+		}
+
+		compiled, err := celengine.Compile(rules)
+		if err != nil {
+			t.Fatalf("compile error: %v", err)
+		}
+
+		sbomResult := types.PassResult(types.CheckTypeSBOM, "ok")
+		sbomResult.Metadata = map[string]any{
+			metaDrift: map[string]any{
+				metaDriftDetected: true,
+				metaDriftAdded:    int64(2),
+				metaDriftRemoved:  int64(0),
+				metaDriftModified: int64(1),
+				metaDriftPkgs:     []string{"pkg:npm/evil@1.0", "pkg:npm/bad@2.0"},
+				metaDriftScore:    float64(2.5),
+			},
+		}
+
+		vars := celengine.BuildVars(
+			testImageRef, testRegistry, testRepository, testDigest, testNamespace,
+			map[types.CheckType]*types.CheckResult{
+				types.CheckTypeSLSA: types.PassResult(types.CheckTypeSLSA, "ok"),
+				types.CheckTypeVEX:  types.PassResult(types.CheckTypeVEX, "ok"),
+				types.CheckTypeSBOM: sbomResult,
+			},
+		)
+
+		result := celengine.Evaluate(compiled, vars)
+		if result.Passed {
+			t.Error("expected fail: drift detected but rule requires no drift")
+		}
+	})
+
+	t.Run("drift score threshold", func(t *testing.T) {
+		t.Parallel()
+
+		rules := []celengine.Rule{
+			{Require: "sbom.drift.score <= 1.0", Message: "drift score too high"},
+		}
+
+		compiled, err := celengine.Compile(rules)
+		if err != nil {
+			t.Fatalf("compile error: %v", err)
+		}
+
+		sbomResult := types.PassResult(types.CheckTypeSBOM, "ok")
+		sbomResult.Metadata = map[string]any{
+			metaDrift: map[string]any{
+				metaDriftDetected: true,
+				metaDriftAdded:    int64(0),
+				metaDriftRemoved:  int64(0),
+				metaDriftModified: int64(1),
+				metaDriftPkgs:     []string{},
+				metaDriftScore:    float64(0.5),
+			},
+		}
+
+		vars := celengine.BuildVars(
+			testImageRef, testRegistry, testRepository, testDigest, testNamespace,
+			map[types.CheckType]*types.CheckResult{
+				types.CheckTypeSLSA: types.PassResult(types.CheckTypeSLSA, "ok"),
+				types.CheckTypeVEX:  types.PassResult(types.CheckTypeVEX, "ok"),
+				types.CheckTypeSBOM: sbomResult,
+			},
+		)
+
+		result := celengine.Evaluate(compiled, vars)
+		if !result.Passed {
+			t.Errorf("expected pass: drift score 0.5 is within 1.0, got: %s", result.Detail)
+		}
+	})
+
+	t.Run("drift defaults when no metadata", func(t *testing.T) {
+		t.Parallel()
+
+		rules := []celengine.Rule{
+			{
+				Require: "sbom.drift.detected == false && sbom.drift.addedCount == 0" +
+					" && sbom.drift.removedCount == 0 && sbom.drift.modifiedCount == 0" +
+					" && sbom.drift.score == 0.0",
+			},
+		}
+
+		compiled, err := celengine.Compile(rules)
+		if err != nil {
+			t.Fatalf("compile error: %v", err)
+		}
+
+		vars := celengine.BuildVars(
+			testImageRef, testRegistry, testRepository, testDigest, testNamespace,
+			map[types.CheckType]*types.CheckResult{
+				types.CheckTypeSLSA: types.PassResult(types.CheckTypeSLSA, "ok"),
+				types.CheckTypeVEX:  types.PassResult(types.CheckTypeVEX, "ok"),
+				types.CheckTypeSBOM: types.PassResult(types.CheckTypeSBOM, "ok"),
+			},
+		)
+
+		result := celengine.Evaluate(compiled, vars)
+		if !result.Passed {
+			t.Errorf("expected pass with default drift values, got: %s", result.Detail)
+		}
+	})
+
+	t.Run("drift addedCount check", func(t *testing.T) {
+		t.Parallel()
+
+		rules := []celengine.Rule{
+			{Require: "sbom.drift.addedCount <= 3", Message: "too many added packages"},
+		}
+
+		compiled, err := celengine.Compile(rules)
+		if err != nil {
+			t.Fatalf("compile error: %v", err)
+		}
+
+		sbomResult := types.PassResult(types.CheckTypeSBOM, "ok")
+		sbomResult.Metadata = map[string]any{
+			metaDrift: map[string]any{
+				metaDriftDetected: true,
+				metaDriftAdded:    int64(5),
+				metaDriftRemoved:  int64(0),
+				metaDriftModified: int64(0),
+				metaDriftPkgs:     []string{"a", "b", "c", "d", "e"},
+				metaDriftScore:    float64(3.0),
+			},
+		}
+
+		vars := celengine.BuildVars(
+			testImageRef, testRegistry, testRepository, testDigest, testNamespace,
+			map[types.CheckType]*types.CheckResult{
+				types.CheckTypeSLSA: types.PassResult(types.CheckTypeSLSA, "ok"),
+				types.CheckTypeVEX:  types.PassResult(types.CheckTypeVEX, "ok"),
+				types.CheckTypeSBOM: sbomResult,
+			},
+		)
+
+		result := celengine.Evaluate(compiled, vars)
+		if result.Passed {
+			t.Error("expected fail: addedCount 5 exceeds 3")
 		}
 	})
 }

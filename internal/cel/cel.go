@@ -441,6 +441,7 @@ func buildSBOMVars(result *types.CheckResult) map[string]any {
 		"cvssCriticalCount": int64(0),
 		"cvssHighCount":     int64(0),
 		"cvssMediumCount":   int64(0),
+		"drift":             defaultDriftVars(),
 	}
 
 	if result != nil {
@@ -449,9 +450,59 @@ func buildSBOMVars(result *types.CheckResult) map[string]any {
 		extractInt64Meta(result.Metadata, vars, "componentCount", "licenseCount",
 			"cvssCriticalCount", "cvssHighCount", "cvssMediumCount")
 		extractFloat64Meta(result.Metadata, vars, "cvssMax")
+		extractDriftMeta(result.Metadata, vars)
 	}
 
 	return vars
+}
+
+func defaultDriftVars() map[string]any {
+	return map[string]any{
+		"detected":      false,
+		"addedCount":    int64(0),
+		"removedCount":  int64(0),
+		"modifiedCount": int64(0),
+		"addedPackages": []string{},
+		"score":         float64(0),
+	}
+}
+
+func extractDriftMeta(meta, vars map[string]any) {
+	if meta == nil {
+		return
+	}
+
+	driftRaw, hasDrift := meta["drift"]
+	if !hasDrift {
+		return
+	}
+
+	driftMap, isMap := driftRaw.(map[string]any)
+	if !isMap {
+		return
+	}
+
+	result := defaultDriftVars()
+
+	if v, ok := driftMap["detected"].(bool); ok {
+		result["detected"] = v
+	}
+
+	for _, key := range []string{"addedCount", "removedCount", "modifiedCount"} {
+		if v, ok := driftMap[key].(int64); ok {
+			result[key] = v
+		}
+	}
+
+	if v, ok := driftMap["score"].(float64); ok {
+		result["score"] = v
+	}
+
+	if v, ok := driftMap["addedPackages"].([]string); ok {
+		result["addedPackages"] = v
+	}
+
+	vars["drift"] = result
 }
 
 func buildNotationVars(result *types.CheckResult) map[string]any {

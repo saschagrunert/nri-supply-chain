@@ -209,8 +209,15 @@ Verifies SBOM attestations in [SPDX](https://spdx.dev) JSON and
 in-toto predicate type routing (`https://spdx.dev/Document` for SPDX,
 `https://cyclonedx.org/bom` for CycloneDX). The plugin extracts package
 licenses and PURLs from the SBOM and checks them against configurable deny
-and allow lists. See [policy.md](policy.md#sbom-verification) for the field reference
-and configuration examples.
+and allow lists. When baseline SBOMs are attached to the image via the OCI
+Referrers API (artifact type
+`application/vnd.nri-supply-chain.sbom-baseline.v1+json`), the plugin
+compares the current SBOM against the baseline using PURL as the identity
+key and computes a weighted drift score. Policy thresholds on added,
+removed, and modified package counts, and overall score can enforce limits
+on acceptable drift. See [policy.md](policy.md#sbom-verification) for the
+field reference and [policy.md](policy.md#sbomdrift-object) for drift
+thresholds.
 
 ### SCAI (Supply Chain Attribute Integrity)
 

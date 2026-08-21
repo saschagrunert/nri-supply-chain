@@ -60,8 +60,15 @@ type cyclonedxRating struct {
 
 type cyclonedxComponent struct {
 	Name     string             `json:"name"`
+	Version  string             `json:"version"`
 	PURL     string             `json:"purl"`
 	Licenses []cyclonedxLicense `json:"licenses"`
+	Hashes   []cyclonedxHash    `json:"hashes"`
+}
+
+type cyclonedxHash struct {
+	Algorithm string `json:"alg"`
+	Content   string `json:"content"`
 }
 
 type cyclonedxLicense struct {
@@ -91,25 +98,8 @@ func parseCycloneDX(data []byte) (sbomData, error) {
 
 	for idx := range bom.Components {
 		comp := &bom.Components[idx]
-
-		for lidx := range comp.Licenses {
-			lic := &comp.Licenses[lidx]
-			if lic.License == nil {
-				continue
-			}
-
-			if lic.License.ID != "" {
-				result.licenses = append(result.licenses, lic.License.ID)
-				uniqueLicenses[lic.License.ID] = struct{}{}
-			} else if lic.License.Name != "" {
-				result.licenses = append(result.licenses, lic.License.Name)
-				uniqueLicenses[lic.License.Name] = struct{}{}
-			}
-		}
-
-		if comp.PURL != "" {
-			result.purls = append(result.purls, comp.PURL)
-		}
+		sp := buildCycloneDXPackage(comp, &result, uniqueLicenses)
+		result.Packages = append(result.Packages, sp)
 	}
 
 	result.componentCount = len(bom.Components)
@@ -117,6 +107,49 @@ func parseCycloneDX(data []byte) (sbomData, error) {
 	result.vulns = bom.Vulnerabilities
 
 	return result, nil
+}
+
+func buildCycloneDXPackage(
+	comp *cyclonedxComponent, result *sbomData, uniqueLicenses map[string]struct{},
+) sbomPackage {
+	pkg := sbomPackage{
+		Name:    comp.Name,
+		Version: comp.Version,
+		PURL:    comp.PURL,
+	}
+
+	for lidx := range comp.Licenses {
+		lic := &comp.Licenses[lidx]
+		if lic.License == nil {
+			continue
+		}
+
+		if lic.License.ID != "" {
+			result.licenses = append(result.licenses, lic.License.ID)
+			uniqueLicenses[lic.License.ID] = struct{}{}
+			pkg.Licenses = append(pkg.Licenses, lic.License.ID)
+		} else if lic.License.Name != "" {
+			result.licenses = append(result.licenses, lic.License.Name)
+			uniqueLicenses[lic.License.Name] = struct{}{}
+			pkg.Licenses = append(pkg.Licenses, lic.License.Name)
+		}
+	}
+
+	if comp.PURL != "" {
+		result.purls = append(result.purls, comp.PURL)
+	}
+
+	if len(comp.Hashes) > 0 {
+		pkg.Checksums = make(map[string]string, len(comp.Hashes))
+		for hidx := range comp.Hashes {
+			hash := &comp.Hashes[hidx]
+			if hash.Algorithm != "" && hash.Content != "" {
+				pkg.Checksums[hash.Algorithm] = hash.Content
+			}
+		}
+	}
+
+	return pkg
 }
 
 type vulnAggregate struct {

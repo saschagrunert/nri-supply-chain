@@ -170,6 +170,10 @@ func (p *Policy) validateSBOM() error {
 		errs = append(errs, validateCVSSPolicy(p.SBOM.CVSS)...)
 	}
 
+	if p.SBOM.Drift != nil {
+		errs = append(errs, validateDriftPolicy(p.SBOM.Drift)...)
+	}
+
 	return errors.Join(errs...)
 }
 
@@ -240,6 +244,28 @@ func validateCVSSPolicy(cvss *SBOMCVSSPolicy) []error {
 	err := validateNonEmpty("sbom.cvss.ignoreCVEs", cvss.IgnoreCVEs)
 	if err != nil {
 		errs = append(errs, err)
+	}
+
+	return errs
+}
+
+func validateDriftPolicy(drift *SBOMDriftPolicy) []error {
+	var errs []error
+
+	if drift.MaxAdded != nil && *drift.MaxAdded < 0 {
+		errs = append(errs, fmt.Errorf("sbom.drift.maxAdded: %w", ErrDriftThresholdNegative))
+	}
+
+	if drift.MaxRemoved != nil && *drift.MaxRemoved < 0 {
+		errs = append(errs, fmt.Errorf("sbom.drift.maxRemoved: %w", ErrDriftThresholdNegative))
+	}
+
+	if drift.MaxModified != nil && *drift.MaxModified < 0 {
+		errs = append(errs, fmt.Errorf("sbom.drift.maxModified: %w", ErrDriftThresholdNegative))
+	}
+
+	if drift.MaxScore != nil && *drift.MaxScore < 0 {
+		errs = append(errs, fmt.Errorf("sbom.drift.maxScore: %w", ErrDriftThresholdNegative))
 	}
 
 	return errs
