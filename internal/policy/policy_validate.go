@@ -57,6 +57,13 @@ func (p *Policy) ValidateModeStrictness(global config.VerificationMode) error {
 func (p *Policy) Validate() error {
 	var errs []error
 
+	if p.Version < 0 || p.Version > LatestPolicyVersion {
+		errs = append(errs, fmt.Errorf(
+			"%w: got %d, max %d",
+			ErrPolicyVersionTooNew, p.Version, LatestPolicyVersion,
+		))
+	}
+
 	if p.Mode != "" && !p.Mode.IsValid() {
 		errs = append(errs, fmt.Errorf("%w: %q", ErrInvalidPolicyMode, p.Mode))
 	}

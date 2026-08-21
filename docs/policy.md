@@ -13,6 +13,7 @@ patterns for the nri-supply-chain plugin.
   - [Step 4: Add image includes and excludes](#step-4-add-image-includes-and-excludes)
 - [JSON Schema](#json-schema)
 - [Field Reference](#field-reference)
+  - [<code>version</code> (integer)](#version-integer)
   - [<code>mode</code> (string)](#mode-string)
   - [<code>inherits</code> (boolean)](#inherits-boolean)
   - [<code>trust</code> (object)](#trust-object)
@@ -446,6 +447,9 @@ nri-supply-chain json-schema policy
         "runtimeTrace": {
           "$ref": "#/$defs/RuntimeTracePolicy"
         },
+        "version": {
+          "type": "integer"
+        },
         "mode": {
           "type": "string",
           "enum": ["disabled", "warn", "enforce"]
@@ -470,6 +474,50 @@ nri-supply-chain json-schema policy
             "$ref": "#/$defs/ImageRule"
           },
           "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ReleasePolicy": {
+      "properties": {
+        "missingPolicy": {
+          "type": "string",
+          "enum": ["allow", "warn", "deny"]
+        },
+        "trustedRegistries": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "requirePackageId": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "RuntimeTracePolicy": {
+      "properties": {
+        "missingPolicy": {
+          "type": "string",
+          "enum": ["allow", "warn", "deny"]
+        },
+        "trustedMonitors": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "forbiddenFilePatterns": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "maxAge": {
+          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -645,50 +693,6 @@ nri-supply-chain json-schema policy
       "additionalProperties": false,
       "type": "object"
     },
-    "ReleasePolicy": {
-      "properties": {
-        "missingPolicy": {
-          "type": "string",
-          "enum": ["allow", "warn", "deny"]
-        },
-        "trustedRegistries": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "requirePackageId": {
-          "type": "boolean"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "RuntimeTracePolicy": {
-      "properties": {
-        "missingPolicy": {
-          "type": "string",
-          "enum": ["allow", "warn", "deny"]
-        },
-        "trustedMonitors": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "forbiddenFilePatterns": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "maxAge": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
     "TrustPolicy": {
       "properties": {
         "builders": {
@@ -837,6 +841,12 @@ nri-supply-chain json-schema policy
 </details>
 
 ## Field Reference
+
+### `version` (integer)
+
+Policy schema version. Currently `1`. Omitting defaults to `0`, which is
+treated as version 1. The plugin rejects policies with a version newer than
+it supports.
 
 ### `mode` (string)
 

@@ -78,6 +78,7 @@ const (
 
 	defaultVerificationTimeout = 5 * time.Minute
 	maxVerificationTimeout     = 30 * time.Minute
+	defaultCheckTimeout        = 2 * time.Minute
 	maxCircuitBreakerCooldown  = 10 * time.Minute
 
 	// PolicySourceLocal loads policies from the local filesystem (default).
@@ -307,6 +308,10 @@ type Config struct {
 	// VerificationTimeout is the maximum time allowed for a single image
 	// verification (all checks combined). Defaults to 5m, maximum 30m.
 	VerificationTimeout Duration `toml:"verification_timeout"`
+	// CheckTimeout is the maximum time allowed for a single attestation check
+	// (e.g. SLSA, VEX, SBOM) within a verification. Defaults to 2m. Must not
+	// exceed VerificationTimeout.
+	CheckTimeout Duration `toml:"check_timeout"`
 	// FetchRateLimit is the maximum number of registry fetch requests per
 	// second. 0 means unlimited.
 	FetchRateLimit float64 `toml:"fetch_rate_limit"`
@@ -334,6 +339,10 @@ type Config struct {
 	// reference ("image@sha256:abc123..."). The digest is extracted and
 	// used for matching. Reloaded with the config on SIGHUP.
 	AllowlistDigests []string `toml:"allowlist_digests"`
+	// AuditLog is an optional file path for a dedicated audit log. When set,
+	// supply chain audit events are written as JSON to this file instead of
+	// the default application logger. Must be an absolute path.
+	AuditLog string `toml:"audit_log"`
 	// Guac configures GUAC (Graph for Understanding Artifact Composition)
 	// as a supplemental verification data source for transitive dependency
 	// analysis, vulnerability correlation, and Scorecard queries.
@@ -392,6 +401,7 @@ func DefaultConfig() *Config {
 		CircuitBreakerThreshold: defaultCircuitBreakerThreshold,
 		CircuitBreakerCooldown:  Duration{Duration: defaultCircuitBreakerCooldown},
 		VerificationTimeout:     Duration{Duration: defaultVerificationTimeout},
+		CheckTimeout:            Duration{Duration: defaultCheckTimeout},
 		FetchRateLimit:          0,
 		LogLevel:                "",
 		Sigstore: SigstoreConfig{
@@ -412,6 +422,7 @@ func DefaultConfig() *Config {
 		MaxAttestationSize: DefaultMaxAttestationSize,
 		CacheMaxEntries:    defaultCacheMaxEntries,
 		AllowlistDigests:   nil,
+		AuditLog:           "",
 		Guac: GUACConfig{
 			Timeout:        Duration{Duration: defaultGUACTimeout},
 			FallbackPolicy: types.ActionWarn,

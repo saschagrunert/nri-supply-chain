@@ -23,7 +23,10 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 )
 
-const testDigest = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+const (
+	testDigest        = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+	testPredicateSLSA = "https://slsa.dev/provenance/v1"
+)
 
 var errFetchFailed = errors.New("fetch failed")
 
@@ -143,7 +146,7 @@ func TestPredicateTypeConstants(t *testing.T) {
 		{
 			name: "SLSA provenance v1",
 			got:  attestation.PredicateSLSAProvenanceV1,
-			want: "https://slsa.dev/provenance/v1",
+			want: testPredicateSLSA,
 		},
 		{
 			name: "VSA",

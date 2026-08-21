@@ -61,8 +61,7 @@ func (cr *checkRunner) run(
 
 	if !hasAttestations {
 		logMissingAttestation(
-			ctx, cr.missingPolicy,
-			cr.missingLog, imageRef, cr.missingReason,
+			ctx, cr.missingLog, imageRef, cr.missingReason,
 		)
 
 		return handleMissingAttestation(

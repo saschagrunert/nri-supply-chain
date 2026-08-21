@@ -67,6 +67,7 @@ func setupSignals(
 
 type pluginReloader interface {
 	CancelPrewarm()
+	PrewarmAfterReload(ctx context.Context)
 	SetFetchTimeout(d time.Duration)
 	SetDigestResolveTimeout(d time.Duration)
 	SetTransportCache(tc *registry.TransportCache)
@@ -147,6 +148,7 @@ func handleReload(
 			plug.SetFetchTimeout(newCfg.FetchTimeout.Duration)
 			plug.SetDigestResolveTimeout(newCfg.DigestResolveTimeout.Duration)
 			updatePluginRegistries(plug, newCfg.Registries, verif.TransportCache())
+			plug.PrewarmAfterReload(ctx)
 		}
 	}
 }

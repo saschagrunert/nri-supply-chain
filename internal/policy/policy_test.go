@@ -42,6 +42,8 @@ const (
 	testExplicitDenyName       = "explicit deny"
 	testNonexistentKeyPath     = "/nonexistent/key.pub"
 	testRuleImagesGlob         = "ghcr.io/**"
+	testGitHubIssuer           = "https://token.actions.githubusercontent.com"
+	testGitHubSANPattern       = "https://github.com/saschagrunert/*"
 	testNotBefore2024          = "2024-01-01T00:00:00Z"
 	testNotAfter2025           = "2025-01-01T00:00:00Z"
 	testMidpoint2024           = "2024-06-01T00:00:00Z"
@@ -125,6 +127,37 @@ func TestPolicyValidateEmpty(t *testing.T) {
 			policy:      emptyPolicy(),
 			wantErr:     false,
 			expectedErr: nil,
+		},
+	})
+}
+
+func TestPolicyValidateVersion(t *testing.T) {
+	t.Parallel()
+
+	runValidateTests(t, []validateTest{
+		{
+			name:        "version 0 (omitted) is valid",
+			policy:      policy.Policy{},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name:        "version 1 is valid",
+			policy:      policy.Policy{Version: policy.LatestPolicyVersion},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
+			name:        "version too new",
+			policy:      policy.Policy{Version: policy.LatestPolicyVersion + 1},
+			wantErr:     true,
+			expectedErr: policy.ErrPolicyVersionTooNew,
+		},
+		{
+			name:        "negative version",
+			policy:      policy.Policy{Version: -1},
+			wantErr:     true,
+			expectedErr: policy.ErrPolicyVersionTooNew,
 		},
 	})
 }
@@ -217,7 +250,7 @@ func TestPolicyValidateVerifiers(t *testing.T) {
 						Verifiers: []policy.TrustedVerifier{
 							{ID: testBuilderID},
 						},
-						Issuers: []string{"https://token.actions.githubusercontent.com"},
+						Issuers: []string{testGitHubIssuer},
 						Sources: nil, BuildTypes: nil,
 					},
 					SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,

@@ -501,10 +501,12 @@ func TestRunParallelCheckPanicRecovery(t *testing.T) {
 	waitGroup.Add(1)
 
 	runParallelCheck(
+		context.Background(),
 		&waitGroup,
 		&result,
 		types.CheckTypeSLSA,
-		func() *types.CheckResult {
+		time.Minute,
+		func(_ context.Context) *types.CheckResult {
 			panic("test panic in check function")
 		},
 	)

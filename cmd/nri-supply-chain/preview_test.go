@@ -567,13 +567,14 @@ func TestCheckStatusesChangedProposedDuplicates(t *testing.T) {
 	t.Parallel()
 
 	current := &verifyOutput{
-		Image:      testImgV1,
-		Digest:     testDigestAAA,
-		Namespace:  "default",
-		PolicyFile: "",
-		Mode:       "",
-		Allowed:    true,
-		Reason:     "",
+		Image:         testImgV1,
+		Digest:        testDigestAAA,
+		Namespace:     "default",
+		PolicyFile:    "",
+		Mode:          "",
+		PreviewPolicy: "",
+		Allowed:       true,
+		Reason:        "",
 		CheckResults: []types.CheckResult{
 			*types.PassResult(types.CheckTypeSLSA, "ok"),
 			*types.PassResult(types.CheckTypeVEX, "ok"),
@@ -581,13 +582,14 @@ func TestCheckStatusesChangedProposedDuplicates(t *testing.T) {
 	}
 
 	proposed := &verifyOutput{
-		Image:      testImgV1,
-		Digest:     testDigestAAA,
-		Namespace:  "default",
-		PolicyFile: "",
-		Mode:       "",
-		Allowed:    true,
-		Reason:     "",
+		Image:         testImgV1,
+		Digest:        testDigestAAA,
+		Namespace:     "default",
+		PolicyFile:    "",
+		Mode:          "",
+		PreviewPolicy: "",
+		Allowed:       true,
+		Reason:        "",
 		CheckResults: []types.CheckResult{
 			*types.PassResult(types.CheckTypeSLSA, "ok"),
 			*types.PassResult(types.CheckTypeSLSA, "ok"),

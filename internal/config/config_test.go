@@ -41,12 +41,14 @@ const (
 )
 
 const (
-	testRegistryGHCR   = "ghcr.io"
-	testMirrorInternal = "mirror.internal"
-	testOCIRef         = "ghcr.io/myorg/policies:v1"
-	testIssuerGoogle   = "https://accounts.google.com"
-	testKeyPath        = "/etc/keys/policy.pub"
-	testSANPattern     = "*@example.com"
+	testRegistryGHCR         = "ghcr.io"
+	testMirrorInternal       = "mirror.internal"
+	testOCIRef               = "ghcr.io/myorg/policies:v1"
+	testIssuerGoogle         = "https://accounts.google.com"
+	testKeyPath              = "/etc/keys/policy.pub"
+	testSANPattern           = "*@example.com"
+	testGUACEndpoint         = "https://guac.example.com"
+	testGUACCheckCertifyVuln = "certify_vuln"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -3410,5 +3412,215 @@ func TestConfigValidateIssuersWithoutSANPatternsInEnforceMode(t *testing.T) {
 		if errors.Is(err, config.ErrIssuersWithoutSANPatternsInEnforce) {
 			t.Error("should not reject when no issuers are configured")
 		}
+	})
+}
+
+func TestConfigValidateAuditLog(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty is valid", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.AuditLog = ""
+
+		testutil.AssertNoError(t, cfg.Validate())
+	})
+
+	t.Run("absolute path is valid", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.AuditLog = "/var/log/audit.log"
+
+		testutil.AssertNoError(t, cfg.Validate())
+	})
+
+	t.Run("relative path is rejected", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.AuditLog = "audit.log"
+
+		err := cfg.Validate()
+		testutil.AssertErrorIs(t, err, config.ErrAuditLogNotAbsolute)
+	})
+}
+
+func TestConfigValidateCheckTimeout(t *testing.T) {
+	t.Parallel()
+
+	t.Run("default is valid", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+
+		err := cfg.Validate()
+		testutil.AssertNoError(t, err)
+
+		if cfg.CheckTimeout.Duration <= 0 {
+			t.Error("expected positive default check_timeout")
+		}
+	})
+
+	t.Run("zero is rejected", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.CheckTimeout = config.Duration{Duration: 0}
+
+		err := cfg.Validate()
+		testutil.AssertErrorIs(t, err, config.ErrCheckTimeoutNotPositive)
+	})
+
+	t.Run("negative is rejected", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.CheckTimeout = config.Duration{Duration: -1 * time.Second}
+
+		err := cfg.Validate()
+		testutil.AssertErrorIs(t, err, config.ErrCheckTimeoutNotPositive)
+	})
+
+	t.Run("exceeding verification timeout is rejected", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.CheckTimeout = config.Duration{Duration: 10 * time.Minute}
+		cfg.VerificationTimeout = config.Duration{Duration: 5 * time.Minute}
+
+		err := cfg.Validate()
+		testutil.AssertErrorIs(t, err, config.ErrCheckTimeoutExceedsVerification)
+	})
+
+	t.Run("equal to verification timeout is valid", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.CheckTimeout = config.Duration{Duration: 5 * time.Minute}
+		cfg.VerificationTimeout = config.Duration{Duration: 5 * time.Minute}
+
+		err := cfg.Validate()
+		if errors.Is(err, config.ErrCheckTimeoutExceedsVerification) {
+			t.Error("should not reject when check_timeout equals verification_timeout")
+		}
+	})
+}
+
+func TestConfigValidateGUACEndpointScheme(t *testing.T) {
+	t.Parallel()
+
+	t.Run("https is valid in enforce mode", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeEnforce
+		cfg.Guac.Endpoint = testGUACEndpoint
+		cfg.Guac.Timeout = config.Duration{Duration: 5 * time.Second}
+		cfg.Guac.Checks = []string{testGUACCheckCertifyVuln}
+		cfg.Guac.MaxDependencies = 5
+
+		err := cfg.Validate()
+		if errors.Is(err, config.ErrGUACEndpointInvalid) {
+			t.Error("should accept https endpoint in enforce mode")
+		}
+	})
+
+	t.Run("http is accepted with warning in enforce mode", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeEnforce
+		cfg.Guac.Endpoint = "http://guac.example.com"
+		cfg.Guac.Timeout = config.Duration{Duration: 5 * time.Second}
+		cfg.Guac.Checks = []string{testGUACCheckCertifyVuln}
+		cfg.Guac.MaxDependencies = 5
+
+		err := cfg.Validate()
+		if errors.Is(err, config.ErrGUACEndpointInvalid) {
+			t.Error("should accept http endpoint in enforce mode (with warning)")
+		}
+	})
+
+	t.Run("http is accepted in warn mode", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.Guac.Endpoint = "http://guac.example.com"
+		cfg.Guac.Timeout = config.Duration{Duration: 5 * time.Second}
+		cfg.Guac.Checks = []string{testGUACCheckCertifyVuln}
+		cfg.Guac.MaxDependencies = 5
+
+		err := cfg.Validate()
+		if errors.Is(err, config.ErrGUACEndpointInvalid) {
+			t.Error("should accept http endpoint in warn mode")
+		}
+	})
+}
+
+func TestConfigValidateGUACAuthTokenRuntime(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty token path is valid", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Guac.Endpoint = testGUACEndpoint
+		cfg.Guac.Timeout = config.Duration{Duration: 5 * time.Second}
+		cfg.Guac.Checks = []string{testGUACCheckCertifyVuln}
+		cfg.Guac.MaxDependencies = 5
+
+		err := cfg.ValidateRuntime()
+		testutil.AssertNoError(t, err)
+	})
+
+	t.Run("non-existent token warns but does not error", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Guac.Endpoint = testGUACEndpoint
+		cfg.Guac.Timeout = config.Duration{Duration: 5 * time.Second}
+		cfg.Guac.Checks = []string{testGUACCheckCertifyVuln}
+		cfg.Guac.MaxDependencies = 5
+		cfg.Guac.AuthTokenPath = "/nonexistent/token"
+
+		err := cfg.ValidateRuntime()
+		testutil.AssertNoError(t, err)
+	})
+
+	t.Run("existing regular file is valid", func(t *testing.T) {
+		t.Parallel()
+
+		tmpDir := t.TempDir()
+		tokenPath := filepath.Join(tmpDir, "token")
+
+		err := os.WriteFile(tokenPath, []byte("my-token"), 0o600)
+		testutil.AssertNoError(t, err)
+
+		cfg := config.DefaultConfig()
+		cfg.Guac.Endpoint = testGUACEndpoint
+		cfg.Guac.Timeout = config.Duration{Duration: 5 * time.Second}
+		cfg.Guac.Checks = []string{testGUACCheckCertifyVuln}
+		cfg.Guac.MaxDependencies = 5
+		cfg.Guac.AuthTokenPath = tokenPath
+
+		err = cfg.ValidateRuntime()
+		testutil.AssertNoError(t, err)
+	})
+
+	t.Run("directory is rejected", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Guac.Endpoint = testGUACEndpoint
+		cfg.Guac.Timeout = config.Duration{Duration: 5 * time.Second}
+		cfg.Guac.Checks = []string{testGUACCheckCertifyVuln}
+		cfg.Guac.MaxDependencies = 5
+		cfg.Guac.AuthTokenPath = t.TempDir()
+
+		err := cfg.ValidateRuntime()
+		testutil.AssertErrorIs(t, err, config.ErrGUACAuthTokenNotRegularFile)
 	})
 }

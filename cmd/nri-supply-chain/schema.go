@@ -89,14 +89,15 @@ func configJSONSchema() ([]byte, error) {
 func verifyResultJSONSchema() ([]byte, error) {
 	return generateSchema(
 		&verifyOutput{
-			Image:        "",
-			Digest:       "",
-			Namespace:    "",
-			PolicyFile:   "",
-			Mode:         "",
-			Allowed:      false,
-			Reason:       "",
-			CheckResults: nil,
+			Image:         "",
+			Digest:        "",
+			Namespace:     "",
+			PolicyFile:    "",
+			Mode:          "",
+			PreviewPolicy: "",
+			Allowed:       false,
+			Reason:        "",
+			CheckResults:  nil,
 		},
 		"nri-supply-chain Verify Result",
 		"JSON output of the verify command.",

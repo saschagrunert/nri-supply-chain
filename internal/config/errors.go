@@ -168,6 +168,14 @@ var (
 	// ErrVerificationTimeoutTooHigh indicates the verification timeout exceeds the maximum.
 	ErrVerificationTimeoutTooHigh = errors.New("verification_timeout exceeds maximum")
 
+	// ErrCheckTimeoutNotPositive indicates a non-positive check timeout.
+	ErrCheckTimeoutNotPositive = errors.New("check_timeout must be positive")
+
+	// ErrCheckTimeoutExceedsVerification indicates check_timeout is larger than verification_timeout.
+	ErrCheckTimeoutExceedsVerification = errors.New(
+		"check_timeout must not exceed verification_timeout",
+	)
+
 	// ErrInsecureRegistryInEnforceMode indicates that insecure TLS cannot be
 	// used with enforce mode because it allows MITM on attestation transport.
 	ErrInsecureRegistryInEnforceMode = errors.New(
@@ -222,6 +230,9 @@ var (
 	ErrIssuersWithoutSANPatternsInEnforce = errors.New(
 		"policy.issuers requires policy.san_patterns in enforce mode",
 	)
+
+	// ErrAuditLogNotAbsolute indicates the audit_log path is not absolute.
+	ErrAuditLogNotAbsolute = errors.New("audit_log must be an absolute path")
 
 	// ErrGUACEndpointInvalid indicates the GUAC endpoint URL is not valid.
 	ErrGUACEndpointInvalid = errors.New("invalid guac.endpoint URL")

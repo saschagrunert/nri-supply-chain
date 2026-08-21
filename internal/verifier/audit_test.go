@@ -19,9 +19,12 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
@@ -244,4 +247,214 @@ func TestAllowResultSetsAllowed(t *testing.T) {
 
 	testutil.AssertEqual(t, true, result.Allowed)
 	testutil.AssertEqual(t, "test reason", result.Reason)
+}
+
+func TestOpenAuditLoggerEmptyPath(t *testing.T) {
+	t.Parallel()
+
+	logger, file, err := verifier.ExportOpenAuditLogger("")
+	testutil.AssertNoError(t, err)
+
+	if logger == nil {
+		t.Fatal("expected non-nil logger")
+	}
+
+	if file != nil {
+		t.Error("expected nil file for empty path")
+	}
+}
+
+func TestOpenAuditLoggerCreatesFile(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "audit.log")
+
+	logger, file, err := verifier.ExportOpenAuditLogger(path)
+	testutil.AssertNoError(t, err)
+
+	if logger == nil {
+		t.Fatal("expected non-nil logger")
+	}
+
+	if file == nil {
+		t.Fatal("expected non-nil file")
+	}
+
+	defer func() { _ = file.Close() }()
+
+	logger.Info("test message", "key", "value")
+
+	info, statErr := os.Stat(path)
+	testutil.AssertNoError(t, statErr)
+
+	if info.Size() == 0 {
+		t.Error("expected non-empty audit log file after writing")
+	}
+}
+
+func TestOpenAuditLoggerInvalidPath(t *testing.T) {
+	t.Parallel()
+
+	_, _, err := verifier.ExportOpenAuditLogger("/nonexistent/dir/audit.log")
+	if err == nil {
+		t.Fatal("expected error for invalid path")
+	}
+
+	if !strings.Contains(err.Error(), "opening audit log") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestCloseAuditLogFileNil(t *testing.T) {
+	t.Parallel()
+
+	verifier.ExportCloseAuditLogFile(nil)
+}
+
+func TestCloseAuditLogFileValid(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "audit.log")
+
+	_, file, err := verifier.ExportOpenAuditLogger(path)
+	testutil.AssertNoError(t, err)
+
+	verifier.ExportCloseAuditLogFile(file)
+}
+
+func TestLogResultMultipleChecks(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	result := &types.Result{
+		Allowed: false,
+		Reason:  "verification failed",
+		CheckResults: []types.CheckResult{
+			{
+				Type:     types.CheckTypeSLSA,
+				Status:   types.StatusFail,
+				Passed:   false,
+				Detail:   "no SLSA provenance found",
+				Err:      nil,
+				Metadata: nil,
+			},
+			{
+				Type:     types.CheckTypeSBOM,
+				Status:   types.StatusPass,
+				Passed:   true,
+				Detail:   "SBOM verified",
+				Err:      nil,
+				Metadata: nil,
+			},
+		},
+	}
+
+	verifier.ExportLogResult(
+		context.Background(), logger,
+		"docker.io/library/nginx:latest", "sha256:abc", "default",
+		result, nil,
+	)
+
+	output := buf.String()
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+
+	if len(lines) < 3 {
+		t.Fatalf("expected at least 3 log lines (2 checks + 1 decision), got %d", len(lines))
+	}
+
+	var lastLine map[string]any
+	testutil.AssertNoError(t, json.Unmarshal([]byte(lines[len(lines)-1]), &lastLine))
+	testutil.AssertEqual(t, "denied", lastLine["decision"])
+}
+
+func TestReloadAuditLoggerSamePath(t *testing.T) {
+	t.Parallel()
+
+	prevCfg := config.DefaultConfig()
+	prevCfg.AuditLog = "/var/log/audit.log"
+
+	nextCfg := config.DefaultConfig()
+	nextCfg.AuditLog = "/var/log/audit.log"
+
+	prevLogger := slog.Default()
+	prev := verifier.ExportNewSnapshot(prevCfg, prevLogger, nil)
+
+	logger, file := verifier.ExportReloadAuditLogger(context.Background(), prev, nextCfg)
+	if logger != prevLogger {
+		t.Error("expected same logger when audit log path unchanged")
+	}
+
+	if file != nil {
+		t.Error("expected nil file when audit log path unchanged")
+	}
+}
+
+func TestReloadAuditLoggerDifferentPath(t *testing.T) {
+	t.Parallel()
+
+	prevCfg := config.DefaultConfig()
+	prevCfg.AuditLog = ""
+
+	nextCfg := config.DefaultConfig()
+	nextCfg.AuditLog = filepath.Join(t.TempDir(), "new-audit.log")
+
+	prev := verifier.ExportNewSnapshot(prevCfg, slog.Default(), nil)
+
+	logger, file := verifier.ExportReloadAuditLogger(context.Background(), prev, nextCfg)
+	if logger == nil {
+		t.Fatal("expected non-nil logger for new audit log path")
+	}
+
+	if file == nil {
+		t.Fatal("expected non-nil file for new audit log path")
+	}
+
+	t.Cleanup(func() { verifier.ExportCloseAuditLogFile(file) })
+}
+
+func TestReloadAuditLoggerInvalidPathFallsBack(t *testing.T) {
+	t.Parallel()
+
+	prevCfg := config.DefaultConfig()
+	prevCfg.AuditLog = ""
+
+	nextCfg := config.DefaultConfig()
+	nextCfg.AuditLog = "/nonexistent/dir/audit.log"
+
+	prev := verifier.ExportNewSnapshot(prevCfg, slog.Default(), nil)
+
+	logger, file := verifier.ExportReloadAuditLogger(context.Background(), prev, nextCfg)
+	if logger == nil {
+		t.Fatal("expected non-nil fallback logger")
+	}
+
+	if file != nil {
+		t.Error("expected nil file on fallback")
+	}
+}
+
+func TestReloadAuditLoggerClosesPreviousFile(t *testing.T) {
+	t.Parallel()
+
+	prevPath := filepath.Join(t.TempDir(), "prev-audit.log")
+
+	_, prevFile, err := verifier.ExportOpenAuditLogger(prevPath)
+	testutil.AssertNoError(t, err)
+
+	prevCfg := config.DefaultConfig()
+	prevCfg.AuditLog = prevPath
+	prevCfg.VerificationTimeout = config.Duration{Duration: 1}
+
+	nextCfg := config.DefaultConfig()
+	nextCfg.AuditLog = filepath.Join(t.TempDir(), "next-audit.log")
+
+	prev := verifier.ExportNewSnapshot(prevCfg, slog.Default(), prevFile)
+
+	_, newFile := verifier.ExportReloadAuditLogger(context.Background(), prev, nextCfg)
+	if newFile != nil {
+		t.Cleanup(func() { verifier.ExportCloseAuditLogFile(newFile) })
+	}
 }

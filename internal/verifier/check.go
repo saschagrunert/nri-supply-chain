@@ -116,7 +116,8 @@ func runChecks(
 	bins := binAttestations(ctx, attestations, imageRef)
 
 	return runVSAAndParallelChecks(
-		ctx, bins, pol, state.metrics, imageRef, attestDigest, namespace, parsedRef, guacResult,
+		ctx, bins, pol, state.metrics, imageRef, attestDigest, namespace, parsedRef,
+		state.config.CheckTimeout.Duration, guacResult,
 	)
 }
 
@@ -124,6 +125,7 @@ func runVSAAndParallelChecks(
 	ctx context.Context, bins attestationBins,
 	pol *policy.Policy, met *metrics.Metrics,
 	imageRef, digest, namespace string, parsedRef name.Reference,
+	checkTimeout time.Duration,
 	guacResult *types.CheckResult,
 ) *types.Result {
 	vsaResult := checkVSA(ctx, bins[types.CheckTypeVSA], pol, imageRef, digest, met, parsedRef)
@@ -138,7 +140,7 @@ func runVSAAndParallelChecks(
 		}
 	}
 
-	result := runParallelChecks(ctx, bins, pol, met, imageRef, digest, parsedRef)
+	result := runParallelChecks(ctx, bins, pol, met, imageRef, digest, parsedRef, checkTimeout)
 
 	if guacResult != nil {
 		result.CheckResults = append(result.CheckResults, *guacResult)
@@ -391,22 +393,23 @@ func runParallelChecks( //nolint:funlen // table-driven dispatch over all check 
 	pol *policy.Policy, met *metrics.Metrics,
 	imageRef, digest string,
 	parsedRef name.Reference,
+	checkTimeout time.Duration,
 ) *types.Result {
 	type checkEntry struct {
 		checkType types.CheckType
-		fn        func() *types.CheckResult
+		fn        func(ctx context.Context) *types.CheckResult
 	}
 
 	checks := make([]checkEntry, 0, 3+len(payloadVerifiers)) //nolint:mnd // 3 = SLSA+VEX+Notation
 	checks = append(checks,
-		checkEntry{types.CheckTypeSLSA, func() *types.CheckResult {
+		checkEntry{types.CheckTypeSLSA, func(ctx context.Context) *types.CheckResult {
 			return runAttestationCheck(
 				ctx, types.CheckTypeSLSA, bins[types.CheckTypeSLSA], pol, met, imageRef,
 				func() (*types.CheckResult, error) {
 					return slsa.VerifyMultiple(ctx, bins[types.CheckTypeSLSA], pol, digest)
 				})
 		}},
-		checkEntry{types.CheckTypeVEX, func() *types.CheckResult {
+		checkEntry{types.CheckTypeVEX, func(ctx context.Context) *types.CheckResult {
 			return runAttestationCheck(
 				ctx, types.CheckTypeVEX, bins[types.CheckTypeVEX], pol, met, imageRef,
 				func() (*types.CheckResult, error) {
@@ -416,7 +419,7 @@ func runParallelChecks( //nolint:funlen // table-driven dispatch over all check 
 					)
 				})
 		}},
-		checkEntry{types.CheckTypeNotation, func() *types.CheckResult {
+		checkEntry{types.CheckTypeNotation, func(ctx context.Context) *types.CheckResult {
 			return runAttestationCheck(
 				ctx, types.CheckTypeNotation, bins[types.CheckTypeNotation], pol, met, imageRef,
 				func() (*types.CheckResult, error) {
@@ -427,14 +430,19 @@ func runParallelChecks( //nolint:funlen // table-driven dispatch over all check 
 		}},
 	)
 
-	for _, pv := range payloadVerifiers {
-		checks = append(checks, checkEntry{pv.checkType, func() *types.CheckResult {
-			return runAttestationCheck(
-				ctx, pv.checkType, bins[pv.checkType], pol, met, imageRef,
-				func() (*types.CheckResult, error) {
-					return pv.verify(ctx, extractPayloads(bins[pv.checkType]), pol, digest)
-				})
-		}})
+	for _, verifier := range payloadVerifiers {
+		checks = append(checks, checkEntry{
+			verifier.checkType,
+			func(ctx context.Context) *types.CheckResult {
+				return runAttestationCheck(
+					ctx, verifier.checkType, bins[verifier.checkType], pol, met, imageRef,
+					func() (*types.CheckResult, error) {
+						payloads := extractPayloads(bins[verifier.checkType])
+
+						return verifier.verify(ctx, payloads, pol, digest)
+					})
+			},
+		})
 	}
 
 	results := make([]*types.CheckResult, len(checks))
@@ -444,7 +452,7 @@ func runParallelChecks( //nolint:funlen // table-driven dispatch over all check 
 	for idx, chk := range checks {
 		waitGroup.Add(1)
 
-		go runParallelCheck(&waitGroup, &results[idx], chk.checkType, chk.fn)
+		go runParallelCheck(ctx, &waitGroup, &results[idx], chk.checkType, checkTimeout, chk.fn)
 	}
 
 	waitGroup.Wait()
@@ -453,10 +461,12 @@ func runParallelChecks( //nolint:funlen // table-driven dispatch over all check 
 }
 
 func runParallelCheck(
+	parentCtx context.Context,
 	waitGroup *sync.WaitGroup,
 	result **types.CheckResult,
 	checkType types.CheckType,
-	checkFunc func() *types.CheckResult,
+	checkTimeout time.Duration,
+	checkFunc func(ctx context.Context) *types.CheckResult,
 ) {
 	defer waitGroup.Done()
 	defer func() {
@@ -472,7 +482,10 @@ func runParallelCheck(
 		}
 	}()
 
-	*result = checkFunc()
+	ctx, cancel := context.WithTimeout(parentCtx, checkTimeout)
+	defer cancel()
+
+	*result = checkFunc(ctx)
 }
 
 // attestationBins maps check types to their matching attestations.

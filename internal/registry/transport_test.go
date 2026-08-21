@@ -45,7 +45,9 @@ import (
 
 const (
 	testRegistryDockerIO    = "index.docker.io"
+	testRegistryDockerHub   = "docker.io"
 	testRegistryGHCR        = "ghcr.io"
+	testRegistryQuay        = "quay.io"
 	testMirrorInternal      = "mirror.internal"
 	testImageGHCR           = "ghcr.io/myorg/myimage:v1.0"
 	testImageDockerNginx    = "docker.io/library/nginx:latest"

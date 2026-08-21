@@ -150,7 +150,7 @@ func captureVerifyOutput(
 
 	input := &verifyOutput{
 		Image: imageRef, Digest: digest, Namespace: namespace,
-		PolicyFile: "", Mode: "",
+		PolicyFile: "", Mode: "", PreviewPolicy: "",
 		Allowed: allowed, Reason: reason, CheckResults: checks,
 	}
 
@@ -495,7 +495,13 @@ func TestRunVerifyInvalidOutputFormat(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 
-	if code := runVerify(testImageV1, policy.DefaultPolicyLabel, "xml", cfg); code != exitError {
+	if code := runVerify(
+		testImageV1,
+		policy.DefaultPolicyLabel,
+		"xml",
+		cfg,
+		"",
+	); code != exitError {
 		t.Errorf("exit code = %d, want %d", code, exitError)
 	}
 }
@@ -514,7 +520,7 @@ func TestRunVerifyResolveDigestFails(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = dir
 
-	code := runVerify(":::invalid-ref", policy.DefaultPolicyLabel, outputFormatJSON, cfg)
+	code := runVerify(":::invalid-ref", policy.DefaultPolicyLabel, outputFormatJSON, cfg, "")
 	if code != exitError {
 		t.Errorf("exit code = %d, want %d", code, exitError)
 	}
@@ -525,7 +531,13 @@ func TestRunVerifyDisabledErrors(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 
-	code := runVerify("example.com/test:latest", policy.DefaultPolicyLabel, outputFormatJSON, cfg)
+	code := runVerify(
+		"example.com/test:latest",
+		policy.DefaultPolicyLabel,
+		outputFormatJSON,
+		cfg,
+		"",
+	)
 	if code != exitError {
 		t.Errorf("expected exit code %d for disabled verification, got %d", exitError, code)
 	}
@@ -592,7 +604,7 @@ func TestRunVerifyExitCodes(t *testing.T) {
 
 			var buf bytes.Buffer
 
-			code := runVerifyTo(&buf, imgRef, policy.DefaultPolicyLabel, outputFormatJSON, cfg)
+			code := runVerifyTo(&buf, imgRef, policy.DefaultPolicyLabel, outputFormatJSON, cfg, "")
 			if code != test.wantCode {
 				t.Errorf("exit code = %d, want %d", code, test.wantCode)
 			}
@@ -653,7 +665,7 @@ func TestRunVerifyVerifierNewError(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = policyDir
 
-	code := runVerify("test:latest", policy.DefaultPolicyLabel, outputFormatJSON, cfg)
+	code := runVerify("test:latest", policy.DefaultPolicyLabel, outputFormatJSON, cfg, "")
 	if code != exitError {
 		t.Errorf("exit code = %d, want %d", code, exitError)
 	}
@@ -713,7 +725,7 @@ func captureRunVerify(
 
 	var buf bytes.Buffer
 
-	code := runVerifyTo(&buf, imageRef, namespace, outputFormat, cfg)
+	code := runVerifyTo(&buf, imageRef, namespace, outputFormat, cfg, "")
 
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
 	lastJSON := findLastJSON(lines)
@@ -801,8 +813,8 @@ func TestOutputVerifyResultTableAllowed(t *testing.T) {
 
 	input := &verifyOutput{
 		Image: testImageNginx, Digest: testDigestABC123, Namespace: testNamespaceProd,
-		PolicyFile: "/policies/prod.json", Mode: string(config.ModeWarn), Allowed: true,
-		Reason: "", CheckResults: checks,
+		PolicyFile: "/policies/prod.json", Mode: string(config.ModeWarn), PreviewPolicy: "",
+		Allowed: true, Reason: "", CheckResults: checks,
 	}
 
 	err := outputVerifyResult(&buf, outputFormatTable, input)
@@ -851,8 +863,8 @@ func TestOutputVerifyResultTableDenied(t *testing.T) {
 
 	input := &verifyOutput{
 		Image: "evil:latest", Digest: "sha256:fff", Namespace: testNamespaceDefault,
-		PolicyFile: "/policies/default.json", Mode: string(config.ModeEnforce), Allowed: false,
-		Reason: "verification failed", CheckResults: checks,
+		PolicyFile: "/policies/default.json", Mode: string(config.ModeEnforce), PreviewPolicy: "",
+		Allowed: false, Reason: "verification failed", CheckResults: checks,
 	}
 
 	err := outputVerifyResult(&buf, outputFormatTable, input)
@@ -881,8 +893,8 @@ func TestOutputVerifyResultTableNoChecks(t *testing.T) {
 
 	input := &verifyOutput{
 		Image: testImageV1, Digest: testDigestAAA, Namespace: "ns",
-		PolicyFile: "/policies/ns.json", Mode: string(config.ModeWarn), Allowed: true,
-		Reason: "", CheckResults: nil,
+		PolicyFile: "/policies/ns.json", Mode: string(config.ModeWarn), PreviewPolicy: "",
+		Allowed: true, Reason: "", CheckResults: nil,
 	}
 
 	err := outputVerifyResult(&buf, outputFormatTable, input)
@@ -1029,6 +1041,7 @@ func TestRunVerifyBatchAllAllowed(t *testing.T) {
 		policy.DefaultPolicyLabel,
 		outputFormatJSON,
 		cfg,
+		"",
 	)
 	if code != exitSuccess {
 		t.Errorf("exit code = %d, want %d", code, exitSuccess)
@@ -1122,6 +1135,7 @@ func TestRunVerifyBatchExitCodes(t *testing.T) {
 				policy.DefaultPolicyLabel,
 				outputFormatJSON,
 				cfg,
+				"",
 			)
 			if code != test.wantCode {
 				t.Errorf("exit code = %d, want %d", code, test.wantCode)
@@ -1140,6 +1154,7 @@ func TestRunVerifyBatchDisabledErrors(t *testing.T) {
 		policy.DefaultPolicyLabel,
 		outputFormatJSON,
 		cfg,
+		"",
 	)
 	if code != exitError {
 		t.Errorf("expected exit code %d, got %d", exitError, code)
@@ -1156,6 +1171,7 @@ func TestRunVerifyBatchInvalidOutputFormat(t *testing.T) {
 		policy.DefaultPolicyLabel,
 		"xml",
 		cfg,
+		"",
 	)
 	if code != exitError {
 		t.Errorf("exit code = %d, want %d", code, exitError)
@@ -1200,6 +1216,7 @@ func TestRunVerifyBatchTableOutput(t *testing.T) {
 		policy.DefaultPolicyLabel,
 		outputFormatTable,
 		cfg,
+		"",
 	)
 	if code != exitSuccess {
 		t.Errorf("exit code = %d, want %d", code, exitSuccess)
@@ -1287,6 +1304,133 @@ func TestColorStatusAllCases(t *testing.T) {
 				test.status, got, test.status,
 			)
 		}
+	}
+}
+
+func TestSetupPreviewPolicyDirHappyPath(t *testing.T) {
+	t.Parallel()
+
+	policyContent := `{"checks":["slsa"]}`
+
+	policyFile := filepath.Join(t.TempDir(), "my-policy.json")
+
+	err := os.WriteFile(policyFile, []byte(policyContent), 0o600)
+	if err != nil {
+		t.Fatalf("writing test policy: %v", err)
+	}
+
+	tmpDir, err := setupPreviewPolicyDir(policyFile, "production")
+	if err != nil {
+		t.Fatalf("setupPreviewPolicyDir failed: %v", err)
+	}
+
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "production.json")) //nolint:gosec // test file
+	if err != nil {
+		t.Fatalf("reading created policy file: %v", err)
+	}
+
+	if string(data) != policyContent {
+		t.Errorf("policy content = %q, want %q", string(data), policyContent)
+	}
+}
+
+func TestSetupPreviewPolicyDirDefaultNamespace(t *testing.T) {
+	t.Parallel()
+
+	policyContent := `{"checks":["slsa"]}`
+
+	policyFile := filepath.Join(t.TempDir(), "policy.json")
+
+	err := os.WriteFile(policyFile, []byte(policyContent), 0o600)
+	if err != nil {
+		t.Fatalf("writing test policy: %v", err)
+	}
+
+	tmpDir, err := setupPreviewPolicyDir(policyFile, policy.DefaultPolicyLabel)
+	if err != nil {
+		t.Fatalf("setupPreviewPolicyDir failed: %v", err)
+	}
+
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	_, statErr := os.Stat(filepath.Join(tmpDir, "default.json"))
+	if statErr != nil {
+		t.Errorf("expected default.json to exist: %v", statErr)
+	}
+}
+
+func TestSetupPreviewPolicyDirNonexistentFile(t *testing.T) {
+	t.Parallel()
+
+	_, err := setupPreviewPolicyDir("/nonexistent/path/policy.json", testNamespaceDefault)
+	if err == nil {
+		t.Fatal("expected error for nonexistent policy file")
+	}
+
+	if !strings.Contains(err.Error(), "reading preview policy") {
+		t.Errorf("error = %q, expected to contain 'reading preview policy'", err)
+	}
+}
+
+func TestOutputVerifyResultTablePreviewPolicy(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	input := &verifyOutput{
+		Image: testImageNginx, Digest: testDigestABC123, Namespace: testNamespaceDefault,
+		PolicyFile: testPolicyPathDefault, Mode: string(config.ModeWarn),
+		PreviewPolicy: "/tmp/my-policy.json",
+		Allowed:       true, Reason: "", CheckResults: nil,
+	}
+
+	err := outputVerifyResult(&buf, outputFormatTable, input)
+	if err != nil {
+		t.Fatalf("outputVerifyResult failed: %v", err)
+	}
+
+	got := buf.String()
+
+	for _, want := range []string{
+		"Preview:",
+		"/tmp/my-policy.json",
+		"dry-run",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("table output missing %q\ngot:\n%s", want, got)
+		}
+	}
+}
+
+func TestOutputVerifyResultJSONPreviewPolicy(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	input := &verifyOutput{
+		Image: testImageNginx, Digest: testDigestABC123, Namespace: testNamespaceDefault,
+		PolicyFile: testPolicyPathDefault, Mode: string(config.ModeWarn),
+		PreviewPolicy: "/tmp/preview.json",
+		Allowed:       true, Reason: "", CheckResults: nil,
+	}
+
+	err := outputVerifyResult(&buf, outputFormatJSON, input)
+	if err != nil {
+		t.Fatalf("outputVerifyResult failed: %v", err)
+	}
+
+	var parsed map[string]any
+
+	err = json.Unmarshal(buf.Bytes(), &parsed)
+	if err != nil {
+		t.Fatalf("invalid JSON output: %v", err)
+	}
+
+	pp, ok := parsed["previewPolicy"].(string)
+	if !ok || pp != "/tmp/preview.json" {
+		t.Errorf("previewPolicy = %v, want %q", parsed["previewPolicy"], "/tmp/preview.json")
 	}
 }
 
