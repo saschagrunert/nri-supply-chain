@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/glob"
@@ -88,47 +87,12 @@ func VerifyMultiple(
 	ctx context.Context,
 	attestations [][]byte, pol *policy.Policy, imageDigest string,
 ) (*types.CheckResult, error) {
-	var (
-		failReasons []string
-		parseErrors []string
+	return types.VerifyMultipleFirstPass( //nolint:wrapcheck // direct delegation to shared helper
+		ctx, checkType, "source", attestations,
+		func(att []byte) (*types.CheckResult, error) {
+			return Verify(ctx, att, pol, imageDigest)
+		},
 	)
-
-	for _, att := range attestations {
-		ctxErr := ctx.Err()
-		if ctxErr != nil {
-			return nil, fmt.Errorf("verification cancelled: %w", ctxErr)
-		}
-
-		result, err := Verify(ctx, att, pol, imageDigest)
-		if err != nil {
-			parseErrors = append(parseErrors, err.Error())
-
-			continue
-		}
-
-		if result.Passed {
-			return result, nil
-		}
-
-		failReasons = append(failReasons, result.Detail)
-	}
-
-	if len(failReasons) > 0 {
-		detail := strings.Join(failReasons, "; ")
-		if len(parseErrors) > 0 {
-			detail += " (also failed to parse: " + strings.Join(parseErrors, "; ") + ")"
-		}
-
-		return check.Fail(detail), nil
-	}
-
-	if len(parseErrors) > 0 {
-		return check.Fail(
-			"no valid source attestation: " + strings.Join(parseErrors, "; "),
-		), nil
-	}
-
-	return check.Fail("no valid source attestation found"), nil
 }
 
 //nolint:cyclop,funlen // sequential verification steps

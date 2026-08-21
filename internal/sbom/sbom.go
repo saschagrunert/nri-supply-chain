@@ -80,59 +80,17 @@ func Verify(
 
 // VerifyMultiple checks multiple SBOM attestations. Any denied license or
 // component in any document causes failure.
-func VerifyMultiple( //nolint:cyclop // metadata accumulation adds branches
+func VerifyMultiple(
 	ctx context.Context,
 	attestations [][]byte, pol *policy.Policy, imageDigest string,
 ) (*types.CheckResult, error) {
-	var (
-		failDetails  []string
-		verifyErrors []string
-		anyValid     bool
-		passedMeta   map[string]any
+	return types.VerifyMultipleWithMerge( //nolint:wrapcheck // direct delegation to shared helper
+		ctx, checkType, "SBOM", check.PassMsg, attestations,
+		func(att []byte) (*types.CheckResult, error) {
+			return Verify(ctx, att, pol, imageDigest)
+		},
+		mergeCVSSMeta,
 	)
-
-	for _, att := range attestations {
-		ctxErr := ctx.Err()
-		if ctxErr != nil {
-			return nil, fmt.Errorf("verification cancelled: %w", ctxErr)
-		}
-
-		result, err := Verify(ctx, att, pol, imageDigest)
-		if err != nil {
-			verifyErrors = append(verifyErrors, err.Error())
-
-			continue
-		}
-
-		anyValid = true
-
-		if !result.Passed && result.Status == types.StatusFail {
-			failDetails = append(failDetails, result.Detail)
-		}
-
-		if result.Passed && result.Metadata != nil {
-			if passedMeta == nil {
-				passedMeta = make(map[string]any)
-			}
-
-			mergeCVSSMeta(passedMeta, result.Metadata)
-		}
-	}
-
-	if len(failDetails) > 0 {
-		return check.Fail(strings.Join(failDetails, "; ")), nil
-	}
-
-	if len(attestations) > 0 && !anyValid {
-		return check.Fail(
-			"all SBOM documents failed verification: " + strings.Join(verifyErrors, "; "),
-		), nil
-	}
-
-	result := check.Pass()
-	result.Metadata = passedMeta
-
-	return result, nil
 }
 
 func verifySBOMPredicate(

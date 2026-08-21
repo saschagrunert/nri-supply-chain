@@ -309,6 +309,13 @@ func cacheAffectingFieldsChanged(prev, next *config.Config) bool {
 		guacConfigChanged(prev, next)
 }
 
+func guacConfigChanged(prev, next *config.Config) bool {
+	return guacTransportChanged(prev, next) ||
+		prev.Guac.FallbackPolicy != next.Guac.FallbackPolicy ||
+		prev.Guac.MaxDependencies != next.Guac.MaxDependencies ||
+		!slices.Equal(prev.Guac.Checks, next.Guac.Checks)
+}
+
 func cacheTimingsChanged(prev, next *config.Config) bool {
 	return prev.CacheTTL.Duration != next.CacheTTL.Duration ||
 		prev.CacheFailureTTL.Duration != next.CacheFailureTTL.Duration ||
@@ -330,7 +337,7 @@ func reloadGUACClient(
 		return nil, nil, nil
 	}
 
-	if prev.guacClient != nil && !guacConfigChanged(prev.config, cfg) {
+	if prev.guacClient != nil && !guacTransportChanged(prev.config, cfg) {
 		return prev.guacClient, prev.guacBreaker, nil
 	}
 
@@ -350,12 +357,9 @@ func reloadGUACClient(
 	), nil
 }
 
-func guacConfigChanged(prev, next *config.Config) bool {
+func guacTransportChanged(prev, next *config.Config) bool {
 	return prev.Guac.Endpoint != next.Guac.Endpoint ||
 		prev.Guac.AuthTokenPath != next.Guac.AuthTokenPath ||
 		prev.Guac.CACertPath != next.Guac.CACertPath ||
-		prev.Guac.Timeout.Duration != next.Guac.Timeout.Duration ||
-		prev.Guac.FallbackPolicy != next.Guac.FallbackPolicy ||
-		prev.Guac.MaxDependencies != next.Guac.MaxDependencies ||
-		!slices.Equal(prev.Guac.Checks, next.Guac.Checks)
+		prev.Guac.Timeout.Duration != next.Guac.Timeout.Duration
 }

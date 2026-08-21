@@ -20,6 +20,61 @@ import (
 	"strings"
 )
 
+// VerifyMultipleFirstPass verifies multiple attestations, returning
+// immediately on the first passing result. Parse errors and verification
+// failures are accumulated and reported only when no attestation passes.
+func VerifyMultipleFirstPass(
+	ctx context.Context,
+	checkType CheckType,
+	label string,
+	attestations [][]byte,
+	verifyOne func(att []byte) (*CheckResult, error),
+) (*CheckResult, error) {
+	var (
+		failReasons []string
+		parseErrors []string
+	)
+
+	for _, att := range attestations {
+		ctxErr := ctx.Err()
+		if ctxErr != nil {
+			return nil, fmt.Errorf("verification cancelled: %w", ctxErr)
+		}
+
+		result, err := verifyOne(att)
+		if err != nil {
+			parseErrors = append(parseErrors, err.Error())
+
+			continue
+		}
+
+		if result.Passed {
+			return result, nil
+		}
+
+		failReasons = append(failReasons, result.Detail)
+	}
+
+	if len(failReasons) > 0 {
+		detail := strings.Join(failReasons, "; ")
+		if len(parseErrors) > 0 {
+			detail += " (also failed to parse: " + strings.Join(parseErrors, "; ") + ")"
+		}
+
+		return FailResult(checkType, detail, nil), nil
+	}
+
+	if len(parseErrors) > 0 {
+		return FailResult(
+			checkType,
+			"no valid "+label+" attestation: "+strings.Join(parseErrors, "; "),
+			nil,
+		), nil
+	}
+
+	return FailResult(checkType, "no valid "+label+" attestation found", nil), nil
+}
+
 // VerifyMultipleWithMerge verifies multiple attestations, collecting failures
 // and merging metadata from passing results. This is the common pattern used
 // by scai, buildenv, vulnscan, and testresult packages.

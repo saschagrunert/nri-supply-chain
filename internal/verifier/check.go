@@ -148,7 +148,7 @@ func runVSAAndParallelChecks(
 	}
 
 	if len(bins[types.CheckTypeVSA]) == 0 {
-		prependVSAWarning(result, pol, "no VSA attestation found for image "+imageRef)
+		appendVSAWarning(result, pol, "no VSA attestation found for image "+imageRef)
 	}
 
 	celCheck := runCELCheck(pol, met, imageRef, digest, namespace, parsedRef, result)
@@ -225,7 +225,7 @@ func runChecksWithoutFetcher(
 
 	result := combineResults(results...)
 
-	prependVSAWarning(result, pol, detail)
+	appendVSAWarning(result, pol, detail)
 
 	return result
 }

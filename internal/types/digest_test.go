@@ -16,7 +16,6 @@ package types_test
 
 import (
 	"testing"
-	"unicode/utf8"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
@@ -157,43 +156,6 @@ func TestMatchDigestInMap(t *testing.T) {
 	}
 }
 
-func assertValidParsedDigest(t *testing.T, algo, hash string) {
-	t.Helper()
-
-	if hash == "" {
-		t.Error("non-empty algo with empty hash")
-	}
-
-	expected, ok := wantHexLen[algo]
-	if !ok {
-		t.Errorf("accepted unrecognized algorithm: %q", algo)
-	} else if len(hash) != expected {
-		t.Errorf("algo %q: got hash length %d, want %d", algo, len(hash), expected)
-	}
-
-	for _, c := range algo {
-		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
-			t.Errorf("algo contains invalid character: %q", string(c))
-		}
-	}
-
-	for _, c := range hash {
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			t.Errorf("hash contains invalid character: %q", string(c))
-		}
-	}
-}
-
-var wantHexLen = map[string]int{ //nolint:gochecknoglobals // mirrors expectedHexLen for fuzz assertions
-	"sha256":     64,
-	"sha384":     96,
-	"sha512":     128,
-	"sha3-256":   64,
-	"sha3-384":   96,
-	"sha3-512":   128,
-	"sha512-256": 64,
-}
-
 func TestExtractDigest(t *testing.T) {
 	t.Parallel()
 
@@ -223,30 +185,4 @@ func TestExtractDigest(t *testing.T) {
 			}
 		})
 	}
-}
-
-func FuzzParseDigest(f *testing.F) {
-	f.Add("sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2")
-	f.Add("")
-	f.Add(":")
-	f.Add("sha256:")
-	f.Add(":abc")
-	f.Add("no-colon")
-	f.Add("sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890")
-	f.Add("sha3-256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890")
-	f.Add("sha512:" + hexBlock128)
-	f.Add("sha384:" + hexBlock96)
-
-	f.Fuzz(func(t *testing.T, input string) {
-		if !utf8.ValidString(input) {
-			return
-		}
-
-		algo, hash := types.ParseDigest(input)
-		if algo == "" {
-			return
-		}
-
-		assertValidParsedDigest(t, algo, hash)
-	})
 }

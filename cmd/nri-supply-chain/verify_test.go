@@ -566,7 +566,7 @@ func TestRunVerifyExitCodes(t *testing.T) {
 			name:          "allowed returns exit code 0",
 			imageSuffix:   "allow-exit-test",
 			mode:          config.ModeWarn,
-			missingPolicy: "warn",
+			missingPolicy: string(internaltypes.ActionWarn),
 			wantCode:      exitSuccess,
 			wantAllowed:   true,
 		},

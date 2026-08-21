@@ -48,6 +48,126 @@ func sumMerge(dst, src map[string]any) {
 	}
 }
 
+func TestVerifyMultipleFirstPassReturnsOnFirstPass(t *testing.T) {
+	t.Parallel()
+
+	attestations := [][]byte{[]byte("fail"), []byte("pass"), []byte("unreachable")}
+	callCount := 0
+
+	result, err := types.VerifyMultipleFirstPass(context.Background(),
+		types.CheckTypeSLSA, testLabel, attestations,
+		func(att []byte) (*types.CheckResult, error) {
+			callCount++
+
+			if string(att) == "pass" {
+				return types.PassResult(types.CheckTypeSLSA, testPassDetail), nil
+			}
+
+			return types.FailResult(types.CheckTypeSLSA, "failed", nil), nil
+		},
+	)
+
+	testutil.AssertNoError(t, err)
+	testutil.AssertTrue(t, result.Passed)
+	testutil.AssertEqual(t, 2, callCount)
+}
+
+func TestVerifyMultipleFirstPassAllFail(t *testing.T) {
+	t.Parallel()
+
+	attestations := [][]byte{[]byte("a"), []byte("b")}
+
+	result, err := types.VerifyMultipleFirstPass(context.Background(),
+		types.CheckTypeSLSA, testLabel, attestations,
+		func(_ []byte) (*types.CheckResult, error) {
+			return types.FailResult(types.CheckTypeSLSA, "denied", nil), nil
+		},
+	)
+
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqual(t, false, result.Passed)
+	testutil.AssertContains(t, result.Detail, "denied")
+}
+
+func TestVerifyMultipleFirstPassParseErrorsOnly(t *testing.T) {
+	t.Parallel()
+
+	attestations := [][]byte{[]byte("bad")}
+
+	result, err := types.VerifyMultipleFirstPass(context.Background(),
+		types.CheckTypeSLSA, testLabel, attestations,
+		func(_ []byte) (*types.CheckResult, error) {
+			return nil, errVerify
+		},
+	)
+
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqual(t, false, result.Passed)
+	testutil.AssertContains(t, result.Detail, "no valid test attestation")
+}
+
+func TestVerifyMultipleFirstPassEmpty(t *testing.T) {
+	t.Parallel()
+
+	result, err := types.VerifyMultipleFirstPass(context.Background(),
+		types.CheckTypeSLSA, testLabel, nil,
+		func(_ []byte) (*types.CheckResult, error) {
+			return types.PassResult(types.CheckTypeSLSA, testPassDetail), nil
+		},
+	)
+
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqual(t, false, result.Passed)
+	testutil.AssertContains(t, result.Detail, "no valid test attestation found")
+}
+
+func TestVerifyMultipleFirstPassCancelledContext(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	attestations := [][]byte{[]byte("a")}
+
+	_, err := types.VerifyMultipleFirstPass(ctx,
+		types.CheckTypeSLSA, testLabel, attestations,
+		func(_ []byte) (*types.CheckResult, error) {
+			t.Fatal("verifyOne should not be called with cancelled context")
+
+			return nil, nil
+		},
+	)
+	if err == nil {
+		t.Fatal("expected error for cancelled context")
+	}
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got: %v", err)
+	}
+}
+
+func TestVerifyMultipleFirstPassMixedErrorsAndFailures(t *testing.T) {
+	t.Parallel()
+
+	attestations := [][]byte{[]byte("err"), []byte("fail")}
+
+	result, err := types.VerifyMultipleFirstPass(context.Background(),
+		types.CheckTypeSLSA, testLabel, attestations,
+		func(att []byte) (*types.CheckResult, error) {
+			if string(att) == "err" {
+				return nil, errVerify
+			}
+
+			return types.FailResult(types.CheckTypeSLSA, "denied", nil), nil
+		},
+	)
+
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqual(t, false, result.Passed)
+	testutil.AssertContains(t, result.Detail, "denied")
+	testutil.AssertContains(t, result.Detail, "also failed to parse")
+}
+
 func TestVerifyMultipleWithMergeCancelledContext(t *testing.T) {
 	t.Parallel()
 
