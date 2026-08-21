@@ -48,7 +48,10 @@ func setupSignals(
 
 	done := make(chan struct{})
 
-	cleanupWatch, watcher := setupFileWatch(ctx, configPath, cfg.PolicyDir, verif, met, plug)
+	cleanupWatch, watcher := setupFileWatch(
+		ctx, configPath, cfg.PolicyDir, cfg.Offline.AttestationStore,
+		cfg.Offline.Mode, verif, met, plug,
+	)
 	setupReload(ctx, configPath, verif, met, plug, sighup, watcher)
 	handleShutdown(ctx, cancel, sigterm, done)
 
@@ -142,7 +145,8 @@ func handleReload(
 	} else {
 		met.ConfigReloadsTotal.Inc()
 		slog.Info("Config reloaded successfully")
-		updatePolicyDirWatch(watcher, configPath, newCfg.PolicyDir)
+		updateWatchedPaths(watcher, configPath, newCfg.PolicyDir,
+			newCfg.Offline.AttestationStore, newCfg.Offline.Mode)
 
 		if plug != nil {
 			plug.SetFetchTimeout(newCfg.FetchTimeout.Duration)
@@ -210,53 +214,66 @@ func updatePluginRegistries(
 	}
 }
 
-func updatePolicyDirWatch(watcher *fsnotify.Watcher, configPath, newPolicyDir string) {
+func updateWatchedPaths(
+	watcher *fsnotify.Watcher, configPath, newPolicyDir,
+	attestationStore string, offlineMode config.OfflineMode,
+) {
 	if watcher == nil {
 		return
 	}
 
-	newAbsDir := ""
+	keep := buildWatchSet(configPath, newPolicyDir, attestationStore, offlineMode)
 
-	if newPolicyDir != "" {
-		abs, absErr := filepath.Abs(newPolicyDir)
-		if absErr == nil {
-			newAbsDir = abs
-		}
-	}
-
-	// Remove any watched path that is not the config file or the new policy directory.
 	for _, watched := range watcher.WatchList() {
-		if watched == configPath || watched == newAbsDir {
+		if keep[watched] {
 			continue
 		}
 
 		removeErr := watcher.Remove(watched)
 		if removeErr != nil {
-			slog.Warn("Failed to unwatch old policy directory",
+			slog.Warn("Failed to unwatch old path",
 				"path", watched, "error", removeErr)
 		} else {
-			slog.Info("Removed old policy directory from file watcher",
+			slog.Info("Removed old path from file watcher",
 				"path", watched)
 		}
 	}
 
-	if newAbsDir == "" {
-		return
-	}
+	for path := range keep {
+		if path == configPath {
+			continue
+		}
 
-	// watcher.Add is a no-op for already-watched paths.
-	addErr := watcher.Add(newAbsDir)
-	if addErr != nil {
-		slog.Warn("Failed to watch new policy directory",
-			"path", newAbsDir, "error", addErr)
-	} else {
-		slog.Info("Added new policy directory to file watcher",
-			"path", newAbsDir)
+		addErr := watcher.Add(path)
+		if addErr != nil {
+			slog.Warn("Failed to watch path",
+				"path", path, "error", addErr)
+		}
 	}
 }
 
+func buildWatchSet(
+	configPath, policyDir, attestationStore string,
+	offlineMode config.OfflineMode,
+) map[string]bool {
+	keep := map[string]bool{configPath: true}
+
+	abs, err := filepath.Abs(policyDir)
+	if policyDir != "" && err == nil {
+		keep[abs] = true
+	}
+
+	abs, err = filepath.Abs(attestationStore)
+	if offlineMode != config.OfflineModeDisabled && attestationStore != "" && err == nil {
+		keep[abs] = true
+	}
+
+	return keep
+}
+
 func setupFileWatch(
-	ctx context.Context, configPath, policyDir string,
+	ctx context.Context, configPath, policyDir, attestationStore string,
+	offlineMode config.OfflineMode,
 	verif *verifier.Verifier, met *metrics.Metrics,
 	plug pluginReloader,
 ) (func(), *fsnotify.Watcher) {
@@ -271,22 +288,14 @@ func setupFileWatch(
 		return func() {}, nil
 	}
 
-	watchErr := watcher.Add(configPath)
-	if watchErr != nil {
-		slog.Warn("Failed to watch config file", "path", configPath, "error", watchErr)
-	}
+	addWatchPath(watcher, configPath, "config file")
 
 	if policyDir != "" {
-		absDir, absErr := filepath.Abs(policyDir)
-		if absErr == nil {
-			watchErr = watcher.Add(absDir)
-			if watchErr != nil {
-				slog.Warn("Failed to watch policy directory",
-					"path", absDir,
-					"error", watchErr,
-				)
-			}
-		}
+		addWatchPath(watcher, policyDir, "policy directory")
+	}
+
+	if offlineMode != config.OfflineModeDisabled && attestationStore != "" {
+		addWatchPath(watcher, attestationStore, "attestation store")
 	}
 
 	go runFileWatch(ctx, watcher, configPath, verif, met, plug)
@@ -297,6 +306,21 @@ func setupFileWatch(
 			slog.Warn("Failed to close file watcher", "error", closeErr)
 		}
 	}, watcher
+}
+
+func addWatchPath(watcher *fsnotify.Watcher, path, label string) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		slog.Warn("Failed to resolve absolute path for watch",
+			"path", path, "label", label, "error", err)
+
+		return
+	}
+
+	watchErr := watcher.Add(absPath)
+	if watchErr != nil {
+		slog.Warn("Failed to watch "+label, "path", absPath, "error", watchErr)
+	}
 }
 
 func runFileWatch(

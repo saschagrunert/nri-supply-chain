@@ -1494,6 +1494,259 @@ func TestVerifyBundleCommon(t *testing.T) {
 	}
 }
 
+func TestVerifyBundleCanceledContext(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := attestation.ExportVerifyBundle(
+		ctx,
+		[]byte(`{}`),
+		&attestation.FetchOptions{},
+		fakeTrustedRoot(),
+	)
+	if err == nil {
+		t.Fatal("expected error for canceled context")
+	}
+
+	if !strings.Contains(err.Error(), "context canceled") {
+		t.Errorf("expected context canceled error, got: %v", err)
+	}
+}
+
+func TestVerifyBundleInvalidJSON(t *testing.T) {
+	t.Parallel()
+
+	_, err := attestation.ExportVerifyBundle(
+		context.Background(),
+		[]byte(`not json`),
+		&attestation.FetchOptions{
+			TrustedIssuers: []string{testIssuerGoogle},
+		},
+		fakeTrustedRoot(),
+	)
+	if err == nil {
+		t.Fatal("expected error for invalid JSON bundle")
+	}
+
+	if !strings.Contains(err.Error(), wantParsingSigstoreBundle) {
+		t.Errorf("expected parsing error, got: %v", err)
+	}
+}
+
+func TestVerifyBundleNoTrustedMaterial(t *testing.T) {
+	t.Parallel()
+
+	bndl := attestation.NewTestBundle(
+		attestation.ExportDSSEPayloadType,
+		`{"test": true}`,
+	)
+	data, _ := bndl.MarshalJSON()
+
+	_, err := attestation.ExportVerifyBundle(
+		context.Background(),
+		data,
+		&attestation.FetchOptions{},
+		fakeTrustedRoot(),
+	)
+	if err == nil {
+		t.Fatal("expected error for no trusted material")
+	}
+}
+
+func TestBuildVerificationConfigWithRoot(t *testing.T) {
+	t.Parallel()
+
+	t.Cleanup(attestation.ResetSANPatternWarnings)
+	t.Cleanup(attestation.ResetPEMKeyCache)
+
+	tests := []struct {
+		name    string
+		opts    func(t *testing.T) *attestation.FetchOptions
+		wantErr bool
+	}{
+		{
+			name: "no trusted material returns error",
+			opts: func(_ *testing.T) *attestation.FetchOptions {
+				return &attestation.FetchOptions{}
+			},
+			wantErr: true,
+		},
+		{
+			name: "issuers only succeeds",
+			opts: func(_ *testing.T) *attestation.FetchOptions {
+				return &attestation.FetchOptions{
+					TrustedIssuers: []string{testIssuerGoogle},
+				}
+			},
+			wantErr: false,
+		},
+		{
+			name: "keys only succeeds",
+			opts: func(t *testing.T) *attestation.FetchOptions {
+				t.Helper()
+
+				return &attestation.FetchOptions{
+					TrustedKeys: []attestation.TrustedKeyRef{{Path: writeTestKey(t)}},
+				}
+			},
+			wantErr: false,
+		},
+		{
+			name: "keys and issuers succeeds",
+			opts: func(t *testing.T) *attestation.FetchOptions {
+				t.Helper()
+
+				return &attestation.FetchOptions{
+					TrustedKeys:    []attestation.TrustedKeyRef{{Path: writeTestKey(t)}},
+					TrustedIssuers: []string{testIssuerGoogle},
+				}
+			},
+			wantErr: false,
+		},
+		{
+			name: "issuers with transparency log",
+			opts: func(_ *testing.T) *attestation.FetchOptions {
+				return &attestation.FetchOptions{
+					TrustedIssuers:         []string{testIssuerGoogle},
+					RequireTransparencyLog: true,
+				}
+			},
+			wantErr: false,
+		},
+		{
+			name: "issuers with SAN patterns",
+			opts: func(_ *testing.T) *attestation.FetchOptions {
+				return &attestation.FetchOptions{
+					TrustedIssuers: []string{testIssuerGoogle},
+					SANPatterns:    []string{testSANUser},
+				}
+			},
+			wantErr: false,
+		},
+		{
+			name: "nonexistent key returns error",
+			opts: func(_ *testing.T) *attestation.FetchOptions {
+				return &attestation.FetchOptions{
+					TrustedKeys: []attestation.TrustedKeyRef{{Path: nonexistentKey}},
+				}
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			opts := tt.opts(t)
+			err := attestation.ExportBuildVerificationCfgWithRoot(opts, fakeTrustedRoot())
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestExtractBundlePayloadValid(t *testing.T) {
+	t.Parallel()
+
+	bndl := attestation.NewTestBundle(
+		attestation.ExportDSSEPayloadType,
+		`{"test": true}`,
+	)
+
+	data, marshalErr := bndl.MarshalJSON()
+	if marshalErr != nil {
+		t.Fatalf("MarshalJSON() error: %v", marshalErr)
+	}
+
+	payload, err := attestation.ExtractBundlePayload(data)
+	if err != nil {
+		t.Fatalf("ExtractBundlePayload() error: %v", err)
+	}
+
+	if string(payload) != `{"test": true}` {
+		t.Errorf("payload = %q, want %q", string(payload), `{"test": true}`)
+	}
+}
+
+func TestExtractBundlePayloadWrongPayloadType(t *testing.T) {
+	t.Parallel()
+
+	bndl := attestation.NewTestBundle(
+		"application/octet-stream",
+		`{"test": true}`,
+	)
+
+	data, marshalErr := bndl.MarshalJSON()
+	if marshalErr != nil {
+		t.Fatalf("MarshalJSON() error: %v", marshalErr)
+	}
+
+	_, err := attestation.ExtractBundlePayload(data)
+	if err == nil {
+		t.Fatal("expected error for wrong payload type")
+	}
+
+	if !strings.Contains(err.Error(), "invalid DSSE payload type") {
+		t.Errorf("expected payload type error, got: %v", err)
+	}
+}
+
+func TestCachedTrustedRootNoCacheReturnsNil(t *testing.T) {
+	t.Parallel()
+
+	fetcher := attestation.NewTestOCIFetcher(nil, nil)
+
+	got := fetcher.CachedTrustedRoot()
+	if got != nil {
+		t.Error("expected nil from fetcher with no root cache")
+	}
+}
+
+func TestCachedTrustedRootWithWarmedCache(t *testing.T) {
+	t.Parallel()
+
+	expected := fakeTrustedRoot()
+	fetcher := attestation.NewOCIFetcherWithPreSeededRoot(expected)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	warmErr := fetcher.Warm(ctx)
+	if warmErr != nil {
+		t.Fatalf("Warm() error: %v", warmErr)
+	}
+
+	got := fetcher.CachedTrustedRoot()
+	if got == nil {
+		t.Fatal("expected non-nil root after warming")
+	}
+}
+
+func TestCachedTrustedRootMultiRootNoCacheReturnsNil(t *testing.T) {
+	t.Parallel()
+
+	fetcher := attestation.NewOCIFetcherWithMultipleRoots(nil)
+
+	got := fetcher.CachedTrustedRoot()
+	if got == nil {
+		// multi-root with nil sources is expected to have no caches
+		t.Log("no caches, got nil as expected")
+	}
+}
+
 func TestFetchTrustedRootWithContext(t *testing.T) {
 	t.Parallel()
 

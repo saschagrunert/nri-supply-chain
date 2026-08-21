@@ -215,6 +215,75 @@ func buildVerificationConfig(
 	return buildVerificationConfigMultiRoot(ctx, opts, []*trustedRootCache{cachedRoot})
 }
 
+// VerifyBundle verifies a sigstore bundle against the given trusted root and
+// returns the extracted DSSE payload. This is the entry point for offline
+// verification where the caller supplies a pre-loaded TrustedRoot directly.
+func VerifyBundle(
+	ctx context.Context,
+	bundleBytes []byte,
+	opts *FetchOptions,
+	trustedRoot *root.TrustedRoot,
+) ([]byte, error) {
+	return verifyBundleCommon(ctx, bundleBytes, opts, func() (
+		root.TrustedMaterialCollection, []verify.VerifierOption, []verify.PolicyOption, error,
+	) {
+		return buildVerificationConfigWithRoot(opts, trustedRoot)
+	})
+}
+
+func buildVerificationConfigWithRoot(
+	opts *FetchOptions,
+	trustedRoot *root.TrustedRoot,
+) (root.TrustedMaterialCollection, []verify.VerifierOption, []verify.PolicyOption, error) {
+	var (
+		materials    root.TrustedMaterialCollection
+		verifierOpts []verify.VerifierOption
+		policyOpts   []verify.PolicyOption
+	)
+
+	if len(opts.TrustedKeys) > 0 {
+		keyMaterial, err := buildKeyMaterial(opts.TrustedKeys)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+
+		materials = append(materials, keyMaterial)
+		verifierOpts = append(
+			verifierOpts,
+			keyOnlyVerifierOpts(len(opts.TrustedIssuers) > 0, opts.RequireTransparencyLog)...,
+		)
+		policyOpts = append(policyOpts, verify.WithKey())
+	}
+
+	if len(opts.TrustedIssuers) > 0 {
+		materials = append(materials, trustedRoot)
+
+		verifierOpts = append(verifierOpts,
+			verify.WithSignedCertificateTimestamps(1),
+			verify.WithObserverTimestamps(1),
+		)
+
+		if opts.RequireTransparencyLog {
+			verifierOpts = append(verifierOpts, verify.WithTransparencyLog(1))
+		}
+
+		certID, err := buildCertificateIdentity(opts.TrustedIssuers, opts.SANPatterns)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+
+		policyOpts = append(policyOpts, verify.WithCertificateIdentity(certID))
+	}
+
+	if len(materials) == 0 {
+		return nil, nil, nil, fmt.Errorf(
+			"%w: provide trusted keys or issuers in policy", errNoTrustedMaterial,
+		)
+	}
+
+	return materials, verifierOpts, policyOpts, nil
+}
+
 func keyOnlyVerifierOpts(hasIssuers, requireTLog bool) []verify.VerifierOption {
 	if hasIssuers {
 		return nil

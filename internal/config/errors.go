@@ -271,4 +271,36 @@ var (
 
 	// ErrGUACCACertNotRegularFile indicates the CA cert path is not a regular file.
 	ErrGUACCACertNotRegularFile = errors.New("guac.ca_cert must be a regular file")
+
+	// ErrInvalidOfflineMode indicates the offline.mode value is not recognized.
+	ErrInvalidOfflineMode = errors.New(
+		`offline.mode must be "disabled", "prefer-bundle", or "offline"`,
+	)
+
+	// ErrOfflineStoreNotAbsolute indicates the attestation_store path is not absolute.
+	ErrOfflineStoreNotAbsolute = errors.New("offline.attestation_store must be an absolute path")
+
+	// ErrOfflineStoreNotDirectory indicates the attestation_store path is not a directory.
+	ErrOfflineStoreNotDirectory = errors.New("offline.attestation_store is not a directory")
+
+	// ErrBundleMaxAgeNotPositive indicates bundle_max_age is not positive.
+	ErrBundleMaxAgeNotPositive = errors.New("offline.bundle_max_age must be positive")
+
+	// ErrInvalidBundleExpiryPolicy indicates the expiry policy is not recognized.
+	ErrInvalidBundleExpiryPolicy = errors.New(
+		`offline.bundle_expiry_policy must be "allow", "warn", or "deny"`,
+	)
+
+	// ErrBundleSignatureKeyRequired indicates a signature key is needed but missing.
+	ErrBundleSignatureKeyRequired = errors.New(
+		"offline.bundle_signature_key required when require_bundle_signature is true",
+	)
+
+	// ErrBundleSignatureKeyNotAbsolute indicates the signature key path is not absolute.
+	ErrBundleSignatureKeyNotAbsolute = errors.New(
+		"offline.bundle_signature_key must be an absolute path",
+	)
+
+	// ErrBundleSignatureKeyNotFound indicates the signature key file does not exist.
+	ErrBundleSignatureKeyNotFound = errors.New("offline.bundle_signature_key file not found")
 )

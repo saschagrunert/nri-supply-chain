@@ -303,7 +303,7 @@ func TestVerify(t *testing.T) {
 			name:     "disabled skips nonexistent policy dir",
 			imageRef: "",
 			setupDir: func(_ *testing.T) string {
-				return "/nonexistent/path"
+				return testNonexistentPath
 			},
 			mode:        config.ModeDisabled,
 			wantAllowed: true,
@@ -546,7 +546,7 @@ func TestNew(t *testing.T) {
 			name: "disabled skips policy load",
 			setup: func(_ *testing.T) *config.Config {
 				cfg := config.DefaultConfig()
-				cfg.PolicyDir = "/nonexistent/path"
+				cfg.PolicyDir = testNonexistentPath
 
 				return cfg
 			},

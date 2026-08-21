@@ -3624,3 +3624,300 @@ func TestConfigValidateGUACAuthTokenRuntime(t *testing.T) {
 		testutil.AssertErrorIs(t, err, config.ErrGUACAuthTokenNotRegularFile)
 	})
 }
+
+func TestConfigValidateOffline(t *testing.T) {
+	t.Parallel()
+
+	validOffline := func(cfg *config.Config) {
+		cfg.Offline.Mode = config.OfflineModeOffline
+		cfg.Offline.AttestationStore = "/var/lib/bundles"
+		cfg.Offline.BundleMaxAge = config.Duration{Duration: 24 * time.Hour}
+		cfg.Offline.BundleExpiryPolicy = config.BundleExpiryWarn
+	}
+
+	tests := []struct {
+		name        string
+		modify      func(*config.Config)
+		expectedErr error
+	}{
+		{
+			name:        "disabled mode skips validation",
+			modify:      func(c *config.Config) { c.Offline.Mode = config.OfflineModeDisabled },
+			expectedErr: nil,
+		},
+		{
+			name:        "invalid mode",
+			modify:      func(c *config.Config) { c.Offline.Mode = "bogus" },
+			expectedErr: config.ErrInvalidOfflineMode,
+		},
+		{
+			name: "valid offline config",
+			modify: func(c *config.Config) {
+				validOffline(c)
+			},
+			expectedErr: nil,
+		},
+		{
+			name: "relative store path",
+			modify: func(c *config.Config) {
+				validOffline(c)
+				c.Offline.AttestationStore = "relative/path"
+			},
+			expectedErr: config.ErrOfflineStoreNotAbsolute,
+		},
+		{
+			name: "empty store path",
+			modify: func(c *config.Config) {
+				validOffline(c)
+				c.Offline.AttestationStore = ""
+			},
+			expectedErr: config.ErrOfflineStoreNotAbsolute,
+		},
+		{
+			name: "non-positive max age",
+			modify: func(c *config.Config) {
+				validOffline(c)
+				c.Offline.BundleMaxAge = config.Duration{Duration: 0}
+			},
+			expectedErr: config.ErrBundleMaxAgeNotPositive,
+		},
+		{
+			name: "invalid expiry policy",
+			modify: func(c *config.Config) {
+				validOffline(c)
+				c.Offline.BundleExpiryPolicy = "invalid"
+			},
+			expectedErr: config.ErrInvalidBundleExpiryPolicy,
+		},
+		{
+			name: "require signature without key",
+			modify: func(c *config.Config) {
+				validOffline(c)
+				c.Offline.RequireBundleSignature = true
+				c.Offline.BundleSignatureKey = ""
+			},
+			expectedErr: config.ErrBundleSignatureKeyRequired,
+		},
+		{
+			name: "signature key not absolute",
+			modify: func(c *config.Config) {
+				validOffline(c)
+				c.Offline.RequireBundleSignature = true
+				c.Offline.BundleSignatureKey = "relative/key.pem"
+			},
+			expectedErr: config.ErrBundleSignatureKeyNotAbsolute,
+		},
+		{
+			name: "valid with signature",
+			modify: func(c *config.Config) {
+				validOffline(c)
+				c.Offline.RequireBundleSignature = true
+				c.Offline.BundleSignatureKey = "/etc/keys/bundle.pub"
+			},
+			expectedErr: nil,
+		},
+		{
+			name: "prefer-bundle mode valid",
+			modify: func(c *config.Config) {
+				validOffline(c)
+				c.Offline.Mode = config.OfflineModePreferBundle
+			},
+			expectedErr: nil,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := config.DefaultConfig()
+			test.modify(cfg)
+
+			err := cfg.Validate()
+
+			if test.expectedErr != nil {
+				testutil.AssertErrorIs(t, err, test.expectedErr)
+			} else {
+				testutil.AssertNoError(t, err)
+			}
+		})
+	}
+}
+
+func TestConfigValidateOfflineRuntime(t *testing.T) {
+	t.Parallel()
+
+	t.Run("disabled skips runtime checks", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Offline.Mode = config.OfflineModeDisabled
+		cfg.Offline.AttestationStore = "/nonexistent"
+
+		testutil.AssertNoError(t, cfg.ValidateRuntime())
+	})
+
+	t.Run("store exists as directory", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+
+		cfg := config.DefaultConfig()
+		cfg.Offline.Mode = config.OfflineModeOffline
+		cfg.Offline.AttestationStore = dir
+
+		testutil.AssertNoError(t, cfg.ValidateRuntime())
+	})
+
+	t.Run("store does not exist", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Offline.Mode = config.OfflineModeOffline
+		cfg.Offline.AttestationStore = "/nonexistent/store"
+
+		testutil.AssertErrorIs(t, cfg.ValidateRuntime(), config.ErrOfflineStoreNotDirectory)
+	})
+
+	t.Run("store is a file not directory", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		storePath := filepath.Join(dir, "not-a-dir")
+
+		err := os.WriteFile(storePath, []byte("data"), 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		cfg := config.DefaultConfig()
+		cfg.Offline.Mode = config.OfflineModeOffline
+		cfg.Offline.AttestationStore = storePath
+
+		testutil.AssertErrorIs(t, cfg.ValidateRuntime(), config.ErrOfflineStoreNotDirectory)
+	})
+
+	t.Run("signature key not found", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Offline.Mode = config.OfflineModeOffline
+		cfg.Offline.AttestationStore = t.TempDir()
+		cfg.Offline.RequireBundleSignature = true
+		cfg.Offline.BundleSignatureKey = "/nonexistent/key.pem"
+
+		testutil.AssertErrorIs(t, cfg.ValidateRuntime(), config.ErrBundleSignatureKeyNotFound)
+	})
+
+	t.Run("signature key is regular file", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		keyPath := filepath.Join(dir, "key.pem")
+
+		err := os.WriteFile(keyPath, []byte("key"), 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		cfg := config.DefaultConfig()
+		cfg.Offline.Mode = config.OfflineModeOffline
+		cfg.Offline.AttestationStore = dir
+		cfg.Offline.RequireBundleSignature = true
+		cfg.Offline.BundleSignatureKey = keyPath
+
+		testutil.AssertNoError(t, cfg.ValidateRuntime())
+	})
+
+	t.Run("signature key is directory", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+
+		cfg := config.DefaultConfig()
+		cfg.Offline.Mode = config.OfflineModeOffline
+		cfg.Offline.AttestationStore = dir
+		cfg.Offline.RequireBundleSignature = true
+		cfg.Offline.BundleSignatureKey = dir
+
+		testutil.AssertErrorIs(t, cfg.ValidateRuntime(), config.ErrBundleSignatureKeyNotFound)
+	})
+}
+
+func TestOfflineConfigChanged(t *testing.T) {
+	t.Parallel()
+
+	base := func() *config.OfflineConfig {
+		return &config.OfflineConfig{
+			Mode:                   config.OfflineModeOffline,
+			AttestationStore:       "/var/lib/bundles",
+			BundleMaxAge:           config.Duration{Duration: 24 * time.Hour},
+			BundleExpiryPolicy:     config.BundleExpiryWarn,
+			RequireBundleSignature: false,
+			BundleSignatureKey:     "",
+		}
+	}
+
+	t.Run("identical", func(t *testing.T) {
+		t.Parallel()
+
+		if config.OfflineConfigChanged(base(), base()) {
+			t.Error("expected no change for identical configs")
+		}
+	})
+
+	t.Run("mode changed", func(t *testing.T) {
+		t.Parallel()
+
+		b := base()
+		b.Mode = config.OfflineModePreferBundle
+
+		if !config.OfflineConfigChanged(base(), b) {
+			t.Error("expected change when mode differs")
+		}
+	})
+
+	t.Run("store path changed", func(t *testing.T) {
+		t.Parallel()
+
+		b := base()
+		b.AttestationStore = "/other/path"
+
+		if !config.OfflineConfigChanged(base(), b) {
+			t.Error("expected change when store path differs")
+		}
+	})
+
+	t.Run("max age changed", func(t *testing.T) {
+		t.Parallel()
+
+		b := base()
+		b.BundleMaxAge = config.Duration{Duration: 48 * time.Hour}
+
+		if !config.OfflineConfigChanged(base(), b) {
+			t.Error("expected change when max age differs")
+		}
+	})
+
+	t.Run("expiry policy changed", func(t *testing.T) {
+		t.Parallel()
+
+		b := base()
+		b.BundleExpiryPolicy = config.BundleExpiryDeny
+
+		if !config.OfflineConfigChanged(base(), b) {
+			t.Error("expected change when expiry policy differs")
+		}
+	})
+
+	t.Run("signature requirement changed", func(t *testing.T) {
+		t.Parallel()
+
+		b := base()
+		b.RequireBundleSignature = true
+
+		if !config.OfflineConfigChanged(base(), b) {
+			t.Error("expected change when signature requirement differs")
+		}
+	})
+}

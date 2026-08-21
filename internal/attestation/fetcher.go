@@ -29,6 +29,7 @@ import (
 	ociV1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
+	"github.com/sigstore/sigstore-go/pkg/root"
 	"golang.org/x/time/rate"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/registry"
@@ -137,6 +138,35 @@ func (f *OCIFetcher) SetMaxAttestationSize(size int64) {
 // trusted root sources (via NewOCIFetcherWithMultipleRoots).
 func (f *OCIFetcher) IsMultiRoot() bool {
 	return len(f.rootCaches) > 0
+}
+
+// CachedTrustedRoot returns the currently cached trusted root without
+// triggering a network fetch. Returns nil if no root has been cached yet
+// (call Warm first). For multi-root fetchers, returns the first cached root.
+func (f *OCIFetcher) CachedTrustedRoot() *root.TrustedRoot {
+	if f.rootCache != nil {
+		f.rootCache.mu.RLock()
+		tr, ok := f.rootCache.cachedHit()
+		f.rootCache.mu.RUnlock()
+
+		if ok {
+			return tr
+		}
+
+		return nil
+	}
+
+	for _, c := range f.rootCaches {
+		c.mu.RLock()
+		tr, ok := c.cachedHit()
+		c.mu.RUnlock()
+
+		if ok {
+			return tr
+		}
+	}
+
+	return nil
 }
 
 // Warm pre-fetches the Sigstore trusted root(s) so that the first verification

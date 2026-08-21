@@ -443,6 +443,26 @@ func (f *OCIFetcher) ExportRootCaches() []*trustedRootCache {
 	return f.rootCaches
 }
 
+// ExportVerifyBundle exposes VerifyBundle for external tests.
+func ExportVerifyBundle(
+	ctx context.Context,
+	bundleBytes []byte,
+	opts *FetchOptions,
+	trustedRoot *root.TrustedRoot,
+) ([]byte, error) {
+	return VerifyBundle(ctx, bundleBytes, opts, trustedRoot)
+}
+
+// ExportBuildVerificationCfgWithRoot exposes buildVerificationConfigWithRoot for external tests.
+func ExportBuildVerificationCfgWithRoot(
+	opts *FetchOptions,
+	trustedRoot *root.TrustedRoot,
+) error {
+	_, _, _, err := buildVerificationConfigWithRoot(opts, trustedRoot)
+
+	return err
+}
+
 // ExportBuildVerificationCfgMultiRoot exposes buildVerificationConfigMultiRoot for external tests.
 func ExportBuildVerificationCfgMultiRoot(
 	ctx context.Context,

@@ -18,6 +18,7 @@ configurations for the nri-supply-chain plugin.
   - [Gradual Rollout](#gradual-rollout)
   - [Strict Production](#strict-production)
   - [VSA-Accelerated Verification](#vsa-accelerated-verification)
+  - [Air-Gapped Deployment](#air-gapped-deployment)
 
 <!-- /toc -->
 
@@ -229,3 +230,54 @@ already attested the image.
   }
 }
 ```
+
+### Air-Gapped Deployment
+
+For fully disconnected environments (military, FedRAMP, healthcare, edge/IoT), attestation bundles provide offline supply chain verification without any registry connectivity.
+
+**Step 1: Create a bundle on a connected system.**
+
+On a system with registry access, create a signed bundle containing attestations for all required images:
+
+```console
+nri-supply-chain bundle create \
+  --from-policy /etc/nri-supply-chain/policies/default.json \
+  --image registry.example.com/extra-app:v1.0 \
+  --output attestation-bundle.tar.gz \
+  --sign-key /path/to/private-key.pem \
+  --trusted-root /path/to/trusted-root.json
+```
+
+The `--from-policy` flag extracts concrete image references from the policy file automatically. Additional images can be added with `--image`. The `--sign-key` flag signs the bundle manifest so the air-gapped system can verify authenticity.
+
+**Step 2: Transfer the bundle to the air-gapped system.**
+
+Copy `attestation-bundle.tar.gz` to the disconnected environment via removable media, one-way data diode, or other approved transfer mechanism.
+
+**Step 3: Import the bundle on the air-gapped system.**
+
+```console
+nri-supply-chain bundle import attestation-bundle.tar.gz \
+  --store /var/lib/nri-supply-chain/bundles \
+  --key /etc/nri-supply-chain/bundle-key.pub
+```
+
+Import always verifies blob integrity. The `--key` flag additionally verifies the bundle manifest signature.
+
+**Step 4: Configure offline mode.**
+
+```toml
+verification = "enforce"
+
+[offline]
+mode = "offline"
+attestation_store = "/var/lib/nri-supply-chain/bundles"
+bundle_max_age = "720h"
+bundle_expiry_policy = "deny"
+require_bundle_signature = true
+bundle_signature_key = "/etc/nri-supply-chain/bundle-key.pub"
+```
+
+With `mode = "offline"`, the plugin reads attestations exclusively from the bundle store. No network calls are made. If an image is not in the bundle, verification fails and the container is rejected (in enforce mode).
+
+To update attestations, repeat the create/transfer/import cycle. The file watcher detects changes to the bundle store directory and triggers a reload automatically.

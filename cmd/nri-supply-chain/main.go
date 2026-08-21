@@ -128,6 +128,7 @@ func newRootCmd() *cobra.Command {
 		newValidateCmd(&configPath, &logLevel),
 		newEffectivePolicyCmd(&configPath, &logLevel),
 		newInspectCmd(&configPath, &logLevel),
+		newBundleCmd(&configPath, &logLevel),
 		newVersionCmd(),
 		newJSONSchemaCmd(),
 	)

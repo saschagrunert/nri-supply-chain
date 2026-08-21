@@ -48,6 +48,10 @@ The plugin exposes Prometheus metrics at the configured
 | `nri_supply_chain_cel_evaluation_duration_seconds` | Histogram |                               | CEL rule evaluation latency                                                                          |
 | `nri_supply_chain_policy_reloads_total`            | Counter   |                               | OCI policy update events (poller-driven reloads)                                                     |
 | `nri_supply_chain_guac_query_duration_seconds`     | Histogram | `type`                        | GUAC API query latency                                                                               |
+| `nri_supply_chain_bundle_staleness_total`          | Counter   | `policy`                      | Bundle staleness events. `policy`: `allow`, `warn`, `deny`                                           |
+| `nri_supply_chain_bundle_verifications_total`      | Counter   | `result`                      | Bundle verification attempts. `result`: `success`, `error`                                           |
+| `nri_supply_chain_bundle_age_seconds`              | Gauge     |                               | Current age of the active attestation bundle in seconds                                              |
+| `nri_supply_chain_bundle_image_count`              | Gauge     |                               | Number of images in the active attestation bundle                                                    |
 
 When `include` is configured, the include check runs before the exclude check.
 Images that do not match any include pattern are counted as `not_included` even
@@ -130,7 +134,7 @@ when cache-affecting config fields changed (`verification`, `policy_dir`,
 `cache_ttl`, `cache_failure_ttl`, `cache_max_entries`, `fetch_failure_policy`,
 `fetch_timeout`, `sigstore` (including `tuf_mirror`, `tuf_root`, `roots`,
 `include_public_root`), `registries`, `policy.source`, `policy.oci_ref`,
-`policy.issuers`, `policy.san_patterns`, `policy.keys`, `guac`) or
+`policy.issuers`, `policy.san_patterns`, `policy.keys`, `guac`, `offline`) or
 when the content of any policy file
 changed. If the config and policies are identical, the cache is preserved. To
 force a cache clear when nothing else needs to change, temporarily modify
@@ -205,7 +209,7 @@ application logger (see [config.md](config.md)).
   `cache_failure_ttl`, `cache_max_entries`, `fetch_failure_policy`,
   `fetch_timeout`, `sigstore` (including `tuf_mirror`, `tuf_root`, `roots`,
   `include_public_root`), `registries`, `policy.source`, `policy.oci_ref`,
-  `policy.issuers`, `policy.san_patterns`, `policy.keys`, `guac`) or policy file
+  `policy.issuers`, `policy.san_patterns`, `policy.keys`, `guac`, `offline`) or policy file
   contents have changed. A SIGHUP with unchanged config and policies does not
   clear the cache. To force a clear, change `cache_ttl` temporarily before
   sending SIGHUP.
@@ -257,27 +261,30 @@ groups:
 The plugin enforces several hardcoded limits that are not configurable. These
 protect against resource exhaustion and unbounded processing.
 
-| Limit                       | Value                            | Behavior when exceeded                                                                                                                                                                                      |
-| --------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Cache capacity              | 10,000 entries (default)         | Configurable via `cache_max_entries` (100 to 1,000,000). Expired entries are evicted first. If the cache is still full, the oldest entry is evicted to make room.                                           |
-| Concurrent fetch limit      | 50                               | Additional verification requests block until a slot becomes available or the context is canceled.                                                                                                           |
-| Per-host fetch limit        | 10                               | At most 10 of the 50 global fetch slots can be used by a single registry host. Prevents one slow or unresponsive registry from starving fetches to other registries.                                        |
-| Fetch retry count           | 2 retries (3 total)              | Uses exponential backoff starting at 500ms. Only transient errors (network timeouts, HTTP 5xx) trigger retries.                                                                                             |
-| Attestation size limit      | 10 MiB per attestation (default) | Configurable via `max_attestation_size` (1 MiB to 100 MiB). Attestation bundles exceeding the limit are rejected. A warning is logged with the actual size.                                                 |
-| Aggregate attestation limit | 50 MiB per image                 | Total attestation payload per image is capped at 50 MiB. Once exceeded, remaining referrers or cosign layers are skipped with a warning.                                                                    |
-| Max referrers per image     | 50                               | Only the first 50 bundle-type referrers are processed. Additional referrers are skipped with a warning.                                                                                                     |
-| Policy file size limit      | 1 MiB per file                   | Policy files larger than 1 MiB are rejected during loading. The file is read through a size-limited reader and an error is returned if the limit is exceeded.                                               |
-| Circuit breaker registry    | 1,000 hosts                      | At most 1,000 per-host circuit breakers are tracked. When full, closed breakers are evicted first. If all remaining breakers are open or half-open, a shared overflow breaker is used for additional hosts. |
-| Sigstore trusted root cache | 1h TTL, 24h max staleness        | The root is refreshed every hour. If the Sigstore TUF mirror is unreachable, the stale root is used for up to 24 hours.                                                                                     |
-| Clock skew tolerance        | 60 seconds                       | SLSA and VSA timestamps up to 60 seconds in the future are accepted. Beyond that, they are rejected as future timestamps.                                                                                   |
-| Digest resolve timeout      | 1 second                         | Image digest resolution during NRI callbacks is capped at 1 second to stay under containerd's ttrpc timeout. The `verify` CLI path uses the configured `fetch_timeout` instead.                             |
-| Policy file count limit     | 1,000 files                      | At most 1,000 JSON policy files are loaded from the policy directory. If the count exceeds this limit, policy loading fails with an error.                                                                  |
-| Glob pattern cache          | 10,000 patterns                  | Compiled glob patterns are cached for reuse. Once the cache holds 10,000 entries, new patterns still compile and match but are not cached.                                                                  |
-| OCI policy layer size       | 1 MiB per layer                  | Individual OCI policy layers larger than 1 MiB are rejected during fetch. The layer is read through a size-limited reader and an error is returned if the limit is exceeded.                                |
-| OCI policy layer count      | 1,000 layers                     | At most 1,000 layers are processed from an OCI policy artifact. If the artifact contains more layers, policy loading fails with an error.                                                                   |
-| Credential file size        | 1 MiB per file                   | PEM public key files, CA certificate bundles, and TUF root files are read through a size-limited reader. Files exceeding 1 MiB are rejected.                                                                |
-| Config file size            | 10 MiB                           | The TOML config file is read through a size-limited reader. Files exceeding 10 MiB are rejected at load time.                                                                                               |
-| Symlink restriction         | Not allowed                      | The `policy_dir`, `sigstore.tuf_root`, `policy.keys`, and registry `ca_cert` paths must not be symbolic links. Symlinks are detected via `Lstat` and rejected during runtime validation.                    |
+| Limit                       | Value                            | Behavior when exceeded                                                                                                                                                                                                |
+| --------------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cache capacity              | 10,000 entries (default)         | Configurable via `cache_max_entries` (100 to 1,000,000). Expired entries are evicted first. If the cache is still full, the oldest entry is evicted to make room.                                                     |
+| Concurrent fetch limit      | 50                               | Additional verification requests block until a slot becomes available or the context is canceled.                                                                                                                     |
+| Per-host fetch limit        | 10                               | At most 10 of the 50 global fetch slots can be used by a single registry host. Prevents one slow or unresponsive registry from starving fetches to other registries.                                                  |
+| Fetch retry count           | 2 retries (3 total)              | Uses exponential backoff starting at 500ms. Only transient errors (network timeouts, HTTP 5xx) trigger retries.                                                                                                       |
+| Attestation size limit      | 10 MiB per attestation (default) | Configurable via `max_attestation_size` (1 MiB to 100 MiB). Attestation bundles exceeding the limit are rejected. A warning is logged with the actual size.                                                           |
+| Aggregate attestation limit | 50 MiB per image                 | Total attestation payload per image is capped at 50 MiB. Once exceeded, remaining referrers or cosign layers are skipped with a warning.                                                                              |
+| Max referrers per image     | 50                               | Only the first 50 bundle-type referrers are processed. Additional referrers are skipped with a warning.                                                                                                               |
+| Policy file size limit      | 1 MiB per file                   | Policy files larger than 1 MiB are rejected during loading. The file is read through a size-limited reader and an error is returned if the limit is exceeded.                                                         |
+| Circuit breaker registry    | 1,000 hosts                      | At most 1,000 per-host circuit breakers are tracked. When full, closed breakers are evicted first. If all remaining breakers are open or half-open, a shared overflow breaker is used for additional hosts.           |
+| Sigstore trusted root cache | 1h TTL, 24h max staleness        | The root is refreshed every hour. If the Sigstore TUF mirror is unreachable, the stale root is used for up to 24 hours.                                                                                               |
+| Clock skew tolerance        | 60 seconds                       | SLSA and VSA timestamps up to 60 seconds in the future are accepted. Beyond that, they are rejected as future timestamps.                                                                                             |
+| Digest resolve timeout      | 1 second                         | Image digest resolution during NRI callbacks is capped at 1 second to stay under containerd's ttrpc timeout. The `verify` CLI path uses the configured `fetch_timeout` instead.                                       |
+| Policy file count limit     | 1,000 files                      | At most 1,000 JSON policy files are loaded from the policy directory. If the count exceeds this limit, policy loading fails with an error.                                                                            |
+| Glob pattern cache          | 10,000 patterns                  | Compiled glob patterns are cached for reuse. Once the cache holds 10,000 entries, new patterns still compile and match but are not cached.                                                                            |
+| OCI policy layer size       | 1 MiB per layer                  | Individual OCI policy layers larger than 1 MiB are rejected during fetch. The layer is read through a size-limited reader and an error is returned if the limit is exceeded.                                          |
+| OCI policy layer count      | 1,000 layers                     | At most 1,000 layers are processed from an OCI policy artifact. If the artifact contains more layers, policy loading fails with an error.                                                                             |
+| Credential file size        | 1 MiB per file                   | PEM public key files, CA certificate bundles, and TUF root files are read through a size-limited reader. Files exceeding 1 MiB are rejected.                                                                          |
+| Config file size            | 10 MiB                           | The TOML config file is read through a size-limited reader. Files exceeding 10 MiB are rejected at load time.                                                                                                         |
+| Symlink restriction         | Not allowed                      | The `policy_dir`, `sigstore.tuf_root`, `policy.keys`, registry `ca_cert`, and `offline.attestation_store` paths must not be symbolic links. Symlinks are detected via `Lstat` and rejected during runtime validation. |
+| Bundle tar import size      | 1 GiB                            | Bundle tar.gz files exceeding 1 GiB (uncompressed total) are rejected during import.                                                                                                                                  |
+| Bundle blob read size       | 100 MiB                          | Individual blob reads from the bundle store are capped at 100 MiB.                                                                                                                                                    |
+| Bundle path traversal       | Rejected                         | Tar entries that escape the target directory are rejected during import. Symlinks and hardlinks in tar entries are silently skipped.                                                                                  |
 
 **Sigstore trusted root refresh.** For keyless (Fulcio) verification, the
 plugin fetches the Sigstore trusted root from the TUF mirror on startup and
@@ -362,6 +369,8 @@ because the cached "allowed" result has not yet expired. In enforce mode the
 default `fetch_failure_policy` is `deny`, which prevents this. In warn mode,
 set `fetch_failure_policy = "deny"` explicitly or reduce `cache_failure_ttl`
 to shorten the window.
+
+**Bundle signature verification.** When `offline.require_bundle_signature` is enabled, the plugin rejects bundles that lack a valid cryptographic signature. Bundle manifests are signed using ECDSA, Ed25519, or RSA keys, and the signature covers the canonical JSON of the manifest (with the signature field zeroed). This prevents tampering with attestation mappings, trusted root entries, or revocation data after bundle creation. The signing key path (`offline.bundle_signature_key`) must not be a symbolic link and is validated during runtime startup. For air-gapped environments, sign bundles on the connected build system before transferring them to the disconnected environment.
 
 **Metrics exposure.** The default `metrics_addr` binds to `127.0.0.1:9090`
 (loopback only). Changing this to a non-loopback address (for example,
