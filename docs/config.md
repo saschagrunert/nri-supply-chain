@@ -8,6 +8,7 @@ nri-supply-chain plugin.
 - [Operational Config](#operational-config)
   - [GUAC](#guac)
   - [Runtime reload](#runtime-reload)
+  - [Offline Bundles](#offline-bundles)
 - [Private Sigstore Instances](#private-sigstore-instances)
   - [Multiple Sigstore Trusted Roots](#multiple-sigstore-trusted-roots)
 - [Registries](#registries)
@@ -21,6 +22,7 @@ nri-supply-chain plugin.
   - [Effective Policy](#effective-policy)
   - [Inspect](#inspect)
   - [JSON Schema](#json-schema)
+  - [Bundle Management](#bundle-management)
 
 <!-- /toc -->
 
@@ -60,6 +62,14 @@ circuit_breaker_cooldown = "30s"
 # [sigstore]
 # tuf_mirror = "https://tuf.internal.example.com"
 # tuf_root = "/etc/sigstore/root.json"
+
+# [offline]
+# mode = "disabled"
+# attestation_store = "/var/lib/nri-supply-chain/bundles"
+# bundle_max_age = "720h"
+# bundle_expiry_policy = "warn"
+# require_bundle_signature = false
+# bundle_signature_key = ""
 ```
 
 | Field                       | Default                          | Description                                                                                                                                                                                                                        |
@@ -135,6 +145,51 @@ full restart:
 
 When a non-reloadable field changes during a reload, the plugin logs a warning
 and keeps the original value.
+
+### Offline Bundles
+
+For air-gapped environments, the plugin can verify attestations from portable bundles stored on disk instead of fetching them from OCI registries. Bundles use OCI layout on disk and contain all attestation data, trust material, and optional revocation snapshots.
+
+```toml
+[offline]
+mode = "prefer-bundle"
+attestation_store = "/var/lib/nri-supply-chain/bundles"
+bundle_max_age = "720h"
+bundle_expiry_policy = "warn"
+require_bundle_signature = true
+bundle_signature_key = "/etc/nri-supply-chain/bundle-key.pub"
+```
+
+| Field                              | Default                             | Description                                                                                                                              |
+| ---------------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `offline.mode`                     | `disabled`                          | Offline mode: `disabled` (registry only), `prefer-bundle` (try bundle first, fall back to registry), `offline` (bundle only, no network) |
+| `offline.attestation_store`        | `/var/lib/nri-supply-chain/bundles` | Absolute path to the on-disk bundle store directory                                                                                      |
+| `offline.bundle_max_age`           | `720h` (30 days)                    | Maximum acceptable bundle age. Bundles older than this are considered stale.                                                             |
+| `offline.bundle_expiry_policy`     | `warn`                              | Behavior for stale bundles: `allow` (accept silently), `warn` (accept with log warning), `deny` (reject)                                 |
+| `offline.require_bundle_signature` | `false`                             | Require bundles to have a valid cryptographic signature                                                                                  |
+| `offline.bundle_signature_key`     | (empty)                             | Absolute path to PEM-encoded public key for bundle signature verification. Required when `require_bundle_signature` is true.             |
+
+The three modes control how the plugin sources attestation data:
+
+**disabled** (default): All attestations are fetched from OCI registries via the Referrers API. The bundle store is ignored. This is the standard mode for environments with registry connectivity.
+
+**prefer-bundle**: The plugin tries the local bundle store first. If no attestations are found for an image in the bundle, it falls back to the OCI registry. This is useful during transitions from connected to air-gapped operation, or when bundles cover most but not all images.
+
+**offline**: The plugin reads attestations exclusively from the bundle store. No network calls are made to OCI registries. If an image is not in the bundle, verification fails. Use this in fully disconnected environments.
+
+When `offline.mode` is changed via config reload, the plugin creates a new fetcher and invalidates the verification cache. The file watcher also monitors the `attestation_store` directory so that bundle updates trigger a reload automatically.
+
+The `attestation_store` path must be absolute and must not be a symbolic link. In `offline` and `prefer-bundle` modes, the directory must exist at startup (validated during runtime validation).
+
+**Important:** When a bundle does not contain an embedded Sigstore trusted root
+(e.g. it was created without `--trusted-root`), the plugin cannot perform
+Sigstore signature verification on individual attestations. In this case,
+attestation payloads are extracted from the DSSE envelope without verifying the
+Sigstore signature chain. Bundle-level integrity (blob SHA-256 checksums) still
+applies, but the cryptographic link to a Sigstore identity is absent. To ensure
+full verification in this scenario, set `require_bundle_signature = true` and
+provide a `bundle_signature_key` so that at least the bundle as a whole is
+cryptographically authenticated.
 
 ## Private Sigstore Instances
 
@@ -506,6 +561,10 @@ nri-supply-chain effective-policy        Show effective policy for a namespace
 nri-supply-chain inspect <image>         List attestations attached to an image
 nri-supply-chain version                 Print the version
 nri-supply-chain json-schema <type>      Print JSON Schema (policy, result, config)
+nri-supply-chain bundle create           Create a portable attestation bundle
+nri-supply-chain bundle inspect          Show bundle contents
+nri-supply-chain bundle verify           Verify bundle integrity and signature
+nri-supply-chain bundle import           Import a bundle into the attestation store
 ```
 
 Global flags (available on all subcommands):
@@ -780,3 +839,78 @@ The config file schema is also available:
 ```console
 nri-supply-chain json-schema config
 ```
+
+### Bundle Management
+
+The `bundle` subcommand group manages portable attestation bundles for air-gapped environments. Bundles package attestation data, trust material, and optional revocation snapshots into a tar.gz file that can be transferred to disconnected systems.
+
+**bundle create**: Fetch attestations from OCI registries and package them into a bundle.
+
+```console
+nri-supply-chain bundle create \
+  --image ghcr.io/myorg/app:v1.0 \
+  --image ghcr.io/myorg/sidecar:v2.0 \
+  --output bundle.tar.gz \
+  --sign-key /path/to/private-key.pem
+```
+
+Create flags:
+
+```text
+    --image           Image reference to include (repeatable)
+-o, --output          Output file path for the bundle tar.gz (required)
+    --sign-key        Path to private key PEM for signing the bundle manifest
+    --from-policy     Path to policy file to extract image references from
+    --trusted-root    Path to trusted root JSON to embed in the bundle
+    --revocation      Path to CRL or TSA file to embed (repeatable)
+```
+
+When `--from-policy` is specified, concrete image references from the policy's `include` and `rules[].images` fields are added to the bundle. Glob patterns are skipped. This can be combined with `--image` flags.
+
+If `--trusted-root` is not specified, the command embeds the cached Sigstore trusted root from the warmed OCI fetcher (if available).
+
+**bundle inspect**: Show the contents of a bundle store directory.
+
+```console
+nri-supply-chain bundle inspect /var/lib/nri-supply-chain/bundles
+```
+
+Inspect flags:
+
+```text
+-o, --output       Output format: table, json (default: table)
+```
+
+**bundle verify**: Verify the integrity, signature, and expiry of a bundle.
+
+```console
+nri-supply-chain bundle verify /var/lib/nri-supply-chain/bundles \
+  --key /path/to/public-key.pem \
+  --max-age 720h
+```
+
+Verify flags:
+
+```text
+    --key          Path to public key PEM for signature verification
+    --max-age      Maximum acceptable bundle age (e.g. 720h, 24h)
+```
+
+Verification checks blob integrity (all referenced blobs exist and match their declared digest and size), optionally verifies the manifest signature, and checks bundle age against `--max-age` if specified.
+
+**bundle import**: Extract a bundle tar.gz into the local attestation store.
+
+```console
+nri-supply-chain bundle import bundle.tar.gz \
+  --store /var/lib/nri-supply-chain/bundles \
+  --key /path/to/public-key.pem
+```
+
+Import flags:
+
+```text
+    --store        Path to the local attestation store directory (required)
+    --key          Path to public key PEM for signature verification during import
+```
+
+Import always verifies blob integrity (all referenced blobs must exist and match their declared digest and size). When `--key` is specified, the manifest signature is also verified. If any check fails, the import is rolled back and the store path remains untouched.

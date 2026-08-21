@@ -22,8 +22,10 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/root"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
+	"github.com/saschagrunert/nri-supply-chain/internal/bundle"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/fileutil"
+	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 )
 
@@ -208,8 +210,99 @@ func loadPreSeededTrustedRoot(path string) (*root.TrustedRoot, error) {
 	return trustedRoot, nil
 }
 
+func createFetcherForMode( //nolint:ireturn // returns Fetcher, FallbackFetcher, or OCIFetcher
+	ctx context.Context, cfg *config.Config, transportCache *registry.TransportCache,
+	bundleMetrics *bundle.Metrics,
+) (attestation.Fetcher, error) {
+	switch cfg.Offline.Mode { //nolint:exhaustive // OfflineModeDisabled falls through to default
+	case config.OfflineModeOffline:
+		return createBundleFetcher(cfg, bundleMetrics)
+
+	case config.OfflineModePreferBundle:
+		bundleFetcher, err := createBundleFetcher(cfg, bundleMetrics)
+		if err != nil {
+			return nil, fmt.Errorf("creating bundle fetcher for prefer-bundle mode: %w", err)
+		}
+
+		ociFetcher, err := createAndWarmFetcher(ctx, cfg, transportCache)
+		if err != nil {
+			return nil, fmt.Errorf("creating OCI fetcher for prefer-bundle mode: %w", err)
+		}
+
+		return bundle.NewFallbackFetcher(bundleFetcher, ociFetcher), nil
+
+	default:
+		return createAndWarmFetcher(ctx, cfg, transportCache)
+	}
+}
+
+func createBundleFetcher(
+	cfg *config.Config, bundleMetrics *bundle.Metrics,
+) (*bundle.Fetcher, error) {
+	store, err := bundle.OpenStore(cfg.Offline.AttestationStore)
+	if err != nil {
+		return nil, fmt.Errorf("opening bundle store: %w", err)
+	}
+
+	trustedRoot, err := store.TrustedRoot()
+	if err != nil {
+		slog.Warn("Bundle has no embedded trusted root, "+
+			"attestation verification will require key-based policy",
+			"error", err)
+	}
+
+	var verifyFunc attestation.BundleVerifyFunc
+	if trustedRoot != nil {
+		verifyFunc = func(ctx context.Context, bundleBytes []byte, opts *attestation.FetchOptions) ([]byte, error) {
+			return attestation.VerifyBundle(ctx, bundleBytes, opts, trustedRoot)
+		}
+	} else {
+		// Without a trusted root, attestations are extracted but not
+		// cryptographically verified at the bundle layer. Security
+		// still relies on the bundle manifest signature (when
+		// configured) and any key-based policy checks in the verifier.
+		verifyFunc = func(_ context.Context, bundleBytes []byte, _ *attestation.FetchOptions) ([]byte, error) {
+			return attestation.ExtractBundlePayload(bundleBytes)
+		}
+	}
+
+	opts := []bundle.FetcherOption{
+		bundle.WithMaxAge(cfg.Offline.BundleMaxAge.Duration),
+		bundle.WithExpiryPolicy(bundle.ExpiryPolicy(cfg.Offline.BundleExpiryPolicy)),
+		bundle.WithRequireBundleSignature(cfg.Offline.RequireBundleSignature),
+	}
+
+	if cfg.Offline.BundleSignatureKey != "" {
+		opts = append(opts, bundle.WithBundleSignatureKey(cfg.Offline.BundleSignatureKey))
+	}
+
+	if bundleMetrics != nil {
+		opts = append(opts, bundle.WithMetrics(bundleMetrics))
+	}
+
+	return bundle.NewFetcher(store, verifyFunc, opts...), nil
+}
+
+func setBundleMetricsOnFetcher(fetcher attestation.Fetcher, met *metrics.Metrics) {
+	target := fetcher
+
+	if fb, ok := fetcher.(*bundle.FallbackFetcher); ok {
+		target = fb.Primary()
+	}
+
+	if bf, ok := target.(*bundle.Fetcher); ok {
+		bf.SetMetrics(&bundle.Metrics{
+			OnStaleness:    func(pol string) { met.BundleStalenessTotal.WithLabelValues(pol).Inc() },
+			OnVerification: func(res string) { met.BundleVerificationsTotal.WithLabelValues(res).Inc() },
+			SetAge:         met.BundleAgeSeconds.Set,
+			SetImageCount:  met.BundleImageCount.Set,
+		})
+	}
+}
+
 func transportCacheFromFetcher(fetcher attestation.Fetcher) *registry.TransportCache {
-	if ociFetcher, ok := fetcher.(*attestation.OCIFetcher); ok && ociFetcher != nil {
+	ociFetcher := ociFetcherFromFetcher(fetcher)
+	if ociFetcher != nil {
 		return ociFetcher.TransportCache()
 	}
 

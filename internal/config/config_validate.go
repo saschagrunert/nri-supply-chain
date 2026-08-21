@@ -33,58 +33,20 @@ import (
 
 // Validate checks the Config for invalid values.
 func (c *Config) Validate() error {
-	var errs []error
-
-	err := c.validateConfigVersion()
-	if err != nil {
-		errs = append(errs, err)
-	}
-
-	errs = append(errs, c.validateModeAndLogLevel()...)
-
-	err = c.validateMetricsAddr()
-	if err != nil {
-		errs = append(errs, err)
-	}
-
-	err = c.validateFetchAndCache()
-	if err != nil {
-		errs = append(errs, err)
-	}
-
-	err = c.validateResilienceFields()
-	if err != nil {
-		errs = append(errs, err)
-	}
-
-	err = c.validateSigstoreConfig()
-	if err != nil {
-		errs = append(errs, err)
-	}
-
-	err = c.validateRegistries()
-	if err != nil {
-		errs = append(errs, err)
-	}
-
-	err = c.validatePolicyConfig()
-	if err != nil {
-		errs = append(errs, err)
-	}
-
-	errs = append(errs, c.validateAllowlistDigests()...)
-
-	err = c.validateAuditLog()
-	if err != nil {
-		errs = append(errs, err)
-	}
-
-	err = c.validateGUACConfig()
-	if err != nil {
-		errs = append(errs, err)
-	}
-
-	return errors.Join(errs...)
+	return errors.Join(
+		c.validateConfigVersion(),
+		errors.Join(c.validateModeAndLogLevel()...),
+		c.validateMetricsAddr(),
+		c.validateFetchAndCache(),
+		c.validateResilienceFields(),
+		c.validateSigstoreConfig(),
+		c.validateRegistries(),
+		c.validatePolicyConfig(),
+		errors.Join(c.validateAllowlistDigests()...),
+		c.validateAuditLog(),
+		c.validateGUACConfig(),
+		c.validateOfflineConfig(),
+	)
 }
 
 // ValidateRuntime performs runtime checks that require filesystem access.
@@ -102,6 +64,7 @@ func (c *Config) ValidateRuntime() error {
 	errs = append(errs, c.validatePolicyKeysRuntime()...)
 	errs = append(errs, c.validateRegistryCACertsRuntime()...)
 	errs = append(errs, c.validateGUACConfigRuntime()...)
+	errs = append(errs, c.validateOfflineConfigRuntime()...)
 
 	return errors.Join(errs...)
 }
@@ -1000,4 +963,113 @@ func validateGUACAuthTokenRuntime(tokenPath string) []error {
 	}
 
 	return nil
+}
+
+func (c *Config) validateOfflineConfig() error {
+	switch c.Offline.Mode {
+	case OfflineModeDisabled:
+		return nil
+	case OfflineModePreferBundle, OfflineModeOffline:
+	default:
+		return fmt.Errorf("%w: got %q", ErrInvalidOfflineMode, c.Offline.Mode)
+	}
+
+	var errs []error
+
+	if c.Offline.AttestationStore == "" || !filepath.IsAbs(c.Offline.AttestationStore) {
+		errs = append(errs, ErrOfflineStoreNotAbsolute)
+	}
+
+	if c.Offline.BundleMaxAge.Duration <= 0 {
+		errs = append(errs, ErrBundleMaxAgeNotPositive)
+	}
+
+	errs = append(errs, c.validateOfflineBundlePolicy()...)
+
+	return errors.Join(errs...)
+}
+
+func (c *Config) validateOfflineBundlePolicy() []error {
+	var errs []error
+
+	switch c.Offline.BundleExpiryPolicy {
+	case BundleExpiryAllow, BundleExpiryWarn, BundleExpiryDeny:
+	default:
+		errs = append(errs, fmt.Errorf(
+			"%w: got %q", ErrInvalidBundleExpiryPolicy, c.Offline.BundleExpiryPolicy,
+		))
+	}
+
+	if c.Offline.RequireBundleSignature {
+		if c.Offline.BundleSignatureKey == "" {
+			errs = append(errs, ErrBundleSignatureKeyRequired)
+		} else if !filepath.IsAbs(c.Offline.BundleSignatureKey) {
+			errs = append(errs, ErrBundleSignatureKeyNotAbsolute)
+		}
+	}
+
+	return errs
+}
+
+func (c *Config) validateOfflineConfigRuntime() []error {
+	if c.Offline.Mode == OfflineModeDisabled {
+		return nil
+	}
+
+	var errs []error
+
+	info, err := os.Lstat(c.Offline.AttestationStore)
+
+	switch {
+	case err != nil:
+		errs = append(errs, fmt.Errorf(
+			"%w: %w", ErrOfflineStoreNotDirectory, err,
+		))
+	case info.Mode()&os.ModeSymlink != 0:
+		errs = append(errs, fmt.Errorf(
+			"%w: offline.attestation_store %q",
+			ErrSymlinkNotAllowed, c.Offline.AttestationStore,
+		))
+	case !info.IsDir():
+		errs = append(errs, fmt.Errorf(
+			"%w: %q is not a directory", ErrOfflineStoreNotDirectory, c.Offline.AttestationStore,
+		))
+	}
+
+	errs = append(errs, c.validateSignatureKeyFileRuntime()...)
+
+	return errs
+}
+
+func (c *Config) validateSignatureKeyFileRuntime() []error {
+	if !c.Offline.RequireBundleSignature || c.Offline.BundleSignatureKey == "" {
+		return nil
+	}
+
+	keyInfo, statErr := os.Lstat(c.Offline.BundleSignatureKey)
+
+	switch {
+	case statErr != nil:
+		return []error{fmt.Errorf(
+			"%w: %w", ErrBundleSignatureKeyNotFound, statErr,
+		)}
+	case keyInfo.Mode()&os.ModeSymlink != 0:
+		return []error{fmt.Errorf(
+			"%w: offline.bundle_signature_key %q",
+			ErrSymlinkNotAllowed, c.Offline.BundleSignatureKey,
+		)}
+	case !keyInfo.Mode().IsRegular():
+		return []error{fmt.Errorf(
+			"%w: %q is not a regular file",
+			ErrBundleSignatureKeyNotFound, c.Offline.BundleSignatureKey,
+		)}
+	default:
+		permErr := fileutil.CheckCredentialPermissions(c.Offline.BundleSignatureKey)
+		if permErr != nil {
+			slog.Warn("Bundle signature key file has overly permissive mode bits",
+				"path", c.Offline.BundleSignatureKey, "error", permErr)
+		}
+
+		return nil
+	}
 }

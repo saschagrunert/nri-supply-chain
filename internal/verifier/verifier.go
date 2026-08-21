@@ -85,14 +85,16 @@ type Verifier struct {
 	poller       *policy.Poller
 }
 
-// NewFetcher creates a new OCI fetcher configured from cfg and pre-warms the
-// Sigstore trusted root. The context bounds the warm-up; pass the application
-// context so startup can be cancelled. Tests that need the "no fetcher"
-// code path should pass nil to New directly.
-func NewFetcher(
+// NewFetcher creates an attestation fetcher configured from cfg. When offline
+// mode is enabled, a BundleFetcher or FallbackFetcher is returned; otherwise
+// an OCIFetcher is created and the Sigstore trusted root is pre-warmed. The
+// context bounds the warm-up; pass the application context so startup can be
+// cancelled. Tests that need the "no fetcher" code path should pass nil to New
+// directly.
+func NewFetcher( //nolint:ireturn // returns BundleFetcher, FallbackFetcher, or OCIFetcher
 	ctx context.Context, cfg *config.Config, transportCache *registry.TransportCache,
-) (*attestation.OCIFetcher, error) {
-	return createAndWarmFetcher(ctx, cfg, transportCache)
+) (attestation.Fetcher, error) {
+	return createFetcherForMode(ctx, cfg, transportCache, nil)
 }
 
 // New creates a new Verifier with the given configuration, metrics, and attestation fetcher.
@@ -104,12 +106,9 @@ func New(
 ) (*Verifier, error) {
 	cfgCopy := *cfg
 
-	if ociFetcher, ok := fetcher.(*attestation.OCIFetcher); ok && ociFetcher != nil {
-		ociFetcher.SetFallbackCallback(met.TrustedRootFallbackTotal.Inc)
-		ociFetcher.SetMirrorFallbackCallback(func(registryHost string) {
-			met.MirrorFallbackTotal.WithLabelValues(registryHost, "attestation").Inc()
-		})
-	}
+	configureOCICallbacks(fetcher, met)
+
+	setBundleMetricsOnFetcher(fetcher, met)
 
 	policies, hashes, policyFetcher, ociDigest, err := loadAndHashPolicies(ctx, &cfgCopy, fetcher)
 	if err != nil {
@@ -375,11 +374,8 @@ func policyNamespaces(policies map[string]*policy.Policy) []string {
 // if verification is disabled or the fetcher has no cache.
 func (v *Verifier) TransportCache() *registry.TransportCache {
 	state := v.state.Load()
-	if ociFetcher, ok := state.fetcher.(*attestation.OCIFetcher); ok {
-		return ociFetcher.TransportCache()
-	}
 
-	return nil
+	return transportCacheFromFetcher(state.fetcher)
 }
 
 // Verify performs supply chain verification for the given image. When the image

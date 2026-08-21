@@ -168,7 +168,10 @@ func TestSetupFileWatch(t *testing.T) {
 
 	ctx := t.Context()
 
-	cleanup, _ := setupFileWatch(ctx, configPath, policyDir, verif, met, nil)
+	cleanup, _ := setupFileWatch(
+		ctx, configPath, policyDir, "",
+		config.OfflineModeDisabled, verif, met, nil,
+	)
 	defer cleanup()
 
 	writeTestConfig(t, configPath, policyDir, "enforce")
@@ -196,7 +199,9 @@ func TestSetupFileWatchNoConfig(t *testing.T) {
 		t.Fatalf("creating verifier: %v", err)
 	}
 
-	cleanup, _ := setupFileWatch(t.Context(), "", "", verif, met, nil)
+	cleanup, _ := setupFileWatch(
+		t.Context(), "", "", "", config.OfflineModeDisabled, verif, met, nil,
+	)
 	defer cleanup()
 
 	if verif.Enforcing() {
@@ -297,7 +302,10 @@ func TestSetupFileWatchNonexistentConfigPath(t *testing.T) {
 		t.Fatalf("creating verifier: %v", err)
 	}
 
-	cleanup, _ := setupFileWatch(t.Context(), "/nonexistent/config.toml", "", verif, met, nil)
+	cleanup, _ := setupFileWatch(
+		t.Context(), "/nonexistent/config.toml", "", "",
+		config.OfflineModeDisabled, verif, met, nil,
+	)
 	cleanup()
 }
 
@@ -320,7 +328,10 @@ func TestSetupFileWatchPolicyDirWatchFailure(t *testing.T) {
 		t.Fatalf("creating verifier: %v", err)
 	}
 
-	cleanup, _ := setupFileWatch(t.Context(), configPath, "/nonexistent/policies", verif, met, nil)
+	cleanup, _ := setupFileWatch(
+		t.Context(), configPath, "/nonexistent/policies",
+		"", config.OfflineModeDisabled, verif, met, nil,
+	)
 	cleanup()
 }
 
@@ -956,13 +967,13 @@ func TestUpdatePluginRegistries(t *testing.T) {
 	})
 }
 
-func TestUpdatePolicyDirWatchNilWatcher(t *testing.T) {
+func TestUpdateWatchedPathsNilWatcher(t *testing.T) {
 	t.Parallel()
 
-	updatePolicyDirWatch(nil, "/some/config.toml", "/some/policies")
+	updateWatchedPaths(nil, "/some/config.toml", "/some/policies", "", config.OfflineModeDisabled)
 }
 
-func TestUpdatePolicyDirWatchSwapsDirectory(t *testing.T) {
+func TestUpdateWatchedPathsSwapsDirectory(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -1002,7 +1013,7 @@ func TestUpdatePolicyDirWatchSwapsDirectory(t *testing.T) {
 		t.Fatalf("adding old policy dir watch: %v", err)
 	}
 
-	updatePolicyDirWatch(watcher, configPath, newPolicyDir)
+	updateWatchedPaths(watcher, configPath, newPolicyDir, "", config.OfflineModeDisabled)
 
 	watchList := watcher.WatchList()
 	absNew, _ := filepath.Abs(newPolicyDir)
@@ -1020,7 +1031,7 @@ func TestUpdatePolicyDirWatchSwapsDirectory(t *testing.T) {
 	}
 }
 
-func TestUpdatePolicyDirWatchEmptyNewDir(t *testing.T) {
+func TestUpdateWatchedPathsEmptyNewDir(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -1054,10 +1065,95 @@ func TestUpdatePolicyDirWatchEmptyNewDir(t *testing.T) {
 		t.Fatalf("adding old policy dir watch: %v", err)
 	}
 
-	updatePolicyDirWatch(watcher, configPath, "")
+	updateWatchedPaths(watcher, configPath, "", "", config.OfflineModeDisabled)
 
 	if slices.Contains(watcher.WatchList(), oldPolicyDir) {
 		t.Error("old policy directory should have been removed even with empty new policy dir")
+	}
+}
+
+func TestUpdateWatchedPathsPreservesAttestationStore(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	policyDir := filepath.Join(dir, "policies")
+	storeDir := filepath.Join(dir, "bundles")
+
+	err := os.Mkdir(policyDir, 0o750)
+	if err != nil {
+		t.Fatalf("creating dir: %v", err)
+	}
+
+	err = os.Mkdir(storeDir, 0o750)
+	if err != nil {
+		t.Fatalf("creating dir: %v", err)
+	}
+
+	err = os.WriteFile(configPath, []byte("verification = \"disabled\"\n"), 0o600)
+	if err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatalf("creating watcher: %v", err)
+	}
+
+	defer func() { _ = watcher.Close() }()
+
+	for _, p := range []string{configPath, policyDir, storeDir} {
+		addErr := watcher.Add(p)
+		if addErr != nil {
+			t.Fatalf("adding watch for %s: %v", p, addErr)
+		}
+	}
+
+	updateWatchedPaths(watcher, configPath, policyDir, storeDir, config.OfflineModeOffline)
+
+	absStore, _ := filepath.Abs(storeDir)
+	if !slices.Contains(watcher.WatchList(), absStore) {
+		t.Errorf("attestation store %s should be preserved in watch list %v",
+			absStore, watcher.WatchList())
+	}
+}
+
+func TestUpdateWatchedPathsRemovesStoreWhenDisabled(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	storeDir := filepath.Join(dir, "bundles")
+
+	err := os.Mkdir(storeDir, 0o750)
+	if err != nil {
+		t.Fatalf("creating dir: %v", err)
+	}
+
+	err = os.WriteFile(configPath, []byte("verification = \"disabled\"\n"), 0o600)
+	if err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatalf("creating watcher: %v", err)
+	}
+
+	defer func() { _ = watcher.Close() }()
+
+	for _, p := range []string{configPath, storeDir} {
+		addErr := watcher.Add(p)
+		if addErr != nil {
+			t.Fatalf("adding watch for %s: %v", p, addErr)
+		}
+	}
+
+	updateWatchedPaths(watcher, configPath, "", storeDir, config.OfflineModeDisabled)
+
+	absStore, _ := filepath.Abs(storeDir)
+	if slices.Contains(watcher.WatchList(), absStore) {
+		t.Error("attestation store should be removed when offline mode is disabled")
 	}
 }
 

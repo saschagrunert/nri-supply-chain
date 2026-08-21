@@ -95,7 +95,15 @@ type Metrics struct {
 	CELEvaluationDuration prometheus.Histogram
 	// GUACQueryDuration measures GUAC query latency by check type.
 	GUACQueryDuration *prometheus.HistogramVec
-	registry          *prometheus.Registry
+	// BundleStalenessTotal counts bundle staleness events by policy (allow, warn, deny).
+	BundleStalenessTotal *prometheus.CounterVec
+	// BundleVerificationsTotal counts bundle verification attempts by result (success, failure).
+	BundleVerificationsTotal *prometheus.CounterVec
+	// BundleAgeSeconds reports the current age of the active bundle in seconds.
+	BundleAgeSeconds prometheus.Gauge
+	// BundleImageCount reports the number of images in the active bundle.
+	BundleImageCount prometheus.Gauge
+	registry         *prometheus.Registry
 }
 
 // New creates and registers all supply chain verification metrics.
@@ -191,6 +199,24 @@ func New() *Metrics {
 				Buckets:   prometheus.DefBuckets,
 			},
 			[]string{labelType},
+		),
+		BundleStalenessTotal: newCounterVec(
+			"bundle_staleness_total",
+			"Total number of bundle staleness events.",
+			"policy",
+		),
+		BundleVerificationsTotal: newCounterVec(
+			"bundle_verifications_total",
+			"Total number of bundle verification attempts.",
+			labelResult,
+		),
+		BundleAgeSeconds: newGauge(
+			"bundle_age_seconds",
+			"Current age of the active attestation bundle in seconds.",
+		),
+		BundleImageCount: newGauge(
+			"bundle_image_count",
+			"Number of images in the active attestation bundle.",
 		),
 		registry: prometheus.NewRegistry(),
 	}
@@ -364,6 +390,10 @@ func (m *Metrics) register() {
 		m.PolicyReloadsTotal,
 		m.CELEvaluationDuration,
 		m.GUACQueryDuration,
+		m.BundleStalenessTotal,
+		m.BundleVerificationsTotal,
+		m.BundleAgeSeconds,
+		m.BundleImageCount,
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{
 			PidFn:        nil,
 			Namespace:    "",

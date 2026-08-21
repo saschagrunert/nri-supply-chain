@@ -347,6 +347,10 @@ type Config struct {
 	// as a supplemental verification data source for transitive dependency
 	// analysis, vulnerability correlation, and Scorecard queries.
 	Guac GUACConfig `toml:"guac"`
+	// Offline configures offline attestation bundle support for air-gapped
+	// environments. When enabled, attestations are read from local on-disk
+	// bundles instead of (or in addition to) OCI registries.
+	Offline OfflineConfig `toml:"offline"`
 }
 
 // GUACConfig configures the GUAC supplemental data source.
@@ -385,6 +389,57 @@ var GUACValidChecks = []string{ //nolint:gochecknoglobals // immutable registry
 	guacCheckCertifyScorecard,
 	guacCheckIsDependency,
 }
+
+// OfflineMode controls the attestation source selection.
+type OfflineMode string
+
+const (
+	// OfflineModeDisabled uses only OCI registries for attestations (default).
+	OfflineModeDisabled OfflineMode = "disabled"
+	// OfflineModePreferBundle tries local bundles first, falls back to registries.
+	OfflineModePreferBundle OfflineMode = "prefer-bundle"
+	// OfflineModeOffline uses only local bundles, fails if not found.
+	OfflineModeOffline OfflineMode = "offline"
+)
+
+// BundleExpiryPolicy controls how expired bundles are handled.
+type BundleExpiryPolicy string
+
+const (
+	// BundleExpiryAllow accepts expired bundles silently.
+	BundleExpiryAllow BundleExpiryPolicy = "allow"
+	// BundleExpiryWarn accepts expired bundles but logs a warning (default).
+	BundleExpiryWarn BundleExpiryPolicy = "warn"
+	// BundleExpiryDeny rejects expired bundles.
+	BundleExpiryDeny BundleExpiryPolicy = "deny"
+)
+
+// OfflineConfig configures offline attestation bundle support.
+type OfflineConfig struct {
+	// Mode selects the attestation source: disabled (registry only, default),
+	// prefer-bundle (try local, fall back to registry), or offline (bundle only).
+	Mode OfflineMode `toml:"mode"`
+	// AttestationStore is the directory containing attestation bundles.
+	// Must be an absolute path when mode is not disabled.
+	AttestationStore string `toml:"attestation_store"`
+	// BundleMaxAge is the maximum age of a bundle before staleness applies.
+	// Must be positive when mode is not disabled.
+	BundleMaxAge Duration `toml:"bundle_max_age"`
+	// BundleExpiryPolicy controls behavior when a bundle exceeds max age.
+	// Valid values: "allow", "warn" (default), "deny".
+	BundleExpiryPolicy BundleExpiryPolicy `toml:"bundle_expiry_policy"`
+	// RequireBundleSignature requires that bundles have a valid cryptographic
+	// signature before they are accepted.
+	RequireBundleSignature bool `toml:"require_bundle_signature"`
+	// BundleSignatureKey is the path to a PEM-encoded public key used to
+	// verify bundle signatures. Required when RequireBundleSignature is true.
+	BundleSignatureKey string `toml:"bundle_signature_key"`
+}
+
+const (
+	defaultAttestationStore = "/var/lib/nri-supply-chain/bundles"
+	defaultBundleMaxAge     = 30 * 24 * time.Hour
+)
 
 // DefaultConfig returns the default configuration.
 func DefaultConfig() *Config {
@@ -432,6 +487,14 @@ func DefaultConfig() *Config {
 				guacCheckIsDependency,
 			},
 			MaxDependencies: defaultGUACMaxDeps,
+		},
+		Offline: OfflineConfig{
+			Mode:                   OfflineModeDisabled,
+			AttestationStore:       defaultAttestationStore,
+			BundleMaxAge:           Duration{Duration: defaultBundleMaxAge},
+			BundleExpiryPolicy:     BundleExpiryWarn,
+			RequireBundleSignature: false,
+			BundleSignatureKey:     "",
 		},
 	}
 }
@@ -510,6 +573,16 @@ func SigstoreConfigChanged(prev, next *SigstoreConfig) bool {
 	}
 
 	return prev.ShouldIncludePublicRoot() != next.ShouldIncludePublicRoot()
+}
+
+// OfflineConfigChanged reports whether two OfflineConfig values differ.
+func OfflineConfigChanged(prev, next *OfflineConfig) bool {
+	return prev.Mode != next.Mode ||
+		prev.AttestationStore != next.AttestationStore ||
+		prev.BundleMaxAge.Duration != next.BundleMaxAge.Duration ||
+		prev.BundleExpiryPolicy != next.BundleExpiryPolicy ||
+		prev.RequireBundleSignature != next.RequireBundleSignature ||
+		prev.BundleSignatureKey != next.BundleSignatureKey
 }
 
 // LoadFromFile reads and parses a TOML config file. The file size is limited

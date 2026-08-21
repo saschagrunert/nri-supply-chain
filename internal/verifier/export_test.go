@@ -22,10 +22,12 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
+	"github.com/saschagrunert/nri-supply-chain/internal/bundle"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/guac"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
+	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
@@ -195,6 +197,42 @@ func ExportNewSnapshot(cfg *config.Config, logger *slog.Logger, file *os.File) *
 // ExportCreateFetcher exposes createFetcher for external tests.
 func ExportCreateFetcher(cfg *config.Config) (*attestation.OCIFetcher, error) {
 	return createFetcher(cfg)
+}
+
+// ExportBundleFetcherFromFetcher exposes bundleFetcherFromFetcher for external tests.
+func ExportBundleFetcherFromFetcher(fetcher attestation.Fetcher) *bundle.Fetcher {
+	return bundleFetcherFromFetcher(fetcher)
+}
+
+// ExportBundleStoreChangedOnDisk exposes bundleStoreChangedOnDisk for external tests.
+func ExportBundleStoreChangedOnDisk(fetcher attestation.Fetcher, cfg *config.Config) bool {
+	return bundleStoreChangedOnDisk(fetcher, cfg)
+}
+
+// ExportSetBundleMetricsOnFetcher exposes setBundleMetricsOnFetcher for external tests.
+func ExportSetBundleMetricsOnFetcher(fetcher attestation.Fetcher, met *metrics.Metrics) {
+	setBundleMetricsOnFetcher(fetcher, met)
+}
+
+// ExportOCIFetcherFromFetcher exposes ociFetcherFromFetcher for external tests.
+func ExportOCIFetcherFromFetcher(fetcher attestation.Fetcher) *attestation.OCIFetcher {
+	return ociFetcherFromFetcher(fetcher)
+}
+
+// ExportCreateFetcherForMode exposes createFetcherForMode for external tests.
+func ExportCreateFetcherForMode(
+	ctx context.Context, cfg *config.Config,
+	transportCache *registry.TransportCache,
+	bundleMetrics *bundle.Metrics,
+) (attestation.Fetcher, error) {
+	return createFetcherForMode(ctx, cfg, transportCache, bundleMetrics)
+}
+
+// ExportCreateBundleFetcher exposes createBundleFetcher for external tests.
+func ExportCreateBundleFetcher(
+	cfg *config.Config, bundleMetrics *bundle.Metrics,
+) (*bundle.Fetcher, error) {
+	return createBundleFetcher(cfg, bundleMetrics)
 }
 
 // ExportNewGUACSnapshot creates a snapshot with GUAC-related fields for testing.

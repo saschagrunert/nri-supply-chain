@@ -76,6 +76,15 @@ func resolveWithKeychain(
 	return resolveDigest(ctx, imageRef, AuthOption())
 }
 
+// ResolveImageDigest resolves an image reference to its digest using the
+// provided remote options (typically authentication). For manifest lists,
+// the platform-specific image digest is returned.
+func ResolveImageDigest(
+	ctx context.Context, imageRef string, opts ...remote.Option,
+) (digest, indexDigest string, err error) {
+	return resolveDigest(ctx, imageRef, opts...)
+}
+
 func resolveIndexDigest(desc *remote.Descriptor) (string, error) {
 	idx, err := desc.ImageIndex()
 	if err != nil {

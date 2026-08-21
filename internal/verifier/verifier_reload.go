@@ -25,10 +25,12 @@ import (
 	"time"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
+	"github.com/saschagrunert/nri-supply-chain/internal/bundle"
 	"github.com/saschagrunert/nri-supply-chain/internal/cache"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/glob"
 	"github.com/saschagrunert/nri-supply-chain/internal/guac"
+	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 	"github.com/saschagrunert/nri-supply-chain/internal/slsa"
@@ -107,7 +109,7 @@ func (v *Verifier) applyReload(
 	cfgCopy *config.Config,
 	policies map[string]*policy.Policy,
 	newHashes map[string]string,
-	newFetcher *attestation.OCIFetcher,
+	newFetcher attestation.Fetcher,
 ) {
 	policiesChanged := !policyHashesEqual(v.policyHashes, newHashes)
 	cacheInvalidated := cacheAffectingFieldsChanged(current.config, cfgCopy) || policiesChanged
@@ -231,36 +233,111 @@ func (v *Verifier) reloadCircuitBreakers(
 // prepareFetcher creates a new fetcher outside the lock when one is needed
 // (first enable or TUF config change). Returns (nil, nil) when the existing
 // fetcher can be reused.
-func (v *Verifier) prepareFetcher(
-	ctx context.Context, cfg *config.Config,
-) (*attestation.OCIFetcher, error) {
+func (v *Verifier) prepareFetcher( //nolint:ireturn // may return OCIFetcher, Fetcher, or FallbackFetcher
+	ctx context.Context,
+	cfg *config.Config,
+) (attestation.Fetcher, error) {
 	if !cfg.Enabled() {
 		return nil, nil //nolint:nilnil // nil fetcher means reuse existing
 	}
 
 	prev := v.state.Load()
 
-	if prev.fetcher != nil &&
-		!config.SigstoreConfigChanged(&prev.config.Sigstore, &cfg.Sigstore) {
-		return nil, nil //nolint:nilnil // no config change, reuse existing
+	sigstoreChanged := config.SigstoreConfigChanged(&prev.config.Sigstore, &cfg.Sigstore)
+	offlineChanged := config.OfflineConfigChanged(&prev.config.Offline, &cfg.Offline)
+
+	if prev.fetcher != nil && !sigstoreChanged && !offlineChanged {
+		if !bundleStoreChangedOnDisk(prev.fetcher, cfg) {
+			return nil, nil //nolint:nilnil // no config change, reuse existing
+		}
+
+		slog.Info("Bundle store changed on disk, recreating fetcher")
 	}
 
-	// nil cache: the fetcher will build its own from cfg.Registries if needed.
-	return createAndWarmFetcher(ctx, cfg, nil)
+	return createFetcherForMode(ctx, cfg, nil, nil)
 }
 
-func closeOldTransportCache(prev *snapshot, newFetcher *attestation.OCIFetcher) {
+func closeOldTransportCache(prev *snapshot, newFetcher attestation.Fetcher) {
 	if newFetcher == nil {
 		return
 	}
 
-	old, ok := prev.fetcher.(*attestation.OCIFetcher)
-	if !ok {
+	if tc := transportCacheFromFetcher(prev.fetcher); tc != nil {
+		tc.CloseIdleConnections()
+	}
+}
+
+func ociFetcherFromFetcher(fetcher attestation.Fetcher) *attestation.OCIFetcher {
+	if ociFetcher, ok := fetcher.(*attestation.OCIFetcher); ok {
+		return ociFetcher
+	}
+
+	if fb, ok := fetcher.(*bundle.FallbackFetcher); ok {
+		return fb.OCIFetcher()
+	}
+
+	return nil
+}
+
+func configureOCICallbacks(fetcher attestation.Fetcher, met *metrics.Metrics) {
+	ociFetcher := ociFetcherFromFetcher(fetcher)
+	if ociFetcher == nil {
 		return
 	}
 
-	if tc := old.TransportCache(); tc != nil {
-		tc.CloseIdleConnections()
+	ociFetcher.SetFallbackCallback(met.TrustedRootFallbackTotal.Inc)
+	ociFetcher.SetMirrorFallbackCallback(func(registryHost string) {
+		met.MirrorFallbackTotal.WithLabelValues(registryHost, "attestation").Inc()
+	})
+}
+
+func bundleStoreChangedOnDisk(fetcher attestation.Fetcher, cfg *config.Config) bool {
+	if cfg.Offline.Mode == config.OfflineModeDisabled {
+		return false
+	}
+
+	bundleFetcher := bundleFetcherFromFetcher(fetcher)
+	if bundleFetcher == nil {
+		return false
+	}
+
+	store, err := bundle.OpenStore(cfg.Offline.AttestationStore)
+	if err != nil {
+		return false
+	}
+
+	return !bundleFetcher.StoreCreatedAt().Equal(store.Manifest().CreatedAt)
+}
+
+func bundleFetcherFromFetcher(fetcher attestation.Fetcher) *bundle.Fetcher {
+	if bf, ok := fetcher.(*bundle.Fetcher); ok {
+		return bf
+	}
+
+	if fb, ok := fetcher.(*bundle.FallbackFetcher); ok {
+		if bf, ok := fb.Primary().(*bundle.Fetcher); ok {
+			return bf
+		}
+	}
+
+	return nil
+}
+
+func applyOCISettings(
+	fetcher attestation.Fetcher, prevCfg, cfg *config.Config,
+) {
+	ociFetcher := ociFetcherFromFetcher(fetcher)
+	if ociFetcher == nil {
+		return
+	}
+
+	ociFetcher.SetRateLimit(cfg.FetchRateLimit)
+	ociFetcher.SetMaxAttestationSize(cfg.MaxAttestationSize)
+
+	if config.RegistriesChanged(prevCfg.Registries, cfg.Registries) {
+		ociFetcher.SetTransportCache(
+			registry.NewTransportCacheOrNil(cfg.Registries),
+		)
 	}
 }
 
@@ -270,29 +347,20 @@ func closeOldTransportCache(prev *snapshot, newFetcher *attestation.OCIFetcher) 
 func (v *Verifier) reloadFetcher( //nolint:ireturn // returns prev.fetcher which is the Fetcher interface
 	prev *snapshot,
 	cfg *config.Config,
-	newFetcher *attestation.OCIFetcher,
+	newFetcher attestation.Fetcher,
 ) attestation.Fetcher {
 	if !cfg.Enabled() {
 		return prev.fetcher
 	}
 
 	if newFetcher != nil {
-		newFetcher.SetFallbackCallback(prev.metrics.TrustedRootFallbackTotal.Inc)
-		newFetcher.SetMirrorFallbackCallback(func(registryHost string) {
-			prev.metrics.MirrorFallbackTotal.WithLabelValues(registryHost, "attestation").Inc()
-		})
+		configureOCICallbacks(newFetcher, prev.metrics)
+		setBundleMetricsOnFetcher(newFetcher, prev.metrics)
 
 		return newFetcher
 	}
 
-	if ociFetcher, ok := prev.fetcher.(*attestation.OCIFetcher); ok {
-		ociFetcher.SetRateLimit(cfg.FetchRateLimit)
-		ociFetcher.SetMaxAttestationSize(cfg.MaxAttestationSize)
-
-		if config.RegistriesChanged(prev.config.Registries, cfg.Registries) {
-			ociFetcher.SetTransportCache(registry.NewTransportCacheOrNil(cfg.Registries))
-		}
-	}
+	applyOCISettings(prev.fetcher, prev.config, cfg)
 
 	return prev.fetcher
 }
@@ -306,7 +374,8 @@ func cacheAffectingFieldsChanged(prev, next *config.Config) bool {
 		config.RegistriesChanged(prev.Registries, next.Registries) ||
 		policySourceChanged(prev, next) ||
 		prev.CacheMaxEntries != next.CacheMaxEntries ||
-		guacConfigChanged(prev, next)
+		guacConfigChanged(prev, next) ||
+		config.OfflineConfigChanged(&prev.Offline, &next.Offline)
 }
 
 func guacConfigChanged(prev, next *config.Config) bool {
