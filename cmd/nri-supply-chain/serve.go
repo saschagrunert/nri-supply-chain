@@ -157,10 +157,16 @@ func startPlugin(
 		transportCache,
 	)
 
+	if cfg.Remediation.Enabled() {
+		plug.SetRemediationMode(cfg.Remediation.Mode)
+		plug.SetRemediationConfig(&cfg.Remediation)
+		warnEvictDeferred(cfg.Remediation.Mode)
+	}
+
 	cleanupSignals := setupSignals(ctx, cancel, configPath, verif, met, cfg, plug)
 	defer cleanupSignals()
 
-	err = runPlugin(ctx, plug, met, cfg.MetricsAddr, pluginName, pluginIdx, cancel)
+	err = runPlugin(ctx, plug, met, cfg, pluginName, pluginIdx, cancel)
 	if err != nil {
 		slog.Error("Plugin exited with error", "error", err)
 
@@ -197,7 +203,7 @@ func createVerifier(
 
 func runPlugin(
 	ctx context.Context, plug *plugin.Plugin, met *metrics.Metrics,
-	metricsAddr, pluginName, pluginIdx string, cancel context.CancelFunc,
+	cfg *config.Config, pluginName, pluginIdx string, cancel context.CancelFunc,
 ) error {
 	nriStub, err := stub.New(plug,
 		stub.WithPluginName(pluginName),
@@ -212,6 +218,8 @@ func runPlugin(
 		return fmt.Errorf("creating NRI stub: %w", err)
 	}
 
+	plug.SetStub(nriStub)
+
 	group, gctx := errgroup.WithContext(ctx)
 
 	group.Go(func() error {
@@ -223,8 +231,16 @@ func runPlugin(
 	})
 
 	group.Go(func() error {
-		return serveMetrics(gctx, met, metricsAddr, plug)
+		return serveMetrics(gctx, met, cfg.MetricsAddr, plug)
 	})
+
+	if cfg.Remediation.Enabled() {
+		group.Go(func() error {
+			plug.RunContinuousVerifier(gctx, cfg.Remediation.Interval.Duration)
+
+			return nil
+		})
+	}
 
 	err = group.Wait()
 	if err != nil {
@@ -273,4 +289,12 @@ func registerHealthProbes(mux *http.ServeMux, plug *plugin.Plugin) {
 		writer.Header().Set("Content-Type", "application/json")
 		_, _ = writer.Write(data)
 	})
+}
+
+func warnEvictDeferred(mode config.RemediationMode) {
+	if mode == config.RemediationModeEvict {
+		slog.Warn("remediation.mode=evict is configured but eviction is deferred: " +
+			"the upstream NRI stub does not yet expose EvictContainers(); " +
+			"the state machine will stop at Throttled until the API is available")
+	}
 }

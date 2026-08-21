@@ -370,6 +370,13 @@ func policyNamespaces(policies map[string]*policy.Policy) []string {
 	return namespaces
 }
 
+// InvalidateCache removes a single entry from the verification result cache,
+// forcing the next Verify call for this digest+namespace to re-fetch and
+// re-evaluate attestations.
+func (v *Verifier) InvalidateCache(digest, namespace string) {
+	v.snap().cache.Delete(digest, namespace)
+}
+
 // TransportCache returns the transport cache from the current fetcher, or nil
 // if verification is disabled or the fetcher has no cache.
 func (v *Verifier) TransportCache() *registry.TransportCache {

@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -50,7 +51,14 @@ type ImageVerifier interface {
 	Enforcing() bool
 	EffectiveModeForNamespace(namespace string) config.VerificationMode
 	Reload(ctx context.Context, cfg *config.Config) error
+	InvalidateCache(digest, namespace string)
 	Status() types.StatusResponse
+}
+
+// StubUpdater abstracts the NRI stub's UpdateContainers method so tests
+// can substitute a mock without depending on the real NRI connection.
+type StubUpdater interface {
+	UpdateContainers(updates []*api.ContainerUpdate) ([]*api.ContainerUpdate, error)
 }
 
 // DigestResolveFunc resolves an image reference to its platform-specific digest
@@ -99,57 +107,10 @@ const (
 	AnnotationChecks = "supply-chain.nri/checks"
 )
 
-// containerTimeMap is a typed concurrent map from container ID to creation time,
-// replacing sync.Map to eliminate runtime type assertions.
-type containerTimeMap struct {
-	mu sync.RWMutex
-	m  map[string]time.Time
-}
-
-func newContainerTimeMap() *containerTimeMap {
-	return &containerTimeMap{
-		mu: sync.RWMutex{},
-		m:  make(map[string]time.Time),
-	}
-}
-
-func (c *containerTimeMap) Store(id string, t time.Time) {
-	c.mu.Lock()
-	c.m[id] = t
-	c.mu.Unlock()
-}
-
-func (c *containerTimeMap) Load(id string) (time.Time, bool) {
-	c.mu.RLock()
-	createdAt, found := c.m[id]
-	c.mu.RUnlock()
-
-	return createdAt, found
-}
-
-func (c *containerTimeMap) LoadAndDelete(id string) (time.Time, bool) {
-	c.mu.Lock()
-
-	createdAt, found := c.m[id]
-	if found {
-		delete(c.m, id)
-	}
-
-	c.mu.Unlock()
-
-	return createdAt, found
-}
-
-func (c *containerTimeMap) cleanStale(activeIDs map[string]struct{}) {
-	c.mu.Lock()
-	for id := range c.m {
-		if _, exists := activeIDs[id]; !exists {
-			delete(c.m, id)
-		}
-	}
-
-	c.mu.Unlock()
-}
+// AnnotationServiceAccountPersist is the annotation key used to persist the
+// pod's service account into container annotations so it survives plugin
+// restart and is available during Synchronize.
+const AnnotationServiceAccountPersist = "supply-chain.nri/service-account"
 
 // Plugin implements the NRI CreateContainer, RemoveContainer, and Configure
 // hooks for supply chain attestation verification.
@@ -162,11 +123,20 @@ type Plugin struct {
 	fetchTimeout         atomic.Int64 // updated via SetFetchTimeout on reload
 	digestResolveTimeout atomic.Int64 // updated via SetDigestResolveTimeout on reload
 	prewarmDone          func()
+	prewarmDoneCh        chan struct{} // closed when prewarmCache first completes
+	prewarmDoneOnce      sync.Once
 	prewarmMu            sync.Mutex
 	prewarmCancel        context.CancelFunc
 	lastPrewarmImages    []prewarmImage // last known running images, for re-warming after reload
 	transportCache       atomic.Pointer[registry.TransportCache]
-	containerTimes       *containerTimeMap
+	containers           *containerRegistry
+	reverifyTrigger      chan struct{} // buffered(1); signals on-demand re-verify
+	feedTrigger          chan []string // buffered(1); carries feed PURLs for filtered re-verify
+	remediationMode      atomic.Value  // stores config.RemediationMode
+	remediationConfig    atomic.Value  // stores config.RemediationConfig
+	stubUpdater          StubUpdater
+	stubMu               sync.RWMutex
+	feedMu               sync.Mutex
 }
 
 // New creates a new Plugin with the given verifier, metrics, and config file path.
@@ -176,14 +146,18 @@ func New(
 	cache *registry.TransportCache,
 ) *Plugin {
 	plug := &Plugin{ //nolint:exhaustruct_v5 // zero-value fields are intentional
-		verifier:       v,
-		metrics:        met,
-		configPath:     configPath,
-		containerTimes: newContainerTimeMap(),
+		verifier:        v,
+		metrics:         met,
+		configPath:      configPath,
+		containers:      newContainerRegistry(),
+		prewarmDoneCh:   make(chan struct{}),
+		reverifyTrigger: make(chan struct{}, 1),
+		feedTrigger:     make(chan []string, 1),
 	}
 
 	plug.fetchTimeout.Store(int64(fetchTimeout))
 	plug.digestResolveTimeout.Store(int64(digestResolveTimeout))
+	plug.remediationMode.Store(config.RemediationModeDisabled)
 
 	if cache != nil {
 		plug.transportCache.Store(cache)
@@ -274,7 +248,7 @@ func (p *Plugin) Synchronize(
 		podNS[pod.GetId()] = pod.GetNamespace()
 	}
 
-	p.cleanStaleContainerTimes(containers)
+	p.cleanStaleContainers(containers)
 
 	images := p.collectPrewarmImages(containers, podNS)
 
@@ -283,6 +257,8 @@ func (p *Plugin) Synchronize(
 	p.prewarmMu.Unlock()
 
 	if len(images) == 0 {
+		p.prewarmDoneOnce.Do(func() { close(p.prewarmDoneCh) })
+
 		return nil, nil
 	}
 
@@ -378,7 +354,23 @@ func (p *Plugin) CreateContainer(
 			ctx, namespace, pod, ctr, imageRef, digest, len(annotations),
 		)
 		if handleErr == nil {
-			p.containerTimes.Store(ctr.GetId(), createdAt)
+			p.containers.Store(
+				ctr.GetId(),
+				&containerState{ //nolint:exhaustruct_v5 // zero-value fields intentional
+					imageRef:       imageRef,
+					digest:         digest,
+					namespace:      namespace,
+					serviceAccount: serviceAccount,
+					createdAt:      createdAt,
+					state:          StateVerified,
+				},
+			)
+
+			if adj == nil {
+				adj = &api.ContainerAdjustment{}
+			}
+
+			adj.AddAnnotation(AnnotationServiceAccountPersist, serviceAccount)
 		}
 
 		return adj, nil, handleErr
@@ -405,9 +397,27 @@ func (p *Plugin) CreateContainer(
 		"allowed", result.Allowed,
 	)
 
-	p.containerTimes.Store(ctr.GetId(), createdAt)
+	state := &containerState{ //nolint:exhaustruct_v5 // zero-value fields intentional
+		imageRef:          imageRef,
+		digest:            digest,
+		indexDigest:       indexDigest,
+		namespace:         namespace,
+		serviceAccount:    serviceAccount,
+		createdAt:         createdAt,
+		state:             StateVerified,
+		lastResult:        result,
+		originalResources: captureLinuxResources(ctr),
+		purls:             extractPURLsFromResult(result),
+	}
+	p.containers.Store(ctr.GetId(), state)
 
 	adj := buildVerificationAdjustment(result, mode)
+
+	if adj == nil {
+		adj = &api.ContainerAdjustment{}
+	}
+
+	adj.AddAnnotation(AnnotationServiceAccountPersist, serviceAccount)
 
 	return adj, nil, nil
 }
@@ -469,12 +479,12 @@ func (p *Plugin) RemoveContainer(
 	containerID := ctr.GetId()
 	namespace := pod.GetNamespace()
 
-	createdAt, loaded := p.containerTimes.LoadAndDelete(containerID)
+	cs, loaded := p.containers.LoadAndDelete(containerID)
 	if !loaded {
 		return nil
 	}
 
-	lifetime := time.Since(createdAt).Seconds()
+	lifetime := time.Since(cs.createdAt).Seconds()
 
 	p.metrics.ContainerLifetime.WithLabelValues(namespace).Observe(lifetime)
 
@@ -488,16 +498,77 @@ func (p *Plugin) RemoveContainer(
 	return nil
 }
 
-// cleanStaleContainerTimes removes entries from the containerTimes map for
+// SetStub stores the NRI stub for use by the continuous verifier's
+// UpdateContainers calls. Called once from serve.go after stub creation.
+func (p *Plugin) SetStub(s StubUpdater) {
+	p.stubMu.Lock()
+	p.stubUpdater = s
+	p.stubMu.Unlock()
+}
+
+// SetRemediationMode updates the current remediation mode. Called during
+// config reload.
+func (p *Plugin) SetRemediationMode(mode config.RemediationMode) {
+	p.remediationMode.Store(mode)
+}
+
+// SetRemediationConfig stores the full remediation config for use by the
+// continuous verifier. Called during startup and config reload.
+func (p *Plugin) SetRemediationConfig(cfg *config.RemediationConfig) {
+	p.remediationConfig.Store(*cfg)
+}
+
+// TriggerReverify sends a non-blocking signal to the continuous verifier
+// to start a re-verification cycle.
+func (p *Plugin) TriggerReverify() {
+	select {
+	case p.reverifyTrigger <- struct{}{}:
+	default:
+	}
+}
+
+// TriggerFeedReverify queues a PURL-filtered re-verification cycle. Only
+// containers whose stored PURLs overlap with the given feed PURLs are
+// re-verified. If a previous trigger is pending, the PURLs are merged.
+// Respects the on_new_cve trigger config; returns immediately when disabled.
+func (p *Plugin) TriggerFeedReverify(purls []string) {
+	if cfg, ok := p.remediationConfig.Load().(config.RemediationConfig); ok {
+		if !cfg.Triggers.OnNewCVE {
+			return
+		}
+	}
+
+	p.feedMu.Lock()
+	defer p.feedMu.Unlock()
+
+	select {
+	case p.feedTrigger <- purls:
+	default:
+		select {
+		case pending := <-p.feedTrigger:
+			purls = append(pending, purls...)
+			slices.Sort(purls)
+			purls = slices.Compact(purls)
+		default:
+		}
+
+		select {
+		case p.feedTrigger <- purls:
+		default:
+		}
+	}
+}
+
+// cleanStaleContainers removes entries from the container registry for
 // containers that are no longer in the active set. This handles containers
 // that were removed while the plugin was disconnected.
-func (p *Plugin) cleanStaleContainerTimes(active []*api.Container) {
+func (p *Plugin) cleanStaleContainers(active []*api.Container) {
 	activeIDs := make(map[string]struct{}, len(active))
 	for _, ctr := range active {
 		activeIDs[ctr.GetId()] = struct{}{}
 	}
 
-	p.containerTimes.cleanStale(activeIDs)
+	p.containers.cleanStale(activeIDs)
 }
 
 func (p *Plugin) registryAwareResolver(
@@ -607,6 +678,21 @@ func (p *Plugin) collectPrewarmImages(
 		}
 
 		namespace := podNS[ctr.GetPodSandboxId()]
+		serviceAccount := annotations[AnnotationServiceAccountPersist]
+
+		p.containers.Store(
+			ctr.GetId(),
+			&containerState{ //nolint:exhaustruct_v5 // zero-value fields intentional
+				imageRef:           imageRef,
+				digest:             digest,
+				namespace:          namespace,
+				serviceAccount:     serviceAccount,
+				createdAt:          time.Now(),
+				state:              StateVerified,
+				originalResources:  captureLinuxResources(ctr),
+				recoveredOnRestart: true,
+			},
+		)
 
 		key := imageRef + "\x00" + namespace
 		if _, ok := seen[key]; ok {
@@ -721,6 +807,8 @@ func deduplicateResults(results []resolveResult) []prewarmImage {
 
 func (p *Plugin) prewarmCache(ctx context.Context, images []prewarmImage) {
 	defer func() {
+		p.prewarmDoneOnce.Do(func() { close(p.prewarmDoneCh) })
+
 		if p.prewarmDone != nil {
 			p.prewarmDone()
 		}
@@ -894,4 +982,44 @@ func validDigestOrEmpty(ref string) string {
 	}
 
 	return ref
+}
+
+// captureLinuxResources extracts the container's current Linux resource
+// settings for later rollback after throttling.
+func captureLinuxResources(ctr *api.Container) *api.LinuxResources {
+	linux := ctr.GetLinux()
+	if linux == nil {
+		return nil
+	}
+
+	return deepCopyLinuxResources(linux.GetResources())
+}
+
+// extractPURLsFromResult collects PURL strings from SBOM check metadata in
+// the verification result.
+func extractPURLsFromResult(result *types.Result) []string {
+	if result == nil {
+		return nil
+	}
+
+	for i := range result.CheckResults {
+		if result.CheckResults[i].Type != types.CheckTypeSBOM {
+			continue
+		}
+
+		purls, ok := result.CheckResults[i].Metadata["purls"].([]string)
+		if ok && len(purls) > 0 {
+			return purls
+		}
+	}
+
+	return nil
+}
+
+func (p *Plugin) getStubUpdater() StubUpdater { //nolint:ireturn // returns concrete value stored in field
+	p.stubMu.RLock()
+	s := p.stubUpdater
+	p.stubMu.RUnlock()
+
+	return s
 }

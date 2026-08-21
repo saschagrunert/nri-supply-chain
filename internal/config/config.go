@@ -38,6 +38,11 @@ type Strictness int
 // PolicySource selects where policy files are loaded from.
 type PolicySource string
 
+// RemediationMode controls the maximum remediation action applied to
+// degraded containers. Use Severity() for ordered comparisons, not the
+// string value directly.
+type RemediationMode string
+
 // LatestConfigVersion is the current config schema version.
 // Bump this when the config schema changes in a way that requires migration.
 const LatestConfigVersion = 1
@@ -106,6 +111,33 @@ const (
 	minCacheMaxEntries        = 100
 	maxCacheMaxEntries        = 1_000_000
 	defaultCacheMaxEntries    = 10_000
+
+	// RemediationModeDisabled disables continuous verification and remediation.
+	RemediationModeDisabled RemediationMode = ""
+	// RemediationModeWarn only logs and emits metrics when verification degrades.
+	RemediationModeWarn RemediationMode = "warn"
+	// RemediationModeThrottle applies cgroup resource limits on degraded containers.
+	RemediationModeThrottle RemediationMode = "throttle"
+	// RemediationModeEvict terminates degraded containers (pending upstream NRI support).
+	RemediationModeEvict RemediationMode = "evict"
+
+	defaultRemediationInterval = 5 * time.Minute
+	minRemediationInterval     = 30 * time.Second
+	maxRemediationInterval     = 1 * time.Hour
+	// DefaultRemediationBatchSize is the default number of containers
+	// re-verified per batch in the continuous verification loop.
+	DefaultRemediationBatchSize    = 10
+	maxRemediationBatchSize        = 100
+	defaultThrottleCPUQuotaPercent = 10
+	defaultThrottleMemoryPercent   = 50
+	minThrottlePercent             = 1
+	maxThrottlePercent             = 100
+
+	// DefaultRemediationCooldown is the default minimum time between
+	// successive remediation actions on the same container.
+	DefaultRemediationCooldown = 5 * time.Minute
+	minRemediationCooldown     = 30 * time.Second
+	maxRemediationCooldown     = 1 * time.Hour
 )
 
 // Duration wraps time.Duration to support TOML unmarshalling from strings.
@@ -351,6 +383,9 @@ type Config struct {
 	// environments. When enabled, attestations are read from local on-disk
 	// bundles instead of (or in addition to) OCI registries.
 	Offline OfflineConfig `toml:"offline"`
+	// Remediation configures continuous verification and graduated
+	// remediation for running containers.
+	Remediation RemediationConfig `toml:"remediation"`
 }
 
 // GUACConfig configures the GUAC supplemental data source.
@@ -441,8 +476,53 @@ const (
 	defaultBundleMaxAge     = 30 * 24 * time.Hour
 )
 
+// RemediationConfig controls continuous re-verification and graduated
+// remediation of running containers.
+type RemediationConfig struct {
+	// Interval is the time between timer-triggered verification cycles.
+	Interval Duration `toml:"interval"`
+	// Mode is the maximum remediation action: "warn", "throttle", or "evict".
+	Mode RemediationMode `toml:"mode"`
+	// BatchSize is the number of containers re-verified per batch before
+	// yielding to allow CreateContainer calls through.
+	BatchSize int `toml:"batch_size"`
+	// Cooldown is the minimum time between successive remediation actions
+	// on the same container. Prevents oscillation between states.
+	Cooldown Duration `toml:"cooldown"`
+	// FeedDir is the directory watched for OSV JSON vulnerability feed files.
+	FeedDir string `toml:"feed_dir"`
+	// Throttle configures cgroup resource limits applied in throttle mode.
+	Throttle ThrottleConfig `toml:"throttle"`
+	// Triggers controls which events initiate re-verification.
+	Triggers TriggerConfig `toml:"triggers"`
+}
+
+// ThrottleConfig defines the cgroup resource reductions applied when a
+// container's verification state degrades.
+type ThrottleConfig struct {
+	// CPUQuotaPercent is the percentage of the container's original CPU quota
+	// to allow after throttling. Range: 1-100.
+	CPUQuotaPercent int `toml:"cpu_quota_percent"`
+	// MemoryLimitPercent is the percentage of the container's original memory
+	// limit to allow after throttling. Range: 1-100.
+	MemoryLimitPercent int `toml:"memory_limit_percent"`
+}
+
+// TriggerConfig controls which events initiate re-verification of running
+// containers.
+type TriggerConfig struct {
+	// OnNewCVE triggers re-verification when new vulnerability feed files
+	// appear in the feed directory.
+	OnNewCVE bool `toml:"on_new_cve"`
+	// OnAttestationRevoked triggers re-verification when a previously valid
+	// attestation is revoked.
+	OnAttestationRevoked bool `toml:"on_attestation_revoked"`
+	// OnPolicyChange triggers re-verification when policy files change.
+	OnPolicyChange bool `toml:"on_policy_change"`
+}
+
 // DefaultConfig returns the default configuration.
-func DefaultConfig() *Config {
+func DefaultConfig() *Config { //nolint:funlen // single struct literal with all defaults
 	return &Config{
 		ConfigVersion:           LatestConfigVersion,
 		Verification:            ModeDisabled,
@@ -496,6 +576,22 @@ func DefaultConfig() *Config {
 			RequireBundleSignature: false,
 			BundleSignatureKey:     "",
 		},
+		Remediation: RemediationConfig{
+			Interval:  Duration{Duration: defaultRemediationInterval},
+			Mode:      RemediationModeDisabled,
+			BatchSize: DefaultRemediationBatchSize,
+			Cooldown:  Duration{Duration: DefaultRemediationCooldown},
+			FeedDir:   "",
+			Throttle: ThrottleConfig{
+				CPUQuotaPercent:    defaultThrottleCPUQuotaPercent,
+				MemoryLimitPercent: defaultThrottleMemoryPercent,
+			},
+			Triggers: TriggerConfig{
+				OnNewCVE:             true,
+				OnAttestationRevoked: true,
+				OnPolicyChange:       true,
+			},
+		},
 	}
 }
 
@@ -517,6 +613,35 @@ func (m VerificationMode) Strictness() Strictness {
 // IsValid returns true if the mode is a recognized verification mode.
 func (m VerificationMode) IsValid() bool {
 	return m.Strictness() >= 0
+}
+
+const (
+	severityWarn     = 0
+	severityThrottle = 1
+	severityEvict    = 2
+)
+
+// Enabled returns true when remediation mode is set to an active mode
+// (warn, throttle, or evict). An empty mode means disabled.
+func (r *RemediationConfig) Enabled() bool {
+	return r.Mode != RemediationModeDisabled
+}
+
+// Severity returns the ordered severity of a RemediationMode. Higher values
+// represent more aggressive remediation. Returns -1 for unrecognized modes.
+func (m RemediationMode) Severity() int {
+	switch m {
+	case RemediationModeDisabled:
+		return -1
+	case RemediationModeWarn:
+		return severityWarn
+	case RemediationModeThrottle:
+		return severityThrottle
+	case RemediationModeEvict:
+		return severityEvict
+	default:
+		return -1
+	}
 }
 
 // Enabled returns true if supply chain verification is not disabled.

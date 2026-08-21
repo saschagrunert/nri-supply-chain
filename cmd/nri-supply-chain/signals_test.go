@@ -22,6 +22,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -93,7 +95,7 @@ func TestSetupReload(t *testing.T) {
 	ctx := t.Context()
 
 	sigCh := make(chan os.Signal, 1)
-	setupReload(ctx, configPath, verif, met, nil, sigCh, nil)
+	setupReload(ctx, configPath, verif, met, nil, sigCh, nil, &atomic.Value{}, &sync.Mutex{})
 
 	writeTestConfig(t, configPath, policyDir, "enforce")
 
@@ -125,7 +127,7 @@ func TestSetupReloadNoConfig(t *testing.T) {
 	ctx := t.Context()
 
 	sigCh := make(chan os.Signal, 1)
-	setupReload(ctx, "", verif, met, nil, sigCh, nil)
+	setupReload(ctx, "", verif, met, nil, sigCh, nil, &atomic.Value{}, &sync.Mutex{})
 
 	sigCh <- syscall.SIGHUP
 
@@ -168,9 +170,10 @@ func TestSetupFileWatch(t *testing.T) {
 
 	ctx := t.Context()
 
-	cleanup, _ := setupFileWatch(
+	cleanup, _, _ := setupFileWatch(
 		ctx, configPath, policyDir, "",
 		config.OfflineModeDisabled, verif, met, nil,
+		"", &sync.Mutex{},
 	)
 	defer cleanup()
 
@@ -199,8 +202,10 @@ func TestSetupFileWatchNoConfig(t *testing.T) {
 		t.Fatalf("creating verifier: %v", err)
 	}
 
-	cleanup, _ := setupFileWatch(
-		t.Context(), "", "", "", config.OfflineModeDisabled, verif, met, nil,
+	cleanup, _, _ := setupFileWatch(
+		t.Context(), "", "", "",
+		config.OfflineModeDisabled, verif, met, nil,
+		"", &sync.Mutex{},
 	)
 	defer cleanup()
 
@@ -302,9 +307,10 @@ func TestSetupFileWatchNonexistentConfigPath(t *testing.T) {
 		t.Fatalf("creating verifier: %v", err)
 	}
 
-	cleanup, _ := setupFileWatch(
+	cleanup, _, _ := setupFileWatch(
 		t.Context(), "/nonexistent/config.toml", "", "",
 		config.OfflineModeDisabled, verif, met, nil,
+		"", &sync.Mutex{},
 	)
 	cleanup()
 }
@@ -328,9 +334,10 @@ func TestSetupFileWatchPolicyDirWatchFailure(t *testing.T) {
 		t.Fatalf("creating verifier: %v", err)
 	}
 
-	cleanup, _ := setupFileWatch(
+	cleanup, _, _ := setupFileWatch(
 		t.Context(), configPath, "/nonexistent/policies",
 		"", config.OfflineModeDisabled, verif, met, nil,
+		"", &sync.Mutex{},
 	)
 	cleanup()
 }
@@ -343,19 +350,26 @@ func TestHandleFileEventChmodIgnored(t *testing.T) {
 
 	defer existingTimer.Stop()
 
-	result := handleFileEvent(
+	cfgResult, feedResult := handleFileEvent(
 		context.Background(),
 		event,
 		existingTimer,
+		nil,
 		testConfigFile,
+		&atomic.Value{},
 		nil,
 		nil,
 		nil,
 		nil,
+		&sync.Mutex{},
 	)
 
-	if result != existingTimer {
+	if cfgResult != existingTimer {
 		t.Error("expected chmod event to return same debounce timer unchanged")
+	}
+
+	if feedResult != nil {
+		t.Error("expected nil feed timer for chmod event")
 	}
 }
 
@@ -390,8 +404,18 @@ func TestHandleFileEventDebounceReplacement(t *testing.T) {
 	defer oldTimer.Stop()
 
 	event := fsnotify.Event{Name: configPath, Op: fsnotify.Write}
-	newTimer := handleFileEvent(
-		context.Background(), event, oldTimer, configPath, verif, met, nil, nil,
+	newTimer, _ := handleFileEvent(
+		context.Background(),
+		event,
+		oldTimer,
+		nil,
+		configPath,
+		&atomic.Value{},
+		verif,
+		met,
+		nil,
+		nil,
+		&sync.Mutex{},
 	)
 
 	if newTimer == nil {
@@ -409,7 +433,19 @@ func TestHandleFileEventNilDebounce(t *testing.T) {
 	t.Parallel()
 
 	event := fsnotify.Event{Name: testConfigFile, Op: fsnotify.Write}
-	result := handleFileEvent(context.Background(), event, nil, testConfigFile, nil, nil, nil, nil)
+	result, _ := handleFileEvent(
+		context.Background(),
+		event,
+		nil,
+		nil,
+		testConfigFile,
+		&atomic.Value{},
+		nil,
+		nil,
+		nil,
+		nil,
+		&sync.Mutex{},
+	)
 
 	if result == nil {
 		t.Fatal("expected new timer, got nil")
@@ -446,7 +482,7 @@ func TestRunFileWatchContextCancel(t *testing.T) {
 	done := make(chan struct{})
 
 	go func() {
-		runFileWatch(ctx, watcher, configPath, nil, nil, nil)
+		runFileWatch(ctx, watcher, configPath, &atomic.Value{}, nil, nil, nil, &sync.Mutex{})
 		close(done)
 	}()
 
@@ -479,7 +515,10 @@ func TestRunFileWatchChannelClosed(t *testing.T) {
 	done := make(chan struct{})
 
 	go func() {
-		runFileWatch(context.Background(), watcher, testConfigFile, nil, nil, nil)
+		runFileWatch(
+			context.Background(), watcher, testConfigFile, &atomic.Value{},
+			nil, nil, nil, &sync.Mutex{},
+		)
 		close(done)
 	}()
 
@@ -522,7 +561,7 @@ func TestRunFileWatchErrorChannel(t *testing.T) {
 	done := make(chan struct{})
 
 	go func() {
-		runFileWatch(ctx, watcher, configPath, nil, nil, nil)
+		runFileWatch(ctx, watcher, configPath, &atomic.Value{}, nil, nil, nil, &sync.Mutex{})
 		close(done)
 	}()
 
@@ -579,7 +618,7 @@ func TestHandleReloadLogLevel(t *testing.T) {
 		t.Fatalf("creating verifier: %v", err)
 	}
 
-	handleReload(context.Background(), configPath, verif, met, nil, nil)
+	handleReload(context.Background(), configPath, verif, met, nil, nil, &atomic.Value{})
 
 	if logLevelVar.Level() != slog.LevelDebug {
 		t.Errorf("expected log level DEBUG after reload, got %v", logLevelVar.Level())
@@ -615,7 +654,7 @@ func TestHandleReloadNoLogLevel(t *testing.T) {
 		t.Fatalf("creating verifier: %v", err)
 	}
 
-	handleReload(context.Background(), configPath, verif, met, nil, nil)
+	handleReload(context.Background(), configPath, verif, met, nil, nil, &atomic.Value{})
 
 	// Without log_level in config, the level should remain unchanged.
 	if logLevelVar.Level() != slog.LevelDebug {
@@ -649,13 +688,17 @@ func TestHandleReloadUpdatesPluginRegistries(t *testing.T) {
 	}
 
 	mock := &mockPluginReloader{
-		cancelPrewarmCalled:      false,
-		prewarmAfterReloadCalled: false,
-		transportCache:           nil,
-		fetchTimeout:             0,
-		digestResolveTimeout:     0,
+		cancelPrewarmCalled:          false,
+		prewarmAfterReloadCalled:     false,
+		transportCache:               nil,
+		fetchTimeout:                 0,
+		digestResolveTimeout:         0,
+		remediationMode:              "",
+		triggerReverifyCalled:        false,
+		triggerFeedReverifyCalled:    false,
+		triggerFeedReverifyLastPURLs: nil,
 	}
-	handleReload(context.Background(), configPath, verif, met, mock, nil)
+	handleReload(context.Background(), configPath, verif, met, mock, nil, &atomic.Value{})
 
 	if mock.transportCache != nil {
 		t.Error("expected nil transport cache when no registries configured")
@@ -707,14 +750,10 @@ func TestHandleReloadUpdatesPluginRegistriesNonEmpty(t *testing.T) {
 		t.Fatalf("creating verifier: %v", err)
 	}
 
-	mock := &mockPluginReloader{
-		cancelPrewarmCalled:      false,
-		prewarmAfterReloadCalled: false,
-		transportCache:           nil,
-		fetchTimeout:             0,
-		digestResolveTimeout:     0,
+	mock := &mockPluginReloader{ //nolint:exhaustruct_v5 // zero-value fields intentional
+		transportCache: nil,
 	}
-	handleReload(context.Background(), configPath, verif, met, mock, nil)
+	handleReload(context.Background(), configPath, verif, met, mock, nil, &atomic.Value{})
 
 	if mock.transportCache == nil {
 		t.Error("expected non-nil transport cache when registries configured")
@@ -722,11 +761,15 @@ func TestHandleReloadUpdatesPluginRegistriesNonEmpty(t *testing.T) {
 }
 
 type mockPluginReloader struct {
-	cancelPrewarmCalled      bool
-	prewarmAfterReloadCalled bool
-	transportCache           *registry.TransportCache
-	fetchTimeout             time.Duration
-	digestResolveTimeout     time.Duration
+	cancelPrewarmCalled          bool
+	prewarmAfterReloadCalled     bool
+	transportCache               *registry.TransportCache
+	fetchTimeout                 time.Duration
+	digestResolveTimeout         time.Duration
+	remediationMode              config.RemediationMode
+	triggerReverifyCalled        bool
+	triggerFeedReverifyCalled    bool
+	triggerFeedReverifyLastPURLs []string
 }
 
 func (m *mockPluginReloader) CancelPrewarm() {
@@ -751,6 +794,21 @@ func (m *mockPluginReloader) SetTransportCache(cache *registry.TransportCache) {
 
 func (m *mockPluginReloader) TransportCache() *registry.TransportCache {
 	return m.transportCache
+}
+
+func (m *mockPluginReloader) SetRemediationMode(mode config.RemediationMode) {
+	m.remediationMode = mode
+}
+
+func (m *mockPluginReloader) SetRemediationConfig(_ *config.RemediationConfig) {}
+
+func (m *mockPluginReloader) TriggerReverify() {
+	m.triggerReverifyCalled = true
+}
+
+func (m *mockPluginReloader) TriggerFeedReverify(purls []string) {
+	m.triggerFeedReverifyCalled = true
+	m.triggerFeedReverifyLastPURLs = purls
 }
 
 //nolint:paralleltest // mutates slog.SetDefault
@@ -825,6 +883,30 @@ func TestWarnNonReloadableChangesNoWarningOnReloadableChange(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // mutates slog.SetDefault
+func TestWarnNonReloadableChangesRemediationEnabled(t *testing.T) {
+	var buf bytes.Buffer
+
+	prev := slog.Default()
+
+	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
+	slog.SetDefault(slog.New(handler))
+
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	current := config.DefaultConfig()
+	proposed := config.DefaultConfig()
+	proposed.Remediation.Mode = config.RemediationModeWarn
+
+	warnNonReloadableChanges(current, proposed)
+
+	output := buf.String()
+
+	if !strings.Contains(output, "remediation.mode enabled but requires restart") {
+		t.Errorf("expected remediation enable warning, got: %s", output)
+	}
+}
+
 func TestWarnNonReloadableChangesNilConfigs(t *testing.T) {
 	t.Parallel()
 
@@ -839,13 +921,7 @@ func TestUpdatePluginRegistries(t *testing.T) {
 	t.Run("non-empty registries sets cache", func(t *testing.T) {
 		t.Parallel()
 
-		mock := &mockPluginReloader{
-			cancelPrewarmCalled:      false,
-			prewarmAfterReloadCalled: false,
-			transportCache:           nil,
-			fetchTimeout:             0,
-			digestResolveTimeout:     0,
-		}
+		mock := &mockPluginReloader{} //nolint:exhaustruct_v5 // zero-value fields intentional
 		updatePluginRegistries(mock, []config.Registry{
 			{
 				Prefix: testPrefixGHCR, Mirror: testMirrorInternal,
@@ -867,13 +943,7 @@ func TestUpdatePluginRegistries(t *testing.T) {
 				CACert: "", Insecure: false,
 			},
 		})
-		mock := &mockPluginReloader{
-			cancelPrewarmCalled:      false,
-			prewarmAfterReloadCalled: false,
-			transportCache:           nil,
-			fetchTimeout:             0,
-			digestResolveTimeout:     0,
-		}
+		mock := &mockPluginReloader{} //nolint:exhaustruct_v5 // zero-value fields intentional
 		updatePluginRegistries(mock, shared.Registries(), shared)
 
 		if mock.transportCache != shared {
@@ -884,11 +954,7 @@ func TestUpdatePluginRegistries(t *testing.T) {
 	t.Run("clears cache when registries removed", func(t *testing.T) {
 		t.Parallel()
 
-		mock := &mockPluginReloader{
-			cancelPrewarmCalled:      false,
-			prewarmAfterReloadCalled: false,
-			fetchTimeout:             0,
-			digestResolveTimeout:     0,
+		mock := &mockPluginReloader{ //nolint:exhaustruct_v5 // zero-value fields intentional
 			transportCache: registry.NewTransportCache([]config.Registry{
 				{
 					Prefix: testPrefixGHCR, Mirror: testMirrorInternal,
@@ -919,13 +985,7 @@ func TestUpdatePluginRegistries(t *testing.T) {
 				CACert: "", Insecure: false,
 			},
 		}
-		mock := &mockPluginReloader{
-			cancelPrewarmCalled:      false,
-			prewarmAfterReloadCalled: false,
-			transportCache:           nil,
-			fetchTimeout:             0,
-			digestResolveTimeout:     0,
-		}
+		mock := &mockPluginReloader{} //nolint:exhaustruct_v5 // zero-value fields intentional
 		updatePluginRegistries(mock, newRegs, staleShared)
 
 		if mock.transportCache == staleShared {
@@ -952,12 +1012,8 @@ func TestUpdatePluginRegistries(t *testing.T) {
 			},
 		}
 		original := registry.NewTransportCache(regs)
-		mock := &mockPluginReloader{
-			cancelPrewarmCalled:      false,
-			prewarmAfterReloadCalled: false,
-			transportCache:           original,
-			fetchTimeout:             0,
-			digestResolveTimeout:     0,
+		mock := &mockPluginReloader{ //nolint:exhaustruct_v5 // zero-value fields intentional
+			transportCache: original,
 		}
 		updatePluginRegistries(mock, regs, nil)
 
@@ -970,7 +1026,9 @@ func TestUpdatePluginRegistries(t *testing.T) {
 func TestUpdateWatchedPathsNilWatcher(t *testing.T) {
 	t.Parallel()
 
-	updateWatchedPaths(nil, "/some/config.toml", "/some/policies", "", config.OfflineModeDisabled)
+	updateWatchedPaths(
+		nil, "/some/config.toml", "/some/policies", "", config.OfflineModeDisabled, "", nil,
+	)
 }
 
 func TestUpdateWatchedPathsSwapsDirectory(t *testing.T) {
@@ -1013,7 +1071,9 @@ func TestUpdateWatchedPathsSwapsDirectory(t *testing.T) {
 		t.Fatalf("adding old policy dir watch: %v", err)
 	}
 
-	updateWatchedPaths(watcher, configPath, newPolicyDir, "", config.OfflineModeDisabled)
+	updateWatchedPaths(
+		watcher, configPath, newPolicyDir, "", config.OfflineModeDisabled, "", &atomic.Value{},
+	)
 
 	watchList := watcher.WatchList()
 	absNew, _ := filepath.Abs(newPolicyDir)
@@ -1065,7 +1125,9 @@ func TestUpdateWatchedPathsEmptyNewDir(t *testing.T) {
 		t.Fatalf("adding old policy dir watch: %v", err)
 	}
 
-	updateWatchedPaths(watcher, configPath, "", "", config.OfflineModeDisabled)
+	updateWatchedPaths(
+		watcher, configPath, "", "", config.OfflineModeDisabled, "", &atomic.Value{},
+	)
 
 	if slices.Contains(watcher.WatchList(), oldPolicyDir) {
 		t.Error("old policy directory should have been removed even with empty new policy dir")
@@ -1109,7 +1171,9 @@ func TestUpdateWatchedPathsPreservesAttestationStore(t *testing.T) {
 		}
 	}
 
-	updateWatchedPaths(watcher, configPath, policyDir, storeDir, config.OfflineModeOffline)
+	updateWatchedPaths(
+		watcher, configPath, policyDir, storeDir, config.OfflineModeOffline, "", nil,
+	)
 
 	absStore, _ := filepath.Abs(storeDir)
 	if !slices.Contains(watcher.WatchList(), absStore) {
@@ -1149,12 +1213,274 @@ func TestUpdateWatchedPathsRemovesStoreWhenDisabled(t *testing.T) {
 		}
 	}
 
-	updateWatchedPaths(watcher, configPath, "", storeDir, config.OfflineModeDisabled)
+	updateWatchedPaths(
+		watcher, configPath, "", storeDir, config.OfflineModeDisabled, "", nil,
+	)
 
 	absStore, _ := filepath.Abs(storeDir)
 	if slices.Contains(watcher.WatchList(), absStore) {
 		t.Error("attestation store should be removed when offline mode is disabled")
 	}
+}
+
+func TestUpdateWatchedPathsPreservesFeedDir(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	policyDir := filepath.Join(dir, "policies")
+	feedDir := filepath.Join(dir, "feeds")
+
+	for _, d := range []string{policyDir, feedDir} {
+		mkErr := os.Mkdir(d, 0o750)
+		if mkErr != nil {
+			t.Fatalf("creating dir: %v", mkErr)
+		}
+	}
+
+	writeErr := os.WriteFile(
+		configPath,
+		[]byte("verification = \"disabled\"\n"),
+		0o600,
+	)
+	if writeErr != nil {
+		t.Fatalf("writing config: %v", writeErr)
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatalf("creating watcher: %v", err)
+	}
+
+	defer func() { _ = watcher.Close() }()
+
+	for _, p := range []string{configPath, policyDir, feedDir} {
+		addErr := watcher.Add(p)
+		if addErr != nil {
+			t.Fatalf("adding watch %s: %v", p, addErr)
+		}
+	}
+
+	updateWatchedPaths(
+		watcher, configPath, policyDir, "", config.OfflineModeDisabled,
+		feedDir, &atomic.Value{},
+	)
+
+	absFeed, _ := filepath.Abs(feedDir)
+	if !slices.Contains(watcher.WatchList(), absFeed) {
+		t.Errorf("feed directory %s should be preserved, watch list: %v",
+			absFeed, watcher.WatchList())
+	}
+}
+
+//nolint:paralleltest // mutates slog.SetDefault
+func TestWarnNonReloadableChangesRemediationInterval(t *testing.T) {
+	var buf bytes.Buffer
+
+	prev := slog.Default()
+
+	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
+	slog.SetDefault(slog.New(handler))
+
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	current := config.DefaultConfig()
+	current.Remediation.Mode = config.RemediationModeWarn
+	current.Remediation.Interval = config.Duration{Duration: 30 * time.Second}
+
+	proposed := config.DefaultConfig()
+	proposed.Remediation.Mode = config.RemediationModeWarn
+	proposed.Remediation.Interval = config.Duration{Duration: 60 * time.Second}
+
+	warnNonReloadableChanges(current, proposed)
+
+	output := buf.String()
+
+	if !strings.Contains(output, "remediation.interval changed but requires restart") {
+		t.Errorf("expected remediation.interval warning, got: %s", output)
+	}
+}
+
+//nolint:paralleltest // mutates slog.SetDefault
+func TestWarnNonReloadableChangesRemediationIntervalUnchanged(t *testing.T) {
+	var buf bytes.Buffer
+
+	prev := slog.Default()
+
+	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
+	slog.SetDefault(slog.New(handler))
+
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	current := config.DefaultConfig()
+	current.Remediation.Mode = config.RemediationModeWarn
+	current.Remediation.Interval = config.Duration{Duration: 30 * time.Second}
+
+	proposed := config.DefaultConfig()
+	proposed.Remediation.Mode = config.RemediationModeWarn
+	proposed.Remediation.Interval = config.Duration{Duration: 30 * time.Second}
+
+	warnNonReloadableChanges(current, proposed)
+
+	output := buf.String()
+
+	if strings.Contains(output, "remediation.interval") {
+		t.Errorf("expected no interval warning for unchanged interval, got: %s", output)
+	}
+}
+
+func TestHandleFeedEvent(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	data := `{"id": "CVE-1", "affected": [{"package": {"purl": "pkg:golang/vuln@1.0"}}]}`
+
+	err := os.WriteFile(filepath.Join(dir, "vuln.json"), []byte(data), 0o600)
+	if err != nil {
+		t.Fatalf("writing feed file: %v", err)
+	}
+
+	met := metrics.New()
+	mock := &mockPluginReloader{} //nolint:exhaustruct_v5 // zero-value fields intentional
+
+	handleFeedEvent(dir, met, mock)
+
+	if !mock.triggerFeedReverifyCalled {
+		t.Error("expected TriggerFeedReverify to be called")
+	}
+
+	if len(mock.triggerFeedReverifyLastPURLs) != 1 ||
+		mock.triggerFeedReverifyLastPURLs[0] != "pkg:golang/vuln@1.0" {
+		t.Errorf("expected [pkg:golang/vuln@1.0], got %v", mock.triggerFeedReverifyLastPURLs)
+	}
+
+	successCount := testutil.ToFloat64(
+		met.FeedFilesProcessedTotal.WithLabelValues("success"),
+	)
+
+	if successCount != 1 {
+		t.Errorf("expected 1 success metric, got %v", successCount)
+	}
+}
+
+func TestHandleFeedEventNoPURLs(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	data := `{"id": "CVE-1", "affected": [{"package": {}}]}`
+
+	err := os.WriteFile(filepath.Join(dir, "empty.json"), []byte(data), 0o600)
+	if err != nil {
+		t.Fatalf("writing feed file: %v", err)
+	}
+
+	met := metrics.New()
+	mock := &mockPluginReloader{} //nolint:exhaustruct_v5 // zero-value fields intentional
+
+	handleFeedEvent(dir, met, mock)
+
+	if mock.triggerFeedReverifyCalled {
+		t.Error("expected TriggerFeedReverify not to be called when no PURLs found")
+	}
+}
+
+func TestHandleFeedEventNilPlugin(t *testing.T) {
+	t.Parallel()
+
+	handleFeedEvent(t.TempDir(), metrics.New(), nil)
+}
+
+func TestHandleFileEventFeedDebounce(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	feedDir := filepath.Join(dir, "feeds")
+
+	err := os.Mkdir(feedDir, 0o750)
+	if err != nil {
+		t.Fatalf("creating feed dir: %v", err)
+	}
+
+	feedDirVal := &atomic.Value{}
+	feedDirVal.Store(feedDir)
+
+	event := fsnotify.Event{
+		Name: filepath.Join(feedDir, "vuln.json"),
+		Op:   fsnotify.Write,
+	}
+
+	cfgTimer, feedTimer := handleFileEvent(
+		context.Background(),
+		event,
+		nil,
+		nil,
+		filepath.Join(dir, "config.toml"),
+		feedDirVal,
+		nil,
+		nil,
+		nil,
+		nil,
+		&sync.Mutex{},
+	)
+
+	if cfgTimer != nil {
+		t.Error("expected nil config timer for feed event")
+	}
+
+	if feedTimer == nil {
+		t.Fatal("expected non-nil feed timer")
+	}
+
+	feedTimer.Stop()
+}
+
+func TestHandleFileEventFeedDebounceReplacement(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	feedDir := filepath.Join(dir, "feeds")
+
+	err := os.Mkdir(feedDir, 0o750)
+	if err != nil {
+		t.Fatalf("creating feed dir: %v", err)
+	}
+
+	feedDirVal := &atomic.Value{}
+	feedDirVal.Store(feedDir)
+
+	event := fsnotify.Event{
+		Name: filepath.Join(feedDir, "vuln.json"),
+		Op:   fsnotify.Create,
+	}
+
+	oldFeedTimer := time.NewTimer(time.Hour)
+	defer oldFeedTimer.Stop()
+
+	_, newFeedTimer := handleFileEvent(
+		context.Background(),
+		event,
+		nil,
+		oldFeedTimer,
+		filepath.Join(dir, "config.toml"),
+		feedDirVal,
+		nil,
+		nil,
+		nil,
+		nil,
+		&sync.Mutex{},
+	)
+
+	if newFeedTimer == nil {
+		t.Fatal("expected non-nil feed timer")
+	}
+
+	if newFeedTimer == oldFeedTimer {
+		t.Error("expected new feed timer to replace old one")
+	}
+
+	newFeedTimer.Stop()
 }
 
 //nolint:paralleltest // modifies package-level logLevelVar
@@ -1174,7 +1500,7 @@ func TestHandleReloadPanicRecovery(t *testing.T) {
 
 	// Pass a nil verifier so that verif.Reload panics with a nil pointer dereference.
 	// The deferred recover in handleReload should catch this.
-	handleReload(context.Background(), configPath, nil, met, nil, nil)
+	handleReload(context.Background(), configPath, nil, met, nil, nil, &atomic.Value{})
 
 	errorsAfter := testutil.ToFloat64(met.ConfigReloadErrorsTotal)
 

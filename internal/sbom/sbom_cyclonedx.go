@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
@@ -314,7 +315,39 @@ func mergeCVSSMeta(dst, src map[string]any) { //nolint:cyclop // type assertions
 					dst[key] = dstCount + srcCount
 				}
 			}
+		case "purls":
+			srcSlice := toStringSlice(val)
+			dstSlice := toStringSlice(existing)
+
+			if len(srcSlice) > 0 || len(dstSlice) > 0 {
+				combined := make([]string, 0, len(dstSlice)+len(srcSlice))
+				combined = append(combined, dstSlice...)
+				combined = append(combined, srcSlice...)
+				slices.Sort(combined)
+				dst[key] = slices.Compact(combined)
+			}
 		default:
 		}
 	}
+}
+
+func toStringSlice(v any) []string {
+	if s, ok := v.([]string); ok {
+		return s
+	}
+
+	items, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+
+	result := make([]string, 0, len(items))
+
+	for _, item := range items {
+		if s, ok := item.(string); ok {
+			result = append(result, s)
+		}
+	}
+
+	return result
 }

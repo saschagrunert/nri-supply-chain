@@ -6,6 +6,7 @@ by the nri-supply-chain plugin.
 <!-- toc -->
 
 - [Verification Flow](#verification-flow)
+  - [Continuous Re-verification](#continuous-re-verification)
 - [Container Annotations](#container-annotations)
 - [Verification Types](#verification-types)
   - [SLSA Provenance](#slsa-provenance)
@@ -133,6 +134,19 @@ fetch, so it does not add latency unless the GUAC query is slower than the
 fetch. Note that when a trusted VSA short-circuits verification, the GUAC
 result is discarded (GUAC data is only used in CEL evaluation, which VSA
 bypasses).
+
+### Continuous Re-verification
+
+When [remediation](config.md#remediation) is enabled, the plugin periodically
+re-runs the verification flow above for all tracked containers. The
+re-verification loop runs in the background at the configured interval. Timer
+ticks use cached results when available; feed and manual triggers invalidate
+the cache first to fetch fresh attestation data.
+
+If a container's verification result degrades (previously passing checks now
+fail), the plugin applies graduated remediation based on the configured mode.
+See [config.md](config.md#remediation) for the state machine, triggers, and
+throttle behavior.
 
 ## Container Annotations
 

@@ -46,6 +46,7 @@ func (c *Config) Validate() error {
 		c.validateAuditLog(),
 		c.validateGUACConfig(),
 		c.validateOfflineConfig(),
+		c.validateRemediationConfig(),
 	)
 }
 
@@ -65,6 +66,7 @@ func (c *Config) ValidateRuntime() error {
 	errs = append(errs, c.validateRegistryCACertsRuntime()...)
 	errs = append(errs, c.validateGUACConfigRuntime()...)
 	errs = append(errs, c.validateOfflineConfigRuntime()...)
+	errs = append(errs, c.validateRemediationConfigRuntime()...)
 
 	return errors.Join(errs...)
 }
@@ -937,6 +939,129 @@ func (c *Config) validateGUACConfigRuntime() []error {
 	}
 
 	return errs
+}
+
+func (c *Config) validateRemediationConfig() error { //nolint:cyclop,funlen // sequential field checks
+	rem := &c.Remediation
+
+	if !rem.Enabled() {
+		return nil
+	}
+
+	var errs []error
+
+	switch rem.Mode {
+	case RemediationModeDisabled:
+		return nil
+	case RemediationModeWarn, RemediationModeThrottle:
+	case RemediationModeEvict:
+		if c.Verification != ModeEnforce {
+			errs = append(errs, ErrRemediationEvictRequiresEnforce)
+		}
+	default:
+		errs = append(errs, fmt.Errorf("%w: %q", ErrRemediationModeInvalid, rem.Mode))
+	}
+
+	if rem.Interval.Duration < minRemediationInterval {
+		errs = append(errs, fmt.Errorf(
+			"%w: got %s, min %s",
+			ErrRemediationIntervalTooShort, rem.Interval.Duration, minRemediationInterval,
+		))
+	}
+
+	if rem.Interval.Duration > maxRemediationInterval {
+		errs = append(errs, fmt.Errorf(
+			"%w: got %s, max %s",
+			ErrRemediationIntervalTooLong, rem.Interval.Duration, maxRemediationInterval,
+		))
+	}
+
+	if rem.BatchSize < 1 {
+		errs = append(errs, fmt.Errorf(
+			"%w: got %d", ErrRemediationBatchSizeInvalid, rem.BatchSize,
+		))
+	}
+
+	if rem.BatchSize > maxRemediationBatchSize {
+		errs = append(errs, fmt.Errorf(
+			"%w: got %d, max %d",
+			ErrRemediationBatchSizeTooLarge, rem.BatchSize, maxRemediationBatchSize,
+		))
+	}
+
+	if rem.Cooldown.Duration < minRemediationCooldown {
+		errs = append(errs, fmt.Errorf(
+			"%w: got %s, min %s",
+			ErrRemediationCooldownTooShort, rem.Cooldown.Duration, minRemediationCooldown,
+		))
+	}
+
+	if rem.Cooldown.Duration > maxRemediationCooldown {
+		errs = append(errs, fmt.Errorf(
+			"%w: got %s, max %s",
+			ErrRemediationCooldownTooLong, rem.Cooldown.Duration, maxRemediationCooldown,
+		))
+	}
+
+	if rem.FeedDir != "" && !filepath.IsAbs(rem.FeedDir) {
+		errs = append(errs, fmt.Errorf(
+			"%w: %q", ErrRemediationFeedDirNotAbsolute, rem.FeedDir,
+		))
+	}
+
+	errs = append(errs, validateThrottleConfig(&rem.Throttle)...)
+
+	return errors.Join(errs...)
+}
+
+func validateThrottleConfig(throttle *ThrottleConfig) []error {
+	var errs []error
+
+	if throttle.CPUQuotaPercent < minThrottlePercent ||
+		throttle.CPUQuotaPercent > maxThrottlePercent {
+		errs = append(errs, fmt.Errorf(
+			"%w: cpu_quota_percent=%d",
+			ErrThrottlePercentOutOfRange, throttle.CPUQuotaPercent,
+		))
+	}
+
+	if throttle.MemoryLimitPercent < minThrottlePercent ||
+		throttle.MemoryLimitPercent > maxThrottlePercent {
+		errs = append(errs, fmt.Errorf(
+			"%w: memory_limit_percent=%d",
+			ErrThrottlePercentOutOfRange, throttle.MemoryLimitPercent,
+		))
+	}
+
+	return errs
+}
+
+func (c *Config) validateRemediationConfigRuntime() []error {
+	if !c.Remediation.Enabled() || c.Remediation.FeedDir == "" {
+		return nil
+	}
+
+	info, err := os.Lstat(c.Remediation.FeedDir)
+	if err != nil {
+		slog.Warn("Remediation feed directory not found, feed watching will be inactive",
+			"path", c.Remediation.FeedDir, "error", err)
+
+		return nil
+	}
+
+	if info.Mode()&os.ModeSymlink != 0 {
+		return []error{fmt.Errorf(
+			"%w: remediation.feed_dir %q", ErrSymlinkNotAllowed, c.Remediation.FeedDir,
+		)}
+	}
+
+	if !info.IsDir() {
+		return []error{fmt.Errorf(
+			"%w: %q", ErrRemediationFeedDirNotDirectory, c.Remediation.FeedDir,
+		)}
+	}
+
+	return nil
 }
 
 func validateGUACAuthTokenRuntime(tokenPath string) []error {

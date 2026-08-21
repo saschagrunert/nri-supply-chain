@@ -7,6 +7,7 @@ nri-supply-chain plugin.
 
 - [Operational Config](#operational-config)
   - [GUAC](#guac)
+  - [Remediation](#remediation)
   - [Runtime reload](#runtime-reload)
   - [Offline Bundles](#offline-bundles)
 - [Private Sigstore Instances](#private-sigstore-instances)
@@ -132,16 +133,74 @@ breakers) using the global `circuit_breaker_threshold` and
 See [operations.md](operations.md) for the metrics reference, config reload
 behavior, and health/readiness probes.
 
+### Remediation
+
+Continuous verification periodically re-evaluates running containers and applies
+graduated remediation when verification state degrades.
+
+```toml
+[remediation]
+mode = "throttle"
+interval = "5m"
+batch_size = 10
+cooldown = "5m"
+feed_dir = "/etc/nri-supply-chain/feeds"
+
+[remediation.throttle]
+cpu_quota_percent = 10
+memory_limit_percent = 50
+
+[remediation.triggers]
+on_new_cve = true
+on_attestation_revoked = true
+on_policy_change = true
+```
+
+Remediation is disabled by default (no `mode` set). Setting `mode` to `warn`, `throttle`, or `evict` enables continuous verification. A background loop re-verifies tracked containers at the configured interval. If verification degrades, the plugin applies graduated responses based on the `mode` ceiling.
+
+| Field                                         | Default | Description                                                                                                                                                |
+| --------------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `remediation.mode`                            | (empty) | Maximum remediation action: `warn` (log only), `throttle` (reduce cgroup limits), `evict` (terminate; pending upstream NRI support). Empty means disabled. |
+| `remediation.interval`                        | `5m`    | Time between timer-triggered verification cycles. Min 30s, max 1h.                                                                                         |
+| `remediation.batch_size`                      | `10`    | Number of containers re-verified per batch before yielding. Max 100.                                                                                       |
+| `remediation.cooldown`                        | `5m`    | Minimum time between successive remediation actions on the same container. Min 30s, max 1h.                                                                |
+| `remediation.feed_dir`                        | (empty) | Absolute path to a directory watched for OSV JSON vulnerability feed files. Changes trigger PURL-filtered re-verification of affected containers.          |
+| `remediation.throttle.cpu_quota_percent`      | `10`    | Percentage of the container's original CPU quota to allow after throttling. Range: 1-100.                                                                  |
+| `remediation.throttle.memory_limit_percent`   | `50`    | Percentage of the container's original memory limit to allow after throttling. Range: 1-100.                                                               |
+| `remediation.triggers.on_new_cve`             | `true`  | Re-verify when new CVE feed files appear in `feed_dir`.                                                                                                    |
+| `remediation.triggers.on_attestation_revoked` | `true`  | Re-verify when attestation state changes.                                                                                                                  |
+| `remediation.triggers.on_policy_change`       | `true`  | Re-verify after a config or policy reload (SIGHUP or file watch).                                                                                          |
+
+The state machine progresses: Verified -> Degraded -> Throttled. A container
+must be in the Degraded state for at least one full verification cycle before
+being escalated to Throttled. When verification recovers, the container
+returns to Verified and its original cgroup limits are restored. Containers
+recovered after a plugin restart skip rollback on their first recovery because
+the stored resources may reflect pre-restart throttled values. After the first
+successful non-degraded re-verification, subsequent throttle/recover cycles
+work normally.
+
+Timer-triggered cycles use cached verification results when available. Feed
+and manual triggers invalidate the cache before re-verification to ensure
+fresh attestation data is fetched.
+
+Setting `mode = "evict"` requires `verification = "enforce"`. Eviction is
+accepted in the config but logs a warning that it is deferred until the
+upstream NRI API exposes `EvictContainers()`. The state machine stops at
+Throttled in the meantime.
+
 ### Runtime reload
 
 The plugin reloads its configuration on SIGHUP or when the config file changes
 on disk. Most fields take effect immediately. The following fields require a
 full restart:
 
-| Field            | Reason                                      |
-| ---------------- | ------------------------------------------- |
-| `config_version` | Schema version is structural                |
-| `metrics_addr`   | The HTTP listener is already bound at start |
+| Field                       | Reason                                                       |
+| --------------------------- | ------------------------------------------------------------ |
+| `config_version`            | Schema version is structural                                 |
+| `metrics_addr`              | The HTTP listener is already bound at start                  |
+| `remediation.mode` (enable) | The continuous verifier goroutine is started only on boot    |
+| `remediation.interval`      | The verification ticker interval is set at goroutine startup |
 
 When a non-reloadable field changes during a reload, the plugin logs a warning
 and keeps the original value.
