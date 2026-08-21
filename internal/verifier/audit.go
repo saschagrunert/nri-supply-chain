@@ -16,7 +16,9 @@ package verifier
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"os"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
@@ -159,6 +161,32 @@ func allowResult(
 		Allowed:      true,
 		Reason:       reason,
 		CheckResults: nil,
+	}
+}
+
+func openAuditLogger(path string) (*slog.Logger, *os.File, error) {
+	if path == "" {
+		return slog.Default(), nil, nil
+	}
+
+	//nolint:gosec,mnd // path validated by config, permission is intentional
+	auditFile, err := os.OpenFile(
+		path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600,
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("opening audit log %q: %w", path, err)
+	}
+
+	logger := slog.New(slog.NewJSONHandler(auditFile, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
+
+	return logger, auditFile, nil
+}
+
+func closeAuditLogFile(f *os.File) {
+	if f != nil {
+		_ = f.Close()
 	}
 }
 

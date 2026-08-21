@@ -231,7 +231,7 @@ func previewImages(
 			break
 		}
 
-		_, out := verifySingleImage(ctx, imageRef, namespace, cfg, verif, cache)
+		_, out := verifySingleImage(ctx, imageRef, namespace, cfg, verif, cache, "")
 		results = append(results, out)
 	}
 

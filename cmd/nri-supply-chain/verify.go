@@ -32,6 +32,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
+	"github.com/saschagrunert/nri-supply-chain/internal/fileutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/registry"
@@ -39,11 +40,14 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
-func newVerifyCmd(configPath, logLevel *string) *cobra.Command {
+func newVerifyCmd( //nolint:funlen // cobra command setup
+	configPath, logLevel *string,
+) *cobra.Command {
 	var (
-		namespace    string
-		outputFormat string
-		verbose      bool
+		namespace     string
+		outputFormat  string
+		verbose       bool
+		previewPolicy string
 	)
 
 	cmd := &cobra.Command{
@@ -72,11 +76,24 @@ func newVerifyCmd(configPath, logLevel *string) *cobra.Command {
 
 			slog.Debug("Using config", "path", *configPath)
 
+			if previewPolicy != "" {
+				tmpDir, cleanupErr := setupPreviewPolicyDir(previewPolicy, namespace)
+				if cleanupErr != nil {
+					slog.Error("Failed to set up preview policy", "error", cleanupErr)
+
+					return errExitNonZero
+				}
+
+				defer func() { _ = os.RemoveAll(tmpDir) }()
+
+				cfg.PolicyDir = tmpDir
+			}
+
 			if verbose {
 				logVerbosePreamble(cmd.ErrOrStderr(), args, namespace, cfg)
 			}
 
-			code := runVerifyCmd(args, namespace, outputFormat, cfg)
+			code := runVerifyCmd(args, namespace, outputFormat, cfg, previewPolicy)
 			if code != 0 {
 				return errExitNonZero
 			}
@@ -91,30 +108,33 @@ func newVerifyCmd(configPath, logLevel *string) *cobra.Command {
 		outputFormatTable, "output format: table, json")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false,
 		"show step-by-step diagnostic output")
+	cmd.Flags().StringVar(&previewPolicy, "preview-policy", "",
+		"path to a policy JSON file to use instead of the configured policies (dry-run)")
 
 	return cmd
 }
 
 func runVerifyCmd(
 	args []string, namespace, outputFormat string,
-	cfg *config.Config,
+	cfg *config.Config, previewPolicy string,
 ) int {
 	if len(args) == 1 {
-		return runVerify(args[0], namespace, outputFormat, cfg)
+		return runVerify(args[0], namespace, outputFormat, cfg, previewPolicy)
 	}
 
-	return runVerifyBatch(args, namespace, outputFormat, cfg)
+	return runVerifyBatch(args, namespace, outputFormat, cfg, previewPolicy)
 }
 
 type verifyOutput struct {
-	Image        string              `json:"image"`
-	Digest       string              `json:"digest"`
-	Namespace    string              `json:"namespace"`
-	PolicyFile   string              `json:"-"`
-	Mode         string              `json:"-"`
-	Allowed      bool                `json:"allowed"`
-	Reason       string              `json:"reason,omitempty"`
-	CheckResults []types.CheckResult `json:"checkResults,omitempty"`
+	Image         string              `json:"image"`
+	Digest        string              `json:"digest"`
+	Namespace     string              `json:"namespace"`
+	PolicyFile    string              `json:"-"`
+	Mode          string              `json:"-"`
+	PreviewPolicy string              `json:"previewPolicy,omitempty"`
+	Allowed       bool                `json:"allowed"`
+	Reason        string              `json:"reason,omitempty"`
+	CheckResults  []types.CheckResult `json:"checkResults,omitempty"`
 }
 
 type resolvedDigest struct {
@@ -123,19 +143,19 @@ type resolvedDigest struct {
 }
 
 func runVerify(
-	imageRef, namespace, outputFormat string, cfg *config.Config,
+	imageRef, namespace, outputFormat string, cfg *config.Config, previewPolicy string,
 ) int {
-	return runVerifyTo(os.Stdout, imageRef, namespace, outputFormat, cfg)
+	return runVerifyTo(os.Stdout, imageRef, namespace, outputFormat, cfg, previewPolicy)
 }
 
 func runVerifyTo(
 	writer io.Writer,
-	imageRef, namespace, outputFormat string, cfg *config.Config,
+	imageRef, namespace, outputFormat string, cfg *config.Config, previewPolicy string,
 ) int {
 	return withVerifier(writer, outputFormat, cfg, func(
 		ctx context.Context, w io.Writer, v *verifier.Verifier, c *registry.TransportCache,
 	) int {
-		return executeVerify(ctx, w, imageRef, namespace, outputFormat, cfg, v, c)
+		return executeVerify(ctx, w, imageRef, namespace, outputFormat, cfg, v, c, previewPolicy)
 	})
 }
 
@@ -143,7 +163,7 @@ func executeVerify(
 	ctx context.Context, writer io.Writer,
 	imageRef, namespace, outputFormat string,
 	cfg *config.Config, verif *verifier.Verifier,
-	cache *registry.TransportCache,
+	cache *registry.TransportCache, previewPolicy string,
 ) int {
 	policyFile := resolvePolicyFile(cfg.PolicyDir, namespace)
 
@@ -159,6 +179,7 @@ func executeVerify(
 	)
 	out := newVerifyOutput(imageRef, resolved.digest, namespace, policyFile)
 	out.Mode = string(verif.EffectiveModeForNamespace(namespace))
+	out.PreviewPolicy = previewPolicy
 	out.CheckResults = checksFrom(result)
 
 	if err != nil {
@@ -192,19 +213,19 @@ func executeVerify(
 }
 
 func runVerifyBatch(
-	images []string, namespace, outputFormat string, cfg *config.Config,
+	images []string, namespace, outputFormat string, cfg *config.Config, previewPolicy string,
 ) int {
-	return runVerifyBatchTo(os.Stdout, images, namespace, outputFormat, cfg)
+	return runVerifyBatchTo(os.Stdout, images, namespace, outputFormat, cfg, previewPolicy)
 }
 
 func runVerifyBatchTo(
 	writer io.Writer,
-	images []string, namespace, outputFormat string, cfg *config.Config,
+	images []string, namespace, outputFormat string, cfg *config.Config, previewPolicy string,
 ) int {
 	return withVerifier(writer, outputFormat, cfg, func(
 		ctx context.Context, w io.Writer, v *verifier.Verifier, c *registry.TransportCache,
 	) int {
-		return executeBatchVerify(ctx, w, images, namespace, outputFormat, cfg, v, c)
+		return executeBatchVerify(ctx, w, images, namespace, outputFormat, cfg, v, c, previewPolicy)
 	})
 }
 
@@ -250,7 +271,7 @@ func executeBatchVerify(
 	ctx context.Context, writer io.Writer,
 	images []string, namespace, outputFormat string,
 	cfg *config.Config, verif *verifier.Verifier,
-	cache *registry.TransportCache,
+	cache *registry.TransportCache, previewPolicy string,
 ) int {
 	results := make([]*verifyOutput, 0, len(images))
 	worstCode := exitSuccess
@@ -262,7 +283,7 @@ func executeBatchVerify(
 			return exitError
 		}
 
-		code, out := verifySingleImage(ctx, imageRef, namespace, cfg, verif, cache)
+		code, out := verifySingleImage(ctx, imageRef, namespace, cfg, verif, cache, previewPolicy)
 		results = append(results, out)
 
 		if code > worstCode {
@@ -283,7 +304,7 @@ func executeBatchVerify(
 func verifySingleImage(
 	ctx context.Context, imageRef, namespace string,
 	cfg *config.Config, verif *verifier.Verifier,
-	cache *registry.TransportCache,
+	cache *registry.TransportCache, previewPolicy string,
 ) (int, *verifyOutput) {
 	policyFile := resolvePolicyFile(cfg.PolicyDir, namespace)
 
@@ -293,6 +314,7 @@ func verifySingleImage(
 
 		out := newVerifyOutput(imageRef, "", namespace, policyFile)
 		out.Mode = string(verif.EffectiveModeForNamespace(namespace))
+		out.PreviewPolicy = previewPolicy
 		out.Reason = err.Error()
 
 		return exitCodeForVerifyError(err), out
@@ -303,6 +325,7 @@ func verifySingleImage(
 	)
 	out := newVerifyOutput(imageRef, resolved.digest, namespace, policyFile)
 	out.Mode = string(verif.EffectiveModeForNamespace(namespace))
+	out.PreviewPolicy = previewPolicy
 	out.CheckResults = checksFrom(result)
 
 	if err != nil {
@@ -426,14 +449,15 @@ func newVerifyOutput(
 	imageRef, digest, namespace, policyFile string,
 ) *verifyOutput {
 	return &verifyOutput{
-		Image:        imageRef,
-		Digest:       digest,
-		Namespace:    namespace,
-		PolicyFile:   policyFile,
-		Mode:         "",
-		Allowed:      false,
-		Reason:       "",
-		CheckResults: nil,
+		Image:         imageRef,
+		Digest:        digest,
+		Namespace:     namespace,
+		PolicyFile:    policyFile,
+		Mode:          "",
+		PreviewPolicy: "",
+		Allowed:       false,
+		Reason:        "",
+		CheckResults:  nil,
 	}
 }
 
@@ -468,6 +492,17 @@ var (
 )
 
 func outputVerifyTable(writer io.Writer, out *verifyOutput) error {
+	if out.PreviewPolicy != "" {
+		_, _ = fmt.Fprintf(
+			writer,
+			"%s %s\n",
+			colorYellow.Sprint(
+				"Preview:",
+			),
+			out.PreviewPolicy+" (dry-run, not using configured policies)",
+		)
+	}
+
 	_, _ = fmt.Fprintf(writer, "%s %s\n", colorBold.Sprint("Image:"), out.Image)
 	_, _ = fmt.Fprintf(writer, "%s %s\n", colorBold.Sprint("Digest:"), out.Digest)
 	_, _ = fmt.Fprintf(writer, "%s %s\n",
@@ -558,6 +593,33 @@ func colorMode(mode string) string {
 	}
 
 	return mode
+}
+
+func setupPreviewPolicyDir(previewPolicyPath, namespace string) (string, error) {
+	data, err := fileutil.ReadLimited(previewPolicyPath, fileutil.MaxCredentialFileSize)
+	if err != nil {
+		return "", fmt.Errorf("reading preview policy %q: %w", previewPolicyPath, err)
+	}
+
+	tmpDir, err := os.MkdirTemp("", "nri-supply-chain-preview-*")
+	if err != nil {
+		return "", fmt.Errorf("creating temp dir: %w", err)
+	}
+
+	filename := filepath.Base(namespace) + ".json"
+	if namespace == policy.DefaultPolicyLabel {
+		filename = "default.json"
+	}
+
+	//nolint:mnd // permission is intentional
+	err = os.WriteFile(filepath.Join(tmpDir, filename), data, 0o600)
+	if err != nil {
+		_ = os.RemoveAll(tmpDir)
+
+		return "", fmt.Errorf("writing preview policy: %w", err)
+	}
+
+	return tmpDir, nil
 }
 
 func colorStatus(status types.CheckStatus) string {

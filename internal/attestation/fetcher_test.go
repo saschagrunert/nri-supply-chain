@@ -960,8 +960,8 @@ func TestExtractPredicateType(t *testing.T) {
 	}{
 		{
 			name:    "SLSA provenance",
-			payload: []byte(`{"predicateType":"https://slsa.dev/provenance/v1"}`),
-			want:    "https://slsa.dev/provenance/v1",
+			payload: []byte(`{"predicateType":"` + testPredicateSLSA + `"}`),
+			want:    testPredicateSLSA,
 		},
 		{
 			name:    "invalid JSON",
@@ -1022,7 +1022,7 @@ func TestFetchCosignTagAttestations(t *testing.T) {
 			},
 			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return []byte(
-					`{"predicateType":"https://slsa.dev/provenance/v1"}`,
+					`{"predicateType":"` + testPredicateSLSA + `"}`,
 				), nil
 			},
 			wantCount: 1,
@@ -1115,7 +1115,7 @@ func TestFetchFallsBackToCosignTag(t *testing.T) {
 
 	fetcher := attestation.NewTestOCIFetcherFull(
 		func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
-			return []byte(`{"predicateType":"https://slsa.dev/provenance/v1"}`), nil
+			return []byte(`{"predicateType":"` + testPredicateSLSA + `"}`), nil
 		},
 		func(ref name.Reference, _ ...remote.Option) (ociV1.Image, error) {
 			if strings.HasSuffix(ref.String(), ".att") {
@@ -1556,7 +1556,7 @@ func TestFetchSkipsCosignTagWhenReferrersExist(t *testing.T) {
 
 	fetcher := attestation.NewTestOCIFetcherFull(
 		func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
-			return []byte(`{"predicateType":"https://slsa.dev/provenance/v1"}`), nil
+			return []byte(`{"predicateType":"` + testPredicateSLSA + `"}`), nil
 		},
 		func(ref name.Reference, _ ...remote.Option) (ociV1.Image, error) {
 			if strings.HasSuffix(ref.String(), ".att") {

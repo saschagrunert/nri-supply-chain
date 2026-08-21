@@ -17,6 +17,7 @@ package verifier
 import (
 	"context"
 	"log/slog"
+	"os"
 
 	"github.com/google/go-containerregistry/pkg/name"
 
@@ -161,6 +162,32 @@ func ExportResolveNodeName() string {
 // ExportPolicyHashForNamespace exposes policyHashForNamespace for external tests.
 func ExportPolicyHashForNamespace(hashes map[string]string, namespace string) string {
 	return policyHashForNamespace(hashes, namespace)
+}
+
+// ExportOpenAuditLogger exposes openAuditLogger for external tests.
+func ExportOpenAuditLogger(path string) (*slog.Logger, *os.File, error) {
+	return openAuditLogger(path)
+}
+
+// ExportCloseAuditLogFile exposes closeAuditLogFile for external tests.
+func ExportCloseAuditLogFile(f *os.File) {
+	closeAuditLogFile(f)
+}
+
+// ExportReloadAuditLogger exposes reloadAuditLogger for external tests.
+func ExportReloadAuditLogger(
+	ctx context.Context, prev *snapshot, cfg *config.Config,
+) (*slog.Logger, *os.File) {
+	return reloadAuditLogger(ctx, prev, cfg)
+}
+
+// ExportNewSnapshot creates a minimal snapshot for testing reload helpers.
+func ExportNewSnapshot(cfg *config.Config, logger *slog.Logger, file *os.File) *snapshot {
+	return &snapshot{
+		config:       cfg,
+		auditLogger:  logger,
+		auditLogFile: file,
+	}
 }
 
 // ExportCreateFetcher exposes createFetcher for external tests.

@@ -349,7 +349,7 @@ func TestHost(t *testing.T) {
 		{
 			name: "ghcr.io reference",
 			ref:  "ghcr.io/owner/repo:v1",
-			want: "ghcr.io",
+			want: testRegistryGHCR,
 		},
 		{
 			name: "localhost reference",

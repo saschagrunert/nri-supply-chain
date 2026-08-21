@@ -75,6 +75,7 @@ func ExportDefaultDigestResolver(
 		prewarmCancel:        nil,
 		transportCache:       atomic.Pointer[registry.TransportCache]{},
 		containerTimes:       newContainerTimeMap(),
+		lastPrewarmImages:    nil,
 	}
 
 	return plug.registryAwareResolver(ctx, imageRef)

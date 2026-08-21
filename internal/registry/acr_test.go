@@ -40,7 +40,7 @@ func TestIsACRHost(t *testing.T) {
 		{"azurecr.us", "myregistry.azurecr.us", true},
 		{"with port", "myregistry.azurecr.io:443", true},
 		{"with scheme expects bare host", "https://myregistry.azurecr.io", false},
-		{"docker hub", "docker.io", false},
+		{"docker hub", testRegistryDockerHub, false},
 		{"gcr", "gcr.io", false},
 		{"ecr", "123456789.dkr.ecr.us-east-1.amazonaws.com", false},
 		{"empty", "", false},

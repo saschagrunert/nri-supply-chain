@@ -77,10 +77,12 @@ circuit_breaker_cooldown = "30s"
 | `circuit_breaker_threshold` | `5`                              | Consecutive fetch failures before a per-host circuit breaker opens                                                                                                                                                                 |
 | `circuit_breaker_cooldown`  | `30s`                            | Duration the circuit breaker stays open before allowing a probe. Max 10m.                                                                                                                                                          |
 | `verification_timeout`      | `5m`                             | Maximum time for a single image verification. Must be positive, maximum 30m.                                                                                                                                                       |
+| `check_timeout`             | `2m`                             | Maximum time for a single attestation check (e.g. SLSA, VEX, SBOM) within a verification. Must not exceed `verification_timeout`.                                                                                                  |
 | `fetch_rate_limit`          | `0` (unlimited)                  | Maximum registry fetch requests per second (max 10,000)                                                                                                                                                                            |
 | `max_attestation_size`      | `10485760` (10 MiB)              | Maximum allowed size in bytes for a single attestation bundle. Min 1 MiB, max 100 MiB.                                                                                                                                             |
 | `cache_max_entries`         | `10000`                          | Maximum number of entries in the verification result cache. Min 100, max 1,000,000.                                                                                                                                                |
 | `allowlist_digests`         | `[]`                             | Global list of trusted image digests that skip verification in all namespaces, overriding per-namespace policies. Accepts bare digests (`sha256:...`) or full references (`image@sha256:...`). Reloaded with the config on SIGHUP. |
+| `audit_log`                 | (empty)                          | Absolute path for a dedicated audit log file. When set, supply chain audit events are written as JSON to this file instead of the application logger. Reloaded on SIGHUP.                                                          |
 
 ### GUAC
 
@@ -530,9 +532,10 @@ configured. Finally, it emits warnings for permissive defaults (such as
 Verify flags:
 
 ```text
--n, --namespace    Namespace for verification (default: default)
--o, --output       Output format: table, json (default: table)
--v, --verbose      Show step-by-step diagnostic output
+-n, --namespace        Namespace for verification (default: default)
+-o, --output           Output format: table, json (default: table)
+-v, --verbose          Show step-by-step diagnostic output
+    --preview-policy   Path to a policy JSON file for dry-run verification
 ```
 
 The `--verbose` flag enables debug-level logging during verification. This shows
@@ -740,6 +743,9 @@ nri-supply-chain json-schema result
           "type": "string"
         },
         "namespace": {
+          "type": "string"
+        },
+        "previewPolicy": {
           "type": "string"
         },
         "allowed": {

@@ -27,9 +27,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
+
+	"github.com/saschagrunert/nri-supply-chain/internal/fileutil"
 )
 
 var (
@@ -83,7 +84,7 @@ func buildTransport(caCertPath string) (http.RoundTripper, error) {
 		return nil, nil //nolint:nilnil // nil transport uses http.DefaultTransport
 	}
 
-	pemData, err := os.ReadFile(caCertPath) //nolint:gosec // path validated by config
+	pemData, err := fileutil.ReadLimited(caCertPath, fileutil.MaxCredentialFileSize)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrGUACCACert, err)
 	}
@@ -159,6 +160,12 @@ func (c *Client) QueryVulnerabilities(
 		return nil, nil, err
 	}
 
+	return parseVulnResponse(body, digest)
+}
+
+func parseVulnResponse(
+	body []byte, digest string,
+) (direct, transitive []Vulnerability, err error) {
 	var resp restVulnResponse
 
 	err = json.Unmarshal(body, &resp)
@@ -204,11 +211,17 @@ func (c *Client) QueryDependencies(
 		return nil, err
 	}
 
+	return parseDepsResponse(body, maxDeps)
+}
+
+func parseDepsResponse(body []byte, maxDeps int) (*DependencyInfo, error) {
 	var resp restDepsResponse
 
-	err = json.Unmarshal(body, &resp)
+	err := json.Unmarshal(body, &resp)
 	if err != nil {
-		return nil, fmt.Errorf("%w: parsing dependency response: %w", ErrGUACQueryFailed, err)
+		return nil, fmt.Errorf(
+			"%w: parsing dependency response: %w", ErrGUACQueryFailed, err,
+		)
 	}
 
 	deps := resp.PURLs
@@ -363,7 +376,7 @@ func (c *Client) setAuth(req *http.Request) error {
 		return nil
 	}
 
-	token, err := os.ReadFile(c.authTokenPath)
+	token, err := fileutil.ReadLimited(c.authTokenPath, fileutil.MaxCredentialFileSize)
 	if err != nil {
 		return fmt.Errorf("%w: reading auth token: %w", ErrGUACAuthError, err)
 	}

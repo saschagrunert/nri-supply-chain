@@ -74,6 +74,11 @@ func (c *Config) Validate() error {
 
 	errs = append(errs, c.validateAllowlistDigests()...)
 
+	err = c.validateAuditLog()
+	if err != nil {
+		errs = append(errs, err)
+	}
+
 	err = c.validateGUACConfig()
 	if err != nil {
 		errs = append(errs, err)
@@ -544,6 +549,8 @@ func (c *Config) validateResilienceFields() error {
 		))
 	}
 
+	errs = append(errs, c.validateCheckTimeout()...)
+
 	if c.FetchRateLimit < 0 {
 		errs = append(errs, fmt.Errorf(
 			"%w: got %g", ErrFetchRateLimitNegative, c.FetchRateLimit,
@@ -559,6 +566,26 @@ func (c *Config) validateResilienceFields() error {
 	errs = append(errs, c.validateLimitsFields()...)
 
 	return errors.Join(errs...)
+}
+
+func (c *Config) validateCheckTimeout() []error {
+	var errs []error
+
+	if c.CheckTimeout.Duration <= 0 {
+		errs = append(errs, fmt.Errorf(
+			"%w: got %s", ErrCheckTimeoutNotPositive, c.CheckTimeout.Duration,
+		))
+	}
+
+	if c.CheckTimeout.Duration > c.VerificationTimeout.Duration {
+		errs = append(errs, fmt.Errorf(
+			"%w: check_timeout %s, verification_timeout %s",
+			ErrCheckTimeoutExceedsVerification,
+			c.CheckTimeout.Duration, c.VerificationTimeout.Duration,
+		))
+	}
+
+	return errs
 }
 
 func (c *Config) validateLimitsFields() []error {
@@ -858,6 +885,14 @@ func (c *Config) validateAllowlistDigests() []error {
 	return errs
 }
 
+func (c *Config) validateAuditLog() error {
+	if c.AuditLog != "" && !filepath.IsAbs(c.AuditLog) {
+		return fmt.Errorf("%w: %q", ErrAuditLogNotAbsolute, c.AuditLog)
+	}
+
+	return nil
+}
+
 func (c *Config) validateGUACConfig() error { //nolint:cyclop // sequential field checks
 	guacCfg := &c.Guac
 
@@ -867,9 +902,14 @@ func (c *Config) validateGUACConfig() error { //nolint:cyclop // sequential fiel
 
 	var errs []error
 
-	u, err := url.Parse(guacCfg.Endpoint)
-	if err != nil || u.Scheme == "" || u.Host == "" {
+	parsed, err := url.Parse(guacCfg.Endpoint)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		errs = append(errs, fmt.Errorf("%w: %s", ErrGUACEndpointInvalid, guacCfg.Endpoint))
+	} else if parsed.Scheme != "https" {
+		slog.Warn(
+			"GUAC endpoint does not use HTTPS, auth tokens will be sent in cleartext",
+			"endpoint", guacCfg.Endpoint,
+		)
 	}
 
 	if guacCfg.Timeout.Duration <= 0 {
@@ -920,17 +960,7 @@ func (c *Config) validateGUACConfigRuntime() []error {
 
 	var errs []error
 
-	if c.Guac.AuthTokenPath != "" {
-		// Use os.Stat (not Lstat) because K8s mounts secrets as symlinks.
-		info, err := os.Stat(c.Guac.AuthTokenPath)
-		if err != nil {
-			slog.Warn("GUAC auth token file not found, token auth will be unavailable",
-				"path", c.Guac.AuthTokenPath, "error", err)
-		} else if !info.Mode().IsRegular() {
-			errs = append(errs, fmt.Errorf("%w: %s",
-				ErrGUACAuthTokenNotRegularFile, c.Guac.AuthTokenPath))
-		}
-	}
+	errs = append(errs, validateGUACAuthTokenRuntime(c.Guac.AuthTokenPath)...)
 
 	if c.Guac.CACertPath != "" {
 		info, err := os.Lstat(c.Guac.CACertPath)
@@ -944,4 +974,30 @@ func (c *Config) validateGUACConfigRuntime() []error {
 	}
 
 	return errs
+}
+
+func validateGUACAuthTokenRuntime(tokenPath string) []error {
+	if tokenPath == "" {
+		return nil
+	}
+
+	// Use os.Stat (not Lstat) because K8s mounts secrets as symlinks.
+	info, err := os.Stat(tokenPath)
+
+	switch {
+	case err != nil:
+		slog.Warn("GUAC auth token file not found, token auth will be unavailable",
+			"path", tokenPath, "error", err)
+	case !info.Mode().IsRegular():
+		return []error{fmt.Errorf("%w: %s",
+			ErrGUACAuthTokenNotRegularFile, tokenPath)}
+	default:
+		permErr := fileutil.CheckCredentialPermissions(tokenPath)
+		if permErr != nil {
+			slog.Warn("GUAC auth token file has overly permissive mode bits",
+				"path", tokenPath, "error", permErr)
+		}
+	}
+
+	return nil
 }

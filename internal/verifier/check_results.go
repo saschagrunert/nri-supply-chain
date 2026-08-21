@@ -182,7 +182,7 @@ func appendReason(result *types.Result, detail string) {
 }
 
 func logMissingAttestation(
-	ctx context.Context, _ types.Action, msg, imageRef, reason string,
+	ctx context.Context, msg, imageRef, reason string,
 ) {
 	slog.DebugContext(ctx, msg,
 		"reason", reason,

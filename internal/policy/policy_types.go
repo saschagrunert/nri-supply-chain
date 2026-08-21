@@ -30,9 +30,18 @@ const (
 
 	// DefaultPolicyLabel is the display label used for the default (namespace-less) policy.
 	DefaultPolicyLabel = "default"
+
+	// LatestPolicyVersion is the current policy schema version.
+	// Bump this when the policy schema changes in a way that requires migration.
+	LatestPolicyVersion = 1
 )
 
 var (
+	// ErrPolicyVersionTooNew indicates the policy version is newer than supported.
+	ErrPolicyVersionTooNew = errors.New(
+		"policy version is newer than supported",
+	)
+
 	// ErrDefaultCannotInherit indicates the default policy has inherits=true.
 	ErrDefaultCannotInherit = errors.New(
 		"default policy cannot set inherits=true",
@@ -313,6 +322,10 @@ type Sections struct {
 type Policy struct {
 	Sections
 
+	// Version is the policy schema version. When omitted (zero), version 1
+	// is assumed for backward compatibility. Policies with a version higher
+	// than LatestPolicyVersion are rejected.
+	Version int `json:"version,omitempty"`
 	// Mode overrides the global verification mode for this namespace.
 	// Valid values: "disabled", "warn", "enforce". When empty, the global mode applies.
 	// The per-namespace mode can only be equal to or stricter than the global

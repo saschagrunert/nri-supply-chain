@@ -2146,3 +2146,72 @@ func TestSetDigestResolveTimeout(t *testing.T) {
 		t.Errorf("updated digest resolve timeout = %v, want %v", got, 5*time.Second)
 	}
 }
+
+func TestPrewarmAfterReloadNoImages(t *testing.T) {
+	t.Parallel()
+
+	plug := newTestPlugin(t, config.ModeDisabled, "")
+
+	plug.PrewarmAfterReload(context.Background())
+}
+
+func TestPrewarmAfterReloadWithImages(t *testing.T) {
+	t.Parallel()
+
+	plug, done := newTestPluginWithPrewarmSignal(t, config.ModeDisabled, "")
+
+	pods := []*api.PodSandbox{
+		{Id: testPodID, Namespace: testNamespace, Name: testPodName},
+	}
+
+	containers := []*api.Container{
+		{
+			Id:           "ctr-prewarm-1",
+			PodSandboxId: testPodID,
+			Name:         testCtrName,
+			Annotations: map[string]string{
+				plugin.AnnotationImage:    testImage,
+				plugin.AnnotationImageRef: testDigest,
+			},
+		},
+	}
+
+	_, err := plug.Synchronize(context.Background(), pods, containers)
+	testutil.AssertNoError(t, err)
+	waitForPrewarm(t, done)
+
+	plug.PrewarmAfterReload(context.Background())
+	waitForPrewarm(t, done)
+}
+
+func TestPrewarmAfterReloadCancelsPrevious(t *testing.T) {
+	t.Parallel()
+
+	plug, done := newTestPluginWithPrewarmSignal(t, config.ModeDisabled, "")
+
+	pods := []*api.PodSandbox{
+		{Id: testPodID, Namespace: testNamespace, Name: testPodName},
+	}
+
+	containers := []*api.Container{
+		{
+			Id:           "ctr-cancel-1",
+			PodSandboxId: testPodID,
+			Name:         testCtrName,
+			Annotations: map[string]string{
+				plugin.AnnotationImage:    testImage,
+				plugin.AnnotationImageRef: testDigest,
+			},
+		},
+	}
+
+	_, err := plug.Synchronize(context.Background(), pods, containers)
+	testutil.AssertNoError(t, err)
+	waitForPrewarm(t, done)
+
+	plug.PrewarmAfterReload(context.Background())
+	waitForPrewarm(t, done)
+
+	plug.PrewarmAfterReload(context.Background())
+	waitForPrewarm(t, done)
+}

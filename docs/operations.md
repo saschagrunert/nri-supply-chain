@@ -169,7 +169,9 @@ detailed verification traces.
 
 Every verification decision emits a structured log entry with the message
 `"Supply chain audit"`. Filter for this message to build an audit trail of
-all container verification outcomes.
+all container verification outcomes. When `audit_log` is set in the config,
+these entries are written as JSON to a dedicated file instead of the
+application logger (see [config.md](config.md)).
 
 | Field               | Description                                                      |
 | ------------------- | ---------------------------------------------------------------- |

@@ -164,6 +164,7 @@ type Plugin struct {
 	prewarmDone          func()
 	prewarmMu            sync.Mutex
 	prewarmCancel        context.CancelFunc
+	lastPrewarmImages    []prewarmImage // last known running images, for re-warming after reload
 	transportCache       atomic.Pointer[registry.TransportCache]
 	containerTimes       *containerTimeMap
 }
@@ -277,6 +278,10 @@ func (p *Plugin) Synchronize(
 
 	images := p.collectPrewarmImages(containers, podNS)
 
+	p.prewarmMu.Lock()
+	p.lastPrewarmImages = images
+	p.prewarmMu.Unlock()
+
 	if len(images) == 0 {
 		return nil, nil
 	}
@@ -308,6 +313,33 @@ func (p *Plugin) CancelPrewarm() {
 	if cancel != nil {
 		cancel()
 	}
+}
+
+// PrewarmAfterReload re-triggers cache pre-warming using the last known set
+// of running container images. Call after a successful config/policy reload
+// to avoid cold-cache verification latency for images already on the node.
+func (p *Plugin) PrewarmAfterReload(ctx context.Context) {
+	p.prewarmMu.Lock()
+	images := p.lastPrewarmImages
+
+	if len(images) == 0 {
+		p.prewarmMu.Unlock()
+
+		return
+	}
+
+	if p.prewarmCancel != nil {
+		p.prewarmCancel()
+	}
+
+	prewarmCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	p.prewarmCancel = cancel
+	p.prewarmMu.Unlock()
+
+	copied := make([]prewarmImage, len(images))
+	copy(copied, images)
+
+	go p.prewarmCache(prewarmCtx, copied)
 }
 
 // CreateContainer is called for each new container before it is created.

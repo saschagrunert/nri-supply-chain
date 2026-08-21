@@ -67,6 +67,7 @@ type snapshot struct {
 	fetchSem         *semaphore.Weighted
 	hostSem          *hostSemMap
 	auditLogger      *slog.Logger
+	auditLogFile     *os.File
 	allowlistDigests map[string]struct{}
 	guacClient       *guac.Client
 	guacBreaker      *attestation.CircuitBreaker
@@ -157,6 +158,11 @@ func newSnapshot(
 	met *metrics.Metrics,
 	fetcher attestation.Fetcher,
 ) (*snapshot, error) {
+	auditLogger, auditLogFile, auditErr := openAuditLogger(cfg.AuditLog)
+	if auditErr != nil {
+		return nil, fmt.Errorf("opening audit log: %w", auditErr)
+	}
+
 	snap := &snapshot{
 		config:       cfg,
 		policies:     policies,
@@ -173,7 +179,8 @@ func newSnapshot(
 		),
 		fetchSem:         semaphore.NewWeighted(maxConcurrentFetches),
 		hostSem:          &hostSemMap{m: sync.Map{}, count: atomic.Int64{}},
-		auditLogger:      slog.Default(),
+		auditLogger:      auditLogger,
+		auditLogFile:     auditLogFile,
 		allowlistDigests: buildAllowlistMap(cfg.AllowlistDigests),
 	}
 
@@ -256,7 +263,9 @@ func (v *Verifier) Stop() {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
-	v.state.Load().cache.Stop()
+	snap := v.state.Load()
+	snap.cache.Stop()
+	closeAuditLogFile(snap.auditLogFile)
 }
 
 // CurrentConfig returns the current configuration snapshot.

@@ -18,9 +18,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"slices"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/cache"
@@ -127,6 +129,8 @@ func (v *Verifier) applyReload(
 		guacBreaker = current.guacBreaker
 	}
 
+	auditLogger, auditLogFile := reloadAuditLogger(ctx, current, cfgCopy)
+
 	v.state.Store(&snapshot{
 		config:           cfgCopy,
 		policies:         policies,
@@ -137,12 +141,43 @@ func (v *Verifier) applyReload(
 		circuitBreakers:  circuitBreakers,
 		fetchSem:         current.fetchSem,
 		hostSem:          hostSem,
-		auditLogger:      current.auditLogger,
+		auditLogger:      auditLogger,
+		auditLogFile:     auditLogFile,
 		allowlistDigests: buildAllowlistMap(cfgCopy.AllowlistDigests),
 		guacClient:       guacClient,
 		guacBreaker:      guacBreaker,
 	})
 	v.policyHashes = newHashes
+}
+
+func reloadAuditLogger(
+	ctx context.Context, prev *snapshot, cfg *config.Config,
+) (*slog.Logger, *os.File) {
+	if prev.config.AuditLog == cfg.AuditLog {
+		return prev.auditLogger, prev.auditLogFile
+	}
+
+	// Close the previous audit log file after a grace period so that
+	// in-flight verification goroutines still holding the old snapshot
+	// can finish their writes without hitting a closed file descriptor.
+	if prev.auditLogFile != nil {
+		oldFile := prev.auditLogFile
+		timeout := prev.config.VerificationTimeout.Duration
+
+		time.AfterFunc(timeout, func() {
+			closeAuditLogFile(oldFile)
+		})
+	}
+
+	logger, auditFile, err := openAuditLogger(cfg.AuditLog)
+	if err != nil {
+		slog.ErrorContext(ctx, "Failed to open audit log, falling back to default logger",
+			"path", cfg.AuditLog, "error", err)
+
+		return slog.Default(), nil
+	}
+
+	return logger, auditFile
 }
 
 func resetVerificationCaches() {
