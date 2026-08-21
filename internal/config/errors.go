@@ -303,4 +303,56 @@ var (
 
 	// ErrBundleSignatureKeyNotFound indicates the signature key file does not exist.
 	ErrBundleSignatureKeyNotFound = errors.New("offline.bundle_signature_key file not found")
+
+	// ErrRemediationModeInvalid indicates an unrecognized remediation mode.
+	ErrRemediationModeInvalid = errors.New(
+		`remediation.mode must be "warn", "throttle", or "evict"`,
+	)
+
+	// ErrRemediationEvictRequiresEnforce indicates mode=evict is incompatible
+	// with verification=warn (would cause infinite evict-restart loops).
+	ErrRemediationEvictRequiresEnforce = errors.New(
+		"remediation.mode=evict requires verification=enforce",
+	)
+
+	// ErrRemediationIntervalTooShort indicates the re-verification interval
+	// is below the minimum.
+	ErrRemediationIntervalTooShort = errors.New("remediation.interval is too short")
+
+	// ErrRemediationIntervalTooLong indicates the re-verification interval
+	// exceeds the maximum.
+	ErrRemediationIntervalTooLong = errors.New("remediation.interval is too long")
+
+	// ErrRemediationBatchSizeInvalid indicates a non-positive batch size.
+	ErrRemediationBatchSizeInvalid = errors.New(
+		"remediation.batch_size must be positive",
+	)
+
+	// ErrRemediationBatchSizeTooLarge indicates the batch size exceeds the maximum.
+	ErrRemediationBatchSizeTooLarge = errors.New(
+		"remediation.batch_size exceeds maximum",
+	)
+
+	// ErrRemediationFeedDirNotAbsolute indicates the feed directory path is
+	// not absolute.
+	ErrRemediationFeedDirNotAbsolute = errors.New(
+		"remediation.feed_dir must be an absolute path",
+	)
+
+	// ErrThrottlePercentOutOfRange indicates a throttle percentage is outside 1-100.
+	ErrThrottlePercentOutOfRange = errors.New(
+		"remediation.throttle percentage must be between 1 and 100",
+	)
+
+	// ErrRemediationFeedDirNotDirectory indicates the feed directory exists
+	// but is not a directory.
+	ErrRemediationFeedDirNotDirectory = errors.New(
+		"remediation.feed_dir is not a directory",
+	)
+
+	// ErrRemediationCooldownTooShort indicates the cooldown is below the minimum.
+	ErrRemediationCooldownTooShort = errors.New("remediation.cooldown is too short")
+
+	// ErrRemediationCooldownTooLong indicates the cooldown exceeds the maximum.
+	ErrRemediationCooldownTooLong = errors.New("remediation.cooldown is too long")
 )

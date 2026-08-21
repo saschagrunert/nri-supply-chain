@@ -61,6 +61,8 @@ const (
 	testValTrue  = "true"
 	testValFalse = "false"
 	testValWarn  = "warn"
+
+	testContainerID = "ctr-1"
 )
 
 func TestCreateContainerDisabled(t *testing.T) {
@@ -86,8 +88,8 @@ func TestCreateContainerDisabled(t *testing.T) {
 	adj, updates, err := plug.CreateContainer(context.Background(), pod, ctr)
 	testutil.AssertNoError(t, err)
 
-	if adj != nil {
-		t.Error("expected nil adjustment")
+	if adj == nil {
+		t.Fatal("expected non-nil adjustment for service account annotation")
 	}
 
 	if updates != nil {
@@ -556,7 +558,7 @@ func TestSynchronizePrewarm(t *testing.T) {
 
 	containers := []*api.Container{
 		{
-			Id:           "ctr-1",
+			Id:           testContainerID,
 			PodSandboxId: testPodID,
 			Name:         testCtrName,
 			Annotations: map[string]string{
@@ -602,7 +604,7 @@ func TestSynchronizeDeduplicates(t *testing.T) {
 
 	containers := []*api.Container{
 		{
-			Id:           "ctr-1",
+			Id:           testContainerID,
 			PodSandboxId: testPodID,
 			Name:         "container-a",
 			Annotations: map[string]string{
@@ -1362,6 +1364,7 @@ func (v *capturingVerifier) EffectiveModeForNamespace(_ string) config.Verificat
 }
 
 func (v *capturingVerifier) Reload(_ context.Context, _ *config.Config) error { return nil }
+func (v *capturingVerifier) InvalidateCache(_, _ string)                      {}
 
 var errVerifyFailed = errors.New("verification failed")
 
@@ -1376,6 +1379,7 @@ func (v *failingVerifier) Verify(
 func (v *failingVerifier) Ready() (ready bool, reason string)               { return true, "" }
 func (v *failingVerifier) Enforcing() bool                                  { return true }
 func (v *failingVerifier) Reload(_ context.Context, _ *config.Config) error { return nil }
+func (v *failingVerifier) InvalidateCache(_, _ string)                      {}
 
 func (v *failingVerifier) EffectiveModeForNamespace(_ string) config.VerificationMode {
 	return config.ModeEnforce
@@ -2206,4 +2210,54 @@ func TestPrewarmAfterReloadCancelsPrevious(t *testing.T) {
 
 	plug.PrewarmAfterReload(context.Background())
 	waitForPrewarm(t, done)
+}
+
+func TestSynchronizeRecoveredContainerState(t *testing.T) {
+	t.Parallel()
+
+	plug, done := newTestPluginWithPrewarmSignal(t, config.ModeDisabled, "")
+
+	testSA := "my-service-account"
+
+	pods := []*api.PodSandbox{
+		{Id: testPodID, Namespace: testNamespace, Name: testPodName},
+	}
+
+	containers := []*api.Container{
+		{
+			Id:           testContainerID,
+			PodSandboxId: testPodID,
+			Name:         testCtrName,
+			Annotations: map[string]string{
+				plugin.AnnotationImage:                 testImage,
+				plugin.AnnotationImageRef:              testDigest,
+				plugin.AnnotationServiceAccountPersist: testSA,
+			},
+		},
+	}
+
+	_, err := plug.Synchronize(context.Background(), pods, containers)
+	testutil.AssertNoError(t, err)
+	waitForPrewarm(t, done)
+
+	state, found := plug.ExportGetContainerState(testContainerID)
+	if !found {
+		t.Fatal("expected container to be in registry after Synchronize")
+	}
+
+	if !state.RecoveredOnRestart {
+		t.Error("expected recoveredOnRestart=true for container recovered via Synchronize")
+	}
+
+	if state.ServiceAccount != testSA {
+		t.Errorf("expected serviceAccount=%q, got %q", testSA, state.ServiceAccount)
+	}
+
+	if len(state.PURLs) != 0 {
+		t.Errorf("expected no PURLs on recovered container, got %d", len(state.PURLs))
+	}
+
+	if state.State != plugin.StateVerified {
+		t.Errorf("expected StateVerified, got %v", state.State)
+	}
 }

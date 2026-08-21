@@ -21,12 +21,16 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
+	"github.com/saschagrunert/nri-supply-chain/internal/feed"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
@@ -48,11 +52,14 @@ func setupSignals(
 
 	done := make(chan struct{})
 
-	cleanupWatch, watcher := setupFileWatch(
+	var reloadMu sync.Mutex
+
+	cleanupWatch, watcher, feedDirVal := setupFileWatch(
 		ctx, configPath, cfg.PolicyDir, cfg.Offline.AttestationStore,
 		cfg.Offline.Mode, verif, met, plug,
+		cfg.Remediation.FeedDir, &reloadMu,
 	)
-	setupReload(ctx, configPath, verif, met, plug, sighup, watcher)
+	setupReload(ctx, configPath, verif, met, plug, sighup, watcher, feedDirVal, &reloadMu)
 	handleShutdown(ctx, cancel, sigterm, done)
 
 	return func() {
@@ -75,12 +82,17 @@ type pluginReloader interface {
 	SetDigestResolveTimeout(d time.Duration)
 	SetTransportCache(tc *registry.TransportCache)
 	TransportCache() *registry.TransportCache
+	SetRemediationMode(mode config.RemediationMode)
+	SetRemediationConfig(cfg *config.RemediationConfig)
+	TriggerReverify()
+	TriggerFeedReverify(purls []string)
 }
 
 func setupReload(
 	ctx context.Context, configPath string, verif *verifier.Verifier,
 	met *metrics.Metrics, plug pluginReloader,
 	sigCh <-chan os.Signal, watcher *fsnotify.Watcher,
+	feedDirVal *atomic.Value, reloadMu *sync.Mutex,
 ) {
 	go func() {
 		for {
@@ -90,15 +102,18 @@ func setupReload(
 			case <-sigCh:
 			}
 
-			handleReload(ctx, configPath, verif, met, plug, watcher)
+			reloadMu.Lock()
+			handleReload(ctx, configPath, verif, met, plug, watcher, feedDirVal)
+			reloadMu.Unlock()
 		}
 	}()
 }
 
-func handleReload(
+func handleReload( //nolint:funlen // sequential reload steps
 	ctx context.Context, configPath string,
 	verif *verifier.Verifier, met *metrics.Metrics,
 	plug pluginReloader, watcher *fsnotify.Watcher,
+	feedDirVal *atomic.Value,
 ) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -146,13 +161,22 @@ func handleReload(
 		met.ConfigReloadsTotal.Inc()
 		slog.Info("Config reloaded successfully")
 		updateWatchedPaths(watcher, configPath, newCfg.PolicyDir,
-			newCfg.Offline.AttestationStore, newCfg.Offline.Mode)
+			newCfg.Offline.AttestationStore, newCfg.Offline.Mode,
+			newCfg.Remediation.FeedDir, feedDirVal,
+		)
 
 		if plug != nil {
 			plug.SetFetchTimeout(newCfg.FetchTimeout.Duration)
 			plug.SetDigestResolveTimeout(newCfg.DigestResolveTimeout.Duration)
 			updatePluginRegistries(plug, newCfg.Registries, verif.TransportCache())
+			plug.SetRemediationMode(newCfg.Remediation.Mode)
+			plug.SetRemediationConfig(&newCfg.Remediation)
+			warnEvictDeferred(newCfg.Remediation.Mode)
 			plug.PrewarmAfterReload(ctx)
+
+			if newCfg.Remediation.Enabled() && newCfg.Remediation.Triggers.OnPolicyChange {
+				plug.TriggerReverify()
+			}
 		}
 	}
 }
@@ -173,6 +197,21 @@ func warnNonReloadableChanges(current, proposed *config.Config) {
 		slog.Warn("config_version changed but requires restart to take effect",
 			"current", current.ConfigVersion,
 			"proposed", proposed.ConfigVersion,
+		)
+	}
+
+	if !current.Remediation.Enabled() && proposed.Remediation.Enabled() {
+		slog.Warn("remediation.mode enabled but requires restart to take effect; "+
+			"the continuous verifier goroutine is only started at startup",
+			"proposed_mode", proposed.Remediation.Mode,
+		)
+	}
+
+	if current.Remediation.Enabled() && proposed.Remediation.Enabled() &&
+		current.Remediation.Interval != proposed.Remediation.Interval {
+		slog.Warn("remediation.interval changed but requires restart to take effect",
+			"current", current.Remediation.Interval.Duration,
+			"proposed", proposed.Remediation.Interval.Duration,
 		)
 	}
 }
@@ -214,15 +253,29 @@ func updatePluginRegistries(
 	}
 }
 
-func updateWatchedPaths(
+func updateWatchedPaths( //nolint:cyclop // sequential path management with feedDirVal update
 	watcher *fsnotify.Watcher, configPath, newPolicyDir,
 	attestationStore string, offlineMode config.OfflineMode,
+	feedDir string, feedDirVal *atomic.Value,
 ) {
 	if watcher == nil {
 		return
 	}
 
-	keep := buildWatchSet(configPath, newPolicyDir, attestationStore, offlineMode)
+	keep := buildWatchSet(configPath, newPolicyDir, attestationStore, offlineMode, feedDir)
+
+	if feedDirVal != nil {
+		absFeedDir := ""
+
+		if feedDir != "" {
+			abs, absErr := filepath.Abs(feedDir)
+			if absErr == nil {
+				absFeedDir = abs
+			}
+		}
+
+		feedDirVal.Store(absFeedDir)
+	}
 
 	for _, watched := range watcher.WatchList() {
 		if keep[watched] {
@@ -254,7 +307,7 @@ func updateWatchedPaths(
 
 func buildWatchSet(
 	configPath, policyDir, attestationStore string,
-	offlineMode config.OfflineMode,
+	offlineMode config.OfflineMode, feedDir string,
 ) map[string]bool {
 	keep := map[string]bool{configPath: true}
 
@@ -268,6 +321,11 @@ func buildWatchSet(
 		keep[abs] = true
 	}
 
+	abs, err = filepath.Abs(feedDir)
+	if feedDir != "" && err == nil {
+		keep[abs] = true
+	}
+
 	return keep
 }
 
@@ -275,17 +333,19 @@ func setupFileWatch(
 	ctx context.Context, configPath, policyDir, attestationStore string,
 	offlineMode config.OfflineMode,
 	verif *verifier.Verifier, met *metrics.Metrics,
-	plug pluginReloader,
-) (func(), *fsnotify.Watcher) {
+	plug pluginReloader, feedDir string, reloadMu *sync.Mutex,
+) (cleanup func(), watcher *fsnotify.Watcher, feedDirVal *atomic.Value) {
+	feedDirVal = &atomic.Value{}
+
 	if !shouldUseConfigFile(configPath) {
-		return func() {}, nil
+		return func() {}, nil, feedDirVal
 	}
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		slog.Warn("Failed to create file watcher, relying on SIGHUP", "error", err)
 
-		return func() {}, nil
+		return func() {}, nil, feedDirVal
 	}
 
 	addWatchPath(watcher, configPath, "config file")
@@ -298,14 +358,35 @@ func setupFileWatch(
 		addWatchPath(watcher, attestationStore, "attestation store")
 	}
 
-	go runFileWatch(ctx, watcher, configPath, verif, met, plug)
+	absFeedDir := ""
+
+	if feedDir != "" {
+		abs, absErr := filepath.Abs(feedDir)
+		if absErr == nil {
+			absFeedDir = abs
+
+			watchErr := watcher.Add(absFeedDir)
+			if watchErr != nil {
+				slog.Warn("Failed to watch feed directory",
+					"path", absFeedDir,
+					"error", watchErr,
+				)
+
+				absFeedDir = ""
+			}
+		}
+	}
+
+	feedDirVal.Store(absFeedDir)
+
+	go runFileWatch(ctx, watcher, configPath, feedDirVal, verif, met, plug, reloadMu)
 
 	return func() {
 		closeErr := watcher.Close()
 		if closeErr != nil {
 			slog.Warn("Failed to close file watcher", "error", closeErr)
 		}
-	}, watcher
+	}, watcher, feedDirVal
 }
 
 func addWatchPath(watcher *fsnotify.Watcher, path, label string) {
@@ -325,16 +406,20 @@ func addWatchPath(watcher *fsnotify.Watcher, path, label string) {
 
 func runFileWatch(
 	ctx context.Context, watcher *fsnotify.Watcher,
-	configPath string, verif *verifier.Verifier,
-	met *metrics.Metrics, plug pluginReloader,
+	configPath string, feedDirVal *atomic.Value, verif *verifier.Verifier,
+	met *metrics.Metrics, plug pluginReloader, reloadMu *sync.Mutex,
 ) {
-	var debounce *time.Timer
+	var configDebounce, feedDebounce *time.Timer
 
 	for {
 		select {
 		case <-ctx.Done():
-			if debounce != nil {
-				debounce.Stop()
+			if configDebounce != nil {
+				configDebounce.Stop()
+			}
+
+			if feedDebounce != nil {
+				feedDebounce.Stop()
 			}
 
 			return
@@ -346,7 +431,10 @@ func runFileWatch(
 				return
 			}
 
-			debounce = handleFileEvent(ctx, event, debounce, configPath, verif, met, plug, watcher)
+			configDebounce, feedDebounce = handleFileEvent(
+				ctx, event, configDebounce, feedDebounce,
+				configPath, feedDirVal, verif, met, plug, watcher, reloadMu,
+			)
 
 		case watchErr, ok := <-watcher.Errors:
 			if !ok {
@@ -362,27 +450,75 @@ func runFileWatch(
 
 func handleFileEvent(
 	ctx context.Context, event fsnotify.Event,
-	debounce *time.Timer, configPath string,
+	configDebounce, feedDebounce *time.Timer,
+	configPath string, feedDirVal *atomic.Value,
 	verif *verifier.Verifier, met *metrics.Metrics,
 	plug pluginReloader, watcher *fsnotify.Watcher,
-) *time.Timer {
+	reloadMu *sync.Mutex,
+) (newConfigDebounce, newFeedDebounce *time.Timer) {
 	if !isReloadEvent(event) {
-		return debounce
+		return configDebounce, feedDebounce
 	}
 
 	slog.Debug("File change detected", "file", event.Name, "op", event.Op)
 
-	if debounce != nil {
-		debounce.Stop()
+	feedDir, _ := feedDirVal.Load().(string)
+
+	if feedDir != "" && strings.HasPrefix(event.Name, feedDir+"/") {
+		if feedDebounce != nil {
+			feedDebounce.Stop()
+		}
+
+		feedDebounce = time.AfterFunc(fileWatchDebounce, func() {
+			if ctx.Err() != nil {
+				return
+			}
+
+			currentFeedDir, _ := feedDirVal.Load().(string)
+			if currentFeedDir != "" {
+				handleFeedEvent(currentFeedDir, met, plug)
+			}
+		})
+
+		return configDebounce, feedDebounce
 	}
 
-	return time.AfterFunc(fileWatchDebounce, func() {
+	if configDebounce != nil {
+		configDebounce.Stop()
+	}
+
+	configDebounce = time.AfterFunc(fileWatchDebounce, func() {
 		if ctx.Err() != nil {
 			return
 		}
 
-		handleReload(ctx, configPath, verif, met, plug, watcher)
+		reloadMu.Lock()
+		handleReload(ctx, configPath, verif, met, plug, watcher, feedDirVal)
+		reloadMu.Unlock()
 	})
+
+	return configDebounce, feedDebounce
+}
+
+func handleFeedEvent(feedDir string, met *metrics.Metrics, plug pluginReloader) {
+	if plug == nil {
+		return
+	}
+
+	purls, successCount, errorCount := feed.ParseDir(feedDir)
+
+	met.FeedFilesProcessedTotal.WithLabelValues("success").Add(float64(successCount))
+	met.FeedFilesProcessedTotal.WithLabelValues("error").Add(float64(errorCount))
+
+	if len(purls) > 0 {
+		slog.Info("Feed directory updated",
+			"purls", len(purls),
+			"files_ok", successCount,
+			"files_err", errorCount,
+		)
+
+		plug.TriggerFeedReverify(purls)
+	}
 }
 
 func isReloadEvent(event fsnotify.Event) bool {

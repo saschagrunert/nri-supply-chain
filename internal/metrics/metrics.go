@@ -103,7 +103,21 @@ type Metrics struct {
 	BundleAgeSeconds prometheus.Gauge
 	// BundleImageCount reports the number of images in the active bundle.
 	BundleImageCount prometheus.Gauge
-	registry         *prometheus.Registry
+	// ReverificationTotal counts re-verification attempts by namespace and result.
+	ReverificationTotal *prometheus.CounterVec
+	// ReverificationDuration measures single-container re-verification latency.
+	ReverificationDuration *prometheus.HistogramVec
+	// TrackedContainers reports the number of containers by verification state.
+	TrackedContainers *prometheus.GaugeVec
+	// RemediationActionsTotal counts remediation actions by type and namespace.
+	RemediationActionsTotal *prometheus.CounterVec
+	// RemediationErrorsTotal counts failed UpdateContainers calls.
+	RemediationErrorsTotal *prometheus.CounterVec
+	// FeedFilesProcessedTotal counts vulnerability feed files processed.
+	FeedFilesProcessedTotal *prometheus.CounterVec
+	// ContinuousVerifierLastRun is the unix timestamp of the last completed cycle.
+	ContinuousVerifierLastRun prometheus.Gauge
+	registry                  *prometheus.Registry
 }
 
 // New creates and registers all supply chain verification metrics.
@@ -217,6 +231,44 @@ func New() *Metrics {
 		BundleImageCount: newGauge(
 			"bundle_image_count",
 			"Number of images in the active attestation bundle.",
+		),
+		ReverificationTotal: newCounterVec(
+			"reverification_total",
+			"Total number of container re-verifications.",
+			labelNamespace, labelResult,
+		),
+		ReverificationDuration: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Namespace: namespace,
+				Name:      "reverification_duration_seconds",
+				Help:      "Duration of single container re-verification in seconds.",
+				Buckets:   prometheus.DefBuckets,
+			},
+			[]string{labelNamespace},
+		),
+		TrackedContainers: newGaugeVec(
+			"tracked_containers",
+			"Number of containers tracked by verification state.",
+			"state",
+		),
+		RemediationActionsTotal: newCounterVec(
+			"remediation_actions_total",
+			"Total number of remediation actions taken.",
+			"action", labelNamespace,
+		),
+		RemediationErrorsTotal: newCounterVec(
+			"remediation_errors_total",
+			"Total number of failed remediation UpdateContainers calls.",
+			"action",
+		),
+		FeedFilesProcessedTotal: newCounterVec(
+			"feed_files_processed_total",
+			"Total number of vulnerability feed files processed.",
+			labelResult,
+		),
+		ContinuousVerifierLastRun: newGauge(
+			"continuous_verifier_last_run",
+			"Unix timestamp of the last completed continuous verification cycle.",
 		),
 		registry: prometheus.NewRegistry(),
 	}
@@ -394,6 +446,13 @@ func (m *Metrics) register() {
 		m.BundleVerificationsTotal,
 		m.BundleAgeSeconds,
 		m.BundleImageCount,
+		m.ReverificationTotal,
+		m.ReverificationDuration,
+		m.TrackedContainers,
+		m.RemediationActionsTotal,
+		m.RemediationErrorsTotal,
+		m.FeedFilesProcessedTotal,
+		m.ContinuousVerifierLastRun,
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{
 			PidFn:        nil,
 			Namespace:    "",

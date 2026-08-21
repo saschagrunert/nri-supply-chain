@@ -295,6 +295,7 @@ func verifySBOMPredicateWithData(
 		"format":         data.format,
 		"componentCount": int64(data.componentCount),
 		"licenseCount":   int64(data.licenseCount),
+		"purls":          data.purls,
 	}
 
 	if !result.Passed {

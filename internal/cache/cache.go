@@ -229,6 +229,30 @@ func (c *Cache) SetWithTTL(digest, namespace string, result *types.Result, ttl t
 	c.updateGaugeLocked()
 }
 
+// Delete removes a single cached entry for the given digest and namespace.
+// Returns true if an entry was deleted, false if no entry existed.
+func (c *Cache) Delete(digest, namespace string) bool {
+	cacheKey := key{digest: digest, namespace: namespace}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if _, found := c.entries[cacheKey]; !found {
+		return false
+	}
+
+	delete(c.entries, cacheKey)
+
+	if heapEnt, ok := c.heapIndex[cacheKey]; ok {
+		heap.Remove(&c.expHeap, heapEnt.index)
+		delete(c.heapIndex, cacheKey)
+	}
+
+	c.updateGaugeLocked()
+
+	return true
+}
+
 // Clear removes all cached entries.
 func (c *Cache) Clear() {
 	c.mu.Lock()

@@ -49,6 +49,8 @@ const (
 	testSANPattern           = "*@example.com"
 	testGUACEndpoint         = "https://guac.example.com"
 	testGUACCheckCertifyVuln = "certify_vuln"
+	testRelativePath         = "relative/path"
+	testInvalid              = "invalid"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -336,7 +338,7 @@ func TestConfigValidateEnabledPaths(t *testing.T) {
 			name: "relative policy dir",
 			modify: func(c *config.Config) {
 				c.Verification = config.ModeWarn
-				c.PolicyDir = "relative/path"
+				c.PolicyDir = testRelativePath
 			},
 			wantErr:     true,
 			expectedErr: config.ErrPolicyDirNotAbsolute,
@@ -1211,7 +1213,7 @@ func TestConfigValidateLogLevel(t *testing.T) {
 		t.Parallel()
 
 		cfg := config.DefaultConfig()
-		cfg.LogLevel = "invalid"
+		cfg.LogLevel = testInvalid
 
 		err := cfg.Validate()
 		if !errors.Is(err, config.ErrInvalidLogLevel) {
@@ -3661,7 +3663,7 @@ func TestConfigValidateOffline(t *testing.T) {
 			name: "relative store path",
 			modify: func(c *config.Config) {
 				validOffline(c)
-				c.Offline.AttestationStore = "relative/path"
+				c.Offline.AttestationStore = testRelativePath
 			},
 			expectedErr: config.ErrOfflineStoreNotAbsolute,
 		},
@@ -3685,7 +3687,7 @@ func TestConfigValidateOffline(t *testing.T) {
 			name: "invalid expiry policy",
 			modify: func(c *config.Config) {
 				validOffline(c)
-				c.Offline.BundleExpiryPolicy = "invalid"
+				c.Offline.BundleExpiryPolicy = testInvalid
 			},
 			expectedErr: config.ErrInvalidBundleExpiryPolicy,
 		},
@@ -3920,4 +3922,299 @@ func TestOfflineConfigChanged(t *testing.T) {
 			t.Error("expected change when signature requirement differs")
 		}
 	})
+}
+
+func TestValidateRemediationConfig(t *testing.T) {
+	t.Parallel()
+
+	t.Run("disabled is always valid", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		testutil.AssertNoError(t, cfg.Validate())
+	})
+
+	t.Run("valid warn mode", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Remediation.Mode = config.RemediationModeWarn
+		cfg.Remediation.Interval = config.Duration{Duration: 5 * time.Minute}
+		cfg.Remediation.BatchSize = 10
+
+		testutil.AssertNoError(t, cfg.Validate())
+	})
+
+	t.Run("valid throttle mode", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Remediation.Mode = config.RemediationModeThrottle
+		cfg.Remediation.Interval = config.Duration{Duration: 5 * time.Minute}
+		cfg.Remediation.BatchSize = 10
+
+		testutil.AssertNoError(t, cfg.Validate())
+	})
+
+	t.Run("invalid mode", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Remediation.Mode = testInvalid
+		cfg.Remediation.Interval = config.Duration{Duration: 5 * time.Minute}
+		cfg.Remediation.BatchSize = 10
+
+		testutil.AssertErrorIs(t, cfg.Validate(), config.ErrRemediationModeInvalid)
+	})
+
+	t.Run("evict requires enforce", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.Remediation.Mode = config.RemediationModeEvict
+		cfg.Remediation.Interval = config.Duration{Duration: 5 * time.Minute}
+		cfg.Remediation.BatchSize = 10
+
+		testutil.AssertErrorIs(t, cfg.Validate(), config.ErrRemediationEvictRequiresEnforce)
+	})
+
+	t.Run("evict requires enforce when disabled", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeDisabled
+		cfg.Remediation.Mode = config.RemediationModeEvict
+		cfg.Remediation.Interval = config.Duration{Duration: 5 * time.Minute}
+		cfg.Remediation.BatchSize = 10
+
+		testutil.AssertErrorIs(t, cfg.Validate(), config.ErrRemediationEvictRequiresEnforce)
+	})
+
+	t.Run("interval too short", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Remediation.Mode = config.RemediationModeWarn
+		cfg.Remediation.Interval = config.Duration{Duration: time.Second}
+		cfg.Remediation.BatchSize = 10
+
+		testutil.AssertErrorIs(t, cfg.Validate(), config.ErrRemediationIntervalTooShort)
+	})
+
+	t.Run("interval too long", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Remediation.Mode = config.RemediationModeWarn
+		cfg.Remediation.Interval = config.Duration{Duration: 2 * time.Hour}
+		cfg.Remediation.BatchSize = 10
+
+		testutil.AssertErrorIs(t, cfg.Validate(), config.ErrRemediationIntervalTooLong)
+	})
+
+	t.Run("batch size zero", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Remediation.Mode = config.RemediationModeWarn
+		cfg.Remediation.Interval = config.Duration{Duration: 5 * time.Minute}
+		cfg.Remediation.BatchSize = 0
+
+		testutil.AssertErrorIs(t, cfg.Validate(), config.ErrRemediationBatchSizeInvalid)
+	})
+
+	t.Run("batch size too large", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Remediation.Mode = config.RemediationModeWarn
+		cfg.Remediation.Interval = config.Duration{Duration: 5 * time.Minute}
+		cfg.Remediation.BatchSize = 200
+
+		testutil.AssertErrorIs(t, cfg.Validate(), config.ErrRemediationBatchSizeTooLarge)
+	})
+
+	t.Run("feed dir not absolute", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Remediation.Mode = config.RemediationModeWarn
+		cfg.Remediation.Interval = config.Duration{Duration: 5 * time.Minute}
+		cfg.Remediation.BatchSize = 10
+		cfg.Remediation.FeedDir = testRelativePath
+
+		testutil.AssertErrorIs(t, cfg.Validate(), config.ErrRemediationFeedDirNotAbsolute)
+	})
+
+	t.Run("throttle CPU percent out of range", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Remediation.Mode = config.RemediationModeWarn
+		cfg.Remediation.Interval = config.Duration{Duration: 5 * time.Minute}
+		cfg.Remediation.BatchSize = 10
+		cfg.Remediation.Throttle.CPUQuotaPercent = 0
+
+		testutil.AssertErrorIs(t, cfg.Validate(), config.ErrThrottlePercentOutOfRange)
+	})
+
+	t.Run("throttle memory percent out of range", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Remediation.Mode = config.RemediationModeWarn
+		cfg.Remediation.Interval = config.Duration{Duration: 5 * time.Minute}
+		cfg.Remediation.BatchSize = 10
+		cfg.Remediation.Throttle.MemoryLimitPercent = 101
+
+		testutil.AssertErrorIs(t, cfg.Validate(), config.ErrThrottlePercentOutOfRange)
+	})
+}
+
+func TestValidateRemediationConfigRuntime(t *testing.T) {
+	t.Parallel()
+
+	t.Run("feed dir not a directory", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		feedFile := filepath.Join(dir, "not-a-dir")
+
+		err := os.WriteFile(feedFile, []byte("x"), 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		cfg := config.DefaultConfig()
+		cfg.Remediation.Mode = config.RemediationModeWarn
+		cfg.Remediation.FeedDir = feedFile
+
+		err = cfg.ValidateRuntime()
+		if err == nil {
+			t.Error("expected error for feed_dir that is not a directory")
+		}
+	})
+
+	t.Run("feed dir nonexistent warns but passes", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Remediation.Mode = config.RemediationModeWarn
+		cfg.Remediation.FeedDir = "/nonexistent/feed/dir"
+
+		testutil.AssertNoError(t, cfg.ValidateRuntime())
+	})
+
+	t.Run("feed dir valid directory passes", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Remediation.Mode = config.RemediationModeWarn
+		cfg.Remediation.FeedDir = t.TempDir()
+
+		testutil.AssertNoError(t, cfg.ValidateRuntime())
+	})
+
+	t.Run("feed dir symlink rejected", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		target := filepath.Join(dir, "real")
+
+		err := os.Mkdir(target, 0o750)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		link := filepath.Join(dir, "link")
+
+		err = os.Symlink(target, link)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		cfg := config.DefaultConfig()
+		cfg.Remediation.Mode = config.RemediationModeWarn
+		cfg.Remediation.FeedDir = link
+
+		testutil.AssertErrorIs(t, cfg.ValidateRuntime(), config.ErrSymlinkNotAllowed)
+	})
+}
+
+func TestRemediationConfigTOMLParsing(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+
+	data := `
+verification = "warn"
+policy_dir = "/etc/nri-supply-chain/policies"
+
+[remediation]
+interval = "5m"
+mode = "throttle"
+batch_size = 20
+cooldown = "3m"
+feed_dir = "/tmp/feeds"
+
+[remediation.throttle]
+cpu_quota_percent = 25
+memory_limit_percent = 75
+
+[remediation.triggers]
+on_new_cve = true
+on_attestation_revoked = false
+on_policy_change = true
+`
+
+	err := os.WriteFile(configPath, []byte(data), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.LoadFromFile(configPath)
+	if err != nil {
+		t.Fatalf("loading config: %v", err)
+	}
+
+	if !cfg.Remediation.Enabled() {
+		t.Error("expected remediation enabled")
+	}
+
+	if cfg.Remediation.Mode != config.RemediationModeThrottle {
+		t.Errorf("expected mode throttle, got %s", cfg.Remediation.Mode)
+	}
+
+	if cfg.Remediation.BatchSize != 20 {
+		t.Errorf("expected batch_size 20, got %d", cfg.Remediation.BatchSize)
+	}
+
+	if cfg.Remediation.Cooldown.Duration != 3*time.Minute {
+		t.Errorf("expected cooldown 3m, got %s", cfg.Remediation.Cooldown.Duration)
+	}
+
+	if cfg.Remediation.Throttle.CPUQuotaPercent != 25 {
+		t.Errorf("expected cpu_quota_percent 25, got %d", cfg.Remediation.Throttle.CPUQuotaPercent)
+	}
+
+	if cfg.Remediation.Throttle.MemoryLimitPercent != 75 {
+		t.Errorf(
+			"expected memory_limit_percent 75, got %d",
+			cfg.Remediation.Throttle.MemoryLimitPercent,
+		)
+	}
+
+	if !cfg.Remediation.Triggers.OnNewCVE {
+		t.Error("expected on_new_cve true")
+	}
+
+	if cfg.Remediation.Triggers.OnAttestationRevoked {
+		t.Error("expected on_attestation_revoked false")
+	}
+
+	if !cfg.Remediation.Triggers.OnPolicyChange {
+		t.Error("expected on_policy_change true")
+	}
 }

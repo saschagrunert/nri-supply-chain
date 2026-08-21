@@ -607,3 +607,75 @@ func TestCacheClear(t *testing.T) {
 		t.Error("expected nil after clear")
 	}
 }
+
+func TestDeleteExistingEntry(t *testing.T) {
+	t.Parallel()
+
+	gauge := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "test_delete_existing",
+		Help: testGaugeHelp,
+	})
+
+	testCache := cache.NewWithGauge(time.Hour, 0, gauge, nil)
+	t.Cleanup(testCache.Stop)
+
+	testCache.Set(testDigest, "default", &types.Result{
+		Allowed: true, Reason: "", CheckResults: nil,
+	})
+
+	if got := testCache.Get(testDigest, "default"); got == nil {
+		t.Fatal("expected entry to exist before delete")
+	}
+
+	deleted := testCache.Delete(testDigest, "default")
+	if !deleted {
+		t.Error("expected Delete to return true for existing entry")
+	}
+
+	if got := testCache.Get(testDigest, "default"); got != nil {
+		t.Error("expected entry to be removed after delete")
+	}
+
+	if val := testutil.ToFloat64(gauge); val != 0 {
+		t.Errorf("expected gauge 0 after delete, got %f", val)
+	}
+}
+
+func TestDeleteNonexistentEntry(t *testing.T) {
+	t.Parallel()
+
+	testCache := cache.New(time.Hour)
+	t.Cleanup(testCache.Stop)
+
+	deleted := testCache.Delete("sha256:nonexistent", "default")
+	if deleted {
+		t.Error("expected Delete to return false for nonexistent entry")
+	}
+}
+
+func TestDeleteDoesNotAffectOtherEntries(t *testing.T) {
+	t.Parallel()
+
+	testCache := cache.New(time.Hour)
+	t.Cleanup(testCache.Stop)
+
+	digest1 := "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+	digest2 := "sha256:b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b200"
+
+	testCache.Set(digest1, "ns1", &types.Result{
+		Allowed: true, Reason: "", CheckResults: nil,
+	})
+	testCache.Set(digest2, "ns2", &types.Result{
+		Allowed: false, Reason: "fail", CheckResults: nil,
+	})
+
+	testCache.Delete(digest1, "ns1")
+
+	if got := testCache.Get(digest1, "ns1"); got != nil {
+		t.Error("expected deleted entry to be gone")
+	}
+
+	if got := testCache.Get(digest2, "ns2"); got == nil {
+		t.Error("expected other entry to remain after deleting a different entry")
+	}
+}
