@@ -29,7 +29,7 @@ linters:
     - errname
     - errorlint
     - exhaustive
-    - exhaustruct
+    - exhaustruct_v5
     - exptostd
     - fatcontext
     - forbidigo
@@ -164,8 +164,8 @@ linters:
             - golang.org/x/time
     dogsled:
       max-blank-identifiers: 3
-    exhaustruct:
-      exclude:
+    exhaustruct_v5:
+      ignore-patterns:
         - 'crypto/x509\.Certificate'
         - 'crypto/x509/pkix\.Name'
         - 'encoding/pem\.Block'

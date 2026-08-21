@@ -426,13 +426,11 @@ func (f *OCIFetcher) fetchOnce(
 }
 
 func isTransientError(err error) bool {
-	var transportErr *transport.Error
-	if errors.As(err, &transportErr) {
+	if transportErr, ok := errors.AsType[*transport.Error](err); ok {
 		return transportErr.Temporary()
 	}
 
-	var netErr net.Error
-	if errors.As(err, &netErr) {
+	if netErr, ok := errors.AsType[net.Error](err); ok {
 		return netErr.Timeout()
 	}
 

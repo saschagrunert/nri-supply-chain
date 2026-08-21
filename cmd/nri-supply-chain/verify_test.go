@@ -267,20 +267,16 @@ func TestResolveDigestManifestList(t *testing.T) {
 	idx := mutate.AppendManifests(empty.Index,
 		mutate.IndexAddendum{
 			Add: amdImg,
-			Descriptor: v1.Descriptor{
-				Platform: &v1.Platform{
-					Architecture: testArchAmd64,
-					OS:           testOSLinux,
-				},
+			Platform: &v1.Platform{
+				Architecture: testArchAmd64,
+				OS:           testOSLinux,
 			},
 		},
 		mutate.IndexAddendum{
 			Add: armImg,
-			Descriptor: v1.Descriptor{
-				Platform: &v1.Platform{
-					Architecture: testArchArm64,
-					OS:           testOSLinux,
-				},
+			Platform: &v1.Platform{
+				Architecture: testArchArm64,
+				OS:           testOSLinux,
 			},
 		},
 	)
@@ -349,11 +345,9 @@ func TestResolveDigestManifestListDockerMediaType(t *testing.T) {
 		mutate.AppendManifests(empty.Index,
 			mutate.IndexAddendum{
 				Add: img,
-				Descriptor: v1.Descriptor{
-					Platform: &v1.Platform{
-						Architecture: testArchAmd64,
-						OS:           testOSLinux,
-					},
+				Platform: &v1.Platform{
+					Architecture: testArchAmd64,
+					OS:           testOSLinux,
 				},
 			},
 		),
@@ -407,11 +401,9 @@ func TestResolveDigestManifestListNoPlatformMatch(t *testing.T) {
 	idx := mutate.AppendManifests(empty.Index,
 		mutate.IndexAddendum{
 			Add: img,
-			Descriptor: v1.Descriptor{
-				Platform: &v1.Platform{
-					Architecture: testArchS390x,
-					OS:           testOSZos,
-				},
+			Platform: &v1.Platform{
+				Architecture: testArchS390x,
+				OS:           testOSZos,
 			},
 		},
 	)

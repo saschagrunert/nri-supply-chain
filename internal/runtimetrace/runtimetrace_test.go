@@ -537,7 +537,7 @@ func TestVerifyFreshness(t *testing.T) {
 			name: "stale trace fails",
 			doc: tracePredicate{
 				Monitor:    traceMonitor{Type: testMonitorType},
-				MonitorLog: traceMonitorLog{}, //nolint:exhaustruct // test omits log entries
+				MonitorLog: traceMonitorLog{}, //nolint:exhaustruct_v5 // test omits log entries
 				Metadata: &traceMetadata{
 					BuildStartedOn:  nil,
 					BuildFinishedOn: &staleTime,
@@ -558,7 +558,7 @@ func TestVerifyFreshness(t *testing.T) {
 			name: "fresh trace passes",
 			doc: tracePredicate{
 				Monitor:    traceMonitor{Type: testMonitorType},
-				MonitorLog: traceMonitorLog{}, //nolint:exhaustruct // test omits log entries
+				MonitorLog: traceMonitorLog{}, //nolint:exhaustruct_v5 // test omits log entries
 				Metadata: &traceMetadata{
 					BuildStartedOn:  nil,
 					BuildFinishedOn: &freshTime,

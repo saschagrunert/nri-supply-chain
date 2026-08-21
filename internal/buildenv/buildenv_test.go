@@ -112,10 +112,8 @@ func TestVerify(t *testing.T) {
 			name: "required property present passes",
 			doc:  validDoc(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					BuildEnv: &policy.BuildEnvPolicy{
-						RequiredProperties: []string{testPropOS},
-					},
+				BuildEnv: &policy.BuildEnvPolicy{
+					RequiredProperties: []string{testPropOS},
 				},
 			},
 			wantPassed: true,
@@ -125,10 +123,8 @@ func TestVerify(t *testing.T) {
 			name: "required property missing fails",
 			doc:  validDoc(),
 			pol: &policy.Policy{
-				Sections: policy.Sections{
-					BuildEnv: &policy.BuildEnvPolicy{
-						RequiredProperties: []string{testPropDebug},
-					},
+				BuildEnv: &policy.BuildEnvPolicy{
+					RequiredProperties: []string{testPropDebug},
 				},
 			},
 			wantPassed: false,

@@ -859,37 +859,37 @@ func TestIsConnectionError(t *testing.T) {
 		},
 		{
 			name: "DNS error",
-			err: &net.DNSError{ //nolint:exhaustruct // test only needs Err+Name
+			err: &net.DNSError{ //nolint:exhaustruct_v5 // test only needs Err+Name
 				Err: "no such host", Name: "mirror.example.com",
 			},
 			want: true,
 		},
 		{
 			name: "OpError (connection refused)",
-			err: &net.OpError{ //nolint:exhaustruct // test only needs Op+Err
+			err: &net.OpError{ //nolint:exhaustruct_v5 // test only needs Op+Err
 				Op: "dial", Err: errConnRefused,
 			},
 			want: true,
 		},
 		{
 			name: "TLS record header error",
-			err:  &tls.RecordHeaderError{}, //nolint:exhaustruct // zero value suffices
+			err:  &tls.RecordHeaderError{}, //nolint:exhaustruct_v5 // zero value suffices
 			want: true,
 		},
 		{
 			name: "x509 CertificateInvalidError",
-			//nolint:exhaustruct // test needs Reason
+			//nolint:exhaustruct_v5 // test needs Reason
 			err:  &x509.CertificateInvalidError{Reason: x509.Expired},
 			want: true,
 		},
 		{
 			name: "x509 UnknownAuthorityError",
-			err:  &x509.UnknownAuthorityError{}, //nolint:exhaustruct // zero value suffices
+			err:  &x509.UnknownAuthorityError{}, //nolint:exhaustruct_v5 // zero value suffices
 			want: true,
 		},
 		{
 			name: "x509 HostnameError",
-			err:  &x509.HostnameError{Host: "example.com"}, //nolint:exhaustruct // test needs Host
+			err:  &x509.HostnameError{Host: "example.com"}, //nolint:exhaustruct_v5 // test needs Host
 			want: true,
 		},
 		{
@@ -954,7 +954,7 @@ func TestIsConnectionError(t *testing.T) {
 		},
 		{
 			name: "wrapped DNS error",
-			err: fmt.Errorf("resolving: %w", &net.DNSError{ //nolint:exhaustruct // test
+			err: fmt.Errorf("resolving: %w", &net.DNSError{ //nolint:exhaustruct_v5 // test
 				Err: "no such host", Name: "x",
 			}),
 			want: true,

@@ -86,7 +86,7 @@ const (
 )
 
 func validDoc() vulnScanDoc {
-	return vulnScanDoc{ //nolint:exhaustruct // test omits Metadata
+	return vulnScanDoc{ //nolint:exhaustruct_v5 // test omits Metadata
 		Scanner: scannerInfo{URI: testScannerURI, Version: "0.50.0"},
 		Result: scanResult{
 			Vulnerabilities: []vuln{
@@ -98,15 +98,15 @@ func validDoc() vulnScanDoc {
 }
 
 func cleanDoc() vulnScanDoc {
-	return vulnScanDoc{ //nolint:exhaustruct // test omits Metadata
-		Scanner: scannerInfo{URI: testScannerURI}, //nolint:exhaustruct // test omits Version
+	return vulnScanDoc{ //nolint:exhaustruct_v5 // test omits Metadata
+		Scanner: scannerInfo{URI: testScannerURI}, //nolint:exhaustruct_v5 // test omits Version
 		Result:  scanResult{Vulnerabilities: []vuln{}},
 	}
 }
 
 func criticalDoc() vulnScanDoc {
-	return vulnScanDoc{ //nolint:exhaustruct // test omits Metadata
-		Scanner: scannerInfo{URI: testScannerURI}, //nolint:exhaustruct // test omits Version
+	return vulnScanDoc{ //nolint:exhaustruct_v5 // test omits Metadata
+		Scanner: scannerInfo{URI: testScannerURI}, //nolint:exhaustruct_v5 // test omits Version
 		Result: scanResult{
 			Vulnerabilities: []vuln{
 				{ID: testCVE3, Severity: testSevCritical, Score: new(9.8)},
@@ -511,16 +511,16 @@ func TestVerifyMultiple(t *testing.T) {
 func TestVerifyMultipleMergesMetadata(t *testing.T) {
 	t.Parallel()
 
-	doc1 := vulnScanDoc{ //nolint:exhaustruct // test omits Metadata
-		Scanner: scannerInfo{URI: testScannerURI}, //nolint:exhaustruct // test omits Version
+	doc1 := vulnScanDoc{ //nolint:exhaustruct_v5 // test omits Metadata
+		Scanner: scannerInfo{URI: testScannerURI}, //nolint:exhaustruct_v5 // test omits Version
 		Result: scanResult{
 			Vulnerabilities: []vuln{
 				{ID: testCVE1, Severity: testSevMedium, Score: new(5.5)},
 			},
 		},
 	}
-	doc2 := vulnScanDoc{ //nolint:exhaustruct // test omits Metadata
-		Scanner: scannerInfo{URI: testScannerURI}, //nolint:exhaustruct // test omits Version
+	doc2 := vulnScanDoc{ //nolint:exhaustruct_v5 // test omits Metadata
+		Scanner: scannerInfo{URI: testScannerURI}, //nolint:exhaustruct_v5 // test omits Version
 		Result: scanResult{
 			Vulnerabilities: []vuln{
 				{ID: testCVE2, Severity: testSevLow, Score: new(2.1)},
@@ -637,7 +637,7 @@ func TestVerifyFreshness(t *testing.T) {
 		{
 			name: "stale scan fails",
 			doc: vulnScanDoc{
-				Scanner: scannerInfo{ //nolint:exhaustruct // test omits Version
+				Scanner: scannerInfo{ //nolint:exhaustruct_v5 // test omits Version
 					URI: testScannerURI,
 				},
 				Metadata: &scanMeta{ScannedOn: &staleTime},
@@ -657,7 +657,7 @@ func TestVerifyFreshness(t *testing.T) {
 		{
 			name: "fresh scan passes",
 			doc: vulnScanDoc{
-				Scanner: scannerInfo{ //nolint:exhaustruct // test omits Version
+				Scanner: scannerInfo{ //nolint:exhaustruct_v5 // test omits Version
 					URI: testScannerURI,
 				},
 				Metadata: &scanMeta{ScannedOn: &freshTime},
@@ -718,11 +718,11 @@ func TestVerifyFreshness(t *testing.T) {
 func TestVerifyScoreWithoutScoreField(t *testing.T) {
 	t.Parallel()
 
-	doc := vulnScanDoc{ //nolint:exhaustruct // test omits Metadata
-		Scanner: scannerInfo{URI: testScannerURI}, //nolint:exhaustruct // test omits Version
+	doc := vulnScanDoc{ //nolint:exhaustruct_v5 // test omits Metadata
+		Scanner: scannerInfo{URI: testScannerURI}, //nolint:exhaustruct_v5 // test omits Version
 		Result: scanResult{
 			Vulnerabilities: []vuln{
-				{ID: testCVE1, Severity: testSevHigh}, //nolint:exhaustruct // test omits Score
+				{ID: testCVE1, Severity: testSevHigh}, //nolint:exhaustruct_v5 // test omits Score
 			},
 		},
 	}
@@ -745,8 +745,8 @@ func TestVerifyScoreWithoutScoreField(t *testing.T) {
 func TestVerifyMultipleMergesScannerURI(t *testing.T) {
 	t.Parallel()
 
-	doc1 := vulnScanDoc{ //nolint:exhaustruct // test omits Metadata
-		Scanner: scannerInfo{ //nolint:exhaustruct // test omits Version
+	doc1 := vulnScanDoc{ //nolint:exhaustruct_v5 // test omits Metadata
+		Scanner: scannerInfo{ //nolint:exhaustruct_v5 // test omits Version
 			URI: "https://scanner1.example.com",
 		},
 		Result: scanResult{
@@ -755,8 +755,8 @@ func TestVerifyMultipleMergesScannerURI(t *testing.T) {
 			},
 		},
 	}
-	doc2 := vulnScanDoc{ //nolint:exhaustruct // test omits Metadata
-		Scanner: scannerInfo{ //nolint:exhaustruct // test omits Version
+	doc2 := vulnScanDoc{ //nolint:exhaustruct_v5 // test omits Metadata
+		Scanner: scannerInfo{ //nolint:exhaustruct_v5 // test omits Version
 			URI: "https://scanner2.example.com",
 		},
 		Result: scanResult{
@@ -834,8 +834,8 @@ func TestVerifyMultiplePassAndFail(t *testing.T) {
 func TestVerifyUnknownSeverityTreatedAsNone(t *testing.T) {
 	t.Parallel()
 
-	doc := vulnScanDoc{ //nolint:exhaustruct // test omits Metadata
-		Scanner: scannerInfo{URI: testScannerURI}, //nolint:exhaustruct // test omits Version
+	doc := vulnScanDoc{ //nolint:exhaustruct_v5 // test omits Metadata
+		Scanner: scannerInfo{URI: testScannerURI}, //nolint:exhaustruct_v5 // test omits Version
 		Result: scanResult{
 			Vulnerabilities: []vuln{
 				{ID: testCVE1, Severity: "moderate", Score: new(4.0)},

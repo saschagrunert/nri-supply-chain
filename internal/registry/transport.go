@@ -190,7 +190,7 @@ func newTLSConfig(insecure bool) *tls.Config {
 }
 
 func newHTTPTransport(tlsCfg *tls.Config) *http.Transport {
-	dialer := &net.Dialer{ //nolint:exhaustruct // only setting relevant fields
+	dialer := &net.Dialer{ //nolint:exhaustruct_v5 // only setting relevant fields
 		Timeout:   transportDialTimeout,
 		KeepAlive: transportKeepAlive,
 	}
@@ -314,8 +314,7 @@ func IsConnectionError(err error) bool {
 	}
 
 	// Server-side errors (5xx) from the registry transport.
-	var transportErr *transport.Error
-	if errors.As(err, &transportErr) {
+	if transportErr, ok := errors.AsType[*transport.Error](err); ok {
 		return transportErr.StatusCode >= http.StatusInternalServerError
 	}
 
@@ -324,8 +323,8 @@ func IsConnectionError(err error) bool {
 	}
 
 	// Timeout errors (net.Error with Timeout() == true).
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
+	netErr, isNetErr := errors.AsType[net.Error](err)
+	if isNetErr && netErr.Timeout() {
 		return true
 	}
 
@@ -334,34 +333,29 @@ func IsConnectionError(err error) bool {
 }
 
 func isNetworkOrTLSError(err error) bool {
-	var dnsErr *net.DNSError
-	if errors.As(err, &dnsErr) {
+	if _, ok := errors.AsType[*net.DNSError](err); ok {
 		return true
 	}
 
-	var opErr *net.OpError
-	if errors.As(err, &opErr) {
+	if _, ok := errors.AsType[*net.OpError](err); ok {
 		return true
 	}
 
-	var tlsRecordErr *tls.RecordHeaderError
-	if errors.As(err, &tlsRecordErr) {
+	if _, ok := errors.AsType[*tls.RecordHeaderError](err); ok {
 		return true
 	}
 
-	var certInvalidErr *x509.CertificateInvalidError
-	if errors.As(err, &certInvalidErr) {
+	if _, ok := errors.AsType[*x509.CertificateInvalidError](err); ok {
 		return true
 	}
 
-	var unknownAuthErr *x509.UnknownAuthorityError
-	if errors.As(err, &unknownAuthErr) {
+	if _, ok := errors.AsType[*x509.UnknownAuthorityError](err); ok {
 		return true
 	}
 
-	var hostnameErr *x509.HostnameError
+	_, ok := errors.AsType[*x509.HostnameError](err)
 
-	return errors.As(err, &hostnameErr)
+	return ok
 }
 
 // OptionsForRegistries returns the (possibly rewritten) image reference plus

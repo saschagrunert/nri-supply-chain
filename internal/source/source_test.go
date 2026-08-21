@@ -71,12 +71,12 @@ type srcMetadata struct {
 func validPredicate() srcPredicate {
 	return srcPredicate{
 		SourceLocations: []srcLocation{
-			{ //nolint:exhaustruct // test only needs URI+Branch
+			{ //nolint:exhaustruct_v5 // test only needs URI+Branch
 				URI:    testSourceURI,
 				Branch: testSourceBranch,
 			},
 		},
-		SourceMetadata: &srcMetadata{ //nolint:exhaustruct // test only needs SourceLevel
+		SourceMetadata: &srcMetadata{ //nolint:exhaustruct_v5 // test only needs SourceLevel
 			SourceLevel: 2,
 		},
 	}
@@ -173,9 +173,9 @@ func TestVerify(t *testing.T) {
 		},
 		{
 			name: "no source metadata defaults level to zero",
-			doc: srcPredicate{ //nolint:exhaustruct // test omits SourceMetadata
+			doc: srcPredicate{ //nolint:exhaustruct_v5 // test omits SourceMetadata
 				SourceLocations: []srcLocation{
-					{ //nolint:exhaustruct // test only needs URI+Branch
+					{ //nolint:exhaustruct_v5 // test only needs URI+Branch
 						URI:    testSourceURI,
 						Branch: testSourceBranch,
 					},
@@ -193,7 +193,7 @@ func TestVerify(t *testing.T) {
 		},
 		{
 			name: "empty source locations with trust policy and no URI fails",
-			doc: srcPredicate{ //nolint:exhaustruct // test omits SourceMetadata
+			doc: srcPredicate{ //nolint:exhaustruct_v5 // test omits SourceMetadata
 				SourceLocations: []srcLocation{},
 			},
 			pol: &policy.Policy{
@@ -395,9 +395,9 @@ func TestVerifyMultiple(t *testing.T) {
 			name: "any valid passing attestation passes",
 			docs: []srcPredicate{
 				validPredicate(),
-				{ //nolint:exhaustruct // test omits SourceMetadata
+				{ //nolint:exhaustruct_v5 // test omits SourceMetadata
 					SourceLocations: []srcLocation{
-						{ //nolint:exhaustruct // test only needs URI
+						{ //nolint:exhaustruct_v5 // test only needs URI
 							URI: "https://github.com/untrusted/repo",
 						},
 					},
@@ -416,9 +416,9 @@ func TestVerifyMultiple(t *testing.T) {
 		{
 			name: "all failing fails",
 			docs: []srcPredicate{
-				{ //nolint:exhaustruct // test omits SourceMetadata
+				{ //nolint:exhaustruct_v5 // test omits SourceMetadata
 					SourceLocations: []srcLocation{
-						{ //nolint:exhaustruct // test only needs URI
+						{ //nolint:exhaustruct_v5 // test only needs URI
 							URI: "https://github.com/untrusted/repo",
 						},
 					},
@@ -535,7 +535,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 func TestVerifyEmptySourceLocations(t *testing.T) {
 	t.Parallel()
 
-	doc := srcPredicate{ //nolint:exhaustruct // test omits SourceMetadata
+	doc := srcPredicate{ //nolint:exhaustruct_v5 // test omits SourceMetadata
 		SourceLocations: []srcLocation{},
 	}
 	att := wrapInToto(t, doc, testDigest)
@@ -591,7 +591,7 @@ func TestVerifyFreshness(t *testing.T) {
 			name: "stale source fails",
 			doc: srcPredicate{
 				SourceLocations: []srcLocation{
-					{ //nolint:exhaustruct // test omits Digest
+					{ //nolint:exhaustruct_v5 // test omits Digest
 						URI:    testSourceURI,
 						Branch: testSourceBranch,
 					},
@@ -616,7 +616,7 @@ func TestVerifyFreshness(t *testing.T) {
 			name: "fresh source passes",
 			doc: srcPredicate{
 				SourceLocations: []srcLocation{
-					{ //nolint:exhaustruct // test omits Digest
+					{ //nolint:exhaustruct_v5 // test omits Digest
 						URI:    testSourceURI,
 						Branch: testSourceBranch,
 					},

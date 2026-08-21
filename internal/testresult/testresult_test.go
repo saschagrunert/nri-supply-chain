@@ -681,15 +681,15 @@ func TestVerifyFailedSuiteCollection(t *testing.T) {
 	doc := testResultDoc{
 		Result: testResultFailCap,
 		Suites: []testSuite{
-			{ //nolint:exhaustruct // test omits Count/Passed/Failed
+			{ //nolint:exhaustruct_v5 // test omits Count/Passed/Failed
 				Name:   testSuiteUnit,
 				Result: testResultPass,
 			},
-			{ //nolint:exhaustruct // test omits Count/Passed/Failed
+			{ //nolint:exhaustruct_v5 // test omits Count/Passed/Failed
 				Name:   testSuiteInteg,
 				Result: testResultFail,
 			},
-			{ //nolint:exhaustruct // test omits Count/Passed/Failed
+			{ //nolint:exhaustruct_v5 // test omits Count/Passed/Failed
 				Name:   testSuiteE2E,
 				Result: "error",
 			},
@@ -719,7 +719,7 @@ func TestVerifyNilCountFields(t *testing.T) {
 	doc := testResultDoc{
 		Result: testResultPassCap,
 		Suites: []testSuite{
-			{ //nolint:exhaustruct // test omits Count/Passed/Failed
+			{ //nolint:exhaustruct_v5 // test omits Count/Passed/Failed
 				Name:   testSuiteUnit,
 				Result: testResultPass,
 			},
@@ -791,7 +791,7 @@ func TestVerifyFreshness(t *testing.T) {
 		},
 		{
 			name: "no timestamp with maxAge fails",
-			doc: testResultDocWithMeta{ //nolint:exhaustruct // test omits Metadata
+			doc: testResultDocWithMeta{ //nolint:exhaustruct_v5 // test omits Metadata
 				Result: testResultPassCap,
 				Suites: []testSuite{},
 			},
@@ -808,7 +808,7 @@ func TestVerifyFreshness(t *testing.T) {
 		},
 		{
 			name: "no timestamp without maxAge passes",
-			doc: testResultDocWithMeta{ //nolint:exhaustruct // test omits Metadata
+			doc: testResultDocWithMeta{ //nolint:exhaustruct_v5 // test omits Metadata
 				Result: testResultPassCap,
 				Suites: []testSuite{},
 			},

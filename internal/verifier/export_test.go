@@ -89,7 +89,7 @@ func ExportNewAuditEvent(
 	check, status, detail, decision, reason string,
 	info *ExportAuditInfo,
 ) *auditEvent {
-	event := &auditEvent{ //nolint:exhaustruct // enrichment fields set by applyAuditInfo
+	event := &auditEvent{ //nolint:exhaustruct_v5 // enrichment fields set by applyAuditInfo
 		Image:     image,
 		Digest:    digest,
 		Namespace: namespace,

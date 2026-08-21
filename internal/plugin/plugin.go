@@ -175,7 +175,7 @@ func New(
 	fetchTimeout, digestResolveTimeout time.Duration,
 	cache *registry.TransportCache,
 ) *Plugin {
-	plug := &Plugin{ //nolint:exhaustruct // zero-value fields are intentional
+	plug := &Plugin{ //nolint:exhaustruct_v5 // zero-value fields are intentional
 		verifier:       v,
 		metrics:        met,
 		configPath:     configPath,

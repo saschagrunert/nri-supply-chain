@@ -138,7 +138,7 @@ func New(
 		return nil, err
 	}
 
-	verif := &Verifier{ //nolint:exhaustruct // zero-value fields are intentional
+	verif := &Verifier{ //nolint:exhaustruct_v5 // zero-value fields are intentional
 		policyHashes: hashes,
 		nodeName:     resolveNodeName(),
 	}

@@ -112,7 +112,7 @@ func logResult(
 	info *auditInfo,
 ) {
 	for _, checkResult := range result.CheckResults {
-		event := &auditEvent{ //nolint:exhaustruct // remaining fields set by applyAuditInfo
+		event := &auditEvent{ //nolint:exhaustruct_v5 // remaining fields set by applyAuditInfo
 			Image:     imageRef,
 			Digest:    digest,
 			Namespace: namespace,
@@ -138,7 +138,7 @@ func logAuditDecision(
 	imageRef, digest, namespace, decision, reason string,
 	info *auditInfo,
 ) {
-	event := &auditEvent{ //nolint:exhaustruct // remaining fields set by applyAuditInfo
+	event := &auditEvent{ //nolint:exhaustruct_v5 // remaining fields set by applyAuditInfo
 		Image:     imageRef,
 		Digest:    digest,
 		Namespace: namespace,

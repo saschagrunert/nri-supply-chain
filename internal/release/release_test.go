@@ -140,7 +140,7 @@ func TestVerify(t *testing.T) {
 		},
 		{
 			name: "requirePackageId fails when missing",
-			doc: relPredicate{ //nolint:exhaustruct // test omits PackageID
+			doc: relPredicate{ //nolint:exhaustruct_v5 // test omits PackageID
 				PURL: testPURL,
 			},
 			pol: &policy.Policy{
@@ -287,7 +287,7 @@ func TestVerifyMultiple(t *testing.T) {
 			name: "any valid passing attestation passes",
 			docs: []relPredicate{
 				validPredicate(),
-				{ //nolint:exhaustruct // test omits PackageID
+				{ //nolint:exhaustruct_v5 // test omits PackageID
 					PURL: "pkg:npm/untrusted@1.0",
 				},
 			},
@@ -304,7 +304,7 @@ func TestVerifyMultiple(t *testing.T) {
 		{
 			name: "all failing fails",
 			docs: []relPredicate{
-				{ //nolint:exhaustruct // test omits PackageID
+				{ //nolint:exhaustruct_v5 // test omits PackageID
 					PURL: "pkg:npm/untrusted@1.0",
 				},
 			},
@@ -419,7 +419,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 func TestVerifyEmptyPURL(t *testing.T) {
 	t.Parallel()
 
-	doc := relPredicate{ //nolint:exhaustruct // test omits PackageID
+	doc := relPredicate{ //nolint:exhaustruct_v5 // test omits PackageID
 		PURL: "",
 	}
 	att := wrapInToto(t, doc, testDigest)
