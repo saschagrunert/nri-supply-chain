@@ -145,7 +145,7 @@ func (tc *TransportCache) getTransport(prefix string) (http.RoundTripper, error)
 		return nil, nil //nolint:nilnil // nil signals "no matching registry"
 	}
 
-	builtTransport, err := BuildTransport(reg.CACert, reg.Insecure)
+	builtTransport, err := buildTransport(reg.CACert, reg.Insecure)
 	if err != nil {
 		return nil, err
 	}
@@ -155,11 +155,7 @@ func (tc *TransportCache) getTransport(prefix string) (http.RoundTripper, error)
 	return builtTransport, nil
 }
 
-// BuildTransport creates an http.RoundTripper configured with the given
-// CA certificate and insecure TLS settings. When caCertPath is empty and
-// insecure is false, a shared default transport with tuned connection pool
-// settings is returned.
-func BuildTransport(caCertPath string, insecure bool) (http.RoundTripper, error) {
+func buildTransport(caCertPath string, insecure bool) (http.RoundTripper, error) {
 	if caCertPath == "" && !insecure {
 		return getDefaultTransport(), nil
 	}
@@ -235,11 +231,7 @@ func loadCACertPool(path string) (*x509.CertPool, error) {
 	return pool, nil
 }
 
-// RewriteReference rewrites an image reference to use a mirror registry.
-// If the image's registry host matches prefix, it is replaced with mirror.
-// Returns the original reference unchanged if mirror is empty or the prefix
-// does not match.
-func RewriteReference(imageRef, prefix, mirror string) (string, error) {
+func rewriteReference(imageRef, prefix, mirror string) (string, error) {
 	if mirror == "" || prefix == "" {
 		return imageRef, nil
 	}
@@ -280,10 +272,7 @@ func RewriteReference(imageRef, prefix, mirror string) (string, error) {
 	}
 }
 
-// FindMatchingRegistry returns the first registry config whose prefix matches
-// the given image reference's registry host exactly. Returns nil if no match
-// is found.
-func FindMatchingRegistry(
+func findMatchingRegistry(
 	registries []config.Registry, imageRef string,
 ) *config.Registry {
 	if len(registries) == 0 {
@@ -391,13 +380,13 @@ func OptionsForRegistries(
 
 	registries := cache.Registries()
 
-	reg := FindMatchingRegistry(registries, imageRef)
+	reg := findMatchingRegistry(registries, imageRef)
 	if reg == nil {
 		return imageRef, nil, nil, nil
 	}
 
 	if reg.Mirror != "" {
-		rewrittenRef, err = RewriteReference(imageRef, reg.Prefix, reg.Mirror)
+		rewrittenRef, err = rewriteReference(imageRef, reg.Prefix, reg.Mirror)
 		if err != nil {
 			return imageRef, nil, nil, err
 		}
@@ -433,7 +422,7 @@ func ResolveWithRegistries(
 	ctx context.Context, imageRef string, cache *TransportCache,
 ) (digest, indexDigest string, fallbackUsed bool, err error) {
 	if cache == nil {
-		digest, indexDigest, err = ResolveWithKeychain(ctx, imageRef)
+		digest, indexDigest, err = resolveWithKeychain(ctx, imageRef)
 
 		return digest, indexDigest, false, err
 	}
@@ -448,7 +437,7 @@ func ResolveWithRegistries(
 		opts = append(opts, transportOpt)
 	}
 
-	digest, indexDigest, err = ResolveDigest(ctx, rewrittenRef, opts...)
+	digest, indexDigest, err = resolveDigest(ctx, rewrittenRef, opts...)
 	if err != nil && fallback != nil && ctx.Err() == nil && IsConnectionError(err) {
 		slog.WarnContext(ctx,
 			"Mirror unreachable for digest resolution, falling back to original registry",
@@ -462,7 +451,7 @@ func ResolveWithRegistries(
 			fallback.TransportOpt,
 		}
 
-		digest, indexDigest, fallbackErr := ResolveDigest(
+		digest, indexDigest, fallbackErr := resolveDigest(
 			ctx, fallback.OriginalRef, fallbackOpts...,
 		)
 		if fallbackErr != nil {

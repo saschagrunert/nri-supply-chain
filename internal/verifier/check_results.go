@@ -101,15 +101,13 @@ func checkVSAMissing(
 	}
 }
 
-func prependVSAWarning(result *types.Result, pol *policy.Policy, detail string) {
+func appendVSAWarning(result *types.Result, pol *policy.Policy, detail string) {
 	if pol.MissingPolicyFor(types.CheckTypeVSA) != types.ActionWarn {
 		return
 	}
 
 	vsaCheck := handleMissingAttestation(types.ActionWarn, types.CheckTypeVSA, detail)
-	result.CheckResults = append(
-		[]types.CheckResult{*vsaCheck}, result.CheckResults...,
-	)
+	result.CheckResults = append(result.CheckResults, *vsaCheck)
 	applyCheckResult(result, vsaCheck)
 }
 

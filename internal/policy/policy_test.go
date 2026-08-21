@@ -5535,3 +5535,225 @@ func TestPolicyValidateSCAIOverlappingAttributes(t *testing.T) {
 		}
 	})
 }
+
+func TestMergeWithDefaultInheritsBuildEnv(t *testing.T) {
+	t.Parallel()
+
+	defaultPol := &policy.Policy{
+		Sections: policy.Sections{
+			BuildEnv: &policy.BuildEnvPolicy{
+				MissingPolicy:       types.ActionDeny,
+				RequiredProperties:  []string{"os"},
+				ForbiddenProperties: []string{"debug"},
+			},
+		},
+	}
+	nsPol := &policy.Policy{}
+
+	merged := policy.MergeWithDefault(nsPol, defaultPol)
+	if merged.BuildEnv == nil {
+		t.Fatal("expected BuildEnv to be inherited")
+	}
+
+	testutil.AssertEqual(t, types.ActionDeny, merged.BuildEnv.MissingPolicy)
+	testutil.AssertEqual(t, 1, len(merged.BuildEnv.RequiredProperties))
+	testutil.AssertEqual(t, 1, len(merged.BuildEnv.ForbiddenProperties))
+
+	merged.BuildEnv.RequiredProperties = append(
+		merged.BuildEnv.RequiredProperties, "arch",
+	)
+
+	if len(defaultPol.BuildEnv.RequiredProperties) != 1 {
+		t.Error("clone should not share slice backing array with default")
+	}
+}
+
+func TestMergeWithDefaultInheritsVulnScan(t *testing.T) {
+	t.Parallel()
+
+	maxScore := 7.5
+	defaultPol := &policy.Policy{
+		Sections: policy.Sections{
+			VulnScan: &policy.VulnScanPolicy{
+				MissingPolicy: types.ActionWarn,
+				MaxScore:      &maxScore,
+				IgnoreCVEs:    []string{"CVE-2024-0001"},
+			},
+		},
+	}
+	nsPol := &policy.Policy{}
+
+	merged := policy.MergeWithDefault(nsPol, defaultPol)
+	if merged.VulnScan == nil {
+		t.Fatal("expected VulnScan to be inherited")
+	}
+
+	testutil.AssertEqual(t, types.ActionWarn, merged.VulnScan.MissingPolicy)
+
+	if merged.VulnScan.MaxScore == nil || *merged.VulnScan.MaxScore != maxScore {
+		t.Error("expected MaxScore to be cloned")
+	}
+
+	*merged.VulnScan.MaxScore = 9.0
+
+	if *defaultPol.VulnScan.MaxScore != maxScore {
+		t.Error("clone should not share MaxScore pointer with default")
+	}
+}
+
+func TestMergeWithDefaultInheritsTestResult(t *testing.T) {
+	t.Parallel()
+
+	defaultPol := &policy.Policy{
+		Sections: policy.Sections{
+			TestResult: &policy.TestResultPolicy{
+				MissingPolicy:  types.ActionDeny,
+				RequiredSuites: []string{"unit", "integration"},
+			},
+		},
+	}
+	nsPol := &policy.Policy{}
+
+	merged := policy.MergeWithDefault(nsPol, defaultPol)
+	if merged.TestResult == nil {
+		t.Fatal("expected TestResult to be inherited")
+	}
+
+	testutil.AssertEqual(t, types.ActionDeny, merged.TestResult.MissingPolicy)
+	testutil.AssertEqual(t, 2, len(merged.TestResult.RequiredSuites))
+}
+
+func TestMergeWithDefaultInheritsRelease(t *testing.T) {
+	t.Parallel()
+
+	defaultPol := &policy.Policy{
+		Sections: policy.Sections{
+			Release: &policy.ReleasePolicy{
+				MissingPolicy:     types.ActionWarn,
+				TrustedRegistries: []string{"ghcr.io/myorg/*"},
+				RequirePackageID:  true,
+			},
+		},
+	}
+	nsPol := &policy.Policy{}
+
+	merged := policy.MergeWithDefault(nsPol, defaultPol)
+	if merged.Release == nil {
+		t.Fatal("expected Release to be inherited")
+	}
+
+	testutil.AssertEqual(t, types.ActionWarn, merged.Release.MissingPolicy)
+	testutil.AssertEqual(t, true, merged.Release.RequirePackageID)
+	testutil.AssertEqual(t, 1, len(merged.Release.TrustedRegistries))
+}
+
+func TestMergeWithDefaultInheritsRuntimeTrace(t *testing.T) {
+	t.Parallel()
+
+	defaultPol := &policy.Policy{
+		Sections: policy.Sections{
+			RuntimeTrace: &policy.RuntimeTracePolicy{
+				MissingPolicy:         types.ActionDeny,
+				TrustedMonitors:       []string{"falco"},
+				ForbiddenFilePatterns: []string{"/etc/shadow"},
+			},
+		},
+	}
+	nsPol := &policy.Policy{}
+
+	merged := policy.MergeWithDefault(nsPol, defaultPol)
+	if merged.RuntimeTrace == nil {
+		t.Fatal("expected RuntimeTrace to be inherited")
+	}
+
+	testutil.AssertEqual(t, types.ActionDeny, merged.RuntimeTrace.MissingPolicy)
+	testutil.AssertEqual(t, 1, len(merged.RuntimeTrace.TrustedMonitors))
+	testutil.AssertEqual(t, 1, len(merged.RuntimeTrace.ForbiddenFilePatterns))
+}
+
+func TestMissingPolicyAccessors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		policy *policy.Policy
+		check  func(*policy.Policy) types.Action
+		want   types.Action
+	}{
+		{
+			name: "SourceMissingPolicy deny",
+			policy: &policy.Policy{
+				Sections: policy.Sections{
+					Source: &policy.SourcePolicy{MissingPolicy: types.ActionDeny},
+				},
+			},
+			check: (*policy.Policy).SourceMissingPolicy,
+			want:  types.ActionDeny,
+		},
+		{
+			name: "BuildEnvMissingPolicy warn",
+			policy: &policy.Policy{
+				Sections: policy.Sections{
+					BuildEnv: &policy.BuildEnvPolicy{MissingPolicy: types.ActionWarn},
+				},
+			},
+			check: (*policy.Policy).BuildEnvMissingPolicy,
+			want:  types.ActionWarn,
+		},
+		{
+			name: "VulnScanMissingPolicy deny",
+			policy: &policy.Policy{
+				Sections: policy.Sections{
+					VulnScan: &policy.VulnScanPolicy{MissingPolicy: types.ActionDeny},
+				},
+			},
+			check: (*policy.Policy).VulnScanMissingPolicy,
+			want:  types.ActionDeny,
+		},
+		{
+			name: "TestResultMissingPolicy allow",
+			policy: &policy.Policy{
+				Sections: policy.Sections{
+					TestResult: &policy.TestResultPolicy{MissingPolicy: types.ActionAllow},
+				},
+			},
+			check: (*policy.Policy).TestResultMissingPolicy,
+			want:  types.ActionAllow,
+		},
+		{
+			name: "ReleaseMissingPolicy warn",
+			policy: &policy.Policy{
+				Sections: policy.Sections{
+					Release: &policy.ReleasePolicy{MissingPolicy: types.ActionWarn},
+				},
+			},
+			check: (*policy.Policy).ReleaseMissingPolicy,
+			want:  types.ActionWarn,
+		},
+		{
+			name: "RuntimeTraceMissingPolicy deny",
+			policy: &policy.Policy{
+				Sections: policy.Sections{
+					RuntimeTrace: &policy.RuntimeTracePolicy{MissingPolicy: types.ActionDeny},
+				},
+			},
+			check: (*policy.Policy).RuntimeTraceMissingPolicy,
+			want:  types.ActionDeny,
+		},
+		{
+			name:   "unset section defaults to allow",
+			policy: &policy.Policy{},
+			check:  (*policy.Policy).SourceMissingPolicy,
+			want:   types.ActionAllow,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := test.check(test.policy)
+			testutil.AssertEqual(t, test.want, got)
+		})
+	}
+}

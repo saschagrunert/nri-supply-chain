@@ -28,28 +28,33 @@ import (
 	"github.com/notaryproject/notation-core-go/signature"
 	notationlib "github.com/notaryproject/notation-go"
 	"github.com/notaryproject/notation-go/verifier/trustpolicy"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
+var errMockVerify = errors.New("signature verification failed")
+
 const (
-	testImageDigest       = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
-	testImageRef          = "example.com/img@sha256:" + testImageDigest
-	testDigest            = "sha256:" + testImageDigest
-	testRuleName          = "rule1"
-	testStoreName         = "mystore"
-	testStoreRef          = "ca:mystore"
-	testNotationMediaType = "application/cose"
-	testCertPlaceholder   = "/tmp/cert.pem"
-	testDocVersion        = "1.0"
-	testLevelStrict       = "strict"
-	testLevelSkip         = "skip"
-	testModeStrict        = "strict"
-	testModeSoft          = "soft"
-	testModeSkip          = "skip"
-	testStoreRefAlt       = "ca:store1"
+	testImageDigest         = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+	testImageRef            = "example.com/img@sha256:" + testImageDigest
+	testDigest              = "sha256:" + testImageDigest
+	testRuleName            = "rule1"
+	testStoreName           = "mystore"
+	testStoreRef            = "ca:mystore"
+	testNotationMediaType   = "application/cose"
+	testCertPlaceholder     = "/tmp/cert.pem"
+	testDocVersion          = "1.0"
+	testLevelStrict         = "strict"
+	testLevelSkip           = "skip"
+	testModeStrict          = "strict"
+	testModeSoft            = "soft"
+	testModeSkip            = "skip"
+	testStoreRefAlt         = "ca:store1"
+	testSubjectMediaType    = "application/vnd.oci.image.manifest.v1+json"
+	testTrustPolicyRuleName = "test-rule"
 )
 
 func validNotationPolicy(t *testing.T) *policy.NotationPolicy {
@@ -222,7 +227,7 @@ func TestBuildTrustPolicyDocumentFieldMapping(t *testing.T) {
 	np := &policy.NotationPolicy{
 		TrustPolicy: []policy.NotationTrustPolicyRule{
 			{
-				Name:              "test-rule",
+				Name:              testTrustPolicyRuleName,
 				RegistryScopes:    []string{"scope1", "scope2"},
 				TrustStores:       []string{testStoreRefAlt, "signingAuthority:store2"},
 				TrustedIdentities: []string{"id1", "id2"},
@@ -238,8 +243,8 @@ func TestBuildTrustPolicyDocumentFieldMapping(t *testing.T) {
 
 	tp := doc.TrustPolicies[0]
 
-	if tp.Name != "test-rule" {
-		t.Errorf("name = %q, want %q", tp.Name, "test-rule")
+	if tp.Name != testTrustPolicyRuleName {
+		t.Errorf("name = %q, want %q", tp.Name, testTrustPolicyRuleName)
 	}
 
 	if len(tp.RegistryScopes) != 2 {
@@ -928,5 +933,222 @@ func TestBuildVerifierForImageReturnsTrustPolicyName(t *testing.T) {
 
 	if trustPolicyName != "default-rule" {
 		t.Errorf("trust policy name = %q, want %q", trustPolicyName, "default-rule")
+	}
+}
+
+type mockVerifier struct {
+	outcome *notationlib.VerificationOutcome
+	err     error
+}
+
+func (m *mockVerifier) Verify(
+	_ context.Context,
+	_ ocispec.Descriptor, //nolint:gocritic // interface requires value type
+	_ []byte,
+	_ notationlib.VerifierVerifyOptions,
+) (*notationlib.VerificationOutcome, error) {
+	return m.outcome, m.err
+}
+
+func (m *mockVerifier) SkipVerify(
+	_ context.Context,
+	_ notationlib.VerifierVerifyOptions,
+) (bool, *trustpolicy.VerificationLevel, error) {
+	return false, nil, nil
+}
+
+func TestVerifySignatureEntryInvalidSubjectDigest(t *testing.T) {
+	t.Parallel()
+
+	sig := &attestation.VerifiedAttestation{
+		NotationSubjectDigest:    "not-a-valid-digest",
+		NotationSubjectMediaType: testSubjectMediaType,
+		NotationMediaType:        testNotationMediaType,
+		Payload:                  []byte("payload"),
+	}
+
+	result := verifySignatureEntry(
+		context.Background(), &mockVerifier{outcome: nil, err: nil}, sig,
+		testImageRef, testDigest, "rule1",
+	)
+
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+
+	if result.Passed {
+		t.Error("expected failure for invalid subject digest")
+	}
+
+	if !strings.Contains(result.Detail, "invalid subject digest") {
+		t.Errorf("unexpected detail: %s", result.Detail)
+	}
+}
+
+func TestVerifySignatureEntrySuccessWithEnvelopeContent(t *testing.T) {
+	t.Parallel()
+
+	_, certPath := generateTestCert(t)
+
+	certData, err := os.ReadFile(certPath) //nolint:gosec // test cert
+	if err != nil {
+		t.Fatalf("reading cert: %v", err)
+	}
+
+	block, _ := pem.Decode(certData)
+
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("parsing cert: %v", err)
+	}
+
+	mock := &mockVerifier{
+		outcome: &notationlib.VerificationOutcome{
+			RawSignature: nil,
+			EnvelopeContent: &signature.EnvelopeContent{
+				SignerInfo: signature.SignerInfo{
+					SignedAttributes: signature.SignedAttributes{
+						SigningScheme:      "",
+						SigningTime:        time.Time{},
+						Expiry:             time.Time{},
+						ExtendedAttributes: nil,
+					},
+					UnsignedAttributes: signature.UnsignedAttributes{
+						TimestampSignature: nil,
+						SigningAgent:       "",
+					},
+					SignatureAlgorithm: 0,
+					CertificateChain:   []*x509.Certificate{cert},
+					Signature:          nil,
+				},
+				Payload: signature.Payload{
+					ContentType: "",
+					Content:     nil,
+				},
+			},
+			VerificationLevel:   nil,
+			VerificationResults: nil,
+			Error:               nil,
+		},
+		err: nil,
+	}
+
+	sig := &attestation.VerifiedAttestation{
+		NotationSubjectDigest:    testDigest,
+		NotationSubjectMediaType: testSubjectMediaType,
+		NotationMediaType:        testNotationMediaType,
+		Payload:                  []byte("payload"),
+	}
+
+	result := verifySignatureEntry(
+		context.Background(), mock, sig,
+		testImageRef, testDigest, testTrustPolicyRuleName,
+	)
+
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+
+	if !result.Passed {
+		t.Errorf("expected pass, got fail: %s", result.Detail)
+	}
+
+	if result.Metadata == nil {
+		t.Fatal("expected metadata to be set")
+	}
+
+	signerDN, ok := result.Metadata["signerDN"].(string)
+	if !ok {
+		t.Fatal("expected signerDN in metadata")
+	}
+
+	if !strings.Contains(signerDN, "CN=test-cert") {
+		t.Errorf("expected signerDN containing CN=test-cert, got %q", signerDN)
+	}
+
+	trustPolicy, ok := result.Metadata["trustPolicy"].(string)
+	if !ok {
+		t.Fatal("expected trustPolicy in metadata")
+	}
+
+	if trustPolicy != testTrustPolicyRuleName {
+		t.Errorf("trust policy = %q, want %q", trustPolicy, testTrustPolicyRuleName)
+	}
+}
+
+func TestVerifySignatureEntrySuccessWithoutEnvelopeContent(t *testing.T) {
+	t.Parallel()
+
+	mock := &mockVerifier{
+		outcome: &notationlib.VerificationOutcome{
+			RawSignature:        nil,
+			EnvelopeContent:     nil,
+			VerificationLevel:   nil,
+			VerificationResults: nil,
+			Error:               nil,
+		},
+		err: nil,
+	}
+
+	sig := &attestation.VerifiedAttestation{
+		NotationSubjectDigest:    testDigest,
+		NotationSubjectMediaType: testSubjectMediaType,
+		NotationMediaType:        testNotationMediaType,
+		Payload:                  []byte("payload"),
+	}
+
+	result := verifySignatureEntry(
+		context.Background(), mock, sig,
+		testImageRef, testDigest, testTrustPolicyRuleName,
+	)
+
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+
+	if !result.Passed {
+		t.Errorf("expected pass, got fail: %s", result.Detail)
+	}
+
+	signerDN, ok := result.Metadata["signerDN"].(string)
+	if !ok {
+		t.Fatal("expected signerDN in metadata")
+	}
+
+	if signerDN != "" {
+		t.Errorf("expected empty signerDN without cert chain, got %q", signerDN)
+	}
+}
+
+func TestVerifySignatureEntryVerifyError(t *testing.T) {
+	t.Parallel()
+
+	mock := &mockVerifier{
+		outcome: nil,
+		err:     errMockVerify,
+	}
+
+	sig := &attestation.VerifiedAttestation{
+		NotationSubjectDigest:    testDigest,
+		NotationSubjectMediaType: testSubjectMediaType,
+		NotationMediaType:        testNotationMediaType,
+		Payload:                  []byte("payload"),
+	}
+
+	result := verifySignatureEntry(
+		context.Background(), mock, sig,
+		testImageRef, testDigest, testTrustPolicyRuleName,
+	)
+
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+
+	if result.Passed {
+		t.Error("expected failure when verifier returns error")
+	}
+
+	if !strings.Contains(result.Detail, "Notation signature verification failed") {
+		t.Errorf("unexpected detail: %s", result.Detail)
 	}
 }

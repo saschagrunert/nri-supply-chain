@@ -23,6 +23,8 @@ import (
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
+	"github.com/saschagrunert/nri-supply-chain/internal/guac"
+	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
@@ -193,4 +195,40 @@ func ExportNewSnapshot(cfg *config.Config, logger *slog.Logger, file *os.File) *
 // ExportCreateFetcher exposes createFetcher for external tests.
 func ExportCreateFetcher(cfg *config.Config) (*attestation.OCIFetcher, error) {
 	return createFetcher(cfg)
+}
+
+// ExportNewGUACSnapshot creates a snapshot with GUAC-related fields for testing.
+func ExportNewGUACSnapshot(
+	cfg *config.Config,
+	met *metrics.Metrics,
+	client *guac.Client,
+	breaker *attestation.CircuitBreaker,
+) *snapshot {
+	return &snapshot{
+		config:      cfg,
+		metrics:     met,
+		guacClient:  client,
+		guacBreaker: breaker,
+	}
+}
+
+// ExportApplyGUACFallback exposes applyGUACFallback for external tests.
+func ExportApplyGUACFallback(
+	state *snapshot, imageRef string, err error,
+) *types.CheckResult {
+	return applyGUACFallback(state, imageRef, err)
+}
+
+// ExportFetchGUACData exposes fetchGUACData for external tests.
+func ExportFetchGUACData(
+	ctx context.Context, state *snapshot, digest, imageRef string,
+) *types.CheckResult {
+	return fetchGUACData(ctx, state, digest, imageRef)
+}
+
+// ExportTimedFetchGUACData exposes timedFetchGUACData for external tests.
+func ExportTimedFetchGUACData(
+	ctx context.Context, state *snapshot, digest, imageRef string,
+) *types.CheckResult {
+	return timedFetchGUACData(ctx, state, digest, imageRef)
 }

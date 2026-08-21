@@ -41,9 +41,7 @@ func Host(imageRef string) string {
 	return ref.Context().RegistryStr()
 }
 
-// ResolveDigest resolves an image reference to its digest, handling manifest lists
-// by selecting the platform-specific image.
-func ResolveDigest(
+func resolveDigest(
 	ctx context.Context,
 	imageRef string,
 	opts ...remote.Option,
@@ -61,7 +59,7 @@ func ResolveDigest(
 	}
 
 	if desc.MediaType.IsIndex() {
-		platformDigest, indexErr := ResolveIndexDigest(desc)
+		platformDigest, indexErr := resolveIndexDigest(desc)
 		if indexErr != nil {
 			return "", "", fmt.Errorf("resolving index digest: %w", indexErr)
 		}
@@ -72,16 +70,13 @@ func ResolveDigest(
 	return desc.Digest.String(), "", nil
 }
 
-// ResolveWithKeychain resolves an image reference to its digest using the
-// multi-keychain for authentication.
-func ResolveWithKeychain(
+func resolveWithKeychain(
 	ctx context.Context, imageRef string,
 ) (digest, indexDigest string, err error) {
-	return ResolveDigest(ctx, imageRef, AuthOption())
+	return resolveDigest(ctx, imageRef, AuthOption())
 }
 
-// ResolveIndexDigest extracts the platform-specific digest from a manifest list descriptor.
-func ResolveIndexDigest(desc *remote.Descriptor) (string, error) {
+func resolveIndexDigest(desc *remote.Descriptor) (string, error) {
 	idx, err := desc.ImageIndex()
 	if err != nil {
 		return "", fmt.Errorf("reading image index: %w", err)
@@ -95,7 +90,7 @@ func ResolveIndexDigest(desc *remote.Descriptor) (string, error) {
 	platform := v1.Platform{
 		Architecture: runtime.GOARCH,
 		OS:           runtime.GOOS,
-		Variant:      PlatformVariant(runtime.GOARCH),
+		Variant:      platformVariant(runtime.GOARCH),
 	}
 
 	for i := range manifest.Manifests {
@@ -111,7 +106,7 @@ func ResolveIndexDigest(desc *remote.Descriptor) (string, error) {
 		}
 	}
 
-	variant := PlatformVariant(runtime.GOARCH)
+	variant := platformVariant(runtime.GOARCH)
 	if variant != "" {
 		return "", fmt.Errorf(
 			"%w for %s/%s/%s", ErrNoPlatformMatch,
@@ -122,11 +117,7 @@ func ResolveIndexDigest(desc *remote.Descriptor) (string, error) {
 	return "", fmt.Errorf("%w for %s/%s", ErrNoPlatformMatch, runtime.GOOS, runtime.GOARCH)
 }
 
-// PlatformVariant returns the platform variant for the given architecture.
-// For arm64, this is "v8". For arm, this defaults to "v7" (matching Go's
-// default GOARM=7; the actual GOARM value is not exposed at runtime).
-// All other architectures return an empty string.
-func PlatformVariant(arch string) string {
+func platformVariant(arch string) string {
 	switch arch {
 	case "arm64":
 		return "v8"

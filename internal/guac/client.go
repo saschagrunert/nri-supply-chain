@@ -27,7 +27,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/fileutil"
@@ -59,6 +61,10 @@ type Client struct {
 	endpoint      string
 	authTokenPath string
 	httpClient    *http.Client
+
+	cachedTokenMu    sync.Mutex
+	cachedToken      string
+	cachedTokenMtime time.Time
 }
 
 // NewClient creates a GUAC client for the given endpoint. If caCertPath is
@@ -376,14 +382,38 @@ func (c *Client) setAuth(req *http.Request) error {
 		return nil
 	}
 
-	token, err := fileutil.ReadLimited(c.authTokenPath, fileutil.MaxCredentialFileSize)
+	token, err := c.readAuthToken()
 	if err != nil {
 		return fmt.Errorf("%w: reading auth token: %w", ErrGUACAuthError, err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(token)))
+	req.Header.Set("Authorization", "Bearer "+token)
 
 	return nil
+}
+
+func (c *Client) readAuthToken() (string, error) {
+	c.cachedTokenMu.Lock()
+	defer c.cachedTokenMu.Unlock()
+
+	info, statErr := os.Stat(c.authTokenPath)
+	if statErr == nil && c.cachedToken != "" && info.ModTime().Equal(c.cachedTokenMtime) {
+		return c.cachedToken, nil
+	}
+
+	data, err := fileutil.ReadLimited(c.authTokenPath, fileutil.MaxCredentialFileSize)
+	if err != nil {
+		return "", fmt.Errorf("reading token file: %w", err)
+	}
+
+	token := strings.TrimSpace(string(data))
+	c.cachedToken = token
+
+	if statErr == nil {
+		c.cachedTokenMtime = info.ModTime()
+	}
+
+	return token, nil
 }
 
 const maxTruncatedBodyLen = 200

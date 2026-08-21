@@ -29,27 +29,31 @@ import (
 )
 
 const (
-	testImageRef         = "docker.io/library/nginx:latest"
-	testDigest           = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
-	testDigestAlgo       = "sha256"
-	testInTotoType       = "https://in-toto.io/Statement/v1"
-	testSubjectName      = "test-image"
-	testPredicateType    = "https://spdx.dev/Document"
-	testSPDXVersion      = "SPDX-2.3"
-	testCycloneDXBOM     = "CycloneDX"
-	testLibName          = "mylib"
-	testLibPURL          = "pkg:npm/mylib@1.0.0"
-	testLicenseNone      = "NOASSERTION"
-	testLicenseMIT       = "MIT"
-	testFormatCycloneDX  = "cyclonedx"
-	testFormatSPDX       = "spdx"
-	testLicenseGPL3Only  = "GPL-3.0-only"
-	testLicenseGPL2Only  = "GPL-2.0-only"
-	testMethodCVSSv31    = "CVSSv31"
-	testSeverityMedium   = "medium"
-	testSeverityHigh     = "high"
-	testSeverityCritical = "critical"
-	testCVEID            = "CVE-2024-0001"
+	testImageRef             = "docker.io/library/nginx:latest"
+	testDigest               = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+	testDigestAlgo           = "sha256"
+	testInTotoType           = "https://in-toto.io/Statement/v1"
+	testSubjectName          = "test-image"
+	testPredicateType        = "https://spdx.dev/Document"
+	testSPDXVersion          = "SPDX-2.3"
+	testCycloneDXBOM         = "CycloneDX"
+	testLibName              = "mylib"
+	testLibPURL              = "pkg:npm/mylib@1.0.0"
+	testLicenseNone          = "NOASSERTION"
+	testLicenseMIT           = "MIT"
+	testFormatCycloneDX      = "cyclonedx"
+	testFormatSPDX           = "spdx"
+	testLicenseGPL3Only      = "GPL-3.0-only"
+	testLicenseGPL2Only      = "GPL-2.0-only"
+	testMethodCVSSv31        = "CVSSv31"
+	testSeverityMedium       = "medium"
+	testSeverityHigh         = "high"
+	testSeverityCritical     = "critical"
+	testCVEID                = "CVE-2024-0001"
+	testLicenseApache2       = "Apache-2.0"
+	testSPDX3Context         = "https://spdx.org/rdf/3.0.1/terms"
+	testSPDX3SpecVer         = "3.0.1"
+	testSPDX3SoftwarePackage = "software_SoftwarePackage"
 )
 
 type inTotoWrapper struct {
@@ -1062,7 +1066,7 @@ func TestVerifyLicenseAllowList(t *testing.T) {
 			Sections: policy.Sections{
 				SBOM: &policy.SBOMPolicy{
 					License: &policy.SBOMLicensePolicy{
-						Allow: []string{testLicenseMIT, "Apache-2.0"},
+						Allow: []string{testLicenseMIT, testLicenseApache2},
 					},
 				},
 			},
@@ -1083,7 +1087,7 @@ func TestVerifyLicenseAllowList(t *testing.T) {
 			Sections: policy.Sections{
 				SBOM: &policy.SBOMPolicy{
 					License: &policy.SBOMLicensePolicy{
-						Allow: []string{"Apache-2.0", "BSD-3-Clause"},
+						Allow: []string{testLicenseApache2, "BSD-3-Clause"},
 					},
 				},
 			},
@@ -1845,4 +1849,212 @@ func TestVerifyMultipleCancelledContext(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled, got: %v", err)
 	}
+}
+
+func TestVerifySPDX3Packages(t *testing.T) {
+	t.Parallel()
+
+	doc := spdx3Doc{
+		Context: testSPDX3Context,
+		Type:    "SpdxDocument",
+		SpdxID:  "urn:spdx-doc:test",
+		SpecVer: testSPDX3SpecVer,
+		Elements: []spdx3Elem{
+			{
+				Type:             testSPDX3SoftwarePackage,
+				Name:             testLibName,
+				DeclaredLicense:  testLicenseMIT,
+				ConcludedLicense: testLicenseApache2,
+				ExternalIdentifiers: []spdx3ExtID{
+					{
+						Type:       "ExternalIdentifier",
+						IDType:     "packageUrl",
+						Identifier: testLibPURL,
+					},
+				},
+			},
+			{
+				Type:             "SoftwarePackage",
+				Name:             "another-lib",
+				DeclaredLicense:  testLicenseGPL3Only,
+				ConcludedLicense: "",
+				ExternalIdentifiers: []spdx3ExtID{
+					{
+						Type:       "ExternalIdentifier",
+						IDType:     "purl",
+						Identifier: "pkg:npm/another-lib@2.0.0",
+					},
+				},
+			},
+		},
+	}
+
+	att := wrapInToto(t, doc, testDigest)
+
+	result, err := sbom.Verify(
+		context.Background(), att, &policy.Policy{}, testDigest,
+	)
+	testutil.AssertNoError(t, err)
+
+	if !result.Passed {
+		t.Errorf("expected pass, got fail (detail: %s)", result.Detail)
+	}
+}
+
+func TestVerifySPDX3LicenseDenyList(t *testing.T) {
+	t.Parallel()
+
+	doc := spdx3Doc{
+		Context: testSPDX3Context,
+		Type:    "",
+		SpdxID:  "",
+		SpecVer: testSPDX3SpecVer,
+		Elements: []spdx3Elem{
+			{
+				Type:                testSPDX3SoftwarePackage,
+				Name:                testLibName,
+				ExternalIdentifiers: nil,
+				DeclaredLicense:     testLicenseMIT,
+				ConcludedLicense:    "",
+			},
+		},
+	}
+
+	att := wrapInToto(t, doc, testDigest)
+
+	pol := &policy.Policy{
+		Sections: policy.Sections{
+			SBOM: &policy.SBOMPolicy{
+				License: &policy.SBOMLicensePolicy{
+					Deny: []string{testLicenseMIT},
+				},
+			},
+		},
+	}
+
+	result, err := sbom.Verify(context.Background(), att, pol, testDigest)
+	testutil.AssertNoError(t, err)
+
+	if result.Passed {
+		t.Error("expected fail for denied license")
+	}
+}
+
+func TestVerifySPDX3NoPackagesRejected(t *testing.T) {
+	t.Parallel()
+
+	doc := spdx3Doc{
+		Context: testSPDX3Context,
+		Type:    "",
+		SpdxID:  "",
+		SpecVer: testSPDX3SpecVer,
+		Elements: []spdx3Elem{
+			{
+				Type:                "Relationship",
+				Name:                "not-a-package",
+				ExternalIdentifiers: nil,
+				DeclaredLicense:     "",
+				ConcludedLicense:    "",
+			},
+		},
+	}
+
+	att := wrapInToto(t, doc, testDigest)
+
+	_, err := sbom.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+	if err == nil {
+		t.Error("expected error for SPDX 3.0 doc with no packages")
+	}
+}
+
+func TestVerifySPDX3ContextDetection(t *testing.T) {
+	t.Parallel()
+
+	doc := spdx3Doc{
+		Context: testSPDX3Context,
+		Type:    "",
+		SpdxID:  "",
+		SpecVer: "",
+		Elements: []spdx3Elem{
+			{
+				Type:                testSPDX3SoftwarePackage,
+				Name:                testLibName,
+				ExternalIdentifiers: nil,
+				DeclaredLicense:     testLicenseMIT,
+				ConcludedLicense:    "",
+			},
+		},
+	}
+
+	att := wrapInToto(t, doc, testDigest)
+
+	result, err := sbom.Verify(
+		context.Background(), att, &policy.Policy{}, testDigest,
+	)
+	testutil.AssertNoError(t, err)
+
+	if !result.Passed {
+		t.Errorf("expected pass for context-detected SPDX 3, got fail: %s", result.Detail)
+	}
+}
+
+func TestVerifySPDX3NoAssertionLicenseSkipped(t *testing.T) {
+	t.Parallel()
+
+	doc := spdx3Doc{
+		Context: "",
+		Type:    "",
+		SpdxID:  "",
+		SpecVer: "3.0.0",
+		Elements: []spdx3Elem{
+			{
+				Type:                "SoftwarePackage",
+				Name:                testLibName,
+				ExternalIdentifiers: nil,
+				DeclaredLicense:     testLicenseNone,
+				ConcludedLicense:    testLicenseNone,
+			},
+		},
+	}
+
+	att := wrapInToto(t, doc, testDigest)
+
+	pol := &policy.Policy{
+		Sections: policy.Sections{
+			SBOM: &policy.SBOMPolicy{
+				License: &policy.SBOMLicensePolicy{
+					Deny: []string{testLicenseNone},
+				},
+			},
+		},
+	}
+
+	result, err := sbom.Verify(context.Background(), att, pol, testDigest)
+	testutil.AssertNoError(t, err)
+
+	if !result.Passed {
+		t.Error("NOASSERTION should be skipped, not treated as denied license")
+	}
+}
+
+type spdx3Doc struct {
+	Context  string      `json:"@context,omitempty"`
+	Type     string      `json:"@type,omitempty"`
+	SpdxID   string      `json:"spdxId,omitempty"` //nolint:tagliatelle // SPDX spec field
+	SpecVer  string      `json:"specVersion,omitempty"`
+	Elements []spdx3Elem `json:"@graph,omitempty"`
+}
+
+type spdx3Elem struct {
+	Type                string       `json:"@type,omitempty"`
+	Name                string       `json:"name,omitempty"`
+	ExternalIdentifiers []spdx3ExtID `json:"externalIdentifier,omitempty"`
+	DeclaredLicense     string       `json:"declaredLicense,omitempty"`
+	ConcludedLicense    string       `json:"concludedLicense,omitempty"`
+}
+
+type spdx3ExtID struct {
+	Type       string `json:"@type,omitempty"`
+	IDType     string `json:"externalIdentifierType,omitempty"`
+	Identifier string `json:"identifier,omitempty"`
 }

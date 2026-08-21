@@ -281,7 +281,7 @@ func TestRunPreviewDisabledVerification(t *testing.T) {
 
 	var buf bytes.Buffer
 
-	code := runPreview(&buf, []string{testImgV1}, "default", outputFormatTable, "", cfg)
+	code := runPreview(&buf, []string{testImgV1}, testNamespaceDefault, outputFormatTable, "", cfg)
 	if code != exitError {
 		t.Errorf("expected exit code %d, got %d", exitError, code)
 	}
@@ -302,7 +302,7 @@ func TestRunPreviewJSONOutput(t *testing.T) {
 
 	code := runPreview(
 		&buf, []string{"invalid-image-ref-for-test:latest"},
-		"default", outputFormatJSON, "", cfg,
+		testNamespaceDefault, outputFormatJSON, "", cfg,
 	)
 
 	if code != exitSuccess {
@@ -569,7 +569,7 @@ func TestCheckStatusesChangedProposedDuplicates(t *testing.T) {
 	current := &verifyOutput{
 		Image:         testImgV1,
 		Digest:        testDigestAAA,
-		Namespace:     "default",
+		Namespace:     testNamespaceDefault,
 		PolicyFile:    "",
 		Mode:          "",
 		PreviewPolicy: "",
@@ -584,7 +584,7 @@ func TestCheckStatusesChangedProposedDuplicates(t *testing.T) {
 	proposed := &verifyOutput{
 		Image:         testImgV1,
 		Digest:        testDigestAAA,
-		Namespace:     "default",
+		Namespace:     testNamespaceDefault,
 		PolicyFile:    "",
 		Mode:          "",
 		PreviewPolicy: "",
@@ -604,7 +604,7 @@ func TestCheckStatusesChangedProposedDuplicates(t *testing.T) {
 func TestOutputDiffTableNoChanges(t *testing.T) {
 	t.Parallel()
 
-	current := newVerifyOutput(testImgV1, "", "default", "")
+	current := newVerifyOutput(testImgV1, "", testNamespaceDefault, "")
 	current.Allowed = true
 
 	out := &previewDiffOutput{
@@ -631,5 +631,167 @@ func TestOutputDiffTableNoChanges(t *testing.T) {
 
 	if !strings.Contains(buf.String(), "No policy impact") {
 		t.Errorf("expected 'No policy impact' in output, got:\n%s", buf.String())
+	}
+}
+
+func TestOutputPreviewTableBasic(t *testing.T) {
+	t.Parallel()
+
+	out := &previewOutput{
+		Images: []*verifyOutput{
+			{
+				Image:        "img:v1",
+				Digest:       "sha256:aaa",
+				Namespace:    testNamespaceDefault,
+				PolicyFile:   "/etc/policies/default.json",
+				Mode:         logLevelWarn,
+				Allowed:      true,
+				Reason:       "",
+				CheckResults: nil,
+			},
+		},
+		Summary: previewSummary{
+			Total:   1,
+			Allowed: 1,
+			Denied:  0,
+			Errors:  0,
+			Checks:  map[string]checkSummary{},
+		},
+		Suggestions: nil,
+	}
+
+	var buf bytes.Buffer
+
+	err := outputPreviewTable(&buf, out)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "Preview Summary") {
+		t.Error("expected 'Preview Summary' header")
+	}
+
+	if !strings.Contains(output, "img:v1") {
+		t.Error("expected image reference in output")
+	}
+}
+
+func TestOutputPreviewTableWithSuggestions(t *testing.T) {
+	t.Parallel()
+
+	out := &previewOutput{
+		Images: []*verifyOutput{},
+		Summary: previewSummary{
+			Total: 0, Allowed: 0, Denied: 0, Errors: 0,
+			Checks: map[string]checkSummary{},
+		},
+		Suggestions: []string{"Enable enforce mode", "Add trust roots"},
+	}
+
+	var buf bytes.Buffer
+
+	err := outputPreviewTable(&buf, out)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "Suggestions") {
+		t.Error("expected Suggestions header")
+	}
+
+	if !strings.Contains(output, "Enable enforce mode") {
+		t.Error("expected first suggestion in output")
+	}
+}
+
+func TestRenderPreviewSummaryWithErrors(t *testing.T) {
+	t.Parallel()
+
+	out := &previewOutput{
+		Images: nil,
+		Summary: previewSummary{
+			Total:   3,
+			Allowed: 1,
+			Denied:  1,
+			Errors:  1,
+			Checks:  map[string]checkSummary{},
+		},
+		Suggestions: nil,
+	}
+
+	var buf bytes.Buffer
+
+	err := renderPreviewSummary(&buf, out)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "Total") {
+		t.Error("expected Total label in summary")
+	}
+
+	if !strings.Contains(output, "Errors") {
+		t.Error("expected Errors label when errors > 0")
+	}
+}
+
+func TestRenderPreviewSummaryWithChecks(t *testing.T) {
+	t.Parallel()
+
+	out := &previewOutput{
+		Images: nil,
+		Summary: previewSummary{
+			Total:   2,
+			Allowed: 2,
+			Denied:  0,
+			Errors:  0,
+			Checks: map[string]checkSummary{
+				testCheckSLSA: {Pass: 2, Warn: 0, Fail: 0},
+			},
+		},
+		Suggestions: nil,
+	}
+
+	var buf bytes.Buffer
+
+	err := renderPreviewSummary(&buf, out)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "SLSA") {
+		t.Error("expected check type in summary table")
+	}
+}
+
+func TestFormatDenied(t *testing.T) {
+	t.Parallel()
+
+	zero := formatDenied(0)
+	if strings.Contains(zero, "\x1b[31m") {
+		t.Error("zero denied should not be red")
+	}
+
+	nonZero := formatDenied(5)
+	if !strings.Contains(nonZero, "5") {
+		t.Errorf("expected '5' in output, got %q", nonZero)
+	}
+}
+
+func TestFormatFailCount(t *testing.T) {
+	t.Parallel()
+
+	zero := formatFailCount(0)
+	if zero != "0" {
+		t.Errorf("expected '0', got %q", zero)
+	}
+
+	nonZero := formatFailCount(3)
+	if !strings.Contains(nonZero, "3") {
+		t.Errorf("expected '3' in output, got %q", nonZero)
 	}
 }
