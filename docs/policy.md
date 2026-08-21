@@ -1684,6 +1684,12 @@ Example configuration:
       "maxScore": 7.0,
       "minSeverity": "critical",
       "ignoreCVEs": ["CVE-2024-0001"]
+    },
+    "drift": {
+      "maxAdded": 5,
+      "maxRemoved": 3,
+      "maxModified": 10,
+      "maxScore": 2.0
     }
   }
 }
@@ -2277,6 +2283,7 @@ Ready-to-use policy files are available in
 - `vex-strict.json`: Strict VEX verification requiring all images to have VEX attestations
 - `vsa-accelerated.json`: VSA-first verification that short-circuits direct checks
 - `sbom-deny-list.json`: SBOM component and license deny-list
+- `sbom-drift.json`: SBOM drift detection with baseline comparison thresholds
 - `cel-rules.json`: CEL policy expressions for custom verification logic
 - `notation.json`: Notation (Notary v2) signature verification with CA trust store
 - `scai.json`: SCAI attribute report verification with required and forbidden attributes

@@ -1,0 +1,25 @@
+{
+  "trust": {
+    "verifiers": [
+      {
+        "id": "build-signer",
+        "keys": ["/etc/nri-supply-chain/keys/cosign.pub"]
+      }
+    ]
+  },
+  "slsa": {
+    "missingPolicy": "allow"
+  },
+  "sbom": {
+    "missingPolicy": "deny",
+    "drift": {
+      "maxAdded": 5,
+      "maxRemoved": 3,
+      "maxModified": 10,
+      "maxScore": 2.0
+    }
+  },
+  "signatures": {
+    "requireTransparencyLog": false
+  }
+}
