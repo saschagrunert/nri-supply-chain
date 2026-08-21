@@ -33,6 +33,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/bundle"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
+	"github.com/saschagrunert/nri-supply-chain/internal/fileutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
@@ -582,9 +583,9 @@ func loadBundleTrustedRoots(
 	trustedRootPath string, fetcher attestation.Fetcher,
 ) ([]*root.TrustedRoot, error) {
 	if trustedRootPath != "" {
-		data, err := os.ReadFile(trustedRootPath) //nolint:gosec // user CLI flag
+		data, err := fileutil.ReadLimited(trustedRootPath, fileutil.MaxConfigFileSize)
 		if err != nil {
-			return nil, fmt.Errorf("reading trusted root %s: %w", trustedRootPath, err)
+			return nil, fmt.Errorf("reading trusted root: %w", err)
 		}
 
 		tr, err := root.NewTrustedRootFromJSON(data)
@@ -621,9 +622,9 @@ func loadBundleRevocationData(
 	revData := make([]bundle.RevocationData, 0, len(revocationPaths))
 
 	for _, revPath := range revocationPaths {
-		data, err := os.ReadFile(revPath) //nolint:gosec // user CLI flag
+		data, err := fileutil.ReadLimited(revPath, fileutil.MaxConfigFileSize)
 		if err != nil {
-			return nil, fmt.Errorf("reading revocation data %s: %w", revPath, err)
+			return nil, fmt.Errorf("reading revocation data: %w", err)
 		}
 
 		revData = append(revData, bundle.RevocationData{

@@ -391,7 +391,7 @@ type Config struct {
 // GUACConfig configures the GUAC supplemental data source.
 // GUAC is enabled when Endpoint is set (no separate "enabled" toggle).
 type GUACConfig struct {
-	// Endpoint is the GUAC API base URL (e.g. "http://guac.internal:8080").
+	// Endpoint is the GUAC API base URL (e.g. "https://guac.internal:8443").
 	// Setting this enables GUAC queries during verification.
 	Endpoint string `toml:"endpoint"`
 	// AuthTokenPath is the filesystem path to a bearer token file.

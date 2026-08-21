@@ -53,6 +53,13 @@ const (
 	testInvalid              = "invalid"
 )
 
+func applyValidGUAC(cfg *config.Config) {
+	cfg.Guac.Endpoint = testGUACEndpoint
+	cfg.Guac.Timeout = config.Duration{Duration: 5 * time.Second}
+	cfg.Guac.Checks = []string{testGUACCheckCertifyVuln}
+	cfg.Guac.MaxDependencies = 5
+}
+
 func TestDefaultConfig(t *testing.T) {
 	t.Parallel()
 
@@ -1303,7 +1310,7 @@ func TestConfigValidateCollectsMultipleErrors(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.Verification = config.VerificationMode("invalid")
-	cfg.LogLevel = "bogus"
+	cfg.LogLevel = testInvalid
 	cfg.CircuitBreakerThreshold = -1
 	cfg.CircuitBreakerCooldown = config.Duration{Duration: -1}
 
@@ -3562,6 +3569,166 @@ func TestConfigValidateGUACEndpointScheme(t *testing.T) {
 	})
 }
 
+func TestConfigValidateGUACFieldErrors(t *testing.T) {
+	t.Parallel()
+
+	t.Run("timeout not positive", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		applyValidGUAC(cfg)
+		cfg.Guac.Timeout = config.Duration{Duration: 0}
+
+		testutil.AssertErrorIs(t, cfg.Validate(), config.ErrGUACTimeoutNotPositive)
+	})
+
+	t.Run("timeout too high", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		applyValidGUAC(cfg)
+		cfg.Guac.Timeout = config.Duration{Duration: time.Minute}
+
+		testutil.AssertErrorIs(t, cfg.Validate(), config.ErrGUACTimeoutTooHigh)
+	})
+
+	t.Run("invalid fallback policy", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		applyValidGUAC(cfg)
+		cfg.Guac.FallbackPolicy = testInvalid
+
+		testutil.AssertErrorIs(
+			t, cfg.Validate(), config.ErrGUACInvalidFallbackPolicy,
+		)
+	})
+
+	t.Run("checks empty", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		applyValidGUAC(cfg)
+		cfg.Guac.Checks = []string{}
+
+		testutil.AssertErrorIs(t, cfg.Validate(), config.ErrGUACChecksEmpty)
+	})
+
+	t.Run("invalid check name", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		applyValidGUAC(cfg)
+		cfg.Guac.Checks = []string{"not_a_real_check"}
+
+		testutil.AssertErrorIs(t, cfg.Validate(), config.ErrGUACInvalidCheck)
+	})
+
+	t.Run("max dependencies out of range zero", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		applyValidGUAC(cfg)
+		cfg.Guac.MaxDependencies = 0
+
+		testutil.AssertErrorIs(t, cfg.Validate(), config.ErrGUACMaxDepsRange)
+	})
+
+	t.Run("max dependencies out of range high", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		applyValidGUAC(cfg)
+		cfg.Guac.MaxDependencies = 100
+
+		testutil.AssertErrorIs(t, cfg.Validate(), config.ErrGUACMaxDepsRange)
+	})
+
+	t.Run("auth token path not absolute", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		applyValidGUAC(cfg)
+		cfg.Guac.AuthTokenPath = testRelativePath
+
+		testutil.AssertErrorIs(
+			t, cfg.Validate(), config.ErrGUACAuthTokenPathNotAbsolute,
+		)
+	})
+
+	t.Run("CA cert path not absolute", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		applyValidGUAC(cfg)
+		cfg.Guac.CACertPath = testRelativePath
+
+		testutil.AssertErrorIs(
+			t, cfg.Validate(), config.ErrGUACCACertPathNotAbsolute,
+		)
+	})
+}
+
+func TestConfigValidateGUACRuntimeCACert(t *testing.T) {
+	t.Parallel()
+
+	t.Run("CA cert not found", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		applyValidGUAC(cfg)
+		cfg.Guac.CACertPath = "/nonexistent/ca.pem"
+
+		testutil.AssertErrorIs(
+			t, cfg.ValidateRuntime(), config.ErrGUACCACertNotFound,
+		)
+	})
+
+	t.Run("CA cert not regular file", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		applyValidGUAC(cfg)
+		cfg.Guac.CACertPath = t.TempDir()
+
+		testutil.AssertErrorIs(
+			t, cfg.ValidateRuntime(), config.ErrGUACCACertNotRegularFile,
+		)
+	})
+}
+
+func TestConfigValidateRemediationCooldown(t *testing.T) {
+	t.Parallel()
+
+	t.Run("cooldown too short", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Remediation.Mode = config.RemediationModeWarn
+		cfg.Remediation.Interval = config.Duration{Duration: 5 * time.Minute}
+		cfg.Remediation.BatchSize = 10
+		cfg.Remediation.Cooldown = config.Duration{Duration: time.Second}
+
+		testutil.AssertErrorIs(
+			t, cfg.Validate(), config.ErrRemediationCooldownTooShort,
+		)
+	})
+
+	t.Run("cooldown too long", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Remediation.Mode = config.RemediationModeWarn
+		cfg.Remediation.Interval = config.Duration{Duration: 5 * time.Minute}
+		cfg.Remediation.BatchSize = 10
+		cfg.Remediation.Cooldown = config.Duration{Duration: 2 * time.Hour}
+
+		testutil.AssertErrorIs(
+			t, cfg.Validate(), config.ErrRemediationCooldownTooLong,
+		)
+	})
+}
+
 func TestConfigValidateGUACAuthTokenRuntime(t *testing.T) {
 	t.Parallel()
 
@@ -3649,7 +3816,7 @@ func TestConfigValidateOffline(t *testing.T) {
 		},
 		{
 			name:        "invalid mode",
-			modify:      func(c *config.Config) { c.Offline.Mode = "bogus" },
+			modify:      func(c *config.Config) { c.Offline.Mode = testInvalid },
 			expectedErr: config.ErrInvalidOfflineMode,
 		},
 		{

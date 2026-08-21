@@ -1,5 +1,7 @@
 FROM golang:1.27.0@sha256:65b6f280bf050ec5af12716857e8ea8439d694dbba8f31ceeb7630670071f2bb AS build
 WORKDIR /src
+COPY go.mod go.sum ./
+COPY vendor/ vendor/
 COPY . .
 ARG VERSION=dev
 ARG SOURCE_DATE_EPOCH=0
