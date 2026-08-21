@@ -19,7 +19,6 @@ package guac
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
@@ -33,6 +32,7 @@ import (
 	"time"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/fileutil"
+	"github.com/saschagrunert/nri-supply-chain/internal/httputil"
 )
 
 var (
@@ -54,12 +54,8 @@ var (
 )
 
 const (
-	maxResponseSize       = 10 << 20 // 10 MiB
-	maxRedirects          = 10
-	transportMaxIdleConns = 100
-	transportIdleTimeout  = 90 * time.Second
-	transportTLSTimeout   = 10 * time.Second
-	transportContTimeout  = 1 * time.Second
+	maxResponseSize = 10 << 20 // 10 MiB
+	maxRedirects    = 10
 )
 
 // Client queries a GUAC instance for vulnerability, scorecard, and
@@ -135,20 +131,7 @@ func buildTransport(caCertPath string) (http.RoundTripper, error) {
 		}
 	}
 
-	transport := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          transportMaxIdleConns,
-		IdleConnTimeout:       transportIdleTimeout,
-		TLSHandshakeTimeout:   transportTLSTimeout,
-		ExpectContinueTimeout: transportContTimeout,
-		TLSClientConfig: &tls.Config{
-			RootCAs:    pool,
-			MinVersion: tls.VersionTLS12,
-		},
-	}
-
-	return transport, nil
+	return httputil.NewTLSTransport(pool), nil
 }
 
 // HealthCheck probes the GUAC endpoint for availability.

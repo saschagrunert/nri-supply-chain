@@ -16,7 +16,6 @@ package registry
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,6 +28,8 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+
+	"github.com/saschagrunert/nri-supply-chain/internal/httputil"
 )
 
 const (
@@ -152,13 +153,7 @@ func (a *acrHelper) cacheToken(host, refreshToken string) {
 	}
 }
 
-const (
-	acrHTTPClientTimeout     = 30 * time.Second
-	acrTransportMaxIdleConns = 100
-	acrTransportIdleTimeout  = 90 * time.Second
-	acrTransportTLSTimeout   = 10 * time.Second
-	acrTransportContTimeout  = 1 * time.Second
-)
+const acrHTTPClientTimeout = 30 * time.Second
 
 func (a *acrHelper) httpClient() *http.Client {
 	if a.client != nil {
@@ -167,16 +162,8 @@ func (a *acrHelper) httpClient() *http.Client {
 
 	a.defaultOnce.Do(func() {
 		a.defaultHTTP = &http.Client{
-			Timeout: acrHTTPClientTimeout,
-			Transport: &http.Transport{
-				Proxy:                 http.ProxyFromEnvironment,
-				ForceAttemptHTTP2:     true,
-				MaxIdleConns:          acrTransportMaxIdleConns,
-				IdleConnTimeout:       acrTransportIdleTimeout,
-				TLSHandshakeTimeout:   acrTransportTLSTimeout,
-				ExpectContinueTimeout: acrTransportContTimeout,
-				TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
-			},
+			Timeout:   acrHTTPClientTimeout,
+			Transport: httputil.NewTLSTransport(nil),
 		}
 	})
 

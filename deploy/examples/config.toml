@@ -105,6 +105,30 @@ circuit_breaker_cooldown = "30s"
 # max_dependencies = 5
 # checks = ["certify_vuln", "certify_scorecard", "is_dependency"]
 
+# Offline attestation bundle support for air-gapped or hybrid environments.
+# [offline]
+# mode = "disabled"                  # "disabled", "prefer-bundle", "offline"
+# attestation_store = "/var/lib/nri-supply-chain/bundles"
+# bundle_max_age = "720h"            # 30 days
+# bundle_expiry_policy = "warn"      # "allow", "warn", "deny"
+# require_bundle_signature = false
+# bundle_signature_key = ""
+
+# Continuous re-verification and graduated remediation for running containers.
+# [remediation]
+# mode = ""                          # "" (disabled), "warn", "throttle", "evict"
+# interval = "5m"
+# batch_size = 10
+# cooldown = "5m"
+# feed_dir = ""
+# [remediation.throttle]
+# cpu_quota_percent = 50
+# memory_limit_percent = 75
+# [remediation.triggers]
+# on_new_cve = false
+# on_attestation_revoked = false
+# on_policy_change = false
+
 # Registry mirror with automatic fallback to the original registry.
 # When the mirror is unreachable, requests fall back to ghcr.io.
 # [[registries]]
