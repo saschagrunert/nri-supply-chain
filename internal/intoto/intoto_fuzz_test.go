@@ -44,8 +44,11 @@ func FuzzVerifySubjectAndExtractPredicate(f *testing.F) {
 		"sha256:0000000000000000000000000000000000000000000000000000000000000000",
 	)
 
-	f.Fuzz(func(_ *testing.T, att []byte, imageDigest string) {
-		intoto.VerifySubjectAndExtractPredicate(att, imageDigest)
+	f.Fuzz(func(t *testing.T, att []byte, imageDigest string) {
+		predicate, err := intoto.VerifySubjectAndExtractPredicate(att, imageDigest)
+		if err == nil && predicate == nil {
+			t.Error("VerifySubjectAndExtractPredicate returned nil predicate and nil error")
+		}
 	})
 }
 

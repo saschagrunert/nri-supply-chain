@@ -97,7 +97,14 @@ func FuzzVerify(f *testing.F) {
 		`"licenses":[{"license":{"id":"Apache-2.0"}}]}]}` +
 		`}`))
 
-	f.Fuzz(func(_ *testing.T, data []byte) {
-		sbom.Verify(context.Background(), data, &policy.Policy{}, testFuzzDigest)
+	f.Fuzz(func(t *testing.T, data []byte) {
+		result, err := sbom.Verify(context.Background(), data, &policy.Policy{}, testFuzzDigest)
+		if err == nil && result == nil {
+			t.Error("Verify returned nil result and nil error")
+		}
+
+		if result != nil && result.Type == "" {
+			t.Error("Verify returned result with empty Type")
+		}
 	})
 }

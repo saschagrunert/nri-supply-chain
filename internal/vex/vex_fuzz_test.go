@@ -110,11 +110,18 @@ func FuzzVerify(f *testing.F) {
 		`]}` +
 		`}`))
 
-	f.Fuzz(func(_ *testing.T, data []byte) {
-		vex.Verify(
+	f.Fuzz(func(t *testing.T, data []byte) {
+		result, err := vex.Verify(
 			context.Background(), data, &policy.Policy{},
 			"docker.io/library/nginx:latest", testDigest,
 			nil,
 		)
+		if err == nil && result == nil {
+			t.Error("Verify returned nil result and nil error")
+		}
+
+		if result != nil && result.Type == "" {
+			t.Error("Verify returned result with empty Type")
+		}
 	})
 }
