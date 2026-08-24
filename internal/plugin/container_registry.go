@@ -169,7 +169,7 @@ func (r *containerRegistry) StateCounts() map[VerificationState]int {
 // ReadState reads container fields under the read lock to avoid races with
 // UpdateState. Returns false if the container does not exist.
 func (r *containerRegistry) ReadState(
-	id string, readFn func(cs *containerState),
+	id string, readFn func(cs containerState),
 ) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -179,7 +179,7 @@ func (r *containerRegistry) ReadState(
 		return false
 	}
 
-	readFn(state)
+	readFn(*state)
 
 	return true
 }

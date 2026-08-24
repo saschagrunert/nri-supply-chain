@@ -16,7 +16,6 @@ package release_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"testing"
 
@@ -29,26 +28,11 @@ import (
 
 const (
 	testDigest          = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
-	testDigestAlgo      = "sha256"
-	testInTotoType      = "https://in-toto.io/Statement/v1"
-	testSubjectName     = "test-image"
 	testPredicateType   = "https://in-toto.io/attestation/release/v0.1"
 	testPURL            = "pkg:oci/myimage@sha256:abc123?repository_url=ghcr.io/example"
 	testPackageID       = "example-package-id"
 	testTrustedRegistry = "pkg:oci/**"
 )
-
-type inTotoWrapper struct {
-	Type          string          `json:"_type"` //nolint:tagliatelle // In-toto spec field name.
-	Subject       []inTotoSubj    `json:"subject"`
-	PredicateType string          `json:"predicateType"`
-	Predicate     json.RawMessage `json:"predicate"`
-}
-
-type inTotoSubj struct {
-	Name   string            `json:"name"`
-	Digest map[string]string `json:"digest"`
-}
 
 type relPredicate struct {
 	PURL      string `json:"purl"`
@@ -60,26 +44,6 @@ func validPredicate() relPredicate {
 		PURL:      testPURL,
 		PackageID: testPackageID,
 	}
-}
-
-func wrapInToto(t *testing.T, doc any, digest string) []byte {
-	t.Helper()
-
-	predBytes := testutil.MustMarshal(t, doc)
-
-	wrapper := inTotoWrapper{
-		Type: testInTotoType,
-		Subject: []inTotoSubj{
-			{
-				Name:   testSubjectName,
-				Digest: map[string]string{testDigestAlgo: digest[len(testDigestAlgo)+1:]},
-			},
-		},
-		PredicateType: testPredicateType,
-		Predicate:     predBytes,
-	}
-
-	return testutil.MustMarshal(t, wrapper)
 }
 
 func TestVerify(t *testing.T) {
@@ -151,7 +115,7 @@ func TestVerify(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			att := wrapInToto(t, test.doc, testDigest)
+			att := testutil.WrapInToto(t, test.doc, testDigest, testPredicateType)
 
 			result, err := release.Verify(context.Background(), att, test.pol, testDigest)
 			testutil.AssertNoError(t, err)
@@ -165,7 +129,7 @@ func TestVerify(t *testing.T) {
 func TestVerifyCheckType(t *testing.T) {
 	t.Parallel()
 
-	att := wrapInToto(t, validPredicate(), testDigest)
+	att := testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType)
 
 	result, err := release.Verify(context.Background(), att, &policy.Policy{}, testDigest)
 	testutil.AssertNoError(t, err)
@@ -176,7 +140,7 @@ func TestVerifyCheckType(t *testing.T) {
 func TestVerifyMetadata(t *testing.T) {
 	t.Parallel()
 
-	att := wrapInToto(t, validPredicate(), testDigest)
+	att := testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType)
 
 	result, err := release.Verify(context.Background(), att, &policy.Policy{}, testDigest)
 	testutil.AssertNoError(t, err)
@@ -235,7 +199,7 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 	t.Run("subject with mismatched digest", func(t *testing.T) {
 		t.Parallel()
 
-		att := wrapInToto(t, validPredicate(), testDigest)
+		att := testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType)
 
 		_, err := release.Verify(context.Background(),
 			att, &policy.Policy{},
@@ -249,7 +213,7 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 	t.Run("empty digest with subjects rejects for binding", func(t *testing.T) {
 		t.Parallel()
 
-		att := wrapInToto(t, validPredicate(), testDigest)
+		att := testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType)
 
 		_, err := release.Verify(context.Background(), att, &policy.Policy{}, "")
 		if !errors.Is(err, intoto.ErrNoDigestBinding) {
@@ -321,7 +285,9 @@ func TestVerifyMultiple(t *testing.T) {
 
 			attestations := make([][]byte, len(test.docs))
 			for idx := range test.docs {
-				attestations[idx] = wrapInToto(t, test.docs[idx], testDigest)
+				attestations[idx] = testutil.WrapInToto(
+					t, test.docs[idx], testDigest, testPredicateType,
+				)
 			}
 
 			result, err := release.VerifyMultiple(
@@ -387,7 +353,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 
 		attestations := [][]byte{
 			[]byte("invalid json"),
-			wrapInToto(t, validPredicate(), testDigest),
+			testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType),
 		}
 
 		result, err := release.VerifyMultiple(
@@ -410,7 +376,7 @@ func TestVerifyEmptyPURL(t *testing.T) {
 	doc := relPredicate{ //nolint:exhaustruct_v5 // test omits PackageID
 		PURL: "",
 	}
-	att := wrapInToto(t, doc, testDigest)
+	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 	t.Run("empty purl with no policy passes", func(t *testing.T) {
 		t.Parallel()
@@ -442,7 +408,7 @@ func TestVerifyEmptyPURL(t *testing.T) {
 func TestVerifyUntrustedRegistryDetailMessage(t *testing.T) {
 	t.Parallel()
 
-	att := wrapInToto(t, validPredicate(), testDigest)
+	att := testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType)
 
 	result, err := release.Verify(context.Background(), att, &policy.Policy{
 		Release: &policy.ReleasePolicy{

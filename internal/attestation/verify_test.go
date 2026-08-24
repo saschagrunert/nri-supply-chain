@@ -1741,9 +1741,8 @@ func TestCachedTrustedRootMultiRootNoCacheReturnsNil(t *testing.T) {
 	fetcher := attestation.NewOCIFetcherWithMultipleRoots(nil)
 
 	got := fetcher.CachedTrustedRoot()
-	if got == nil {
-		// multi-root with nil sources is expected to have no caches
-		t.Log("no caches, got nil as expected")
+	if got != nil {
+		t.Errorf("expected nil trusted root, got %v", got)
 	}
 }
 

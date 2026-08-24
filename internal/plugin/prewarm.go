@@ -109,21 +109,20 @@ func (p *Plugin) resolvePrewarmDigests(
 			continue
 		}
 
+		acquireErr := sem.Acquire(ctx, 1)
+		if acquireErr != nil {
+			slog.DebugContext(ctx, "Skipping prewarm, context cancelled",
+				"image", images[idx].imageRef,
+				"error", acquireErr,
+			)
+
+			break
+		}
+
 		waitGroup.Add(1)
 
 		go func(index int) {
 			defer waitGroup.Done()
-
-			acquireErr := sem.Acquire(ctx, 1)
-			if acquireErr != nil {
-				slog.DebugContext(ctx, "Skipping prewarm, context cancelled",
-					"image", images[index].imageRef,
-					"error", acquireErr,
-				)
-
-				return
-			}
-
 			defer sem.Release(1)
 
 			p.resolveOneDigest(ctx, &images[index], &results[index])

@@ -21,6 +21,7 @@ import (
 
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/sbom"
+	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 )
 
 func benchMarshal(b *testing.B, val any) []byte {
@@ -39,12 +40,14 @@ func benchWrapInToto(b *testing.B, doc any, digest string) []byte {
 
 	predBytes := benchMarshal(b, doc)
 
-	wrapper := inTotoWrapper{
-		Type: testInTotoType,
-		Subject: []inTotoSubj{
+	wrapper := testutil.InTotoWrapper{
+		Type: testutil.InTotoStatementType,
+		Subject: []testutil.InTotoSubj{
 			{
-				Name:   testSubjectName,
-				Digest: map[string]string{testDigestAlgo: digest[len(testDigestAlgo)+1:]},
+				Name: testutil.TestSubjectName,
+				Digest: map[string]string{
+					testutil.TestDigestAlgo: digest[len(testutil.TestDigestAlgo)+1:],
+				},
 			},
 		},
 		PredicateType: testPredicateType,

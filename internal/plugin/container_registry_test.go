@@ -151,7 +151,7 @@ func TestContainerRegistryReadStateNotFound(t *testing.T) {
 
 	called := false
 
-	found := reg.ReadState("nonexistent", func(_ *containerState) {
+	found := reg.ReadState("nonexistent", func(_ containerState) {
 		called = true
 	})
 

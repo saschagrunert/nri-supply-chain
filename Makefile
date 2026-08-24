@@ -141,7 +141,7 @@ e2e: build $(KUBERNIX) $(COSIGN) $(CRANE) ## Run bats e2e tests (requires root a
 ##@ Verification
 
 .PHONY: verify-all
-verify-all: lint verify-shfmt verify-shellcheck verify-mdtoc verify-jsonschema verify-tidy verify-vendor verify-dependencies govulncheck verify-prettier verify-typos ## Run all verification targets
+verify-all: lint verify-shfmt verify-shellcheck verify-mdtoc verify-jsonschema verify-helm verify-tidy verify-vendor verify-dependencies govulncheck verify-prettier verify-typos ## Run all verification targets
 
 .PHONY: lint
 lint: $(GOLANGCI_LINT) ## Run golangci-lint

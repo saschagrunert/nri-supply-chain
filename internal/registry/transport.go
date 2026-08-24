@@ -53,7 +53,7 @@ const (
 	transportTLSTimeout    = 10 * time.Second
 	transportIdleTimeout   = 90 * time.Second
 	transportMaxIdleConns  = 100
-	transportIdlePerHost   = 50
+	transportIdlePerHost   = 20
 	transportKeepAlive     = 30 * time.Second
 	transportExpectTimeout = time.Second
 )

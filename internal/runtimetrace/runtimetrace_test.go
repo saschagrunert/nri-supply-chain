@@ -31,26 +31,11 @@ import (
 
 const (
 	testDigest           = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
-	testDigestAlgo       = "sha256"
-	testInTotoType       = "https://in-toto.io/Statement/v1"
-	testSubjectName      = "test-image"
 	testPredicateType    = "https://in-toto.io/attestation/runtime-trace/v0.1"
 	testMonitorType      = "https://example.com/monitors/ebpf"
 	testTrustedPattern   = "https://example.com/monitors/*"
 	testForbiddenTmpGlob = "/tmp/**"
 )
-
-type inTotoWrapper struct {
-	Type          string          `json:"_type"` //nolint:tagliatelle // In-toto spec field name.
-	Subject       []inTotoSubj    `json:"subject"`
-	PredicateType string          `json:"predicateType"`
-	Predicate     json.RawMessage `json:"predicate"`
-}
-
-type inTotoSubj struct {
-	Name   string            `json:"name"`
-	Digest map[string]string `json:"digest"`
-}
 
 type tracePredicate struct {
 	Monitor    traceMonitor    `json:"monitor"`
@@ -96,26 +81,6 @@ func validPredicate() tracePredicate {
 		},
 		Metadata: nil,
 	}
-}
-
-func wrapInToto(t *testing.T, doc any, digest string) []byte {
-	t.Helper()
-
-	predBytes := testutil.MustMarshal(t, doc)
-
-	wrapper := inTotoWrapper{
-		Type: testInTotoType,
-		Subject: []inTotoSubj{
-			{
-				Name:   testSubjectName,
-				Digest: map[string]string{testDigestAlgo: digest[len(testDigestAlgo)+1:]},
-			},
-		},
-		PredicateType: testPredicateType,
-		Predicate:     predBytes,
-	}
-
-	return testutil.MustMarshal(t, wrapper)
 }
 
 func TestVerify(t *testing.T) {
@@ -185,7 +150,7 @@ func TestVerify(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			att := wrapInToto(t, test.doc, testDigest)
+			att := testutil.WrapInToto(t, test.doc, testDigest, testPredicateType)
 
 			result, err := runtimetrace.Verify(context.Background(), att, test.pol, testDigest)
 			testutil.AssertNoError(t, err)
@@ -199,7 +164,7 @@ func TestVerify(t *testing.T) {
 func TestVerifyCheckType(t *testing.T) {
 	t.Parallel()
 
-	att := wrapInToto(t, validPredicate(), testDigest)
+	att := testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType)
 
 	result, err := runtimetrace.Verify(context.Background(), att, &policy.Policy{}, testDigest)
 	testutil.AssertNoError(t, err)
@@ -210,7 +175,7 @@ func TestVerifyCheckType(t *testing.T) {
 func TestVerifyMetadata(t *testing.T) {
 	t.Parallel()
 
-	att := wrapInToto(t, validPredicate(), testDigest)
+	att := testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType)
 
 	result, err := runtimetrace.Verify(context.Background(), att, &policy.Policy{}, testDigest)
 	testutil.AssertNoError(t, err)
@@ -292,7 +257,7 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 	t.Run("subject with mismatched digest", func(t *testing.T) {
 		t.Parallel()
 
-		att := wrapInToto(t, validPredicate(), testDigest)
+		att := testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType)
 
 		_, err := runtimetrace.Verify(context.Background(),
 			att, &policy.Policy{},
@@ -306,7 +271,7 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 	t.Run("empty digest with subjects rejects for binding", func(t *testing.T) {
 		t.Parallel()
 
-		att := wrapInToto(t, validPredicate(), testDigest)
+		att := testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType)
 
 		_, err := runtimetrace.Verify(context.Background(), att, &policy.Policy{}, "")
 		if !errors.Is(err, intoto.ErrNoDigestBinding) {
@@ -358,7 +323,9 @@ func TestVerifyMultiple(t *testing.T) {
 
 			attestations := make([][]byte, len(test.docs))
 			for idx := range test.docs {
-				attestations[idx] = wrapInToto(t, test.docs[idx], testDigest)
+				attestations[idx] = testutil.WrapInToto(
+					t, test.docs[idx], testDigest, testPredicateType,
+				)
 			}
 
 			result, err := runtimetrace.VerifyMultiple(
@@ -405,8 +372,8 @@ func TestVerifyMultipleMergesMetadata(t *testing.T) {
 	}
 
 	attestations := [][]byte{
-		wrapInToto(t, doc1, testDigest),
-		wrapInToto(t, doc2, testDigest),
+		testutil.WrapInToto(t, doc1, testDigest, testPredicateType),
+		testutil.WrapInToto(t, doc2, testDigest, testPredicateType),
 	}
 
 	result, err := runtimetrace.VerifyMultiple(
@@ -493,7 +460,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 
 		attestations := [][]byte{
 			[]byte("invalid json"),
-			wrapInToto(t, validPredicate(), testDigest),
+			testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType),
 		}
 
 		result, err := runtimetrace.VerifyMultiple(
@@ -594,7 +561,7 @@ func TestVerifyFreshness(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			att := wrapInToto(t, test.doc, testDigest)
+			att := testutil.WrapInToto(t, test.doc, testDigest, testPredicateType)
 
 			result, err := runtimetrace.Verify(context.Background(), att, test.pol, testDigest)
 			testutil.AssertNoError(t, err)
@@ -611,7 +578,7 @@ func TestVerifyFreshness(t *testing.T) {
 func TestVerifyUntrustedMonitorDetailMessage(t *testing.T) {
 	t.Parallel()
 
-	att := wrapInToto(t, validPredicate(), testDigest)
+	att := testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType)
 
 	result, err := runtimetrace.Verify(context.Background(), att, &policy.Policy{
 		RuntimeTrace: &policy.RuntimeTracePolicy{
@@ -636,7 +603,7 @@ func TestVerifyUntrustedMonitorDetailMessage(t *testing.T) {
 func TestVerifyForbiddenFileDetailMessage(t *testing.T) {
 	t.Parallel()
 
-	att := wrapInToto(t, validPredicate(), testDigest)
+	att := testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType)
 
 	result, err := runtimetrace.Verify(context.Background(), att, &policy.Policy{
 		RuntimeTrace: &policy.RuntimeTracePolicy{
@@ -672,7 +639,7 @@ func TestVerifyFileAccessURI(t *testing.T) {
 		},
 		Metadata: nil,
 	}
-	att := wrapInToto(t, doc, testDigest)
+	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 	result, err := runtimetrace.Verify(context.Background(), att, &policy.Policy{
 		RuntimeTrace: &policy.RuntimeTracePolicy{
