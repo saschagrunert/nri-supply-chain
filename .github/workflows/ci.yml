@@ -48,10 +48,7 @@ jobs:
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: v3.21.4
-      - name: Lint and render chart
-        run: |
-          helm lint --strict deploy/helm/nri-supply-chain
-          helm template nri-supply-chain deploy/helm/nri-supply-chain --namespace nri-supply-chain > /dev/null
+      - run: make verify-helm
 
   test-unit:
     name: test / unit
@@ -268,6 +265,10 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/zeitgeist
+          key: zeitgeist-${{ runner.os }}-${{ hashFiles('Makefile') }}
       - run: make verify-dependencies
 
   shfmt:
@@ -275,6 +276,10 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/shfmt
+          key: shfmt-${{ runner.os }}-${{ hashFiles('Makefile') }}
       - run: make verify-shfmt
 
   shellcheck:
@@ -282,6 +287,10 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/shellcheck
+          key: shellcheck-${{ runner.os }}-${{ hashFiles('Makefile') }}
       - run: make verify-shellcheck
 
   markdownlint:

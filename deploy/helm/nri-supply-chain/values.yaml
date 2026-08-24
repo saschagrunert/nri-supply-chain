@@ -38,6 +38,8 @@ daemonSet:
   nodeSelector: {}
   affinity: {}
 
+# Increase memory limits on nodes with many images; cache pre-warming runs up
+# to 5 concurrent fetches and each attestation can reach maxAttestationSize.
 resources:
   requests:
     cpu: 50m

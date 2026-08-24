@@ -121,7 +121,14 @@ func FuzzVerify(f *testing.F) {
 		`"metadata":{"invocationId":"run-1","startedOn":"2025-01-15T10:30:00Z"}}}` +
 		`}`))
 
-	f.Fuzz(func(_ *testing.T, data []byte) {
-		slsa.Verify(context.Background(), data, &policy.Policy{}, testDigest)
+	f.Fuzz(func(t *testing.T, data []byte) {
+		result, err := slsa.Verify(context.Background(), data, &policy.Policy{}, testDigest)
+		if err == nil && result == nil {
+			t.Error("Verify returned nil result and nil error")
+		}
+
+		if result != nil && result.Type == "" {
+			t.Error("Verify returned result with empty Type")
+		}
 	})
 }

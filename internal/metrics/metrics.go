@@ -117,6 +117,8 @@ type Metrics struct {
 	FeedFilesProcessedTotal *prometheus.CounterVec
 	// ContinuousVerifierLastRun is the unix timestamp of the last completed cycle.
 	ContinuousVerifierLastRun prometheus.Gauge
+	// CreateContainerDuration measures end-to-end NRI CreateContainer hook latency.
+	CreateContainerDuration *prometheus.HistogramVec
 	// HostSemOverflowTotal counts per-host semaphore overflow events.
 	HostSemOverflowTotal prometheus.Counter
 	registry             *prometheus.Registry
@@ -271,6 +273,18 @@ func New() *Metrics {
 		ContinuousVerifierLastRun: newGauge(
 			"continuous_verifier_last_run",
 			"Unix timestamp of the last completed continuous verification cycle.",
+		),
+		CreateContainerDuration: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Namespace: namespace,
+				Name:      "create_container_duration_seconds",
+				Help:      "End-to-end duration of the NRI CreateContainer hook in seconds.",
+				Buckets: sortedBuckets(
+					slices.Clone(prometheus.DefBuckets),
+					bucketFetchMid, bucketFetchTimeout,
+				),
+			},
+			[]string{labelNamespace, labelResult},
 		),
 		HostSemOverflowTotal: newCounter(
 			"host_sem_overflow_total",
@@ -459,6 +473,7 @@ func (m *Metrics) register() {
 		m.RemediationErrorsTotal,
 		m.FeedFilesProcessedTotal,
 		m.ContinuousVerifierLastRun,
+		m.CreateContainerDuration,
 		m.HostSemOverflowTotal,
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{
 			PidFn:        nil,

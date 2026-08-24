@@ -35,7 +35,10 @@ metrics_addr = ":8080"
 	f.Add(`[[[invalid`)
 	f.Add(`verification = "unknown"`)
 
-	f.Fuzz(func(_ *testing.T, data string) {
-		config.LoadFromString(data)
+	f.Fuzz(func(t *testing.T, data string) {
+		cfg, err := config.LoadFromString(data)
+		if err == nil && cfg == nil {
+			t.Error("LoadFromString returned nil config and nil error")
+		}
 	})
 }

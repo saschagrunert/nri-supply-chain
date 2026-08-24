@@ -101,6 +101,10 @@ func TestNewMetrics(t *testing.T) {
 	if met.ContainerLifetime == nil {
 		t.Error("expected ContainerLifetime to be set")
 	}
+
+	if met.CreateContainerDuration == nil {
+		t.Error("expected CreateContainerDuration to be set")
+	}
 }
 
 func TestMetricsHandler(t *testing.T) {
@@ -182,6 +186,7 @@ func TestMetricsIncrement(t *testing.T) {
 	met.FetchDuration.WithLabelValues("ghcr.io").Observe(0.25)
 	met.MirrorFallbackTotal.WithLabelValues("ghcr.io", "digest").Inc()
 	met.ContainerLifetime.WithLabelValues("default").Observe(42.5)
+	met.CreateContainerDuration.WithLabelValues("default", "success").Observe(0.1)
 
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequestWithContext(
@@ -223,6 +228,7 @@ func TestMetricsIncrement(t *testing.T) {
 		`nri_supply_chain_fetch_duration_seconds_bucket{registry="ghcr.io",le="0.25"} 1`,
 		`nri_supply_chain_mirror_fallback_total{registry="ghcr.io",type="digest"} 1`,
 		`nri_supply_chain_container_lifetime_seconds_bucket{namespace="default",le="64"} 1`,
+		`nri_supply_chain_create_container_duration_seconds_bucket{namespace="default",result="success",le="0.25"} 1`,
 	} {
 		if !strings.Contains(bodyStr, expected) {
 			t.Errorf("expected %q in metrics output", expected)
