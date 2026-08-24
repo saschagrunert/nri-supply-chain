@@ -118,7 +118,11 @@ func (v *Verifier) applyPolicyUpdate(
 
 	snap.circuitBreakers = state.circuitBreakers
 	snap.fetchSem = state.fetchSem
+
+	closeAuditLogFile(snap.auditLogFile)
+	snap.auditLogFile = state.auditLogFile
 	snap.auditLogger = state.auditLogger
+
 	snap.guacClient = state.guacClient
 	snap.guacBreaker = state.guacBreaker
 
@@ -132,7 +136,7 @@ func (v *Verifier) applyPolicyUpdate(
 		WarnWarnModeDefaults(ctx, state.config, policies)
 	}
 
-	slog.Info(
+	slog.InfoContext(ctx,
 		"OCI policy update applied",
 		"policies_count", len(policies),
 	)

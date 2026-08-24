@@ -34,24 +34,9 @@ import (
 const (
 	testImageRef      = "docker.io/library/nginx:latest"
 	testDigest        = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
-	testDigestAlgo    = "sha256"
 	testVEXContext    = "https://openvex.dev/ns/v0.2.0"
-	testInTotoType    = "https://in-toto.io/Statement/v1"
 	testPredicateType = "https://openvex.dev/ns"
-	testSubjectName   = "test-image"
 )
-
-type inTotoWrapper struct {
-	Type          string          `json:"_type"` //nolint:tagliatelle // In-toto spec field name.
-	Subject       []inTotoSubj    `json:"subject"`
-	PredicateType string          `json:"predicateType"`
-	Predicate     json.RawMessage `json:"predicate"`
-}
-
-type inTotoSubj struct {
-	Name   string            `json:"name"`
-	Digest map[string]string `json:"digest"`
-}
 
 func validVEXDoc(status openvex.Status) openvex.VEX {
 	return openvex.VEX{
@@ -69,26 +54,6 @@ func validVEXDoc(status openvex.Status) openvex.VEX {
 			},
 		},
 	}
-}
-
-func wrapInToto(t *testing.T, doc any, digest string) []byte {
-	t.Helper()
-
-	predBytes := testutil.MustMarshal(t, doc)
-
-	wrapper := inTotoWrapper{
-		Type: testInTotoType,
-		Subject: []inTotoSubj{
-			{
-				Name:   testSubjectName,
-				Digest: map[string]string{testDigestAlgo: digest[len(testDigestAlgo)+1:]},
-			},
-		},
-		PredicateType: testPredicateType,
-		Predicate:     predBytes,
-	}
-
-	return testutil.MustMarshal(t, wrapper)
 }
 
 func TestVerify(t *testing.T) {
@@ -263,7 +228,7 @@ func TestVerify(t *testing.T) {
 
 			// Wrap VEX docs in in-toto format with a subject to satisfy
 			// subject binding requirements when digest is provided.
-			att := wrapInToto(t, test.doc, testDigest)
+			att := testutil.WrapInToto(t, test.doc, testDigest, testPredicateType)
 
 			result, err := vex.Verify(
 				context.Background(), att,
@@ -390,7 +355,7 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 		t.Parallel()
 
 		doc := validVEXDoc(openvex.StatusNotAffected)
-		att := wrapInToto(t, doc, testDigest)
+		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 		_, err := vex.Verify(
 			context.Background(), att,
@@ -409,16 +374,18 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 		doc := validVEXDoc(openvex.StatusNotAffected)
 		predBytes := testutil.MustMarshal(t, doc)
 
-		wrapper := inTotoWrapper{
-			Type: testInTotoType,
-			Subject: []inTotoSubj{
+		wrapper := testutil.InTotoWrapper{
+			Type: testutil.InTotoStatementType,
+			Subject: []testutil.InTotoSubj{
 				{
 					Name:   "other-image",
-					Digest: map[string]string{testDigestAlgo: "000000"},
+					Digest: map[string]string{testutil.TestDigestAlgo: "000000"},
 				},
 				{
-					Name:   testSubjectName,
-					Digest: map[string]string{testDigestAlgo: testDigest[len(testDigestAlgo)+1:]},
+					Name: testutil.TestSubjectName,
+					Digest: map[string]string{
+						testutil.TestDigestAlgo: testDigest[len(testutil.TestDigestAlgo)+1:],
+					},
 				},
 			},
 			PredicateType: testPredicateType,
@@ -447,16 +414,16 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 		doc := validVEXDoc(openvex.StatusNotAffected)
 		predBytes := testutil.MustMarshal(t, doc)
 
-		wrapper := inTotoWrapper{
-			Type: testInTotoType,
-			Subject: []inTotoSubj{
+		wrapper := testutil.InTotoWrapper{
+			Type: testutil.InTotoStatementType,
+			Subject: []testutil.InTotoSubj{
 				{
 					Name:   "image-a",
-					Digest: map[string]string{testDigestAlgo: "aaa111"},
+					Digest: map[string]string{testutil.TestDigestAlgo: "aaa111"},
 				},
 				{
 					Name:   "image-b",
-					Digest: map[string]string{testDigestAlgo: "bbb222"},
+					Digest: map[string]string{testutil.TestDigestAlgo: "bbb222"},
 				},
 			},
 			PredicateType: testPredicateType,
@@ -523,7 +490,7 @@ func TestVerifyStatementEdgeCases(t *testing.T) {
 			},
 		}
 
-		att := wrapInToto(t, doc, testDigest)
+		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 		result, err := vex.Verify(
 			context.Background(), att,
@@ -547,7 +514,7 @@ func TestVerifyStatementEdgeCases(t *testing.T) {
 		t.Parallel()
 
 		doc := multiStatusVEXDoc(openvex.StatusNotAffected, openvex.StatusAffected)
-		att := wrapInToto(t, doc, testDigest)
+		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 		result, err := vex.Verify(
 			context.Background(), att,
@@ -567,7 +534,7 @@ func TestVerifyStatementEdgeCases(t *testing.T) {
 		t.Parallel()
 
 		doc := multiStatusVEXDoc(openvex.StatusUnderInvestigation, openvex.StatusAffected)
-		att := wrapInToto(t, doc, testDigest)
+		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 		result, err := vex.Verify(
 			context.Background(), att,
@@ -591,7 +558,7 @@ func TestVerifyStatementEdgeCases(t *testing.T) {
 		t.Parallel()
 
 		doc := validVEXDoc(openvex.StatusUnderInvestigation)
-		att := wrapInToto(t, doc, testDigest)
+		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 		result, err := vex.Verify(
 			context.Background(), att,
@@ -618,7 +585,7 @@ func TestVerifyStatementEdgeCases(t *testing.T) {
 		t.Parallel()
 
 		doc := multiStatusVEXDoc(openvex.StatusAffected, openvex.StatusAffected)
-		att := wrapInToto(t, doc, testDigest)
+		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 		result, err := vex.Verify(
 			context.Background(), att,
@@ -692,7 +659,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 
 		attestations := make([][]byte, len(docs))
 		for idx := range docs {
-			attestations[idx] = wrapInToto(t, docs[idx], testDigest)
+			attestations[idx] = testutil.WrapInToto(t, docs[idx], testDigest, testPredicateType)
 		}
 
 		result, err := vex.VerifyMultiple(
@@ -727,7 +694,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 
 		attestations := make([][]byte, len(docs))
 		for idx := range docs {
-			attestations[idx] = wrapInToto(t, docs[idx], testDigest)
+			attestations[idx] = testutil.WrapInToto(t, docs[idx], testDigest, testPredicateType)
 		}
 
 		result, err := vex.VerifyMultiple(
@@ -749,7 +716,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 
 		attestations := [][]byte{
 			[]byte("invalid 1"),
-			wrapInToto(t, validVEXDoc(openvex.StatusFixed), testDigest),
+			testutil.WrapInToto(t, validVEXDoc(openvex.StatusFixed), testDigest, testPredicateType),
 			[]byte("invalid 2"),
 		}
 
@@ -787,7 +754,7 @@ func TestVerifyCheckType(t *testing.T) {
 	doc := validVEXDoc(openvex.StatusAffected)
 
 	result, err := vex.Verify(
-		context.Background(), wrapInToto(t, doc, testDigest),
+		context.Background(), testutil.WrapInToto(t, doc, testDigest, testPredicateType),
 		&policy.Policy{}, testImageRef, testDigest,
 		nil,
 	)
@@ -825,7 +792,7 @@ func TestVerifyPURLSingleSegmentRepo(t *testing.T) {
 	}
 
 	result, err := vex.Verify(
-		context.Background(), wrapInToto(t, doc, digest),
+		context.Background(), testutil.WrapInToto(t, doc, digest, testPredicateType),
 		&policy.Policy{}, imageRef, digest,
 		nil,
 	)
@@ -892,7 +859,12 @@ func TestVerifyMultiple(t *testing.T) {
 
 			attestations := make([][]byte, len(test.docs))
 			for idx := range test.docs {
-				attestations[idx] = wrapInToto(t, test.docs[idx], testDigest)
+				attestations[idx] = testutil.WrapInToto(
+					t,
+					test.docs[idx],
+					testDigest,
+					testPredicateType,
+				)
 			}
 
 			result, err := vex.VerifyMultiple(
@@ -923,7 +895,7 @@ func TestVerifyMultipleSkipsInvalid(t *testing.T) {
 
 	attestations := [][]byte{
 		[]byte("invalid json"),
-		wrapInToto(t, goodDoc, testDigest),
+		testutil.WrapInToto(t, goodDoc, testDigest, testPredicateType),
 	}
 
 	result, err := vex.VerifyMultiple(
@@ -970,7 +942,7 @@ func TestVerifyInTotoWrapped(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			att := wrapInToto(t, test.doc, testDigest)
+			att := testutil.WrapInToto(t, test.doc, testDigest, testPredicateType)
 
 			result, err := vex.Verify(
 				context.Background(), att,
@@ -1003,9 +975,9 @@ func TestVerifyInTotoEmptySubjectWithDigest(t *testing.T) {
 	doc := validVEXDoc(openvex.StatusFixed)
 	predBytes := testutil.MustMarshal(t, doc)
 
-	wrapper := inTotoWrapper{
-		Type:          testInTotoType,
-		Subject:       []inTotoSubj{},
+	wrapper := testutil.InTotoWrapper{
+		Type:          testutil.InTotoStatementType,
+		Subject:       []testutil.InTotoSubj{},
 		PredicateType: testPredicateType,
 		Predicate:     predBytes,
 	}
@@ -1031,9 +1003,9 @@ func TestVerifyInTotoEmptySubjectWithoutDigest(t *testing.T) {
 	doc := validVEXDoc(openvex.StatusFixed)
 	predBytes := testutil.MustMarshal(t, doc)
 
-	wrapper := inTotoWrapper{
-		Type:          testInTotoType,
-		Subject:       []inTotoSubj{},
+	wrapper := testutil.InTotoWrapper{
+		Type:          testutil.InTotoStatementType,
+		Subject:       []testutil.InTotoSubj{},
 		PredicateType: testPredicateType,
 		Predicate:     predBytes,
 	}
@@ -1066,7 +1038,7 @@ func TestVerifyInTotoNilSubjectWithDigest(t *testing.T) {
 		PredicateType string          `json:"predicateType"`
 		Predicate     json.RawMessage `json:"predicate"`
 	}{
-		Type:          testInTotoType,
+		Type:          testutil.InTotoStatementType,
 		PredicateType: testPredicateType,
 		Predicate:     predBytes,
 	}
@@ -1090,12 +1062,12 @@ func TestVerifySubjectsWithoutDigestRejected(t *testing.T) {
 	doc := validVEXDoc(openvex.StatusFixed)
 	predBytes := testutil.MustMarshal(t, doc)
 
-	wrapper := inTotoWrapper{
-		Type: testInTotoType,
-		Subject: []inTotoSubj{
+	wrapper := testutil.InTotoWrapper{
+		Type: testutil.InTotoStatementType,
+		Subject: []testutil.InTotoSubj{
 			{
-				Name:   testSubjectName,
-				Digest: map[string]string{testDigestAlgo: "abc123"},
+				Name:   testutil.TestSubjectName,
+				Digest: map[string]string{testutil.TestDigestAlgo: "abc123"},
 			},
 		},
 		PredicateType: testPredicateType,
@@ -1155,7 +1127,7 @@ func cycloneDXBOM(state cdx.ImpactAnalysisState) *cdx.BOM {
 			Hashes: &[]cdx.Hash{
 				{
 					Algorithm: cdx.HashAlgoSHA256,
-					Value:     testDigest[len(testDigestAlgo)+1:],
+					Value:     testDigest[len(testutil.TestDigestAlgo)+1:],
 				},
 			},
 		},
@@ -1178,12 +1150,14 @@ func wrapCycloneDXInToto(t *testing.T, bom *cdx.BOM, digest string) []byte {
 
 	predBytes := testutil.MustMarshal(t, bom)
 
-	wrapper := inTotoWrapper{
-		Type: testInTotoType,
-		Subject: []inTotoSubj{
+	wrapper := testutil.InTotoWrapper{
+		Type: testutil.InTotoStatementType,
+		Subject: []testutil.InTotoSubj{
 			{
-				Name:   testSubjectName,
-				Digest: map[string]string{testDigestAlgo: digest[len(testDigestAlgo)+1:]},
+				Name: testutil.TestSubjectName,
+				Digest: map[string]string{
+					testutil.TestDigestAlgo: digest[len(testutil.TestDigestAlgo)+1:],
+				},
 			},
 		},
 		PredicateType: "https://cyclonedx.org/bom",
@@ -1333,7 +1307,7 @@ func TestVerifyMultipleMixedFormats(t *testing.T) {
 	t.Parallel()
 
 	openVEXDoc := validVEXDoc(openvex.StatusNotAffected)
-	openVEXAtt := wrapInToto(t, openVEXDoc, testDigest)
+	openVEXAtt := testutil.WrapInToto(t, openVEXDoc, testDigest, testPredicateType)
 
 	cdxBOM := cycloneDXBOM(cdx.IASNotAffected)
 	cdxAtt := wrapCycloneDXInToto(t, cdxBOM, testDigest)
@@ -1358,7 +1332,7 @@ func TestVerifyMultipleMixedFormatsWithAffected(t *testing.T) {
 	t.Parallel()
 
 	openVEXDoc := validVEXDoc(openvex.StatusNotAffected)
-	openVEXAtt := wrapInToto(t, openVEXDoc, testDigest)
+	openVEXAtt := testutil.WrapInToto(t, openVEXDoc, testDigest, testPredicateType)
 
 	cdxBOM := cycloneDXBOM(cdx.IASExploitable)
 	cdxAtt := wrapCycloneDXInToto(t, cdxBOM, testDigest)

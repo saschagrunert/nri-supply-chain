@@ -52,7 +52,7 @@ type containerForReverify struct {
 // RunContinuousVerifier starts the background re-verification loop. It blocks
 // until ctx is cancelled. Start in the errgroup alongside nriStub.Run.
 func (p *Plugin) RunContinuousVerifier(ctx context.Context, interval time.Duration) {
-	slog.Info("Continuous verifier waiting for prewarm", "interval", interval)
+	slog.InfoContext(ctx, "Continuous verifier waiting for prewarm", "interval", interval)
 
 	select {
 	case <-ctx.Done():
@@ -60,7 +60,7 @@ func (p *Plugin) RunContinuousVerifier(ctx context.Context, interval time.Durati
 	case <-p.prewarmDoneCh:
 	}
 
-	slog.Info("Continuous verifier started", "interval", interval)
+	slog.InfoContext(ctx, "Continuous verifier started", "interval", interval)
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -68,7 +68,7 @@ func (p *Plugin) RunContinuousVerifier(ctx context.Context, interval time.Durati
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Info("Continuous verifier stopped")
+			slog.InfoContext(ctx, "Continuous verifier stopped")
 
 			return
 		case <-ticker.C:
@@ -156,13 +156,13 @@ func (p *Plugin) runVerificationCycle(
 	}
 
 	if len(updates) > 0 {
-		p.applyUpdates(updates)
+		p.applyUpdates(ctx, updates)
 	}
 
 	p.updateTrackedContainerGauge()
 	p.metrics.ContinuousVerifierLastRun.SetToCurrentTime()
 
-	slog.Info("Continuous verification cycle completed",
+	slog.InfoContext(ctx, "Continuous verification cycle completed",
 		"trigger", trigger,
 		"containers", len(targets),
 		"updates", len(updates),
@@ -188,7 +188,7 @@ func (p *Plugin) reverifyContainer(
 	p.metrics.ReverificationDuration.WithLabelValues(target.namespace).Observe(duration)
 
 	if err != nil {
-		slog.Warn("Re-verification error",
+		slog.WarnContext(ctx, "Re-verification error",
 			"container", target.id,
 			"image", target.imageRef,
 			"error", err,
@@ -215,12 +215,12 @@ func (p *Plugin) reverifyContainer(
 
 	p.metrics.ReverificationTotal.WithLabelValues(target.namespace, resultLabel).Inc()
 
-	return p.applyStateTransition(target, result, degraded, trigger, mode, feedPURLs)
+	return p.applyStateTransition(ctx, target, result, degraded, trigger, mode, feedPURLs)
 }
 
 //nolint:cyclop,funlen // state machine with three transitions and mode-gated remediation
 func (p *Plugin) applyStateTransition(
-	target *containerForReverify, result *types.Result,
+	ctx context.Context, target *containerForReverify, result *types.Result,
 	degraded bool, trigger string, mode config.RemediationMode,
 	feedPURLs []string,
 ) *api.ContainerUpdate {
@@ -244,7 +244,7 @@ func (p *Plugin) applyStateTransition(
 		case !degraded && prevState != StateVerified:
 			cState.state = StateVerified
 
-			slog.Info("Container verification recovered",
+			slog.InfoContext(ctx, "Container verification recovered",
 				"container", target.id,
 				"image", target.imageRef,
 				"namespace", target.namespace,
@@ -268,7 +268,7 @@ func (p *Plugin) applyStateTransition(
 			cState.state = StateDegraded
 			cState.lastTriggerHash = triggerHash
 
-			slog.Warn("Container verification degraded",
+			slog.WarnContext(ctx, "Container verification degraded",
 				"container", target.id,
 				"image", target.imageRef,
 				"namespace", target.namespace,
@@ -288,7 +288,7 @@ func (p *Plugin) applyStateTransition(
 					cpuPct, memPct := p.throttlePercents()
 					update = p.buildThrottleUpdate(target.id, cState.originalResources)
 
-					slog.Warn("Container throttled",
+					slog.WarnContext(ctx, "Container throttled",
 						"container", target.id,
 						"image", target.imageRef,
 						"namespace", target.namespace,
@@ -425,24 +425,24 @@ func deepCopyLinuxResources(src *api.LinuxResources) *api.LinuxResources {
 	return cloned
 }
 
-func (p *Plugin) applyUpdates(updates []*api.ContainerUpdate) {
+func (p *Plugin) applyUpdates(ctx context.Context, updates []*api.ContainerUpdate) {
 	stub := p.getStubUpdater()
 	if stub == nil {
-		slog.Warn("Cannot apply remediation updates: NRI stub not available")
+		slog.WarnContext(ctx, "Cannot apply remediation updates: NRI stub not available")
 
 		return
 	}
 
 	failed, err := stub.UpdateContainers(updates)
 	if err != nil {
-		slog.Error("UpdateContainers failed", "error", err)
+		slog.ErrorContext(ctx, "UpdateContainers failed", "error", err)
 		p.metrics.RemediationErrorsTotal.WithLabelValues("update").Inc()
 
 		return
 	}
 
 	for _, f := range failed {
-		slog.Warn("Container update failed",
+		slog.WarnContext(ctx, "Container update failed",
 			"container", f.GetContainerId(),
 		)
 		p.metrics.RemediationErrorsTotal.WithLabelValues("partial").Inc()
@@ -475,9 +475,13 @@ func computeTriggerHash(trigger, digest string, feedPURLs []string) string {
 	input := trigger + "\x00" + digest
 
 	if len(feedPURLs) > 0 {
-		sorted := slices.Clone(feedPURLs)
-		slices.Sort(sorted)
-		input += "\x00" + strings.Join(sorted, "\x00")
+		if slices.IsSorted(feedPURLs) {
+			input += "\x00" + strings.Join(feedPURLs, "\x00")
+		} else {
+			sorted := slices.Clone(feedPURLs)
+			slices.Sort(sorted)
+			input += "\x00" + strings.Join(sorted, "\x00")
+		}
 	}
 
 	h := sha256.Sum256([]byte(input))

@@ -191,7 +191,7 @@ type ExportContainerState struct {
 func (p *Plugin) ExportGetContainerState(containerID string) (ExportContainerState, bool) {
 	var result ExportContainerState
 
-	found := p.containers.ReadState(containerID, func(cs *containerState) {
+	found := p.containers.ReadState(containerID, func(cs containerState) {
 		result = ExportContainerState{
 			RecoveredOnRestart: cs.recoveredOnRestart,
 			ServiceAccount:     cs.serviceAccount,

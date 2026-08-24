@@ -16,7 +16,6 @@ package sbom_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -31,9 +30,6 @@ import (
 const (
 	testImageRef             = "docker.io/library/nginx:latest"
 	testDigest               = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
-	testDigestAlgo           = "sha256"
-	testInTotoType           = "https://in-toto.io/Statement/v1"
-	testSubjectName          = "test-image"
 	testPredicateType        = "https://spdx.dev/Document"
 	testSPDXVersion          = "SPDX-2.3"
 	testCycloneDXBOM         = "CycloneDX"
@@ -55,18 +51,6 @@ const (
 	testSPDX3SpecVer         = "3.0.1"
 	testSPDX3SoftwarePackage = "software_SoftwarePackage"
 )
-
-type inTotoWrapper struct {
-	Type          string          `json:"_type"` //nolint:tagliatelle // In-toto spec field name.
-	Subject       []inTotoSubj    `json:"subject"`
-	PredicateType string          `json:"predicateType"`
-	Predicate     json.RawMessage `json:"predicate"`
-}
-
-type inTotoSubj struct {
-	Name   string            `json:"name"`
-	Digest map[string]string `json:"digest"`
-}
 
 func validSPDXDoc() spdxDoc {
 	return spdxDoc{
@@ -152,26 +136,6 @@ type cdxLicenseWrapper struct {
 type cdxLicense struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
-}
-
-func wrapInToto(t *testing.T, doc any, digest string) []byte {
-	t.Helper()
-
-	predBytes := testutil.MustMarshal(t, doc)
-
-	wrapper := inTotoWrapper{
-		Type: testInTotoType,
-		Subject: []inTotoSubj{
-			{
-				Name:   testSubjectName,
-				Digest: map[string]string{testDigestAlgo: digest[len(testDigestAlgo)+1:]},
-			},
-		},
-		PredicateType: testPredicateType,
-		Predicate:     predBytes,
-	}
-
-	return testutil.MustMarshal(t, wrapper)
 }
 
 func TestVerify(t *testing.T) {
@@ -341,7 +305,7 @@ func TestVerify(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			att := wrapInToto(t, test.doc, testDigest)
+			att := testutil.WrapInToto(t, test.doc, testDigest, testPredicateType)
 
 			result, err := sbom.Verify(context.Background(), att, test.pol, testDigest)
 
@@ -429,7 +393,7 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 		t.Parallel()
 
 		doc := validSPDXDoc()
-		att := wrapInToto(t, doc, testDigest)
+		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 		_, err := sbom.Verify(context.Background(),
 			att, &policy.Policy{},
@@ -444,7 +408,7 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 		t.Parallel()
 
 		doc := validSPDXDoc()
-		att := wrapInToto(t, doc, testDigest)
+		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 		_, err := sbom.Verify(context.Background(), att, &policy.Policy{}, "nocolon")
 		if !errors.Is(err, intoto.ErrSubjectMismatch) {
@@ -456,7 +420,7 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 		t.Parallel()
 
 		doc := validSPDXDoc()
-		att := wrapInToto(t, doc, testDigest)
+		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 		_, err := sbom.Verify(context.Background(), att, &policy.Policy{}, "")
 		if !errors.Is(err, intoto.ErrNoDigestBinding) {
@@ -470,16 +434,18 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 		doc := validSPDXDoc()
 		predBytes := testutil.MustMarshal(t, doc)
 
-		wrapper := inTotoWrapper{
-			Type: testInTotoType,
-			Subject: []inTotoSubj{
+		wrapper := testutil.InTotoWrapper{
+			Type: testutil.InTotoStatementType,
+			Subject: []testutil.InTotoSubj{
 				{
 					Name:   "other-image",
-					Digest: map[string]string{testDigestAlgo: "000000"},
+					Digest: map[string]string{testutil.TestDigestAlgo: "000000"},
 				},
 				{
-					Name:   testSubjectName,
-					Digest: map[string]string{testDigestAlgo: testDigest[len(testDigestAlgo)+1:]},
+					Name: testutil.TestSubjectName,
+					Digest: map[string]string{
+						testutil.TestDigestAlgo: testDigest[len(testutil.TestDigestAlgo)+1:],
+					},
 				},
 			},
 			PredicateType: testPredicateType,
@@ -515,7 +481,7 @@ func TestVerifySPDXLicenseFields(t *testing.T) {
 			},
 		}
 
-		att := wrapInToto(t, doc, testDigest)
+		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			SBOM: &policy.SBOMPolicy{
@@ -546,7 +512,7 @@ func TestVerifySPDXLicenseFields(t *testing.T) {
 			},
 		}
 
-		att := wrapInToto(t, doc, testDigest)
+		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			SBOM: &policy.SBOMPolicy{
@@ -577,7 +543,7 @@ func TestVerifySPDXLicenseFields(t *testing.T) {
 			},
 		}
 
-		att := wrapInToto(t, doc, testDigest)
+		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			SBOM: &policy.SBOMPolicy{
@@ -608,7 +574,7 @@ func TestVerifySPDXLicenseFields(t *testing.T) {
 			},
 		}
 
-		att := wrapInToto(t, doc, testDigest)
+		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			SBOM: &policy.SBOMPolicy{
@@ -639,7 +605,7 @@ func TestVerifySPDXLicenseFields(t *testing.T) {
 			},
 		}
 
-		att := wrapInToto(t, doc, testDigest)
+		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			SBOM: &policy.SBOMPolicy{
@@ -670,7 +636,7 @@ func TestVerifySPDXLicenseFields(t *testing.T) {
 			},
 		}
 
-		att := wrapInToto(t, doc, testDigest)
+		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			SBOM: &policy.SBOMPolicy{
@@ -701,7 +667,7 @@ func TestVerifySPDXLicenseFields(t *testing.T) {
 			},
 		}
 
-		att := wrapInToto(t, doc, testDigest)
+		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			SBOM: &policy.SBOMPolicy{
@@ -735,7 +701,7 @@ func TestVerifyCycloneDXLicenseName(t *testing.T) {
 		Vulnerabilities: nil,
 	}
 
-	att := wrapInToto(t, doc, testDigest)
+	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 		SBOM: &policy.SBOMPolicy{
@@ -754,7 +720,7 @@ func TestVerifyCycloneDXLicenseName(t *testing.T) {
 func TestVerifyCheckType(t *testing.T) {
 	t.Parallel()
 
-	att := wrapInToto(t, validSPDXDoc(), testDigest)
+	att := testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType)
 
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{}, testDigest)
 	testutil.AssertNoError(t, err)
@@ -765,7 +731,7 @@ func TestVerifyCheckType(t *testing.T) {
 func TestVerifySPDXMetadata(t *testing.T) {
 	t.Parallel()
 
-	att := wrapInToto(t, validSPDXDoc(), testDigest)
+	att := testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType)
 
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{}, testDigest)
 	testutil.AssertNoError(t, err)
@@ -793,7 +759,7 @@ func TestVerifySPDXMetadata(t *testing.T) {
 func TestVerifyCycloneDXMetadata(t *testing.T) {
 	t.Parallel()
 
-	att := wrapInToto(t, validCycloneDXDoc(), testDigest)
+	att := testutil.WrapInToto(t, validCycloneDXDoc(), testDigest, testPredicateType)
 
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{}, testDigest)
 	testutil.AssertNoError(t, err)
@@ -822,7 +788,7 @@ func TestVerifyMultipleMetadataPropagation(t *testing.T) {
 	t.Parallel()
 
 	attestations := [][]byte{
-		wrapInToto(t, validSPDXDoc(), testDigest),
+		testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType),
 	}
 
 	result, err := sbom.VerifyMultiple(
@@ -885,7 +851,12 @@ func TestVerifyMultiple(t *testing.T) {
 
 			attestations := make([][]byte, len(test.docs))
 			for idx := range test.docs {
-				attestations[idx] = wrapInToto(t, test.docs[idx], testDigest)
+				attestations[idx] = testutil.WrapInToto(
+					t,
+					test.docs[idx],
+					testDigest,
+					testPredicateType,
+				)
 			}
 
 			result, err := sbom.VerifyMultiple(
@@ -943,8 +914,8 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		t.Parallel()
 
 		attestations := [][]byte{
-			wrapInToto(t, validSPDXDoc(), testDigest),
-			wrapInToto(t, validSPDXDoc(), testDigest),
+			testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType),
+			testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType),
 		}
 
 		result, err := sbom.VerifyMultiple(context.Background(), attestations, &policy.Policy{
@@ -970,7 +941,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 
 		attestations := [][]byte{
 			[]byte("invalid json"),
-			wrapInToto(t, validSPDXDoc(), testDigest),
+			testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType),
 		}
 
 		result, err := sbom.VerifyMultiple(
@@ -1002,7 +973,7 @@ func TestVerifyCycloneDXNilLicense(t *testing.T) {
 		Vulnerabilities: nil,
 	}
 
-	att := wrapInToto(t, doc, testDigest)
+	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{}, testDigest)
 	testutil.AssertNoError(t, err)
@@ -1018,7 +989,7 @@ func TestVerifyLicenseAllowList(t *testing.T) {
 	t.Run("license in allow list passes", func(t *testing.T) {
 		t.Parallel()
 
-		att := wrapInToto(t, validSPDXDoc(), testDigest)
+		att := testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			SBOM: &policy.SBOMPolicy{
@@ -1037,7 +1008,7 @@ func TestVerifyLicenseAllowList(t *testing.T) {
 	t.Run("license not in allow list fails", func(t *testing.T) {
 		t.Parallel()
 
-		att := wrapInToto(t, validSPDXDoc(), testDigest)
+		att := testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			SBOM: &policy.SBOMPolicy{
@@ -1060,7 +1031,7 @@ func TestVerifyLicenseAllowList(t *testing.T) {
 	t.Run("deny takes precedence over allow", func(t *testing.T) {
 		t.Parallel()
 
-		att := wrapInToto(t, validSPDXDoc(), testDigest)
+		att := testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			SBOM: &policy.SBOMPolicy{
@@ -1084,7 +1055,7 @@ func TestVerifyLicenseAllowList(t *testing.T) {
 	t.Run("empty allow list does not restrict", func(t *testing.T) {
 		t.Parallel()
 
-		att := wrapInToto(t, validSPDXDoc(), testDigest)
+		att := testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			SBOM: &policy.SBOMPolicy{
@@ -1103,7 +1074,7 @@ func TestVerifyLicenseAllowList(t *testing.T) {
 	t.Run("allow list is case-insensitive", func(t *testing.T) {
 		t.Parallel()
 
-		att := wrapInToto(t, validSPDXDoc(), testDigest)
+		att := testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			SBOM: &policy.SBOMPolicy{
@@ -1126,7 +1097,7 @@ func TestVerifyComponentAllowList(t *testing.T) {
 	t.Run("component in allow list passes", func(t *testing.T) {
 		t.Parallel()
 
-		att := wrapInToto(t, validSPDXDoc(), testDigest)
+		att := testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			SBOM: &policy.SBOMPolicy{
@@ -1145,7 +1116,7 @@ func TestVerifyComponentAllowList(t *testing.T) {
 	t.Run("component not in allow list fails", func(t *testing.T) {
 		t.Parallel()
 
-		att := wrapInToto(t, validSPDXDoc(), testDigest)
+		att := testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			SBOM: &policy.SBOMPolicy{
@@ -1168,7 +1139,7 @@ func TestVerifyComponentAllowList(t *testing.T) {
 	t.Run("deny takes precedence over allow", func(t *testing.T) {
 		t.Parallel()
 
-		att := wrapInToto(t, validSPDXDoc(), testDigest)
+		att := testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			SBOM: &policy.SBOMPolicy{
@@ -1192,7 +1163,7 @@ func TestVerifyComponentAllowList(t *testing.T) {
 	t.Run("allow list uses prefix match", func(t *testing.T) {
 		t.Parallel()
 
-		att := wrapInToto(t, validSPDXDoc(), testDigest)
+		att := testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			SBOM: &policy.SBOMPolicy{
@@ -1211,7 +1182,7 @@ func TestVerifyComponentAllowList(t *testing.T) {
 	t.Run("empty allow list does not restrict", func(t *testing.T) {
 		t.Parallel()
 
-		att := wrapInToto(t, validSPDXDoc(), testDigest)
+		att := testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType)
 
 		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 			SBOM: &policy.SBOMPolicy{
@@ -1247,7 +1218,7 @@ func TestVerifyCVSSThresholdExceeded(t *testing.T) {
 		},
 	})
 
-	att := wrapInToto(t, doc, testDigest)
+	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 		SBOM: &policy.SBOMPolicy{
@@ -1283,7 +1254,7 @@ func TestVerifyCVSSThresholdUnder(t *testing.T) {
 		},
 	})
 
-	att := wrapInToto(t, doc, testDigest)
+	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 		SBOM: &policy.SBOMPolicy{
@@ -1311,7 +1282,7 @@ func TestVerifyCVSSIgnoredCVE(t *testing.T) {
 		},
 	})
 
-	att := wrapInToto(t, doc, testDigest)
+	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 		SBOM: &policy.SBOMPolicy{
@@ -1340,7 +1311,7 @@ func TestVerifyCVSSOrLogicScoreOnly(t *testing.T) {
 		},
 	})
 
-	att := wrapInToto(t, doc, testDigest)
+	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 	// Exceeds maxScore but not minSeverity, should still flag.
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
@@ -1370,7 +1341,7 @@ func TestVerifyCVSSOrLogicSeverityOnly(t *testing.T) {
 		},
 	})
 
-	att := wrapInToto(t, doc, testDigest)
+	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 	// Does not exceed maxScore but exceeds minSeverity, should flag.
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
@@ -1393,7 +1364,7 @@ func TestVerifyCVSSEmptyVulnerabilities(t *testing.T) {
 
 	doc := cyclonedxWithVulns(nil)
 
-	att := wrapInToto(t, doc, testDigest)
+	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 		SBOM: &policy.SBOMPolicy{
@@ -1414,7 +1385,7 @@ func TestVerifyCVSSSkippedForSPDX(t *testing.T) {
 
 	doc := validSPDXDoc()
 
-	att := wrapInToto(t, doc, testDigest)
+	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 	// CVSS settings are present but should be ignored for SPDX.
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
@@ -1455,7 +1426,7 @@ func TestVerifyCVSSMetadataPopulated(t *testing.T) {
 		},
 	})
 
-	att := wrapInToto(t, doc, testDigest)
+	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 	// Use a high threshold so all pass, but metadata still gets populated.
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
@@ -1519,7 +1490,7 @@ func TestVerifyCVSSEmptyRatings(t *testing.T) {
 		{ID: testCVEID, Ratings: []cdxRating{}},
 	})
 
-	att := wrapInToto(t, doc, testDigest)
+	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 		SBOM: &policy.SBOMPolicy{
@@ -1555,8 +1526,8 @@ func TestVerifyMultipleCVSSMetadata(t *testing.T) {
 	})
 
 	attestations := [][]byte{
-		wrapInToto(t, doc1, testDigest),
-		wrapInToto(t, doc2, testDigest),
+		testutil.WrapInToto(t, doc1, testDigest, testPredicateType),
+		testutil.WrapInToto(t, doc2, testDigest, testPredicateType),
 	}
 
 	result, err := sbom.VerifyMultiple(context.Background(), attestations, &policy.Policy{
@@ -1614,7 +1585,7 @@ func TestVerifyCVSSMinSeverityOnly(t *testing.T) {
 		},
 	})
 
-	att := wrapInToto(t, doc, testDigest)
+	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 		SBOM: &policy.SBOMPolicy{
@@ -1643,7 +1614,7 @@ func TestVerifyCVSSMultiRatingAggregation(t *testing.T) {
 		},
 	})
 
-	att := wrapInToto(t, doc, testDigest)
+	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 		SBOM: &policy.SBOMPolicy{
@@ -1675,7 +1646,7 @@ func TestVerifyCVSSNilScoreSeverityOnly(t *testing.T) {
 		},
 	})
 
-	att := wrapInToto(t, doc, testDigest)
+	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 		SBOM: &policy.SBOMPolicy{
@@ -1712,7 +1683,7 @@ func TestVerifyCVSSUnrecognizedSeverity(t *testing.T) {
 		},
 	})
 
-	att := wrapInToto(t, doc, testDigest)
+	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
 		SBOM: &policy.SBOMPolicy{
@@ -1799,7 +1770,7 @@ func TestVerifySPDX3Packages(t *testing.T) {
 		},
 	}
 
-	att := wrapInToto(t, doc, testDigest)
+	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 	result, err := sbom.Verify(
 		context.Background(), att, &policy.Policy{}, testDigest,
@@ -1830,7 +1801,7 @@ func TestVerifySPDX3LicenseDenyList(t *testing.T) {
 		},
 	}
 
-	att := wrapInToto(t, doc, testDigest)
+	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 	pol := &policy.Policy{
 		SBOM: &policy.SBOMPolicy{
@@ -1867,7 +1838,7 @@ func TestVerifySPDX3NoPackagesRejected(t *testing.T) {
 		},
 	}
 
-	att := wrapInToto(t, doc, testDigest)
+	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 	_, err := sbom.Verify(context.Background(), att, &policy.Policy{}, testDigest)
 	if err == nil {
@@ -1894,7 +1865,7 @@ func TestVerifySPDX3ContextDetection(t *testing.T) {
 		},
 	}
 
-	att := wrapInToto(t, doc, testDigest)
+	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 	result, err := sbom.Verify(
 		context.Background(), att, &policy.Policy{}, testDigest,
@@ -1925,7 +1896,7 @@ func TestVerifySPDX3NoAssertionLicenseSkipped(t *testing.T) {
 		},
 	}
 
-	att := wrapInToto(t, doc, testDigest)
+	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 	pol := &policy.Policy{
 		SBOM: &policy.SBOMPolicy{

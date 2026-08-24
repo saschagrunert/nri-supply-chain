@@ -30,27 +30,12 @@ import (
 
 const (
 	testDigest              = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
-	testDigestAlgo          = "sha256"
-	testInTotoType          = "https://in-toto.io/Statement/v1"
-	testSubjectName         = "test-image"
 	testPredicateType       = "https://in-toto.io/attestation/scai/v0.3"
 	testAttrCodeReview      = "PASSED_CODE_REVIEW"
 	testAttrPassedTests     = "PASSED_TESTS"
 	testAttrFuzzTested      = "FUZZ_TESTED"
 	testAttrKnownVulnerable = "KNOWN_VULNERABLE"
 )
-
-type inTotoWrapper struct {
-	Type          string          `json:"_type"` //nolint:tagliatelle // In-toto spec field name.
-	Subject       []inTotoSubj    `json:"subject"`
-	PredicateType string          `json:"predicateType"`
-	Predicate     json.RawMessage `json:"predicate"`
-}
-
-type inTotoSubj struct {
-	Name   string            `json:"name"`
-	Digest map[string]string `json:"digest"`
-}
 
 type scaiReport struct {
 	Attributes []scaiAttribute `json:"attributes"`
@@ -74,26 +59,6 @@ func validReport() scaiReport {
 			},
 		},
 	}
-}
-
-func wrapInToto(t *testing.T, doc any, digest string) []byte {
-	t.Helper()
-
-	predBytes := testutil.MustMarshal(t, doc)
-
-	wrapper := inTotoWrapper{
-		Type: testInTotoType,
-		Subject: []inTotoSubj{
-			{
-				Name:   testSubjectName,
-				Digest: map[string]string{testDigestAlgo: digest[len(testDigestAlgo)+1:]},
-			},
-		},
-		PredicateType: testPredicateType,
-		Predicate:     predBytes,
-	}
-
-	return testutil.MustMarshal(t, wrapper)
 }
 
 func TestVerify(t *testing.T) {
@@ -200,7 +165,7 @@ func TestVerify(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			att := wrapInToto(t, test.doc, testDigest)
+			att := testutil.WrapInToto(t, test.doc, testDigest, testPredicateType)
 
 			result, err := scai.Verify(context.Background(), att, test.pol, testDigest)
 			testutil.AssertNoError(t, err)
@@ -214,7 +179,7 @@ func TestVerify(t *testing.T) {
 func TestVerifyCheckType(t *testing.T) {
 	t.Parallel()
 
-	att := wrapInToto(t, validReport(), testDigest)
+	att := testutil.WrapInToto(t, validReport(), testDigest, testPredicateType)
 
 	result, err := scai.Verify(context.Background(), att, &policy.Policy{}, testDigest)
 	testutil.AssertNoError(t, err)
@@ -225,7 +190,7 @@ func TestVerifyCheckType(t *testing.T) {
 func TestVerifyMetadata(t *testing.T) {
 	t.Parallel()
 
-	att := wrapInToto(t, validReport(), testDigest)
+	att := testutil.WrapInToto(t, validReport(), testDigest, testPredicateType)
 
 	result, err := scai.Verify(context.Background(), att, &policy.Policy{}, testDigest)
 	testutil.AssertNoError(t, err)
@@ -293,7 +258,7 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 	t.Run("subject with mismatched digest", func(t *testing.T) {
 		t.Parallel()
 
-		att := wrapInToto(t, validReport(), testDigest)
+		att := testutil.WrapInToto(t, validReport(), testDigest, testPredicateType)
 
 		_, err := scai.Verify(context.Background(),
 			att, &policy.Policy{},
@@ -307,7 +272,7 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 	t.Run("empty digest with subjects rejects for binding", func(t *testing.T) {
 		t.Parallel()
 
-		att := wrapInToto(t, validReport(), testDigest)
+		att := testutil.WrapInToto(t, validReport(), testDigest, testPredicateType)
 
 		_, err := scai.Verify(context.Background(), att, &policy.Policy{}, "")
 		if !errors.Is(err, intoto.ErrNoDigestBinding) {
@@ -327,7 +292,7 @@ func TestVerifyEvidenceEdgeCases(t *testing.T) {
 				{Attribute: testAttrPassedTests, Evidence: json.RawMessage("null")},
 			},
 		}
-		att := wrapInToto(t, doc, testDigest)
+		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 		result, err := scai.Verify(context.Background(), att, &policy.Policy{
 			SCAI: &policy.SCAIPolicy{RequireEvidence: true},
@@ -347,7 +312,7 @@ func TestVerifyEvidenceEdgeCases(t *testing.T) {
 				{Attribute: testAttrPassedTests, Evidence: json.RawMessage("{}")},
 			},
 		}
-		att := wrapInToto(t, doc, testDigest)
+		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 		result, err := scai.Verify(context.Background(), att, &policy.Policy{
 			SCAI: &policy.SCAIPolicy{RequireEvidence: true},
@@ -403,7 +368,9 @@ func TestVerifyMultiple(t *testing.T) {
 
 			attestations := make([][]byte, len(test.docs))
 			for idx := range test.docs {
-				attestations[idx] = wrapInToto(t, test.docs[idx], testDigest)
+				attestations[idx] = testutil.WrapInToto(
+					t, test.docs[idx], testDigest, testPredicateType,
+				)
 			}
 
 			result, err := scai.VerifyMultiple(
@@ -445,8 +412,8 @@ func TestVerifyMultipleMergesMetadata(t *testing.T) {
 	}
 
 	attestations := [][]byte{
-		wrapInToto(t, report1, testDigest),
-		wrapInToto(t, report2, testDigest),
+		testutil.WrapInToto(t, report1, testDigest, testPredicateType),
+		testutil.WrapInToto(t, report2, testDigest, testPredicateType),
 	}
 
 	result, err := scai.VerifyMultiple(
@@ -508,8 +475,8 @@ func TestVerifyMultipleMergesMetadataEvidenceAND(t *testing.T) {
 	}
 
 	attestations := [][]byte{
-		wrapInToto(t, reportWithEvidence, testDigest),
-		wrapInToto(t, reportWithoutEvidence, testDigest),
+		testutil.WrapInToto(t, reportWithEvidence, testDigest, testPredicateType),
+		testutil.WrapInToto(t, reportWithoutEvidence, testDigest, testPredicateType),
 	}
 
 	result, err := scai.VerifyMultiple(
@@ -573,7 +540,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 
 		attestations := [][]byte{
 			[]byte("invalid json"),
-			wrapInToto(t, validReport(), testDigest),
+			testutil.WrapInToto(t, validReport(), testDigest, testPredicateType),
 		}
 
 		result, err := scai.VerifyMultiple(
@@ -593,7 +560,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 func TestVerifyForbiddenDetailMessage(t *testing.T) {
 	t.Parallel()
 
-	att := wrapInToto(t, validReport(), testDigest)
+	att := testutil.WrapInToto(t, validReport(), testDigest, testPredicateType)
 
 	result, err := scai.Verify(context.Background(), att, &policy.Policy{
 		SCAI: &policy.SCAIPolicy{
@@ -621,7 +588,7 @@ func TestVerifyEmptyAttributes(t *testing.T) {
 	doc := scaiReport{
 		Attributes: []scaiAttribute{},
 	}
-	att := wrapInToto(t, doc, testDigest)
+	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 	t.Run("empty attributes with no policy passes", func(t *testing.T) {
 		t.Parallel()
@@ -673,7 +640,7 @@ func TestVerifyEmptyAttributes(t *testing.T) {
 func TestVerifyRequiredDetailMessage(t *testing.T) {
 	t.Parallel()
 
-	att := wrapInToto(t, validReport(), testDigest)
+	att := testutil.WrapInToto(t, validReport(), testDigest, testPredicateType)
 
 	result, err := scai.Verify(context.Background(), att, &policy.Policy{
 		SCAI: &policy.SCAIPolicy{

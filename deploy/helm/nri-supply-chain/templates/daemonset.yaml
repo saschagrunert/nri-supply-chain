@@ -23,6 +23,9 @@ spec:
         {{- end }}
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if not (hasKey .Values.podAnnotations "prometheus.io/port") }}
+        prometheus.io/port: {{ include "nri-supply-chain.metricsPort" . | quote }}
+        {{- end }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

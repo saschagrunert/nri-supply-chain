@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"slices"
 	"strconv"
@@ -165,7 +166,7 @@ func newSnapshot(
 	snap := &snapshot{
 		config:       cfg,
 		policies:     policies,
-		policyHashes: hashes,
+		policyHashes: maps.Clone(hashes),
 		cache: cache.NewWithGauge(
 			cfg.CacheTTL.Duration, cfg.CacheMaxEntries,
 			met.CacheEntriesTotal, met.CacheEvictionsTotal,

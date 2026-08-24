@@ -23,6 +23,7 @@ import (
 	openvex "github.com/openvex/go-vex/pkg/vex"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
+	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/vex"
 )
 
@@ -42,12 +43,14 @@ func benchWrapInToto(b *testing.B, doc any, digest string) []byte {
 
 	predBytes := benchMarshal(b, doc)
 
-	wrapper := inTotoWrapper{
-		Type: testInTotoType,
-		Subject: []inTotoSubj{
+	wrapper := testutil.InTotoWrapper{
+		Type: testutil.InTotoStatementType,
+		Subject: []testutil.InTotoSubj{
 			{
-				Name:   testSubjectName,
-				Digest: map[string]string{testDigestAlgo: digest[len(testDigestAlgo)+1:]},
+				Name: testutil.TestSubjectName,
+				Digest: map[string]string{
+					testutil.TestDigestAlgo: digest[len(testutil.TestDigestAlgo)+1:],
+				},
 			},
 		},
 		PredicateType: testPredicateType,
@@ -90,12 +93,14 @@ func benchWrapCycloneDXInToto(b *testing.B, bom *cdx.BOM, digest string) []byte 
 
 	predBytes := benchMarshal(b, bom)
 
-	wrapper := inTotoWrapper{
-		Type: testInTotoType,
-		Subject: []inTotoSubj{
+	wrapper := testutil.InTotoWrapper{
+		Type: testutil.InTotoStatementType,
+		Subject: []testutil.InTotoSubj{
 			{
-				Name:   testSubjectName,
-				Digest: map[string]string{testDigestAlgo: digest[len(testDigestAlgo)+1:]},
+				Name: testutil.TestSubjectName,
+				Digest: map[string]string{
+					testutil.TestDigestAlgo: digest[len(testutil.TestDigestAlgo)+1:],
+				},
 			},
 		},
 		PredicateType: "https://cyclonedx.org/bom",

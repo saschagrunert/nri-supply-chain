@@ -16,7 +16,6 @@ package buildenv_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -30,27 +29,12 @@ import (
 
 const (
 	testDigest        = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
-	testDigestAlgo    = "sha256"
-	testInTotoType    = "https://in-toto.io/Statement/v1"
-	testSubjectName   = "test-image"
 	testPredicateType = "https://in-toto.io/attestation/build-env/v1"
 	testPropOS        = "linux"
 	testPropArch      = "amd64"
 	testPropCompiler  = "gcc-12"
 	testPropDebug     = "DEBUG_MODE"
 )
-
-type inTotoWrapper struct {
-	Type          string          `json:"_type"` //nolint:tagliatelle // In-toto spec field name.
-	Subject       []inTotoSubj    `json:"subject"`
-	PredicateType string          `json:"predicateType"`
-	Predicate     json.RawMessage `json:"predicate"`
-}
-
-type inTotoSubj struct {
-	Name   string            `json:"name"`
-	Digest map[string]string `json:"digest"`
-}
 
 type buildEnvDoc struct {
 	Environment []envProperty `json:"environment"`
@@ -69,26 +53,6 @@ func validDoc() buildEnvDoc {
 			{Name: testPropCompiler, Value: "12.3.0"},
 		},
 	}
-}
-
-func wrapInToto(t *testing.T, doc any, digest string) []byte {
-	t.Helper()
-
-	predBytes := testutil.MustMarshal(t, doc)
-
-	wrapper := inTotoWrapper{
-		Type: testInTotoType,
-		Subject: []inTotoSubj{
-			{
-				Name:   testSubjectName,
-				Digest: map[string]string{testDigestAlgo: digest[len(testDigestAlgo)+1:]},
-			},
-		},
-		PredicateType: testPredicateType,
-		Predicate:     predBytes,
-	}
-
-	return testutil.MustMarshal(t, wrapper)
 }
 
 func TestVerify(t *testing.T) {
@@ -169,7 +133,7 @@ func TestVerify(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			att := wrapInToto(t, test.doc, testDigest)
+			att := testutil.WrapInToto(t, test.doc, testDigest, testPredicateType)
 
 			result, err := buildenv.Verify(context.Background(), att, test.pol, testDigest)
 			testutil.AssertNoError(t, err)
@@ -183,7 +147,7 @@ func TestVerify(t *testing.T) {
 func TestVerifyCheckType(t *testing.T) {
 	t.Parallel()
 
-	att := wrapInToto(t, validDoc(), testDigest)
+	att := testutil.WrapInToto(t, validDoc(), testDigest, testPredicateType)
 
 	result, err := buildenv.Verify(context.Background(), att, &policy.Policy{}, testDigest)
 	testutil.AssertNoError(t, err)
@@ -194,7 +158,7 @@ func TestVerifyCheckType(t *testing.T) {
 func TestVerifyMetadata(t *testing.T) {
 	t.Parallel()
 
-	att := wrapInToto(t, validDoc(), testDigest)
+	att := testutil.WrapInToto(t, validDoc(), testDigest, testPredicateType)
 
 	result, err := buildenv.Verify(context.Background(), att, &policy.Policy{}, testDigest)
 	testutil.AssertNoError(t, err)
@@ -257,7 +221,7 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 	t.Run("subject with mismatched digest", func(t *testing.T) {
 		t.Parallel()
 
-		att := wrapInToto(t, validDoc(), testDigest)
+		att := testutil.WrapInToto(t, validDoc(), testDigest, testPredicateType)
 
 		_, err := buildenv.Verify(context.Background(),
 			att, &policy.Policy{},
@@ -271,7 +235,7 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 	t.Run("empty digest with subjects rejects for binding", func(t *testing.T) {
 		t.Parallel()
 
-		att := wrapInToto(t, validDoc(), testDigest)
+		att := testutil.WrapInToto(t, validDoc(), testDigest, testPredicateType)
 
 		_, err := buildenv.Verify(context.Background(), att, &policy.Policy{}, "")
 		if !errors.Is(err, intoto.ErrNoDigestBinding) {
@@ -283,7 +247,7 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 func TestVerifyForbiddenDetailMessage(t *testing.T) {
 	t.Parallel()
 
-	att := wrapInToto(t, validDoc(), testDigest)
+	att := testutil.WrapInToto(t, validDoc(), testDigest, testPredicateType)
 
 	result, err := buildenv.Verify(context.Background(), att, &policy.Policy{
 		BuildEnv: &policy.BuildEnvPolicy{
@@ -308,7 +272,7 @@ func TestVerifyForbiddenDetailMessage(t *testing.T) {
 func TestVerifyRequiredDetailMessage(t *testing.T) {
 	t.Parallel()
 
-	att := wrapInToto(t, validDoc(), testDigest)
+	att := testutil.WrapInToto(t, validDoc(), testDigest, testPredicateType)
 
 	result, err := buildenv.Verify(context.Background(), att, &policy.Policy{
 		BuildEnv: &policy.BuildEnvPolicy{
@@ -336,7 +300,7 @@ func TestVerifyEmptyEnvironment(t *testing.T) {
 	doc := buildEnvDoc{
 		Environment: []envProperty{},
 	}
-	att := wrapInToto(t, doc, testDigest)
+	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 	t.Run("empty environment with no policy passes", func(t *testing.T) {
 		t.Parallel()
@@ -413,7 +377,9 @@ func TestVerifyMultiple(t *testing.T) {
 
 			attestations := make([][]byte, len(test.docs))
 			for idx := range test.docs {
-				attestations[idx] = wrapInToto(t, test.docs[idx], testDigest)
+				attestations[idx] = testutil.WrapInToto(
+					t, test.docs[idx], testDigest, testPredicateType,
+				)
 			}
 
 			result, err := buildenv.VerifyMultiple(
@@ -446,8 +412,8 @@ func TestVerifyMultipleMergesMetadata(t *testing.T) {
 	}
 
 	attestations := [][]byte{
-		wrapInToto(t, doc1, testDigest),
-		wrapInToto(t, doc2, testDigest),
+		testutil.WrapInToto(t, doc1, testDigest, testPredicateType),
+		testutil.WrapInToto(t, doc2, testDigest, testPredicateType),
 	}
 
 	result, err := buildenv.VerifyMultiple(
@@ -533,7 +499,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 
 		attestations := [][]byte{
 			[]byte("invalid json"),
-			wrapInToto(t, validDoc(), testDigest),
+			testutil.WrapInToto(t, validDoc(), testDigest, testPredicateType),
 		}
 
 		result, err := buildenv.VerifyMultiple(

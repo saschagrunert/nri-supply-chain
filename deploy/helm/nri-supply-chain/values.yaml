@@ -21,8 +21,6 @@ serviceAccount:
 
 podAnnotations:
   prometheus.io/scrape: "true"
-  # Must match the port in config.metricsAddr when using annotation-based discovery.
-  prometheus.io/port: "9090"
   prometheus.io/path: /metrics
 podLabels: {}
 

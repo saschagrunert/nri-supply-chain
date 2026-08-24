@@ -143,7 +143,7 @@ func combineResults(checks ...*types.CheckResult) *types.Result {
 	result := &types.Result{
 		Allowed:      true,
 		Reason:       "",
-		CheckResults: nil,
+		CheckResults: make([]types.CheckResult, 0, len(checks)),
 	}
 
 	for _, check := range checks {
