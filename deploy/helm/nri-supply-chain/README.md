@@ -39,7 +39,7 @@ All standard operational settings are exposed below `config`, including
 timeouts, cache limits, registry mirrors, Sigstore roots, and the policy
 source. `config.extraConfig` appends TOML verbatim for forward-compatible
 fields. `config.allowlistDigests` bypasses verification for explicitly trusted
-digests. For policy/config semantics, see the repository's `docs/config.md`.
+digests. For policy/config semantics, see the repository's [`docs/config.md`](../../../docs/config.md).
 
 Private Sigstore roots and custom registry CAs should be supplied through a
 Secret or ConfigMap using `extraVolumes` and `extraVolumeMounts`, then referred

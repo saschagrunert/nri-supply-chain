@@ -388,7 +388,7 @@ tuf_root = "/etc/sigstore/github-tuf-root.json"
 
 Pair this with a policy file that trusts the GitHub Actions OIDC issuer and
 restricts SAN patterns to your organization (see
-`deploy/examples/policies/github-attestations.json`).
+[`deploy/examples/policies/github-attestations.json`](../deploy/examples/policies/github-attestations.json)).
 
 ## Registries
 
