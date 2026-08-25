@@ -1,6 +1,6 @@
 dependencies:
   - name: nri-supply-chain
-    version: 0.4.0
+    version: 0.5.0
     refPaths:
       - path: cmd/nri-supply-chain/main.go
         match: ^var version
@@ -13,11 +13,19 @@ dependencies:
       - path: README.md
         match: "NOTATION.*nri-supply-chain:"
       - path: README.md
+        match: "SCAI.*nri-supply-chain:"
+      - path: README.md
+        match: "RUNTIMETRACE.*nri-supply-chain:"
+      - path: README.md
         match: '"detail".*nri-supply-chain:'
       - path: deploy/kubernetes/daemonset.yaml
         match: "image.*nri-supply-chain:"
       - path: deploy/helm/nri-supply-chain/Chart.yaml
+        match: "^version:"
+      - path: deploy/helm/nri-supply-chain/Chart.yaml
         match: ^appVersion
+      - path: internal/registry/registry_bench_test.go
+        match: "imageRef.*nri-supply-chain:"
 
   - name: helm
     version: 3.21.4

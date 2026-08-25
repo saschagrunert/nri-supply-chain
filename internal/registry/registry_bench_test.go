@@ -22,7 +22,7 @@ import (
 )
 
 func BenchmarkHost(b *testing.B) {
-	const imageRef = "ghcr.io/saschagrunert/nri-supply-chain:v0.4.0"
+	const imageRef = "ghcr.io/saschagrunert/nri-supply-chain:v0.5.0"
 
 	b.ResetTimer()
 
@@ -51,7 +51,7 @@ func BenchmarkFindMatchingRegistry(b *testing.B) {
 		{Prefix: "mcr.microsoft.com", Mirror: "", CACert: "", Insecure: false},
 	}
 
-	const imageRef = "ghcr.io/saschagrunert/nri-supply-chain:v0.4.0"
+	const imageRef = "ghcr.io/saschagrunert/nri-supply-chain:v0.5.0"
 
 	b.ResetTimer()
 
@@ -67,7 +67,7 @@ func BenchmarkFindMatchingRegistryMiss(b *testing.B) {
 		{Prefix: "registry.k8s.io", Mirror: "", CACert: "", Insecure: false},
 	}
 
-	const imageRef = "ghcr.io/saschagrunert/nri-supply-chain:v0.4.0"
+	const imageRef = "ghcr.io/saschagrunert/nri-supply-chain:v0.5.0"
 
 	b.ResetTimer()
 
@@ -77,7 +77,7 @@ func BenchmarkFindMatchingRegistryMiss(b *testing.B) {
 }
 
 func BenchmarkRewriteReference(b *testing.B) {
-	const imageRef = "ghcr.io/saschagrunert/nri-supply-chain:v0.4.0"
+	const imageRef = "ghcr.io/saschagrunert/nri-supply-chain:v0.5.0"
 
 	b.ResetTimer()
 
