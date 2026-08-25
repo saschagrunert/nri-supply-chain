@@ -2271,25 +2271,25 @@ The plugin tries both modes; either can satisfy the policy:
 Ready-to-use policy files are available in
 [`deploy/examples/policies/`](../deploy/examples/policies/):
 
-- `default.json`: Minimal default policy with trusted builders and keyless verification
-- `keyless.json`: Keyless (Fulcio/OIDC) verification with GitHub Actions
-- `keybased.json`: Key-based verification with PEM public keys
-- `key-rotation.json`: Dual-key setup for rolling key rotation
-- `github-attestations.json`: GitHub Actions `attest-build-provenance` with GitHub OIDC issuer
-- `custom-build-system.json`: Custom build system (Tekton) with explicit known parameters
-- `production.json`: Strict production policy with provenance freshness and VSA requirements
-- `gradual-rollout.json`: Gradual rollout from warn to enforce mode
-- `namespace-override.json`: Namespace override with `inherits: true`
-- `vex-strict.json`: Strict VEX verification requiring all images to have VEX attestations
-- `vsa-accelerated.json`: VSA-first verification that short-circuits direct checks
-- `sbom-deny-list.json`: SBOM component and license deny-list
-- `sbom-drift.json`: SBOM drift detection with baseline comparison thresholds
-- `cel-rules.json`: CEL policy expressions for custom verification logic
-- `notation.json`: Notation (Notary v2) signature verification with CA trust store
-- `scai.json`: SCAI attribute report verification with required and forbidden attributes
-- `source-track.json`: SLSA Source Track verification with trusted sources and minimum level
-- `build-env.json`: Build environment verification with required and forbidden properties
-- `vuln-scan.json`: Vulnerability scan verification with CVSS thresholds and CVE ignore list
-- `test-result.json`: Test result verification with required test suites
-- `release.json`: Release attestation verification with trusted registries and required package IDs
-- `runtime-trace.json`: Runtime trace verification with trusted monitors and forbidden file patterns
+- [`default.json`](../deploy/examples/policies/default.json): Minimal default policy with trusted builders and keyless verification
+- [`keyless.json`](../deploy/examples/policies/keyless.json): Keyless (Fulcio/OIDC) verification with GitHub Actions
+- [`keybased.json`](../deploy/examples/policies/keybased.json): Key-based verification with PEM public keys
+- [`key-rotation.json`](../deploy/examples/policies/key-rotation.json): Dual-key setup for rolling key rotation
+- [`github-attestations.json`](../deploy/examples/policies/github-attestations.json): GitHub Actions `attest-build-provenance` with GitHub OIDC issuer
+- [`custom-build-system.json`](../deploy/examples/policies/custom-build-system.json): Custom build system (Tekton) with explicit known parameters
+- [`production.json`](../deploy/examples/policies/production.json): Strict production policy with provenance freshness and VSA requirements
+- [`gradual-rollout.json`](../deploy/examples/policies/gradual-rollout.json): Gradual rollout from warn to enforce mode
+- [`namespace-override.json`](../deploy/examples/policies/namespace-override.json): Namespace override with `inherits: true`
+- [`vex-strict.json`](../deploy/examples/policies/vex-strict.json): Strict VEX verification requiring all images to have VEX attestations
+- [`vsa-accelerated.json`](../deploy/examples/policies/vsa-accelerated.json): VSA-first verification that short-circuits direct checks
+- [`sbom-deny-list.json`](../deploy/examples/policies/sbom-deny-list.json): SBOM component and license deny-list
+- [`sbom-drift.json`](../deploy/examples/policies/sbom-drift.json): SBOM drift detection with baseline comparison thresholds
+- [`cel-rules.json`](../deploy/examples/policies/cel-rules.json): CEL policy expressions for custom verification logic
+- [`notation.json`](../deploy/examples/policies/notation.json): Notation (Notary v2) signature verification with CA trust store
+- [`scai.json`](../deploy/examples/policies/scai.json): SCAI attribute report verification with required and forbidden attributes
+- [`source-track.json`](../deploy/examples/policies/source-track.json): SLSA Source Track verification with trusted sources and minimum level
+- [`build-env.json`](../deploy/examples/policies/build-env.json): Build environment verification with required and forbidden properties
+- [`vuln-scan.json`](../deploy/examples/policies/vuln-scan.json): Vulnerability scan verification with CVSS thresholds and CVE ignore list
+- [`test-result.json`](../deploy/examples/policies/test-result.json): Test result verification with required test suites
+- [`release.json`](../deploy/examples/policies/release.json): Release attestation verification with trusted registries and required package IDs
+- [`runtime-trace.json`](../deploy/examples/policies/runtime-trace.json): Runtime trace verification with trusted monitors and forbidden file patterns

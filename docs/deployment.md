@@ -49,7 +49,7 @@ Deploy as a DaemonSet to run the plugin on every node in the cluster:
 kubectl apply -f deploy/kubernetes/
 ```
 
-The single manifest `deploy/kubernetes/daemonset.yaml` bundles a Namespace,
+The single manifest [`deploy/kubernetes/daemonset.yaml`](../deploy/kubernetes/daemonset.yaml) bundles a Namespace,
 ServiceAccount, ConfigMap with example config and policy, NetworkPolicy,
 PodDisruptionBudget, and the DaemonSet.
 Edit the ConfigMap to match your environment before deploying. See
@@ -86,7 +86,7 @@ for the values reference and security notes.
 
 ## Systemd Service
 
-A systemd unit file is provided at `deploy/systemd/nri-supply-chain.service`.
+A systemd unit file is provided at [`deploy/systemd/nri-supply-chain.service`](../deploy/systemd/nri-supply-chain.service).
 Install it and enable the service:
 
 ```console
