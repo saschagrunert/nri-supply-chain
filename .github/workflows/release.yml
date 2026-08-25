@@ -148,6 +148,7 @@ jobs:
 
   deploy:
     permissions:
+      actions: read
       attestations: write
       contents: read
       packages: write

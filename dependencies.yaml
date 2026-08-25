@@ -57,6 +57,14 @@ dependencies:
       - path: .github/workflows/ci.yml
         match: "version: v2\\."
 
+  - name: trivy
+    version: 0.74.0
+    refPaths:
+      - path: .github/workflows/ci.yml
+        match: "version: v0\\."
+      - path: .github/actions/attest/action.yml
+        match: "version: v0\\."
+
   - name: syft
     version: 1.51.0
     refPaths:

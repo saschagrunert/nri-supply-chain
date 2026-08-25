@@ -92,6 +92,7 @@ runs:
         trivyignores: .trivyignore
         format: json
         output: /tmp/trivy-results.json
+        version: v0.74.0
 
     - name: Attest container image VEX
       shell: bash
@@ -210,7 +211,7 @@ runs:
             durationSeconds: (if .started_at and .completed_at then
               (((.completed_at | fromdateiso8601) - (.started_at | fromdateiso8601)))
             else null end)
-          }' 2>/dev/null | jq -s '.' || echo '[]')
+          }' 2>/dev/null | jq -s '.') || SUITES='[]'
 
         if [ "$SUITES" = "[]" ]; then
           echo "::warning::No test/lint/fuzz jobs found for run ${CI_RUN}, skipping test result attestation"

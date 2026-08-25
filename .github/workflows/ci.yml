@@ -231,6 +231,7 @@ jobs:
           scan-type: fs
           exit-code: "1"
           trivyignores: .trivyignore
+          version: v0.74.0
 
   typos:
     runs-on: ubuntu-latest
