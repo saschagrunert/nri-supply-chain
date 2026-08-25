@@ -55,6 +55,18 @@ PodDisruptionBudget, and the DaemonSet.
 Edit the ConfigMap to match your environment before deploying. See
 [config.md](config.md) for the full field reference.
 
+For Prometheus Operator monitoring (ServiceMonitor, PrometheusRule, and a
+headless metrics Service), also apply the monitoring manifest:
+
+```console
+kubectl apply -f deploy/kubernetes/monitoring.yaml
+```
+
+A pre-built Grafana dashboard is available at
+[`deploy/grafana/dashboard.json`](../deploy/grafana/dashboard.json). Import it
+into Grafana or provision it via a ConfigMap with the `grafana_dashboard: "1"`
+label.
+
 ### Helm Chart
 
 The Helm chart provides a parameterized DaemonSet deployment:

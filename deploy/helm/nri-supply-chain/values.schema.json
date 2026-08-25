@@ -244,7 +244,8 @@
       "additionalProperties": false,
       "properties": {
         "serviceMonitor": { "$ref": "#/definitions/serviceMonitor" },
-        "prometheusRule": { "$ref": "#/definitions/prometheusRule" }
+        "prometheusRule": { "$ref": "#/definitions/prometheusRule" },
+        "grafana": { "$ref": "#/definitions/grafana" }
       }
     },
     "serviceMonitor": {
@@ -279,7 +280,35 @@
           "minimum": 0
         },
         "verificationLatencyFor": { "type": "string" },
-        "reloadFailureFor": { "type": "string" }
+        "reloadFailureFor": { "type": "string" },
+        "cacheHitRatioThreshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "cacheHitRatioFor": { "type": "string" },
+        "containersDegradedFor": { "type": "string" },
+        "remediationErrorsFor": { "type": "string" },
+        "continuousVerifierStaleThreshold": {
+          "type": "number",
+          "minimum": 0
+        },
+        "continuousVerifierStaleFor": { "type": "string" }
+      }
+    },
+    "grafana": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "labels": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
       }
     }
   }

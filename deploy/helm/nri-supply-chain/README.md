@@ -55,8 +55,14 @@ label; adjust `networkPolicy.ingress` for your Prometheus topology.
 
 Set `monitoring.serviceMonitor.enabled=true` when the Prometheus Operator CRD
 is installed. Set `monitoring.prometheusRule.enabled=true` to create the
-included alerts. Both are opt-in so the chart can install on clusters without
-those CRDs.
+included alerts (10 rules covering verification failures, circuit breaker
+trips, fetch errors, latency, config reloads, cache hit ratio, degraded
+containers, remediation errors, and continuous verifier staleness). Both are
+opt-in so the chart can install on clusters without those CRDs.
+
+Set `monitoring.grafana.enabled=true` to provision a Grafana dashboard via
+a ConfigMap with the `grafana_dashboard: "1"` label. This works with the
+Grafana sidecar container that watches for labeled ConfigMaps.
 
 The chart derives the container and probe port from `config.metricsAddr`.
 `service.port` controls the port exposed by the Service and may differ from the
