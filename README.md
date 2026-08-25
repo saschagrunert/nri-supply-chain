@@ -71,13 +71,13 @@ For a detailed introduction, see the [CNCF blog post](https://www.cncf.io/blog/2
 
    ```console
    nri-supply-chain --config config.toml \
-     verify ghcr.io/saschagrunert/nri-supply-chain:0.4.0
+     verify ghcr.io/saschagrunert/nri-supply-chain:0.5.0
    ```
 
    The default output is a colored table:
 
    ```text
-   Image: ghcr.io/saschagrunert/nri-supply-chain:0.4.0
+   Image: ghcr.io/saschagrunert/nri-supply-chain:0.5.0
    Digest: sha256:abc123...
    Namespace: default
    Policy: /etc/nri-supply-chain/policies/default.json
@@ -87,22 +87,22 @@ For a detailed introduction, see the [CNCF blog post](https://www.cncf.io/blog/2
    TYPE           STATUS   DETAIL
    SLSA           pass     SLSA provenance verified
    VEX            pass     VEX verification passed
-   NOTATION       pass     no Notation signature found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0
+   NOTATION       pass     no Notation signature found for image ghcr.io/saschagrunert/nri-supply-chain:0.5.0
    SBOM           pass     SBOM verification passed
-   SCAI           pass     no SCAI attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0
+   SCAI           pass     no SCAI attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.5.0
    SOURCE         pass     source verification passed
    BUILDENV       pass     build environment verification passed
    VULNSCAN       pass     vulnerability scan verification passed
    TESTRESULT     pass     test result verification passed
    RELEASE        pass     release verification passed
-   RUNTIMETRACE   pass     no runtime trace attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0
+   RUNTIMETRACE   pass     no runtime trace attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.5.0
    ```
 
    Use `--output json` for machine-readable output:
 
    ```json
    {
-     "image": "ghcr.io/saschagrunert/nri-supply-chain:0.4.0",
+     "image": "ghcr.io/saschagrunert/nri-supply-chain:0.5.0",
      "digest": "sha256:abc123...",
      "namespace": "default",
      "allowed": true,
@@ -123,7 +123,7 @@ For a detailed introduction, see the [CNCF blog post](https://www.cncf.io/blog/2
          "type": "notation",
          "passed": true,
          "status": "pass",
-         "detail": "no Notation signature found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0"
+         "detail": "no Notation signature found for image ghcr.io/saschagrunert/nri-supply-chain:0.5.0"
        },
        {
          "type": "sbom",
@@ -135,7 +135,7 @@ For a detailed introduction, see the [CNCF blog post](https://www.cncf.io/blog/2
          "type": "scai",
          "passed": true,
          "status": "pass",
-         "detail": "no SCAI attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0"
+         "detail": "no SCAI attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.5.0"
        },
        {
          "type": "source",
@@ -171,7 +171,7 @@ For a detailed introduction, see the [CNCF blog post](https://www.cncf.io/blog/2
          "type": "runtimetrace",
          "passed": true,
          "status": "pass",
-         "detail": "no runtime trace attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.4.0"
+         "detail": "no runtime trace attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.5.0"
        }
      ]
    }
@@ -205,7 +205,7 @@ For a detailed introduction, see the [CNCF blog post](https://www.cncf.io/blog/2
    With this policy the default table output becomes:
 
    ```text
-   Image: ghcr.io/saschagrunert/nri-supply-chain:0.4.0
+   Image: ghcr.io/saschagrunert/nri-supply-chain:0.5.0
    Digest: sha256:abc123...
    Namespace: default
    Policy: /etc/nri-supply-chain/policies/default.json

@@ -54,3 +54,5 @@ make bench        # Benchmark tests
 External tool versions are tracked in `dependencies.yaml` and verified by
 `make verify-dependencies`. When bumping a tool version, update every file
 listed in its `refPaths` entry.
+
+To bump the project version, run `hack/bump-version.sh X.Y.Z`.
