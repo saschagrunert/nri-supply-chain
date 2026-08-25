@@ -185,3 +185,13 @@ monitoring:
     verificationLatencyThresholdSeconds: 5
     verificationLatencyFor: 5m
     reloadFailureFor: 15m
+    cacheHitRatioThreshold: 0.5
+    cacheHitRatioFor: 15m
+    containersDegradedFor: 10m
+    remediationErrorsFor: 5m
+    continuousVerifierStaleThreshold: 900
+    continuousVerifierStaleFor: 5m
+  grafana:
+    enabled: false
+    labels: {}
+    annotations: {}

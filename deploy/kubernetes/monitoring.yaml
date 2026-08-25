@@ -1,0 +1,110 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nri-supply-chain-metrics
+  namespace: nri-supply-chain
+  labels:
+    app.kubernetes.io/name: nri-supply-chain
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: nri-supply-chain
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: nri-supply-chain
+  namespace: nri-supply-chain
+  labels:
+    app.kubernetes.io/name: nri-supply-chain
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nri-supply-chain
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: nri-supply-chain
+  namespace: nri-supply-chain
+  labels:
+    app.kubernetes.io/name: nri-supply-chain
+spec:
+  groups:
+    - name: nri-supply-chain
+      rules:
+        - alert: NRISupplyChainVerificationFailures
+          expr: sum(rate(nri_supply_chain_verification_total{result="fail"}[5m])) > 0
+          for: 5m
+          labels: { severity: warning }
+          annotations:
+            summary: Supply-chain verification failures detected.
+        - alert: NRISupplyChainCircuitBreakerOpen
+          expr: increase(nri_supply_chain_circuit_breaker_trips_total[5m]) > 0
+          for: 5m
+          labels: { severity: warning }
+          annotations:
+            summary: Registry circuit breaker is open.
+        - alert: NRISupplyChainHighFetchErrorRate
+          expr: sum(rate(nri_supply_chain_fetch_errors_total[5m])) > 0.1
+          for: 5m
+          labels: { severity: warning }
+          annotations:
+            summary: Sustained attestation fetch errors from the registry.
+        - alert: NRISupplyChainVerificationInterrupted
+          expr: sum(increase(nri_supply_chain_verification_interrupted_total[5m])) > 0
+          for: 5m
+          labels: { severity: warning }
+          annotations:
+            summary: Verifications are being interrupted by context cancellation.
+        - alert: NRISupplyChainHighVerificationLatency
+          expr: histogram_quantile(0.99, sum(rate(nri_supply_chain_verification_duration_seconds_bucket[5m])) by (le)) > 5
+          for: 5m
+          labels: { severity: warning }
+          annotations:
+            summary: Verification p99 latency exceeds 5 seconds.
+        - alert: NRISupplyChainConfigReloadFailure
+          expr: increase(nri_supply_chain_config_reload_errors_total[15m]) > 0
+          for: 15m
+          labels: { severity: warning }
+          annotations:
+            summary: Supply-chain plugin configuration reload is failing.
+        - alert: NRISupplyChainCacheHitRatioLow
+          expr: |
+            sum(rate(nri_supply_chain_cache_hits_total[15m]))
+            / (sum(rate(nri_supply_chain_cache_hits_total[15m]))
+               + sum(rate(nri_supply_chain_cache_misses_total[15m])))
+            < 0.5
+          for: 15m
+          labels: { severity: warning }
+          annotations:
+            summary: Cache hit ratio is below 50%.
+        - alert: NRISupplyChainContainersDegraded
+          expr: sum(nri_supply_chain_tracked_containers{state="degraded"}) > 0
+          for: 10m
+          labels: { severity: warning }
+          annotations:
+            summary: Containers in degraded verification state.
+        - alert: NRISupplyChainRemediationErrors
+          expr: sum(increase(nri_supply_chain_remediation_errors_total[5m])) > 0
+          for: 5m
+          labels: { severity: warning }
+          annotations:
+            summary: Remediation UpdateContainers calls are failing.
+        - alert: NRISupplyChainContinuousVerifierStale
+          expr: time() - nri_supply_chain_continuous_verifier_last_run > 900
+          for: 5m
+          labels: { severity: warning }
+          annotations:
+            summary: Continuous verifier has not run in the last 15 minutes.

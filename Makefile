@@ -10,6 +10,7 @@ COSIGN_VERSION = 3.1.3
 CRANE_VERSION = 0.21.9
 GOVULNCHECK_VERSION = v1.7.0
 PRETTIER_VERSION = 3.9.6
+DASHBOARD_LINTER_VERSION = 0.3.0
 
 # SHA-256 checksums for downloaded CI tools (linux/amd64).
 KUBERNIX_SHA256 = 63844f7a513a42b01d7d39a6f42888c7640295d68aeae82b7ccf4a9d7984196c
@@ -18,6 +19,7 @@ CRANE_SHA256 = 5c16d8ddb971cb1d5e6ed8b1e743da8224414eeba2c2762d8f1a61b2f095699e
 ZEITGEIST_SHA256 = b004b91e0ad881732f2ba0e63def2e3c35950323e221b50c50cbad75b3f5c2b1
 SHFMT_SHA256 = fb096c5d1ac6beabbdbaa2874d025badb03ee07929f0c9ff67563ce8c75398b1
 SHELLCHECK_SHA256 = 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+DASHBOARD_LINTER_SHA256 = 9a0eecb84ff22005dbd21c39ffd91534b407b511c45c21879df62ad0de33d79f
 
 # SHA-256 checksums for downloaded CI tools (linux/arm64).
 KUBERNIX_SHA256_ARM64 = ac043a9bcdac1ffb93623b30d92a594e59dc0ef9bdf0d222eab3efa17be8f892
@@ -26,6 +28,7 @@ CRANE_SHA256_ARM64 = b6ee979d9411dfb05ce35ab9e156fe5de7def11a230764a7856ffa2eb97
 ZEITGEIST_SHA256_ARM64 = 8e630fbfbfe3790d7cb86a8aff837998f029c7cacf77960c0b153b93adeda698
 SHFMT_SHA256_ARM64 = 32d92acaa5cd8abb29fc49dac123dc412442d5713967819d8af2c29f1b3857c7
 SHELLCHECK_SHA256_ARM64 = 12b331c1d2db6b9eb13cfca64306b1b157a86eb69db83023e261eaa7e7c14588
+DASHBOARD_LINTER_SHA256_ARM64 = cca3c44ab921a4303dc3850b0cea56e0192112a185ebadceb173d7c7a5d3731b
 
 # verify_checksum verifies a file's SHA-256 checksum on Linux.
 # Usage: $(call verify_checksum,file,amd64_hash,arm64_hash)
@@ -50,6 +53,7 @@ MDTOC := $(BUILD_DIR)/mdtoc
 COSIGN := $(BUILD_DIR)/cosign
 CRANE := $(BUILD_DIR)/crane
 GOVULNCHECK := $(BUILD_DIR)/govulncheck
+DASHBOARD_LINTER := $(BUILD_DIR)/dashboard-linter
 
 ARCH ?= $(shell uname -m | \
 	sed 's/x86_64/amd64/' | \
@@ -141,7 +145,7 @@ e2e: build $(KUBERNIX) $(COSIGN) $(CRANE) ## Run bats e2e tests (requires root a
 ##@ Verification
 
 .PHONY: verify-all
-verify-all: lint verify-shfmt verify-shellcheck verify-mdtoc verify-jsonschema verify-helm verify-tidy verify-vendor verify-dependencies govulncheck verify-prettier verify-typos ## Run all verification targets
+verify-all: lint verify-shfmt verify-shellcheck verify-mdtoc verify-jsonschema verify-helm verify-tidy verify-vendor verify-dependencies govulncheck verify-prettier verify-typos verify-dashboard ## Run all verification targets
 
 .PHONY: lint
 lint: $(GOLANGCI_LINT) ## Run golangci-lint
@@ -220,6 +224,11 @@ verify-typos: ## Check for typos in source files
 verify-prettier: ## Verify file formatting with prettier
 	npx prettier@$(PRETTIER_VERSION) --check .
 
+.PHONY: verify-dashboard
+verify-dashboard: $(DASHBOARD_LINTER) ## Lint Grafana dashboard JSON
+	$(DASHBOARD_LINTER) lint deploy/grafana/dashboard.json
+	diff deploy/grafana/dashboard.json deploy/helm/nri-supply-chain/files/dashboard.json
+
 $(ZEITGEIST):
 	@mkdir -p $(BUILD_DIR)
 	curl -sSfL -o $(ZEITGEIST) \
@@ -267,6 +276,14 @@ $(CRANE):
 	$(call verify_checksum,$(BUILD_DIR)/crane.tar.gz,$(CRANE_SHA256),$(CRANE_SHA256_ARM64))
 	tar xfz $(BUILD_DIR)/crane.tar.gz -C $(BUILD_DIR) crane
 	rm $(BUILD_DIR)/crane.tar.gz
+
+$(DASHBOARD_LINTER):
+	@mkdir -p $(BUILD_DIR)
+	curl -sSfL -o $(BUILD_DIR)/dashboard-linter.tar.gz \
+		https://github.com/grafana/dashboard-linter/releases/download/v$(DASHBOARD_LINTER_VERSION)/dashboard-linter_$(DASHBOARD_LINTER_VERSION)_$(OS)_$(ARCH).tar.gz
+	$(call verify_checksum,$(BUILD_DIR)/dashboard-linter.tar.gz,$(DASHBOARD_LINTER_SHA256),$(DASHBOARD_LINTER_SHA256_ARM64))
+	tar xfz $(BUILD_DIR)/dashboard-linter.tar.gz -C $(BUILD_DIR) dashboard-linter
+	rm $(BUILD_DIR)/dashboard-linter.tar.gz
 
 $(GOVULNCHECK):
 	@mkdir -p $(BUILD_DIR)

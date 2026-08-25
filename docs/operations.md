@@ -230,6 +230,14 @@ application logger (see [config.md](config.md)).
 
 ## Monitoring and Alerting
 
+A pre-built Grafana dashboard is available at
+[`deploy/grafana/dashboard.json`](../deploy/grafana/dashboard.json). Standalone
+Prometheus Operator resources (ServiceMonitor, PrometheusRule) are in
+[`deploy/kubernetes/monitoring.yaml`](../deploy/kubernetes/monitoring.yaml).
+Helm users can enable equivalent resources via
+`monitoring.serviceMonitor.enabled`, `monitoring.prometheusRule.enabled`, and
+`monitoring.grafana.enabled`.
+
 Example Prometheus alert rules for key failure conditions:
 
 ```yaml
@@ -268,6 +276,22 @@ groups:
         for: 5m
         annotations:
           summary: p99 verification latency exceeds 5 seconds.
+
+      - alert: ConfigReloadFailure
+        expr: increase(nri_supply_chain_config_reload_errors_total[15m]) > 0
+        for: 15m
+        annotations:
+          summary: Supply-chain plugin configuration reload is failing.
+
+      - alert: CacheHitRatioLow
+        expr: |
+          sum(rate(nri_supply_chain_cache_hits_total[15m]))
+          / (sum(rate(nri_supply_chain_cache_hits_total[15m]))
+             + sum(rate(nri_supply_chain_cache_misses_total[15m]))
+          ) < 0.5
+        for: 15m
+        annotations:
+          summary: Cache hit ratio is below 50%.
 
       - alert: ContainersDegraded
         expr: sum(nri_supply_chain_tracked_containers{state="degraded"}) > 0

@@ -76,4 +76,32 @@ spec:
           labels: {severity: warning}
           annotations:
             summary: Supply-chain plugin configuration reload is failing.
+        - alert: NRISupplyChainCacheHitRatioLow
+          expr: |
+            sum(rate(nri_supply_chain_cache_hits_total[15m]))
+            / (sum(rate(nri_supply_chain_cache_hits_total[15m]))
+               + sum(rate(nri_supply_chain_cache_misses_total[15m])))
+            < {{ .Values.monitoring.prometheusRule.cacheHitRatioThreshold }}
+          for: {{ .Values.monitoring.prometheusRule.cacheHitRatioFor }}
+          labels: {severity: warning}
+          annotations:
+            summary: Cache hit ratio is below the configured threshold.
+        - alert: NRISupplyChainContainersDegraded
+          expr: sum(nri_supply_chain_tracked_containers{state="degraded"}) > 0
+          for: {{ .Values.monitoring.prometheusRule.containersDegradedFor }}
+          labels: {severity: warning}
+          annotations:
+            summary: Containers in degraded verification state.
+        - alert: NRISupplyChainRemediationErrors
+          expr: sum(increase(nri_supply_chain_remediation_errors_total[5m])) > 0
+          for: {{ .Values.monitoring.prometheusRule.remediationErrorsFor }}
+          labels: {severity: warning}
+          annotations:
+            summary: Remediation UpdateContainers calls are failing.
+        - alert: NRISupplyChainContinuousVerifierStale
+          expr: time() - nri_supply_chain_continuous_verifier_last_run > {{ .Values.monitoring.prometheusRule.continuousVerifierStaleThreshold }}
+          for: {{ .Values.monitoring.prometheusRule.continuousVerifierStaleFor }}
+          labels: {severity: warning}
+          annotations:
+            summary: Continuous verifier has not run recently.
 {{- end }}

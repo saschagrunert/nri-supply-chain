@@ -344,7 +344,10 @@ VSA-accelerated, CEL, and other scenarios.
 ## Operations
 
 The plugin exposes Prometheus metrics, `/healthz` and `/readyz` endpoints,
-and supports live config reload via SIGHUP or filesystem watching. See
+and supports live config reload via SIGHUP or filesystem watching. A pre-built
+[Grafana dashboard](deploy/grafana/dashboard.json) and standalone
+[monitoring manifests](deploy/kubernetes/monitoring.yaml) (ServiceMonitor,
+PrometheusRule) are provided. See
 [docs/operations.md](docs/operations.md) for the metrics reference, alerting
 rules, troubleshooting guide, internal limits, and security considerations.
 

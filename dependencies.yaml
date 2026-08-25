@@ -119,6 +119,12 @@ dependencies:
       - path: Makefile
         match: ^PRETTIER_VERSION
 
+  - name: dashboard-linter
+    version: 0.3.0
+    refPaths:
+      - path: Makefile
+        match: ^DASHBOARD_LINTER_VERSION
+
   - name: pause
     version: 3.10
     refPaths:
