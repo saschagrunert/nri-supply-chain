@@ -21,7 +21,7 @@ require (
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/openvex/go-vex v0.2.8
 	github.com/prometheus/client_golang v1.24.1
-	github.com/sigstore/protobuf-specs v0.5.1
+	github.com/sigstore/protobuf-specs v0.5.2
 	github.com/sigstore/sigstore v1.10.9
 	github.com/sigstore/sigstore-go v1.3.0
 	github.com/spf13/cobra v1.10.2
