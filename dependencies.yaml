@@ -73,6 +73,14 @@ dependencies:
       - path: .github/workflows/release.yml
         match: syft-version
 
+  - name: goreleaser
+    version: 2
+    refPaths:
+      - path: .github/workflows/ci.yml
+        match: 'version: "~> v2'
+      - path: .github/workflows/release.yml
+        match: 'version: "~> v2'
+
   - name: zeitgeist
     version: 0.8.0
     refPaths:

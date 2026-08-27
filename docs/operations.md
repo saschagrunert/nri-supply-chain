@@ -227,6 +227,27 @@ application logger (see [config.md](config.md)).
   contents have changed. A SIGHUP with unchanged config and policies does not
   clear the cache. To force a clear, change `cache_ttl` temporarily before
   sending SIGHUP.
+- **Containers slow to start**: High verification latency is usually caused by
+  registry round-trip time. Check `nri_supply_chain_fetch_duration_seconds` and
+  `nri_supply_chain_verification_duration_seconds` metrics. Increase
+  `cache_ttl` to reduce repeated fetches. Verify that registry mirrors are
+  configured if images are pulled from a remote registry.
+- **All containers rejected after config change**: The config parser uses strict
+  mode. Unknown or renamed fields cause a parse error, falling back to the
+  previous config. Run `nri-supply-chain validate -c config.toml` before
+  deploying config changes. Check logs for "unknown config keys" messages.
+- **Continuous verifier not running**: Confirm that `remediation.mode` is set to
+  a value other than `disabled` and that the NRI stub is connected (check
+  `/readyz`). The `nri_supply_chain_continuous_verifier_last_run` metric should
+  update at the configured interval.
+- **GUAC queries failing**: Verify that the GUAC endpoint is reachable from the
+  node. Check `nri_supply_chain_guac_query_duration_seconds` for latency. If
+  using token auth, confirm the token file is mounted and readable. GUAC
+  failures follow `guac.fallback_policy` (default: `warn`).
+- **Bundle import fails**: Verify the bundle was created with a compatible
+  version. Run `nri-supply-chain bundle verify <store>` to check integrity
+  and signature. If `--key` is provided, ensure the public key matches the
+  signing key used during `bundle create`.
 
 ## Monitoring and Alerting
 

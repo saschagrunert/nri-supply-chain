@@ -654,9 +654,12 @@ Verify flags:
 ```text
 -n, --namespace        Namespace for verification (default: default)
 -o, --output           Output format: table, json (default: table)
+-q, --quiet            Suppress all output except the exit code
 -v, --verbose          Show step-by-step diagnostic output
     --preview-policy   Path to a policy JSON file for dry-run verification
 ```
+
+The `--quiet` and `--output` flags are mutually exclusive.
 
 The `--verbose` flag enables debug-level logging during verification. This shows
 intermediate steps including registry connectivity, digest resolution, discovered
@@ -734,6 +737,12 @@ When verifying multiple images, the exit code is the worst (highest) across all
 images. If any image is denied (exit 1), the overall exit is 1. If any image
 hits an infrastructure error (exit 2), the overall exit is 2.
 
+Use `--quiet` in CI pipelines when only the exit code matters:
+
+```console
+nri-supply-chain verify --quiet ghcr.io/myorg/myimage:v1.0
+```
+
 ### Preview
 
 The `preview` subcommand verifies a batch of images against the current policy
@@ -784,15 +793,17 @@ the base policy:
 nri-supply-chain effective-policy --namespace production --image ghcr.io/org/app:latest
 ```
 
-The output is JSON containing the namespace, effective mode, policy source
-("default" or "namespace"), matched rule index (or -1 if no rule matched),
-matched rule patterns, and the fully resolved policy object.
+The default output is JSON containing the namespace, effective mode, policy
+source ("default" or "namespace"), matched rule index (or -1 if no rule
+matched), matched rule patterns, and the fully resolved policy object. Use
+`--output table` for a human-readable summary.
 
 Effective-policy flags:
 
 ```text
 -n, --namespace    Namespace to resolve (default: default)
 -i, --image        Image reference to match against rules
+-o, --output       Output format: table, json (default: json)
 ```
 
 ### Inspect

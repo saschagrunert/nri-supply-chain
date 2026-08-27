@@ -96,6 +96,8 @@ func newBundleCreateCmd(configPath, logLevel *string) *cobra.Command {
 	cmd.Flags().StringArrayVar(&revocation, "revocation", nil,
 		"path to CRL or TSA file to embed (can be specified multiple times)")
 
+	_ = cmd.MarkFlagRequired("output")
+
 	return cmd
 }
 
@@ -128,12 +130,6 @@ func runBundleCreateCmd(
 
 	if len(*images) == 0 {
 		slog.Error("At least one --image or --from-policy is required")
-
-		return errExitNonZero
-	}
-
-	if outputPath == "" {
-		slog.Error("--output is required")
 
 		return errExitNonZero
 	}
@@ -336,12 +332,6 @@ func newBundleImportCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 
-			if storePath == "" {
-				slog.Error("--store is required")
-
-				return errExitNonZero
-			}
-
 			importErr := bundle.Import(args[0], storePath, keyPath)
 			if importErr != nil {
 				slog.Error("Import failed", "error", importErr)
@@ -363,6 +353,8 @@ func newBundleImportCmd() *cobra.Command {
 		"path to the local attestation store directory")
 	cmd.Flags().StringVar(&keyPath, "key", "",
 		"path to public key PEM for signature verification during import")
+
+	_ = cmd.MarkFlagRequired("store")
 
 	return cmd
 }

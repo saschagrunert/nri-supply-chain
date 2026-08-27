@@ -99,12 +99,12 @@ spec:
         - alert: NRISupplyChainRemediationErrors
           expr: sum(increase(nri_supply_chain_remediation_errors_total[5m])) > 0
           for: 5m
-          labels: { severity: warning }
+          labels: { severity: critical }
           annotations:
             summary: Remediation UpdateContainers calls are failing.
         - alert: NRISupplyChainContinuousVerifierStale
           expr: time() - nri_supply_chain_continuous_verifier_last_run > 900
           for: 5m
-          labels: { severity: warning }
+          labels: { severity: critical }
           annotations:
             summary: Continuous verifier has not run in the last 15 minutes.

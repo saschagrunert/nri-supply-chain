@@ -222,17 +222,50 @@ func previewImages(
 	cfg *config.Config, verif *verifier.Verifier,
 	cache *registry.TransportCache,
 ) []*verifyOutput {
+	type indexedResult struct {
+		index int
+		out   *verifyOutput
+	}
+
+	resultsCh := make(chan indexedResult, len(images))
+	sem := make(chan struct{}, batchConcurrency)
+
+	for idx, imageRef := range images {
+		sem <- struct{}{}
+
+		go func() {
+			defer func() { <-sem }()
+
+			if ctx.Err() != nil {
+				return
+			}
+
+			_, out := verifySingleImage(ctx, imageRef, namespace, cfg, verif, cache, "")
+			resultsCh <- indexedResult{index: idx, out: out}
+		}()
+	}
+
+	for range cap(sem) {
+		sem <- struct{}{}
+	}
+
+	close(resultsCh)
+
+	if ctx.Err() != nil {
+		slog.Error("Preview interrupted", "error", ctx.Err())
+	}
+
+	ordered := make([]*verifyOutput, len(images))
+	for r := range resultsCh {
+		ordered[r.index] = r.out
+	}
+
 	results := make([]*verifyOutput, 0, len(images))
 
-	for _, imageRef := range images {
-		if ctx.Err() != nil {
-			slog.Error("Preview interrupted", "error", ctx.Err())
-
-			break
+	for _, out := range ordered {
+		if out != nil {
+			results = append(results, out)
 		}
-
-		_, out := verifySingleImage(ctx, imageRef, namespace, cfg, verif, cache, "")
-		results = append(results, out)
 	}
 
 	return results

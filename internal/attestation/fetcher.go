@@ -428,7 +428,6 @@ func (f *OCIFetcher) fetchOnce(
 		ctx, manifest.Manifests, ref, digest, remoteOpts, fetchOpts,
 	)
 
-	// Collect Notation signatures from referrers.
 	notationSigs := f.collectNotationSignatures(ctx, manifest.Manifests, ref, digest, remoteOpts)
 	attestations = append(attestations, notationSigs...)
 
@@ -447,8 +446,7 @@ func (f *OCIFetcher) fetchOnce(
 		return f.cosignTagFallback(ctx, ref, digest, remoteOpts, fetchOpts)
 	}
 
-	// Collect baseline SBOMs after the bundle check so they don't mask
-	// verification failures.
+	// Collected after the bundle check so baseline SBOMs don't mask verification failures.
 	baselineSBOMs := f.collectBaselineSBOMs(ctx, manifest.Manifests, ref, digest, remoteOpts)
 	attestations = append(attestations, baselineSBOMs...)
 

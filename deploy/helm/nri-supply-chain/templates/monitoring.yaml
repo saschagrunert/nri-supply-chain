@@ -95,13 +95,13 @@ spec:
         - alert: NRISupplyChainRemediationErrors
           expr: sum(increase(nri_supply_chain_remediation_errors_total[5m])) > 0
           for: {{ .Values.monitoring.prometheusRule.remediationErrorsFor }}
-          labels: {severity: warning}
+          labels: {severity: critical}
           annotations:
             summary: Remediation UpdateContainers calls are failing.
         - alert: NRISupplyChainContinuousVerifierStale
           expr: time() - nri_supply_chain_continuous_verifier_last_run > {{ .Values.monitoring.prometheusRule.continuousVerifierStaleThreshold }}
           for: {{ .Values.monitoring.prometheusRule.continuousVerifierStaleFor }}
-          labels: {severity: warning}
+          labels: {severity: critical}
           annotations:
             summary: Continuous verifier has not run recently.
 {{- end }}

@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
@@ -38,7 +39,7 @@ func TestRunEffectivePolicyDefault(t *testing.T) {
 
 	var buf bytes.Buffer
 
-	code := runEffectivePolicy(&buf, policy.DefaultPolicyLabel, "", cfg)
+	code := runEffectivePolicy(&buf, policy.DefaultPolicyLabel, "", outputFormatJSON, cfg)
 	if code != exitSuccess {
 		t.Fatalf("expected exit code %d, got %d", exitSuccess, code)
 	}
@@ -86,7 +87,7 @@ func TestRunEffectivePolicyNamespace(t *testing.T) {
 
 	var buf bytes.Buffer
 
-	code := runEffectivePolicy(&buf, testNamespaceProduction, "", cfg)
+	code := runEffectivePolicy(&buf, testNamespaceProduction, "", outputFormatJSON, cfg)
 	if code != exitSuccess {
 		t.Fatalf("expected exit code %d, got %d", exitSuccess, code)
 	}
@@ -136,7 +137,13 @@ func TestRunEffectivePolicyWithImageRule(t *testing.T) {
 
 	var buf bytes.Buffer
 
-	code := runEffectivePolicy(&buf, policy.DefaultPolicyLabel, "ghcr.io/org/app:latest", cfg)
+	code := runEffectivePolicy(
+		&buf,
+		policy.DefaultPolicyLabel,
+		"ghcr.io/org/app:latest",
+		outputFormatJSON,
+		cfg,
+	)
 	if code != exitSuccess {
 		t.Fatalf("expected exit code %d, got %d", exitSuccess, code)
 	}
@@ -184,7 +191,7 @@ func TestRunEffectivePolicyNoImageRuleMatch(t *testing.T) {
 	var buf bytes.Buffer
 
 	code := runEffectivePolicy(
-		&buf, policy.DefaultPolicyLabel, "docker.io/library/nginx:latest", cfg,
+		&buf, policy.DefaultPolicyLabel, "docker.io/library/nginx:latest", outputFormatJSON, cfg,
 	)
 	if code != exitSuccess {
 		t.Fatalf("expected exit code %d, got %d", exitSuccess, code)
@@ -217,7 +224,7 @@ func TestRunEffectivePolicyNamespaceFlag(t *testing.T) {
 
 	var buf bytes.Buffer
 
-	code := runEffectivePolicy(&buf, "custom-ns", "", cfg)
+	code := runEffectivePolicy(&buf, "custom-ns", "", outputFormatJSON, cfg)
 	if code != exitSuccess {
 		t.Fatalf("expected exit code %d, got %d", exitSuccess, code)
 	}
@@ -271,7 +278,106 @@ func TestRunEffectivePolicyMissingNamespace(t *testing.T) {
 
 	var buf bytes.Buffer
 
-	code := runEffectivePolicy(&buf, "nonexistent", "", cfg)
+	code := runEffectivePolicy(&buf, "nonexistent", "", outputFormatJSON, cfg)
+	if code != exitError {
+		t.Errorf("expected exit code %d, got %d", exitError, code)
+	}
+}
+
+func TestRunEffectivePolicyTableFormat(t *testing.T) {
+	t.Parallel()
+
+	policyDir := t.TempDir()
+	writeValidationPolicy(t, policyDir, "default.json",
+		`{"slsa": {"missingPolicy": "warn"}}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = policyDir
+
+	var buf bytes.Buffer
+
+	code := runEffectivePolicy(&buf, policy.DefaultPolicyLabel, "", outputFormatTable, cfg)
+	if code != exitSuccess {
+		t.Fatalf("expected exit code %d, got %d", exitSuccess, code)
+	}
+
+	output := buf.String()
+
+	if !strings.Contains(output, "Namespace:") {
+		t.Error("table output missing Namespace field")
+	}
+
+	if !strings.Contains(output, "Mode:") {
+		t.Error("table output missing Mode field")
+	}
+
+	if !strings.Contains(output, "Source:") {
+		t.Error("table output missing Source field")
+	}
+}
+
+func TestRunEffectivePolicyTableFormatWithImageRule(t *testing.T) {
+	t.Parallel()
+
+	policyDir := t.TempDir()
+	writeValidationPolicy(t, policyDir, "default.json",
+		`{
+			"slsa": {"missingPolicy": "warn"},
+			"rules": [
+				{
+					"images": ["ghcr.io/org/*"],
+					"slsa": {"missingPolicy": "deny"}
+				}
+			]
+		}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = policyDir
+
+	var buf bytes.Buffer
+
+	code := runEffectivePolicy(
+		&buf, policy.DefaultPolicyLabel, "ghcr.io/org/app:latest", outputFormatTable, cfg,
+	)
+	if code != exitSuccess {
+		t.Fatalf("expected exit code %d, got %d", exitSuccess, code)
+	}
+
+	output := buf.String()
+
+	if !strings.Contains(output, "Image:") {
+		t.Error("table output missing Image field")
+	}
+
+	if !strings.Contains(output, "Rule index:") {
+		t.Error("table output missing Rule index field")
+	}
+
+	if !strings.Contains(output, "Patterns:") {
+		t.Error("table output missing Patterns field")
+	}
+
+	if !strings.Contains(output, "ghcr.io/org/*") {
+		t.Error("table output missing rule pattern")
+	}
+}
+
+func TestRunEffectivePolicyInvalidFormat(t *testing.T) {
+	t.Parallel()
+
+	policyDir := t.TempDir()
+	writeValidationPolicy(t, policyDir, "default.json",
+		`{"slsa": {"missingPolicy": "warn"}}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = policyDir
+
+	var buf bytes.Buffer
+
+	code := runEffectivePolicy(&buf, policy.DefaultPolicyLabel, "", "invalid", cfg)
 	if code != exitError {
 		t.Errorf("expected exit code %d, got %d", exitError, code)
 	}
@@ -290,7 +396,7 @@ func TestRunEffectivePolicyFallsBackToDefault(t *testing.T) {
 
 	var buf bytes.Buffer
 
-	code := runEffectivePolicy(&buf, "nonexistent-ns", "", cfg)
+	code := runEffectivePolicy(&buf, "nonexistent-ns", "", outputFormatJSON, cfg)
 	if code != exitSuccess {
 		t.Fatalf("expected exit code %d, got %d", exitSuccess, code)
 	}

@@ -134,3 +134,31 @@ func TestCheckCredentialPermissionsNonexistent(t *testing.T) {
 		t.Errorf("expected non-ErrInsecurePermissions error, got ErrInsecurePermissions")
 	}
 }
+
+func TestReadLimitedRejectsSymlink(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "real.txt")
+
+	writeErr := os.WriteFile(target, []byte("data"), 0o600)
+	if writeErr != nil {
+		t.Fatalf("writing target file: %v", writeErr)
+	}
+
+	link := filepath.Join(dir, "link.txt")
+
+	linkErr := os.Symlink(target, link)
+	if linkErr != nil {
+		t.Fatalf("creating symlink: %v", linkErr)
+	}
+
+	_, err := fileutil.ReadLimited(link, 1024)
+	if err == nil {
+		t.Fatal("expected error for symlink, got nil")
+	}
+
+	if !errors.Is(err, fileutil.ErrSymlink) {
+		t.Errorf("expected ErrSymlink, got: %v", err)
+	}
+}

@@ -38,18 +38,6 @@ var (
 
 	// ErrUnsupportedFormat indicates the SBOM format is not recognized.
 	ErrUnsupportedFormat = errors.New("unsupported SBOM format")
-
-	// ErrDeniedLicense indicates the SBOM contains a denied license.
-	ErrDeniedLicense = errors.New("denied license found in SBOM")
-
-	// ErrDeniedComponent indicates the SBOM contains a denied component.
-	ErrDeniedComponent = errors.New("denied component found in SBOM")
-
-	// ErrLicenseNotAllowed indicates the SBOM contains a license not in the allow list.
-	ErrLicenseNotAllowed = errors.New("license not in allow list")
-
-	// ErrComponentNotAllowed indicates the SBOM contains a component not in the allow list.
-	ErrComponentNotAllowed = errors.New("component not in allow list")
 )
 
 type sbomPackage struct {

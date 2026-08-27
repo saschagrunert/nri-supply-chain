@@ -37,12 +37,24 @@ var (
 
 	// ErrInsecurePermissions indicates a credential file has overly permissive mode bits.
 	ErrInsecurePermissions = errors.New("file has insecure permissions")
+
+	// ErrSymlink indicates a path is a symbolic link when a regular file was expected.
+	ErrSymlink = errors.New("path is a symbolic link")
 )
 
 // ReadLimited reads a file up to maxSize bytes. Returns ErrFileTooLarge if the
-// file exceeds the limit.
+// file exceeds the limit. Rejects symbolic links to prevent path traversal.
 func ReadLimited(path string, maxSize int64) ([]byte, error) {
 	path = filepath.Clean(path)
+
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, fmt.Errorf("stat %q: %w", path, err)
+	}
+
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("%w: %q", ErrSymlink, path)
+	}
 
 	file, err := os.Open(path)
 	if err != nil {
