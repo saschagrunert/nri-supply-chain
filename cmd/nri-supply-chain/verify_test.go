@@ -61,6 +61,7 @@ const (
 	testNamespaceDefault  = "default"
 	testPolicyPathDefault = "/policies/default.json"
 	testReasonDenied      = "denied"
+	testReasonVerified    = "verified"
 )
 
 func TestOutputVerifyResultAllowed(t *testing.T) {
@@ -69,7 +70,7 @@ func TestOutputVerifyResultAllowed(t *testing.T) {
 	checks := []internaltypes.CheckResult{
 		{
 			Type: internaltypes.CheckTypeSLSA, Passed: true,
-			Status: internaltypes.StatusPass, Detail: "verified", Err: nil,
+			Status: internaltypes.StatusPass, Detail: testReasonVerified, Err: nil,
 			Metadata: nil,
 		},
 	}
@@ -79,7 +80,7 @@ func TestOutputVerifyResultAllowed(t *testing.T) {
 
 	out := captureVerifyOutput(
 		t, testImageNginx, testDigest,
-		policy.DefaultPolicyLabel, true, "verified", checks,
+		policy.DefaultPolicyLabel, true, testReasonVerified, checks,
 	)
 
 	if out.Image != testImageNginx {
@@ -98,8 +99,8 @@ func TestOutputVerifyResultAllowed(t *testing.T) {
 		t.Error("expected Allowed = true")
 	}
 
-	if out.Reason != "verified" {
-		t.Errorf("Reason = %q, want %q", out.Reason, "verified")
+	if out.Reason != testReasonVerified {
+		t.Errorf("Reason = %q, want %q", out.Reason, testReasonVerified)
 	}
 
 	if len(out.CheckResults) != 1 {
@@ -911,7 +912,7 @@ func TestOutputBatchJSON(t *testing.T) {
 			Allowed:   true, Reason: "", CheckResults: nil,
 		},
 		{
-			Image: testImageNginx125, Digest: "sha256:bbb",
+			Image: testImageNginx125, Digest: testDigestBBB,
 			Namespace: testNamespaceDefault,
 			Allowed:   false, Reason: testReasonDenied, CheckResults: nil,
 		},
@@ -963,7 +964,7 @@ func TestOutputBatchTable(t *testing.T) {
 			Allowed: true, CheckResults: nil,
 		},
 		{
-			Image: testImageNginx125, Digest: "sha256:bbb",
+			Image: testImageNginx125, Digest: testDigestBBB,
 			Namespace:  testNamespaceDefault,
 			PolicyFile: testPolicyPathDefault, Mode: string(config.ModeEnforce),
 			Allowed: false, Reason: testReasonDenied, CheckResults: nil,
@@ -1240,7 +1241,7 @@ func TestChecksFromNonNil(t *testing.T) {
 		Allowed: true,
 		Reason:  "ok",
 		CheckResults: []internaltypes.CheckResult{
-			*internaltypes.PassResult(internaltypes.CheckTypeSLSA, "verified"),
+			*internaltypes.PassResult(internaltypes.CheckTypeSLSA, testReasonVerified),
 		},
 	}
 
@@ -1457,5 +1458,54 @@ func TestLogVerbosePreamble(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("output missing %q\ngot:\n%s", want, got)
 		}
+	}
+}
+
+func TestOutputVerifyResultQuiet(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	input := &verifyOutput{
+		Image: testImageNginx, Digest: testDigestABC123, Namespace: testNamespaceDefault,
+		PolicyFile: testPolicyPathDefault, Mode: string(config.ModeWarn), PreviewPolicy: "",
+		Allowed: true, Reason: testReasonVerified, CheckResults: nil,
+	}
+
+	err := outputVerifyResult(&buf, outputFormatQuiet, input)
+	if err != nil {
+		t.Fatalf("outputVerifyResult failed: %v", err)
+	}
+
+	if buf.Len() != 0 {
+		t.Errorf("quiet mode should produce no output, got: %q", buf.String())
+	}
+}
+
+func TestOutputBatchResultsQuiet(t *testing.T) {
+	t.Parallel()
+
+	results := []*verifyOutput{
+		{
+			Image: testImageAlpine, Digest: testDigestAAA,
+			Namespace: testNamespaceDefault,
+			Allowed:   true, Reason: "", CheckResults: nil,
+		},
+		{
+			Image: testImageNginx125, Digest: testDigestBBB,
+			Namespace: testNamespaceDefault,
+			Allowed:   false, Reason: testReasonDenied, CheckResults: nil,
+		},
+	}
+
+	var buf bytes.Buffer
+
+	err := outputBatchResults(&buf, outputFormatQuiet, results)
+	if err != nil {
+		t.Fatalf("outputBatchResults failed: %v", err)
+	}
+
+	if buf.Len() != 0 {
+		t.Errorf("quiet mode should produce no output, got: %q", buf.String())
 	}
 }

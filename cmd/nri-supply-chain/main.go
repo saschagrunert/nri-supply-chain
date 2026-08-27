@@ -40,6 +40,7 @@ const (
 
 	outputFormatTable = "table"
 	outputFormatJSON  = "json"
+	outputFormatQuiet = "quiet"
 
 	defaultConfigPath = "/etc/nri-supply-chain/config.toml"
 
@@ -75,7 +76,7 @@ func execute() int {
 	return exitSuccess
 }
 
-func newRootCmd() *cobra.Command {
+func newRootCmd() *cobra.Command { //nolint:funlen // cobra command setup
 	var (
 		configPath string
 		logLevel   string
@@ -84,8 +85,14 @@ func newRootCmd() *cobra.Command {
 	)
 
 	root := &cobra.Command{
-		Use:           "nri-supply-chain",
-		Short:         "NRI Supply Chain Plugin",
+		Use:   "nri-supply-chain",
+		Short: "NRI Supply Chain Plugin",
+		Long: "NRI plugin for supply chain attestation verification at the\n" +
+			"container runtime level.\n\n" +
+			"Exit codes:\n" +
+			"  0  success (verification passed)\n" +
+			"  1  denied (verification failed)\n" +
+			"  2  error (configuration, network, or internal error)",
 		Version:       version,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -109,7 +116,7 @@ func newRootCmd() *cobra.Command {
 		},
 	}
 
-	root.CompletionOptions.HiddenDefaultCmd = true
+	root.CompletionOptions.HiddenDefaultCmd = false
 	root.SetVersionTemplate("nri-supply-chain {{.Version}}\n")
 
 	root.PersistentFlags().StringVarP(&configPath, "config", "c",

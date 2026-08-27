@@ -47,6 +47,7 @@ func newVerifyCmd( //nolint:funlen // cobra command setup
 		namespace     string
 		outputFormat  string
 		verbose       bool
+		quiet         bool
 		previewPolicy string
 	)
 
@@ -89,6 +90,10 @@ func newVerifyCmd( //nolint:funlen // cobra command setup
 				cfg.PolicyDir = tmpDir
 			}
 
+			if quiet {
+				outputFormat = outputFormatQuiet
+			}
+
 			if verbose {
 				logVerbosePreamble(cmd.ErrOrStderr(), args, namespace, cfg)
 			}
@@ -108,8 +113,12 @@ func newVerifyCmd( //nolint:funlen // cobra command setup
 		outputFormatTable, "output format: table, json")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false,
 		"show step-by-step diagnostic output")
+	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false,
+		"suppress all output except the exit code")
 	cmd.Flags().StringVar(&previewPolicy, "preview-policy", "",
 		"path to a policy JSON file to use instead of the configured policies (dry-run)")
+
+	cmd.MarkFlagsMutuallyExclusive("output", "quiet")
 
 	return cmd
 }
@@ -233,7 +242,8 @@ func withVerifier(
 	writer io.Writer, outputFormat string, cfg *config.Config,
 	execute func(context.Context, io.Writer, *verifier.Verifier, *registry.TransportCache) int,
 ) int {
-	if outputFormat != outputFormatTable && outputFormat != outputFormatJSON {
+	if outputFormat != outputFormatTable && outputFormat != outputFormatJSON &&
+		outputFormat != outputFormatQuiet {
 		slog.Error("Invalid output format", "format", outputFormat)
 
 		return exitError
@@ -267,27 +277,74 @@ func withVerifier(
 	return execute(ctx, writer, verif, cache)
 }
 
-func executeBatchVerify(
+const batchConcurrency = 10
+
+func executeBatchVerify( //nolint:funlen // concurrent batch pattern
 	ctx context.Context, writer io.Writer,
 	images []string, namespace, outputFormat string,
 	cfg *config.Config, verif *verifier.Verifier,
 	cache *registry.TransportCache, previewPolicy string,
 ) int {
-	results := make([]*verifyOutput, 0, len(images))
+	type indexedResult struct {
+		index int
+		code  int
+		out   *verifyOutput
+	}
+
+	resultsCh := make(chan indexedResult, len(images))
+	sem := make(chan struct{}, batchConcurrency)
+
+	for idx, imageRef := range images {
+		sem <- struct{}{}
+
+		go func() {
+			defer func() { <-sem }()
+
+			if ctx.Err() != nil {
+				return
+			}
+
+			code, out := verifySingleImage(
+				ctx,
+				imageRef,
+				namespace,
+				cfg,
+				verif,
+				cache,
+				previewPolicy,
+			)
+			resultsCh <- indexedResult{index: idx, code: code, out: out}
+		}()
+	}
+
+	for range cap(sem) {
+		sem <- struct{}{}
+	}
+
+	close(resultsCh)
+
+	if ctx.Err() != nil {
+		slog.Error("Batch verification interrupted", "error", ctx.Err())
+
+		return exitError
+	}
+
+	ordered := make([]*verifyOutput, len(images))
 	worstCode := exitSuccess
 
-	for _, imageRef := range images {
-		if ctx.Err() != nil {
-			slog.Error("Batch verification interrupted", "error", ctx.Err())
+	for r := range resultsCh {
+		ordered[r.index] = r.out
 
-			return exitError
+		if r.code > worstCode {
+			worstCode = r.code
 		}
+	}
 
-		code, out := verifySingleImage(ctx, imageRef, namespace, cfg, verif, cache, previewPolicy)
-		results = append(results, out)
+	results := make([]*verifyOutput, 0, len(images))
 
-		if code > worstCode {
-			worstCode = code
+	for _, out := range ordered {
+		if out != nil {
+			results = append(results, out)
 		}
 	}
 
@@ -350,6 +407,8 @@ func outputBatchResults(writer io.Writer, format string, results []*verifyOutput
 	switch format {
 	case outputFormatJSON:
 		return outputBatchJSON(writer, results)
+	case outputFormatQuiet:
+		return nil
 	default:
 		return outputBatchTable(writer, results)
 	}
@@ -465,6 +524,8 @@ func outputVerifyResult(writer io.Writer, format string, out *verifyOutput) erro
 	switch format {
 	case outputFormatJSON:
 		return outputVerifyJSON(writer, out)
+	case outputFormatQuiet:
+		return nil
 	default:
 		return outputVerifyTable(writer, out)
 	}

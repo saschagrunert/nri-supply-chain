@@ -38,6 +38,11 @@ For a detailed introduction, see the [CNCF blog post](https://www.cncf.io/blog/2
 
 ## Quickstart
 
+**Prerequisites:** NRI must be enabled on the container runtime. For CRI-O,
+check `crio config 2>/dev/null | grep enable_nri`. For containerd, verify
+`[plugins."io.containerd.nri.v1.nri"]` is present in the containerd config.
+See the [compatibility section](#compatibility) for supported versions.
+
 1. Download the latest release binary or container image from the
    [releases page](https://github.com/saschagrunert/nri-supply-chain/releases).
 

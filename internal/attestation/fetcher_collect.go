@@ -42,14 +42,16 @@ func isBaselineSBOM(artifactType string) bool {
 	return artifactType == BaselineSBOMArtifactType
 }
 
+//nolint:dupl // intentionally similar to collectNotationSignatures
 func (f *OCIFetcher) collectBaselineSBOMs(
 	ctx context.Context,
 	manifests []ociV1.Descriptor, ref name.Digest, digest string,
 	remoteOpts []remote.Option,
 ) []VerifiedAttestation {
 	var (
-		attsMu sync.Mutex
-		atts   []VerifiedAttestation
+		attsMu    sync.Mutex
+		atts      []VerifiedAttestation
+		totalSize atomic.Int64
 	)
 
 	group, groupCtx := errgroup.WithContext(ctx)
@@ -68,13 +70,24 @@ func (f *OCIFetcher) collectBaselineSBOMs(
 				return nil
 			}
 
+			if totalSize.Add(int64(len(att.Payload))) > maxTotalAttestationSize {
+				slog.WarnContext(groupCtx, "Aggregate baseline SBOM size exceeds limit",
+					"limit", maxTotalAttestationSize,
+				)
+
+				return errAggregateSizeExceeded
+			}
+
 			appendAttestation(&attsMu, &atts, &att)
 
 			return nil
 		})
 	}
 
-	_ = group.Wait()
+	err := group.Wait()
+	if err != nil && !errors.Is(err, errAggregateSizeExceeded) {
+		slog.WarnContext(ctx, "Unexpected error during baseline SBOM collection", "error", err)
+	}
 
 	return atts
 }
@@ -159,14 +172,16 @@ func (f *OCIFetcher) fetchBaselineSBOM( //nolint:funlen // mirrors fetchNotation
 	}, true
 }
 
+//nolint:dupl // intentionally similar to collectBaselineSBOMs
 func (f *OCIFetcher) collectNotationSignatures(
 	ctx context.Context,
 	manifests []ociV1.Descriptor, ref name.Digest, digest string,
 	remoteOpts []remote.Option,
 ) []VerifiedAttestation {
 	var (
-		sigsMu sync.Mutex
-		sigs   []VerifiedAttestation
+		sigsMu    sync.Mutex
+		sigs      []VerifiedAttestation
+		totalSize atomic.Int64
 	)
 
 	group, groupCtx := errgroup.WithContext(ctx)
@@ -185,13 +200,24 @@ func (f *OCIFetcher) collectNotationSignatures(
 				return nil
 			}
 
+			if totalSize.Add(int64(len(att.Payload))) > maxTotalAttestationSize {
+				slog.WarnContext(groupCtx, "Aggregate Notation signature size exceeds limit",
+					"limit", maxTotalAttestationSize,
+				)
+
+				return errAggregateSizeExceeded
+			}
+
 			appendAttestation(&sigsMu, &sigs, &att)
 
 			return nil
 		})
 	}
 
-	_ = group.Wait()
+	err := group.Wait()
+	if err != nil && !errors.Is(err, errAggregateSizeExceeded) {
+		slog.WarnContext(ctx, "Unexpected error during Notation signature collection", "error", err)
+	}
 
 	return sigs
 }

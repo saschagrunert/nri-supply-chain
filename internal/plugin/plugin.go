@@ -599,12 +599,12 @@ func (p *Plugin) handleMissingAnnotations(
 			"pod", namespace+"/"+pod.GetName(),
 			"container", ctr.GetName(),
 			"image_ref", imageRef,
-			"digest", digest,
 			"annotation_count", annotationCount,
 		)
 
 		return nil, nil, fmt.Errorf(
-			"%w for container %s", ErrMissingAnnotations, ctr.GetName(),
+			"%w for container %s in %s/%s",
+			ErrMissingAnnotations, ctr.GetName(), namespace, pod.GetName(),
 		)
 	}
 

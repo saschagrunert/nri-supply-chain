@@ -17,9 +17,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -46,8 +48,9 @@ type effectivePolicyOutput struct {
 
 func newEffectivePolicyCmd(configPath, logLevel *string) *cobra.Command {
 	var (
-		namespace string
-		image     string
+		namespace    string
+		image        string
+		outputFormat string
 	)
 
 	cmd := &cobra.Command{
@@ -71,7 +74,7 @@ func newEffectivePolicyCmd(configPath, logLevel *string) *cobra.Command {
 
 			slog.Debug("Using config", "path", *configPath)
 
-			code := runEffectivePolicy(os.Stdout, namespace, image, cfg)
+			code := runEffectivePolicy(os.Stdout, namespace, image, outputFormat, cfg)
 			if code != 0 {
 				return errExitNonZero
 			}
@@ -84,13 +87,21 @@ func newEffectivePolicyCmd(configPath, logLevel *string) *cobra.Command {
 		policy.DefaultPolicyLabel, "namespace to resolve")
 	cmd.Flags().StringVarP(&image, "image", "i",
 		"", "image reference to match against rules")
+	cmd.Flags().StringVarP(&outputFormat, "output", "o",
+		outputFormatJSON, "output format: table, json")
 
 	return cmd
 }
 
 func runEffectivePolicy(
-	writer io.Writer, namespace, image string, cfg *config.Config,
+	writer io.Writer, namespace, image, outputFormat string, cfg *config.Config,
 ) int {
+	if outputFormat != outputFormatTable && outputFormat != outputFormatJSON {
+		slog.Error("Invalid output format", "format", outputFormat)
+
+		return exitError
+	}
+
 	policies, _, err := loadPolicies(cfg)
 	if err != nil {
 		slog.Error("Failed to load policies", "error", err)
@@ -107,6 +118,10 @@ func runEffectivePolicy(
 
 	out := buildEffectivePolicyOutput(namespace, image, source, pol, cfg)
 
+	if outputFormat == outputFormatTable {
+		return outputEffectivePolicyTable(writer, out)
+	}
+
 	enc := json.NewEncoder(writer)
 	enc.SetIndent("", "  ")
 
@@ -115,6 +130,25 @@ func runEffectivePolicy(
 		slog.Error("Failed to write output", "error", err)
 
 		return exitError
+	}
+
+	return exitSuccess
+}
+
+func outputEffectivePolicyTable(writer io.Writer, out *effectivePolicyOutput) int {
+	_, _ = fmt.Fprintf(writer, "%s  %s\n", colorBold.Sprint("Namespace:"), out.Namespace)
+	_, _ = fmt.Fprintf(writer, "%s       %s\n", colorBold.Sprint("Mode:"), colorMode(out.Mode))
+	_, _ = fmt.Fprintf(writer, "%s     %s\n", colorBold.Sprint("Source:"), out.Source)
+
+	if out.Image != "" {
+		_, _ = fmt.Fprintf(writer, "%s      %s\n", colorBold.Sprint("Image:"), out.Image)
+	}
+
+	if out.RuleIndex >= 0 {
+		_, _ = fmt.Fprintf(writer, "%s %d\n",
+			colorBold.Sprint("Rule index:"), out.RuleIndex)
+		_, _ = fmt.Fprintf(writer, "%s   %s\n",
+			colorBold.Sprint("Patterns:"), strings.Join(out.RulePatterns, ", "))
 	}
 
 	return exitSuccess
