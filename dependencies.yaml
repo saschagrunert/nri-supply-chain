@@ -1,6 +1,6 @@
 dependencies:
   - name: nri-supply-chain
-    version: 0.5.0
+    version: 0.5.1
     refPaths:
       - path: cmd/nri-supply-chain/main.go
         match: ^var version
