@@ -253,7 +253,8 @@ func TestCreateContainerWarnAllow(t *testing.T) {
 	}
 
 	wantChecks := "slsa:fail,vex:pass,sbom:pass,scai:pass,source:pass," +
-		"buildenv:pass,vulnscan:pass,testresult:pass,release:pass,runtimetrace:pass"
+		"buildenv:pass,vulnscan:pass,testresult:pass,release:pass,runtimetrace:pass," +
+		"scorecard:pass"
 	if v := annotations[plugin.AnnotationChecks]; v != wantChecks {
 		t.Errorf("checks = %q, want %q", v, wantChecks)
 	}

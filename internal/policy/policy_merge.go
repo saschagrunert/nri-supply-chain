@@ -15,6 +15,7 @@
 package policy
 
 import (
+	"maps"
 	"slices"
 
 	celengine "github.com/saschagrunert/nri-supply-chain/internal/cel"
@@ -24,7 +25,7 @@ import (
 // policy and overriding fields that are set in the namespace policy. Each
 // top-level section (Trust, Include, Exclude, SLSA, VEX, VSA, Signatures,
 // Notation, SBOM, SCAI, Source, BuildEnv, VulnScan, TestResult, Release,
-// RuntimeTrace, CEL, Rules) is
+// RuntimeTrace, Scorecard, CEL, Rules) is
 // replaced entirely if set in the namespace policy. The Inherits field is
 // cleared on the result. Inherited structs are shallow-copied to prevent
 // mutations from affecting the default.
@@ -178,6 +179,10 @@ func applySections(dst *Sections, src Sections) { //nolint:gocritic // value par
 	if src.RuntimeTrace != nil {
 		dst.RuntimeTrace = cloneRuntimeTrace(src.RuntimeTrace)
 	}
+
+	if src.Scorecard != nil {
+		dst.Scorecard = cloneScorecard(src.Scorecard)
+	}
 }
 
 func cloneNotation(notationPolicy *NotationPolicy) *NotationPolicy {
@@ -319,6 +324,18 @@ func cloneRuntimeTrace(src *RuntimeTracePolicy) *RuntimeTracePolicy {
 	clone := *src
 	clone.TrustedMonitors = slices.Clone(clone.TrustedMonitors)
 	clone.ForbiddenFilePatterns = slices.Clone(clone.ForbiddenFilePatterns)
+
+	return &clone
+}
+
+func cloneScorecard(src *ScorecardPolicy) *ScorecardPolicy {
+	clone := *src
+	clone.Checks = maps.Clone(clone.Checks)
+
+	if clone.MinScore != nil {
+		score := *clone.MinScore
+		clone.MinScore = &score
+	}
 
 	return &clone
 }

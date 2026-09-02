@@ -68,6 +68,8 @@ const (
 	CheckTypeRuntimeTrace CheckType = "runtimetrace"
 	// CheckTypeGUAC is the GUAC supplemental data check type.
 	CheckTypeGUAC CheckType = "guac"
+	// CheckTypeScorecard is the OpenSSF Scorecard check type.
+	CheckTypeScorecard CheckType = "scorecard"
 )
 
 // AttestationCheckTypes lists all check types that correspond to
@@ -87,6 +89,7 @@ var AttestationCheckTypes = []CheckType{ //nolint:gochecknoglobals // registry
 	CheckTypeTestResult,
 	CheckTypeRelease,
 	CheckTypeRuntimeTrace,
+	CheckTypeScorecard,
 }
 
 // Result represents the outcome of a supply chain verification.

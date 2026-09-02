@@ -36,6 +36,7 @@ patterns for the nri-supply-chain plugin.
   - [<code>testResult</code> (object)](#testresult-object)
   - [<code>release</code> (object)](#release-object)
   - [<code>runtimeTrace</code> (object)](#runtimetrace-object)
+  - [<code>scorecard</code> (object)](#scorecard-object)
   - [<code>rules</code> (array of objects)](#rules-array-of-objects)
   - [<code>cel</code> (object)](#cel-object)
 - [Verification Types](#verification-types)
@@ -53,6 +54,7 @@ patterns for the nri-supply-chain plugin.
   - [Test Result Verification](#test-result-verification)
   - [Release Verification](#release-verification)
   - [Runtime Trace Verification](#runtime-trace-verification)
+  - [OpenSSF Scorecard Verification](#openssf-scorecard-verification)
 - [Pattern Matching](#pattern-matching)
   - [<code>include</code>, <code>exclude</code>, and <code>trust.sources</code>](#include-exclude-and-trustsources)
   - [<code>trust.sanPatterns</code>](#trustsanpatterns)
@@ -313,6 +315,9 @@ nri-supply-chain json-schema policy
         "runtimeTrace": {
           "$ref": "#/$defs/RuntimeTracePolicy"
         },
+        "scorecard": {
+          "$ref": "#/$defs/ScorecardPolicy"
+        },
         "images": {
           "items": {
             "type": "string"
@@ -447,6 +452,9 @@ nri-supply-chain json-schema policy
         },
         "runtimeTrace": {
           "$ref": "#/$defs/RuntimeTracePolicy"
+        },
+        "scorecard": {
+          "$ref": "#/$defs/ScorecardPolicy"
         },
         "version": {
           "type": "integer"
@@ -666,6 +674,25 @@ nri-supply-chain json-schema policy
         },
         "maxAge": {
           "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ScorecardPolicy": {
+      "properties": {
+        "missingPolicy": {
+          "type": "string",
+          "enum": ["allow", "warn", "deny"]
+        },
+        "minScore": {
+          "type": "number"
+        },
+        "checks": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object"
         }
       },
       "additionalProperties": false,
@@ -1187,6 +1214,22 @@ attached to container images.
 | `forbiddenFilePatterns` | array  | (none)  | Glob patterns for file accesses that must not appear (e.g. `/etc/shadow`)        |
 | `maxAge`                | string | (none)  | Maximum age of the trace (e.g. `24h`, `168h`); older traces are considered stale |
 
+### `scorecard` (object)
+
+OpenSSF Scorecard result verification settings. The plugin verifies Scorecard
+JSON v2 results carried in in-toto attestations with the provisional predicate
+type `https://scorecard.dev/result/v0.1`.
+
+| Field           | Type   | Default | Description                                                                    |
+| --------------- | ------ | ------- | ------------------------------------------------------------------------------ |
+| `missingPolicy` | string | `allow` | Behavior when no Scorecard attestation is found: `allow`, `warn`, or `deny`    |
+| `minScore`      | float  | (none)  | Minimum aggregate Scorecard score (0.0-10.0)                                   |
+| `checks`        | object | (none)  | Map of exact Scorecard check names to minimum integer scores (0-10), inclusive |
+
+An upstream Scorecard check score of `-1` means inconclusive. It remains
+available to CEL, but fails any configured per-check minimum. Every check named
+in `checks` must be present in the attestation.
+
 ### `rules` (array of objects)
 
 Per-image policy overrides. Each rule matches images by glob patterns and
@@ -1213,6 +1256,7 @@ Each rule is an object with:
 | `testResult`   | object | no       | Override test result settings (same schema as `testResult`)     |
 | `release`      | object | no       | Override release settings (same schema as `release`)            |
 | `runtimeTrace` | object | no       | Override runtime trace settings (same schema as `runtimeTrace`) |
+| `scorecard`    | object | no       | Override Scorecard settings (same schema as `scorecard`)        |
 
 Fields not set in a rule are inherited from the base policy. The `images`
 patterns use the same glob syntax as `include` and `exclude`.
@@ -1358,6 +1402,11 @@ Each rule is an object with:
 | `guac.scorecard.source`        | string | Source repository from the Scorecard              |
 | `guac.dependencies`            | list   | Transitive dependency PURLs (truncated by max)    |
 | `guac.dependency_count`        | int    | Total transitive dependencies (before truncation) |
+| `scorecard.verified`           | bool   | Whether OpenSSF Scorecard verification passed     |
+| `scorecard.repo`               | string | Repository analyzed by Scorecard                  |
+| `scorecard.version`            | string | OpenSSF Scorecard version                         |
+| `scorecard.score`              | float  | Aggregate Scorecard score                         |
+| `scorecard.checks`             | map    | Check-name to integer-score map                   |
 
 Standard string functions are available via `ext.Strings()`: `startsWith`,
 `endsWith`, `contains`, `matches`.
@@ -1941,6 +1990,51 @@ Example configuration:
 }
 ```
 
+### OpenSSF Scorecard Verification
+
+Verifies [OpenSSF Scorecard](https://github.com/ossf/scorecard) JSON v2 results
+attached to container images as in-toto attestations. Until the upstream
+Software Verification Results predicate is finalized, the plugin recognizes
+the provisional predicate type `https://scorecard.dev/result/v0.1`.
+
+Checks performed:
+
+- **Subject digest**: The in-toto `subject[].digest` must match the image digest.
+- **Result structure**: The repository, Scorecard version, aggregate score, and
+  at least one named check must be present. Scores must be in Scorecard's
+  `-1` (inconclusive) to `10` range.
+- **Aggregate score**: If `scorecard.minScore` is configured, the aggregate
+  score must be greater than or equal to it.
+- **Per-check scores**: Every entry in `scorecard.checks` must exist in the
+  result and meet or exceed its configured minimum.
+
+When multiple Scorecard attestations exist, all must pass. CEL metadata is
+merged conservatively: the lowest aggregate and per-check score is retained,
+while repository and version values are deduplicated.
+
+Example configuration:
+
+```json
+{
+  "scorecard": {
+    "missingPolicy": "deny",
+    "minScore": 7.0,
+    "checks": {
+      "Code-Review": 8,
+      "Branch-Protection": 9
+    }
+  },
+  "cel": {
+    "rules": [
+      {
+        "require": "scorecard.verified && scorecard.checks['Fuzzing'] >= 5",
+        "message": "Scorecard fuzzing score is too low"
+      }
+    ]
+  }
+}
+```
+
 ## Pattern Matching
 
 The plugin uses glob patterns in several contexts, with slightly different
@@ -1990,7 +2084,7 @@ A file named `<namespace>.json` in the policy directory overrides
 By default, the override is a full replacement. If a namespace policy sets
 `"inherits": true`, unset top-level fields (`trust`, `include`, `exclude`,
 `slsa`, `vex`, `vsa`, `signatures`, `notation`, `sbom`, `scai`, `source`,
-`buildEnv`, `vulnScan`, `testResult`, `release`, `runtimeTrace`, `cel`, `rules`) are inherited from the default
+`buildEnv`, `vulnScan`, `testResult`, `release`, `runtimeTrace`, `scorecard`, `cel`, `rules`) are inherited from the default
 policy. Each top-level section that is set in the namespace policy replaces
 the default's section entirely. The default policy itself cannot set `inherits`.
 
@@ -2049,7 +2143,7 @@ Example: `default.json` requires provenance, but `dev.json` allows everything:
 
 In this example, `staging.json` inherits all remaining sections (`trust`,
 `include`, `exclude`, `slsa`, `vsa`, `signatures`, `notation`, `sbom`, `scai`,
-`source`, `buildEnv`, `vulnScan`, `testResult`, `release`, `runtimeTrace`, `cel`, `rules`) from
+`source`, `buildEnv`, `vulnScan`, `testResult`, `release`, `runtimeTrace`, `scorecard`, `cel`, `rules`) from
 `default.json` but replaces the `vex` section.
 
 ## Deployment Patterns

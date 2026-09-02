@@ -21,6 +21,8 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 )
 
+const testScorecardCodeReview = "Code-Review"
+
 func TestValidateVulnScan(t *testing.T) {
 	t.Parallel()
 
@@ -83,6 +85,102 @@ func TestValidateVulnScan(t *testing.T) {
 				t.Errorf("unexpected error: %v", err)
 			}
 		})
+	}
+}
+
+func TestValidateScorecard(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		pol     *policy.Policy
+		wantErr error
+	}{
+		{
+			name: "minScore below range",
+			pol: &policy.Policy{
+				Scorecard: &policy.ScorecardPolicy{MinScore: new(-0.1)},
+			},
+			wantErr: policy.ErrScorecardMinScoreRange,
+		},
+		{
+			name: "minScore above range",
+			pol: &policy.Policy{
+				Scorecard: &policy.ScorecardPolicy{MinScore: new(10.1)},
+			},
+			wantErr: policy.ErrScorecardMinScoreRange,
+		},
+		{
+			name: "check score below range",
+			pol: &policy.Policy{
+				Scorecard: &policy.ScorecardPolicy{
+					Checks: map[string]int{testScorecardCodeReview: -1},
+				},
+			},
+			wantErr: policy.ErrScorecardCheckScoreRange,
+		},
+		{
+			name: "check score above range",
+			pol: &policy.Policy{
+				Scorecard: &policy.ScorecardPolicy{
+					Checks: map[string]int{testScorecardCodeReview: 11},
+				},
+			},
+			wantErr: policy.ErrScorecardCheckScoreRange,
+		},
+		{
+			name: "empty check name",
+			pol: &policy.Policy{
+				Scorecard: &policy.ScorecardPolicy{Checks: map[string]int{"": 7}},
+			},
+			wantErr: policy.ErrEmptyValue,
+		},
+		{
+			name: "valid scorecard policy",
+			pol: &policy.Policy{
+				Scorecard: &policy.ScorecardPolicy{
+					MinScore: new(7.0),
+					Checks:   map[string]int{testScorecardCodeReview: 8, "Branch-Protection": 9},
+				},
+			},
+			wantErr: nil,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := test.pol.Validate()
+			if test.wantErr != nil && !errors.Is(err, test.wantErr) {
+				t.Errorf("error = %v, want %v", err, test.wantErr)
+			} else if test.wantErr == nil && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestMergeScorecardDeepCopy(t *testing.T) {
+	t.Parallel()
+
+	defaultPolicy := &policy.Policy{
+		Scorecard: &policy.ScorecardPolicy{
+			MinScore: new(7.0),
+			Checks:   map[string]int{testScorecardCodeReview: 8},
+		},
+	}
+
+	merged := policy.MergeWithDefault(&policy.Policy{}, defaultPolicy)
+	*merged.Scorecard.MinScore = 9.0
+	merged.Scorecard.Checks[testScorecardCodeReview] = 10
+
+	if *defaultPolicy.Scorecard.MinScore != 7.0 {
+		t.Error("merging mutated the default minScore")
+	}
+
+	if defaultPolicy.Scorecard.Checks[testScorecardCodeReview] != 8 {
+		t.Error("merging mutated the default checks map")
 	}
 }
 

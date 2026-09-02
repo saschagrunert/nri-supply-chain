@@ -34,6 +34,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/runtimetrace"
 	"github.com/saschagrunert/nri-supply-chain/internal/sbom"
 	"github.com/saschagrunert/nri-supply-chain/internal/scai"
+	"github.com/saschagrunert/nri-supply-chain/internal/scorecard"
 	"github.com/saschagrunert/nri-supply-chain/internal/slsa"
 	"github.com/saschagrunert/nri-supply-chain/internal/source"
 	"github.com/saschagrunert/nri-supply-chain/internal/testresult"
@@ -64,6 +65,7 @@ var payloadVerifiers = []struct { //nolint:gochecknoglobals // immutable registr
 	{types.CheckTypeTestResult, testresult.VerifyMultiple},
 	{types.CheckTypeRelease, release.VerifyMultiple},
 	{types.CheckTypeRuntimeTrace, runtimetrace.VerifyMultiple},
+	{types.CheckTypeScorecard, scorecard.VerifyMultiple},
 }
 
 func runChecks(
@@ -401,7 +403,11 @@ func runParallelChecks( //nolint:funlen // table-driven dispatch over all check 
 		fn        func(ctx context.Context) *types.CheckResult
 	}
 
-	checks := make([]checkEntry, 0, 3+len(payloadVerifiers)) //nolint:mnd // 3 = SLSA+VEX+Notation
+	checks := make(
+		[]checkEntry,
+		0,
+		4+len(payloadVerifiers), //nolint:mnd // 4 = SLSA+VEX+Notation+SBOM
+	)
 	checks = append(checks,
 		checkEntry{types.CheckTypeSLSA, func(ctx context.Context) *types.CheckResult {
 			return runAttestationCheck(
@@ -555,6 +561,8 @@ func binAttestations( //nolint:cyclop,funlen // additional predicate type adds a
 			add(types.CheckTypeRuntimeTrace, att)
 		case attestation.PredicateBaselineSBOM:
 			add(checkTypeBaselineSBOM, att)
+		case attestation.PredicateScorecard:
+			add(types.CheckTypeScorecard, att)
 		case attestation.PredicateCosignSignature:
 			slog.DebugContext(ctx,
 				"Skipping bare cosign signature attestation",

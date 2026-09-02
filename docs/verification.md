@@ -23,6 +23,7 @@ by the nri-supply-chain plugin.
   - [Release](#release)
   - [Runtime Trace](#runtime-trace)
   - [GUAC (Graph for Understanding Artifact Composition)](#guac-graph-for-understanding-artifact-composition)
+  - [OpenSSF Scorecard](#openssf-scorecard)
 - [Other Standards](#other-standards)
 
 <!-- /toc -->
@@ -72,7 +73,7 @@ When a container is created, the plugin performs verification in this order:
    matched against each rule's `images` patterns in order (first match
    wins). When a rule matches, its non-nil sections (trust, slsa, vex,
    vsa, signatures, notation, sbom, scai, source, buildEnv, vulnScan,
-   testResult, release, runtimeTrace, cel) override the base policy for that verification.
+   testResult, release, runtimeTrace, scorecard, cel) override the base policy for that verification.
 
 6. **Cache check**: If a cached result exists for this image digest and is
    within the configured TTL, returns it immediately.
@@ -104,7 +105,7 @@ When a container is created, the plugin performs verification in this order:
 9. **VSA-first evaluation**:
    - If a trusted PASSED VSA is found, skip all parallel checks (SLSA, VEX,
      Notation, SBOM, SCAI, Source, BuildEnv, VulnScan, TestResult, Release,
-     RuntimeTrace) and
+     RuntimeTrace, Scorecard) and
      CEL evaluation entirely.
    - If a trusted FAILED VSA is found, hard reject immediately (no fallback).
    - If no VSA is found, or the VSA is from an untrusted verifier or stale,
@@ -112,8 +113,8 @@ When a container is created, the plugin performs verification in this order:
 
 10. **Parallel verification**: When VSA does not short-circuit, SLSA provenance,
     VEX, Notation signature, SBOM, SCAI, Source Track, Build Environment,
-    Vulnerability Scan, Test Result, Release, and Runtime Trace checks run
-    concurrently.
+    Vulnerability Scan, Test Result, Release, Runtime Trace, and OpenSSF
+    Scorecard checks run concurrently.
 
 11. **CEL policy evaluation**: If the policy defines CEL rules, they are
     evaluated against the combined check results. CEL rules can enforce
@@ -127,7 +128,7 @@ When a container is created, the plugin performs verification in this order:
 Latency model:
 
 - With trusted VSA: `max(fetch, GUAC query) + VSA verify`
-- Without VSA: `max(fetch, GUAC query) + max(SLSA, VEX, Notation, SBOM, SCAI, Source, BuildEnv, VulnScan, TestResult, Release, RuntimeTrace) + CEL eval`
+- Without VSA: `max(fetch, GUAC query) + max(SLSA, VEX, Notation, SBOM, SCAI, Source, BuildEnv, VulnScan, TestResult, Release, RuntimeTrace, Scorecard) + CEL eval`
 
 When GUAC is enabled, its query runs in parallel with the OCI attestation
 fetch, so it does not add latency unless the GUAC query is slower than the
@@ -348,6 +349,18 @@ package Y, which has vulnerability Z"). The two data sources have different
 failure modes and update cadences; keeping them separate with independent
 fallback policies reflects that. CEL rules combine both perspectives, for
 example: `slsa.verified && guac.transitive_vulns.size() == 0`.
+
+### OpenSSF Scorecard
+
+Verifies [OpenSSF Scorecard](https://github.com/ossf/scorecard) JSON v2 results
+carried in in-toto attestations with the provisional predicate type
+`https://scorecard.dev/result/v0.1`. Scorecard evaluates repository security
+practices such as code review, branch protection, dependency pinning, fuzzing,
+and maintained status. The plugin can enforce an aggregate minimum and exact
+per-check minimum scores, and exposes the repository, Scorecard version,
+aggregate score, and check-score map to CEL. When multiple Scorecard results
+exist, all must pass. See
+[policy.md](policy.md#openssf-scorecard-verification) for the field reference.
 
 ## Other Standards
 

@@ -286,6 +286,16 @@ var (
 
 	// ErrRuntimeTraceMaxAgeNotPositive indicates a non-positive runtimeTrace maxAge value.
 	ErrRuntimeTraceMaxAgeNotPositive = errors.New("runtimeTrace.maxAge must be positive")
+
+	// ErrScorecardMinScoreRange indicates minScore is outside the valid range.
+	ErrScorecardMinScoreRange = errors.New(
+		"scorecard.minScore must be between 0.0 and 10.0",
+	)
+
+	// ErrScorecardCheckScoreRange indicates a per-check score is outside the valid range.
+	ErrScorecardCheckScoreRange = errors.New(
+		"scorecard.checks scores must be between 0 and 10",
+	)
 )
 
 // Sections groups the verification settings that can be overridden
@@ -321,6 +331,8 @@ type Sections struct {
 	Release *ReleasePolicy `json:"release,omitempty"`
 	// RuntimeTrace contains runtime trace verification settings.
 	RuntimeTrace *RuntimeTracePolicy `json:"runtimeTrace,omitempty"`
+	// Scorecard contains OpenSSF Scorecard verification settings.
+	Scorecard *ScorecardPolicy `json:"scorecard,omitempty"`
 }
 
 // Policy defines the trust roots and per-namespace verification settings.
@@ -639,6 +651,16 @@ type RuntimeTracePolicy struct {
 	MaxAge string `json:"maxAge,omitempty"`
 	// MaxAgeDuration is the parsed form of MaxAge, resolved after validation.
 	MaxAgeDuration time.Duration `json:"-"`
+}
+
+// ScorecardPolicy contains OpenSSF Scorecard verification settings.
+type ScorecardPolicy struct {
+	// MissingPolicy controls behavior when no Scorecard attestation is found.
+	MissingPolicy types.Action `json:"missingPolicy,omitempty" jsonschema:"enum=allow,enum=warn,enum=deny"`
+	// MinScore is the minimum allowed aggregate Scorecard score (0.0-10.0).
+	MinScore *float64 `json:"minScore,omitempty"`
+	// Checks maps Scorecard check names to their minimum allowed score (0-10).
+	Checks map[string]int `json:"checks,omitempty"`
 }
 
 // ImageRule defines per-image verification overrides within a namespace policy.

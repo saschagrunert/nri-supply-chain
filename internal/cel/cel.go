@@ -116,6 +116,7 @@ func initEnvironment() (*cel.Env, error) {
 			cel.Variable("release", cel.MapType(cel.StringType, cel.DynType)),
 			cel.Variable("runtimetrace", cel.MapType(cel.StringType, cel.DynType)),
 			cel.Variable("guac", cel.MapType(cel.StringType, cel.DynType)),
+			cel.Variable("scorecard", cel.MapType(cel.StringType, cel.DynType)),
 			ext.Strings(),
 		)
 	})
@@ -345,6 +346,7 @@ func BuildVars(
 		"release":      buildReleaseVars(results[types.CheckTypeRelease]),
 		"runtimetrace": buildRuntimeTraceVars(results[types.CheckTypeRuntimeTrace]),
 		"guac":         buildGUACVars(results[types.CheckTypeGUAC]),
+		"scorecard":    buildScorecardVars(results[types.CheckTypeScorecard]),
 	}
 }
 
@@ -697,6 +699,28 @@ func buildGUACVars(result *types.CheckResult) map[string]any {
 
 	if v, ok := result.Metadata["dependencies"].([]any); ok {
 		vars["dependencies"] = v
+	}
+
+	return vars
+}
+
+func buildScorecardVars(result *types.CheckResult) map[string]any {
+	vars := map[string]any{
+		varVerified: false,
+		"repo":      "",
+		"version":   "",
+		"score":     float64(0),
+		"checks":    map[string]int64{},
+	}
+
+	if result != nil {
+		vars[varVerified] = result.Passed
+		extractStringMeta(result.Metadata, vars, "repo", "version")
+		extractFloat64Meta(result.Metadata, vars, "score")
+
+		if checks, ok := result.Metadata["checks"].(map[string]int64); ok {
+			vars["checks"] = checks
+		}
 	}
 
 	return vars

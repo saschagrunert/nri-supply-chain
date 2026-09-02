@@ -128,6 +128,13 @@ var missingPolicyAccessors = map[types.CheckType]func(*Sections) types.Action{
 
 		return ""
 	},
+	types.CheckTypeScorecard: func(s *Sections) types.Action {
+		if s.Scorecard != nil {
+			return s.Scorecard.MissingPolicy
+		}
+
+		return ""
+	},
 }
 
 // MissingPolicyFor returns the effective missing-attestation policy for
@@ -189,6 +196,11 @@ func (p *Policy) ReleaseMissingPolicy() types.Action {
 // RuntimeTraceMissingPolicy returns the effective runtime trace missing policy.
 func (p *Policy) RuntimeTraceMissingPolicy() types.Action {
 	return p.MissingPolicyFor(types.CheckTypeRuntimeTrace)
+}
+
+// ScorecardMissingPolicy returns the effective OpenSSF Scorecard missing policy.
+func (p *Policy) ScorecardMissingPolicy() types.Action {
+	return p.MissingPolicyFor(types.CheckTypeScorecard)
 }
 
 // Builders returns the trusted builders list, or nil if trust is not configured.

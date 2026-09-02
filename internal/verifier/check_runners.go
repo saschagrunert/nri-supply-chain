@@ -168,6 +168,12 @@ var checkDefs = map[types.CheckType]checkDef{
 		missingReason: reasonMissingAttestation,
 		missingDetail: "no runtime trace attestation found for image ",
 	},
+	types.CheckTypeScorecard: {
+		label:         "Scorecard",
+		missingLog:    "No OpenSSF Scorecard attestation found",
+		missingReason: reasonMissingAttestation,
+		missingDetail: "no OpenSSF Scorecard attestation found for image ",
+	},
 }
 
 func runAttestationCheck(
