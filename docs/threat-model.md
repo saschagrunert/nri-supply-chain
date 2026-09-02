@@ -27,7 +27,8 @@ The nri-supply-chain plugin is an NRI (Node Resource Interface) plugin that
 intercepts container creation events on CRI-O or containerd. Before a container
 is allowed to run, the plugin fetches and verifies supply chain attestations
 (SLSA provenance, VEX, VSA, Notation signatures, SBOMs, SCAI, Source Track,
-Build Environment, Vulnerability Scan, Test Result, Release, Runtime Trace)
+Build Environment, Vulnerability Scan, Test Result, Release, Runtime Trace,
+OpenSSF Scorecard)
 from OCI registries.
 It operates below the Kubernetes API layer, so every container on a node must
 pass verification regardless of how it was scheduled.

@@ -230,6 +230,8 @@ func (p *Policy) validateSections() []error { //nolint:funlen // one block per s
 		p.resolveRuntimeTraceDuration()
 	}
 
+	appendErr(p.validateScorecard())
+
 	return errs
 }
 

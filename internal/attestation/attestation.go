@@ -84,6 +84,9 @@ const (
 	// PredicateRuntimeTrace is the in-toto predicate type for runtime trace attestations.
 	PredicateRuntimeTrace = "https://in-toto.io/attestation/runtime-trace/v0.1"
 
+	// PredicateScorecard is the provisional in-toto predicate type for OpenSSF Scorecard results.
+	PredicateScorecard = "https://scorecard.dev/result/v0.1"
+
 	// PredicateSLSAProvenanceV02 is the in-toto predicate type for SLSA provenance v0.2.
 	PredicateSLSAProvenanceV02 = "https://slsa.dev/provenance/v0.2"
 

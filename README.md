@@ -10,10 +10,11 @@ An [NRI](https://github.com/containerd/nri) plugin for supply chain attestation
 verification at the container runtime level. It intercepts container creation
 events on [CRI-O](https://cri-o.io) or [containerd](https://containerd.io) and
 verifies SLSA provenance, VEX, VSA, Notation signatures, SBOM, SCAI,
-Source Track, Build Environment, Vulnerability Scan, and Test Result
-attestations, and CEL policy expressions before a container is allowed to run.
-It also integrates with [GUAC](https://guac.sh/) for transitive dependency
-analysis, vulnerability correlation, and OpenSSF Scorecard queries.
+Source Track, Build Environment, Vulnerability Scan, Test Result, Release,
+Runtime Trace, and OpenSSF Scorecard attestations, and CEL policy expressions
+before a container is allowed to run. It also integrates with
+[GUAC](https://guac.sh/) for transitive dependency analysis, vulnerability
+correlation, and OpenSSF Scorecard queries.
 
 Runtime-level enforcement cannot be bypassed by misconfigured admission
 webhooks, disabled policy controllers, or direct kubelet API calls. The plugin
@@ -101,6 +102,7 @@ See the [compatibility section](#compatibility) for supported versions.
    TESTRESULT     pass     test result verification passed
    RELEASE        pass     release verification passed
    RUNTIMETRACE   pass     no runtime trace attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.5.1
+   SCORECARD      pass     no OpenSSF Scorecard attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.5.1
    ```
 
    Use `--output json` for machine-readable output:
@@ -177,6 +179,12 @@ See the [compatibility section](#compatibility) for supported versions.
          "passed": true,
          "status": "pass",
          "detail": "no runtime trace attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.5.1"
+       },
+       {
+         "type": "scorecard",
+         "passed": true,
+         "status": "pass",
+         "detail": "no OpenSSF Scorecard attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.5.1"
        }
      ]
    }
@@ -269,7 +277,7 @@ flowchart TD
     GUAC["GUAC query\n(parallel)"]
     Fetch["Fetch attestations\n(OCI Referrers API +\ncosign tag fallback)"]
     VSA{"Trusted VSA?"}
-    Parallel["SLSA + VEX + Notation + SBOM + SCAI\n+ Source + BuildEnv + VulnScan\n+ TestResult + Release\n+ RuntimeTrace (parallel)"]
+    Parallel["SLSA + VEX + Notation + SBOM + SCAI\n+ Source + BuildEnv + VulnScan\n+ TestResult + Release\n+ RuntimeTrace + Scorecard (parallel)"]
     CEL["CEL policy evaluation"]
     Enforce{"Enforce / Warn"}
     Allow["Allow container"]
@@ -315,8 +323,9 @@ restarted, avoiding a cold-cache fetch penalty.
 ## Verification
 
 The plugin verifies SLSA provenance, VEX, VSA, Notation, SBOM, SCAI, Source
-Track, Build Environment, Vulnerability Scan, and Test Result attestations
-with optional CEL policy expressions and GUAC integration. It extracts
+Track, Build Environment, Vulnerability Scan, Test Result, Release, Runtime
+Trace, and OpenSSF Scorecard attestations with optional CEL policy expressions.
+It also supports GUAC integration. It extracts
 image references and digests from CRI-O or containerd NRI annotations,
 resolves missing digests via registry HEAD requests, and applies per-namespace
 policies. VSA from a trusted verifier can short-circuit all other checks.

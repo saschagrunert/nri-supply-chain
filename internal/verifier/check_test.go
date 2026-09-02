@@ -172,6 +172,28 @@ func TestBinAttestationsSLSAV02(t *testing.T) {
 	}
 }
 
+func TestBinAttestationsScorecard(t *testing.T) {
+	t.Parallel()
+
+	attestations := []attestation.VerifiedAttestation{
+		{
+			PredicateType: attestation.PredicateScorecard,
+			Payload:       []byte("scorecard-result"),
+			Digest:        benchDigest,
+		},
+	}
+
+	bins := binAttestations(context.Background(), attestations, "")
+
+	if len(bins[types.CheckTypeScorecard]) != 1 {
+		t.Fatalf("expected 1 Scorecard attestation, got %d", len(bins[types.CheckTypeScorecard]))
+	}
+
+	if string(bins[types.CheckTypeScorecard][0].Payload) != "scorecard-result" {
+		t.Errorf("unexpected Scorecard payload: %q", bins[types.CheckTypeScorecard][0].Payload)
+	}
+}
+
 func TestBinAttestationsNotation(t *testing.T) {
 	t.Parallel()
 

@@ -2165,3 +2165,68 @@ func TestEvaluateRuntimeTraceVariables(t *testing.T) {
 
 	runCELVarTests(t, types.CheckTypeRuntimeTrace, tests)
 }
+
+func TestEvaluateScorecardVariables(t *testing.T) {
+	t.Parallel()
+
+	celengine.ResetEnvironmentForTest()
+
+	tests := []celVarTest{
+		{
+			name:    "scorecard verified and aggregate threshold",
+			require: "scorecard.verified && scorecard.score >= 7.0",
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeScorecard, "ok")
+				r.Metadata = map[string]any{
+					"repo":    "github.com/example/project",
+					"version": "v5.4.0",
+					"score":   float64(8.4),
+					"checks":  map[string]int64{"Code-Review": 8},
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name: "scorecard per-check thresholds",
+			require: `scorecard.checks["Code-Review"] >= 8 && ` +
+				`scorecard.checks["Branch-Protection"] >= 9`,
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeScorecard, "ok")
+				r.Metadata = map[string]any{
+					"score": float64(8.4),
+					"checks": map[string]int64{
+						"Code-Review": 8, "Branch-Protection": 9,
+					},
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name:    "scorecard repository and version",
+			require: `scorecard.repo == "github.com/example/project" && scorecard.version == "v5.4.0"`,
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeScorecard, "ok")
+				r.Metadata = map[string]any{
+					"repo":    "github.com/example/project",
+					"version": "v5.4.0",
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name: "scorecard defaults with nil result",
+			require: `scorecard.verified == false && scorecard.repo == "" && ` +
+				`scorecard.version == "" && scorecard.score == 0.0 && size(scorecard.checks) == 0`,
+			result: nil,
+			pass:   true,
+		},
+	}
+
+	runCELVarTests(t, types.CheckTypeScorecard, tests)
+}

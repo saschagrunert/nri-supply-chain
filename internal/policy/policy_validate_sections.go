@@ -599,6 +599,44 @@ func (p *Policy) validateRuntimeTrace() error { //nolint:cyclop // validation re
 	return errors.Join(errs...)
 }
 
+const scorecardMaxScoreUpper = 10.0
+
+func (p *Policy) validateScorecard() error { //nolint:cyclop // sequential validation steps
+	if p.Scorecard == nil {
+		return nil
+	}
+
+	var errs []error
+
+	if p.Scorecard.MissingPolicy != "" {
+		err := types.ValidateAction(
+			"scorecard.missingPolicy", p.Scorecard.MissingPolicy,
+		)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("validating scorecard policy: %w", err))
+		}
+	}
+
+	if p.Scorecard.MinScore != nil &&
+		(*p.Scorecard.MinScore < 0 || *p.Scorecard.MinScore > scorecardMaxScoreUpper) {
+		errs = append(errs, ErrScorecardMinScoreRange)
+	}
+
+	for name, score := range p.Scorecard.Checks {
+		if name == "" {
+			errs = append(errs, fmt.Errorf("scorecard.checks: %w", ErrEmptyValue))
+		}
+
+		if score < 0 || score > int(scorecardMaxScoreUpper) {
+			errs = append(errs, fmt.Errorf(
+				"%w: %q has score %d", ErrScorecardCheckScoreRange, name, score,
+			))
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
 // resolveSLSADuration parses MaxAge into MaxAgeDuration. Safe to call only
 // after validateSLSA, which guarantees the duration string is valid.
 func (p *Policy) resolveSLSADuration() {
@@ -747,6 +785,7 @@ func validateRuleSections(rulePol *Policy, idx int) []error {
 		{"scai", rulePol.validateSCAI},
 		{"buildEnv", rulePol.validateBuildEnv},
 		{"release", rulePol.validateRelease},
+		{"scorecard", rulePol.validateScorecard},
 	} {
 		err := validator.fn()
 		if err != nil {
