@@ -24,7 +24,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var version = "v0.5.1"
+var version = "v0.5.2"
 
 var logLevelVar slog.LevelVar //nolint:gochecknoglobals // shared between initLogging and reload
 
