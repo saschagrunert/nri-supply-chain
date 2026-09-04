@@ -40,7 +40,7 @@ The plugin exposes Prometheus metrics at the configured
 | `nri_supply_chain_cache_failure_hits_total`        | Counter   |                               | Cache hits returning a cached failure                                                                |
 | `nri_supply_chain_build_info`                      | Gauge     | `version`, `goversion`        | Build metadata (set once at startup)                                                                 |
 | `nri_supply_chain_config_reloads_total`            | Counter   |                               | Successful config reloads                                                                            |
-| `nri_supply_chain_verification_interrupted_total`  | Counter   |                               | Verifications interrupted by context cancellation                                                    |
+| `nri_supply_chain_verification_interrupted_total`  | Counter   |                               | Verifications interrupted by context cancellation or internal errors                                 |
 | `nri_supply_chain_config_reload_errors_total`      | Counter   |                               | Failed config reload attempts                                                                        |
 | `nri_supply_chain_prewarm_duration_seconds`        | Histogram | `result`                      | Cache prewarm latency (buckets: 1, 5, 10, 30, 60, 120, 300)                                          |
 | `nri_supply_chain_mirror_fallback_total`           | Counter   | `registry`, `type`            | Mirror fallback events. `type`: `digest`, `attestation`                                              |
@@ -54,7 +54,7 @@ The plugin exposes Prometheus metrics at the configured
 | `nri_supply_chain_bundle_image_count`              | Gauge     |                               | Number of images in the active attestation bundle                                                    |
 | `nri_supply_chain_reverification_total`            | Counter   | `namespace`, `result`         | Re-verification attempts. `result`: `pass`, `degraded`, `error`                                      |
 | `nri_supply_chain_reverification_duration_seconds` | Histogram | `namespace`                   | Single container re-verification latency                                                             |
-| `nri_supply_chain_tracked_containers`              | Gauge     | `state`                       | Number of containers by verification state (`verified`, `degraded`, `throttled`)                     |
+| `nri_supply_chain_tracked_containers`              | Gauge     | `state`                       | Number of containers by verification state (`verified`, `skipped`, `degraded`, `throttled`)          |
 | `nri_supply_chain_remediation_actions_total`       | Counter   | `action`, `namespace`         | Remediation actions taken. `action`: `warn`, `throttle`, `rollback`, `recover`                       |
 | `nri_supply_chain_remediation_errors_total`        | Counter   | `action`                      | Failed remediation UpdateContainers calls. `action`: `update`, `partial`                             |
 | `nri_supply_chain_feed_files_processed_total`      | Counter   | `result`                      | Vulnerability feed files processed. `result`: `success`, `error`                                     |
@@ -193,6 +193,7 @@ application logger (see [config.md](config.md)).
 
 | Field               | Description                                                      |
 | ------------------- | ---------------------------------------------------------------- |
+| `schemaVersion`     | Audit schema version (currently `"1"`)                           |
 | `image`             | Full image reference                                             |
 | `digest`            | Image digest                                                     |
 | `namespace`         | Kubernetes namespace                                             |
@@ -215,8 +216,8 @@ application logger (see [config.md](config.md)).
   first, then falls back to cosign tag-based discovery
   (`sha256-<digest>.att`). Debug logs show which path was used.
 - **Fetch errors**: Check network connectivity from the node to the registry.
-  Set `fetch_failure_policy = "allow"` temporarily to unblock while
-  investigating.
+  Set `fetch_failure_policy = "warn"` temporarily to unblock while
+  investigating (`allow` is rejected in enforce mode).
 - **Stale cache**: Reduce `cache_ttl` or set to `0s` to disable caching during
   debugging. Send SIGHUP to reload; the cache is cleared only when
   cache-affecting config fields (`verification`, `policy_dir`, `cache_ttl`,
@@ -287,7 +288,7 @@ groups:
         expr: sum(increase(nri_supply_chain_verification_interrupted_total[5m])) > 0
         for: 5m
         annotations:
-          summary: Verifications are being interrupted by context cancellation.
+          summary: Verifications are being interrupted by context cancellation or internal errors.
 
       - alert: HighVerificationLatency
         expr: |

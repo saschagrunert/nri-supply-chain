@@ -30,6 +30,8 @@ type VerificationState int
 const (
 	// StateVerified means the container has passed verification.
 	StateVerified VerificationState = iota
+	// StateSkipped means verification was skipped (e.g. missing annotations).
+	StateSkipped
 	// StateDegraded means re-verification produced a worse result than the
 	// original. In warn mode, only logging and metrics are emitted.
 	StateDegraded
@@ -43,6 +45,8 @@ func (s VerificationState) String() string {
 	switch s {
 	case StateVerified:
 		return "verified"
+	case StateSkipped:
+		return "skipped"
 	case StateDegraded:
 		return "degraded"
 	case StateThrottled:
@@ -68,6 +72,7 @@ type containerState struct {
 	originalResources  *api.LinuxResources
 	purls              []string
 	recoveredOnRestart bool
+	consecutiveErrors  int
 }
 
 // containerRegistry is a typed concurrent map from container ID to

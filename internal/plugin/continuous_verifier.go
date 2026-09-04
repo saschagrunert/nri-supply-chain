@@ -52,6 +52,14 @@ type containerForReverify struct {
 // RunContinuousVerifier starts the background re-verification loop. It blocks
 // until ctx is cancelled. Start in the errgroup alongside nriStub.Run.
 func (p *Plugin) RunContinuousVerifier(ctx context.Context, interval time.Duration) {
+	if !p.continuousVerifierStarted.CompareAndSwap(false, true) {
+		slog.WarnContext(ctx, "Continuous verifier already running, ignoring duplicate call")
+
+		return
+	}
+
+	defer p.continuousVerifierStarted.Store(false)
+
 	slog.InfoContext(ctx, "Continuous verifier waiting for prewarm", "interval", interval)
 
 	select {
@@ -188,16 +196,14 @@ func (p *Plugin) reverifyContainer(
 	p.metrics.ReverificationDuration.WithLabelValues(target.namespace).Observe(duration)
 
 	if err != nil {
-		slog.WarnContext(ctx, "Re-verification error",
-			"container", target.id,
-			"image", target.imageRef,
-			"error", err,
-		)
-
-		p.metrics.ReverificationTotal.WithLabelValues(target.namespace, "error").Inc()
+		p.handleReverifyError(ctx, target, err)
 
 		return nil
 	}
+
+	p.containers.UpdateState(target.id, func(cState *containerState) {
+		cState.consecutiveErrors = 0
+	})
 
 	degraded := !result.Allowed
 	for i := range result.CheckResults {
@@ -216,6 +222,33 @@ func (p *Plugin) reverifyContainer(
 	p.metrics.ReverificationTotal.WithLabelValues(target.namespace, resultLabel).Inc()
 
 	return p.applyStateTransition(ctx, target, result, degraded, trigger, mode, feedPURLs)
+}
+
+func (p *Plugin) handleReverifyError(
+	ctx context.Context, target *containerForReverify, err error,
+) {
+	slog.WarnContext(ctx, "Re-verification error",
+		"container", target.id,
+		"image", target.imageRef,
+		"error", err,
+	)
+
+	p.metrics.ReverificationTotal.WithLabelValues(target.namespace, "error").Inc()
+
+	p.containers.UpdateState(target.id, func(cState *containerState) {
+		cState.consecutiveErrors++
+
+		if cState.consecutiveErrors >= consecutiveErrorThreshold &&
+			(cState.state == StateVerified || cState.state == StateSkipped) {
+			cState.state = StateDegraded
+
+			slog.WarnContext(ctx, "Container degraded after consecutive re-verification errors",
+				"container", target.id,
+				"image", target.imageRef,
+				"errors", cState.consecutiveErrors,
+			)
+		}
+	})
 }
 
 //nolint:cyclop,funlen // state machine with three transitions and mode-gated remediation
@@ -241,7 +274,16 @@ func (p *Plugin) applyStateTransition(
 		prevState := cState.state
 
 		switch {
-		case !degraded && prevState != StateVerified:
+		case !degraded && prevState == StateSkipped:
+			cState.state = StateVerified
+
+			slog.InfoContext(ctx, "Container verification passed",
+				"container", target.id,
+				"image", target.imageRef,
+				"namespace", target.namespace,
+			)
+
+		case !degraded && prevState != StateVerified && prevState != StateSkipped:
 			cState.state = StateVerified
 
 			slog.InfoContext(ctx, "Container verification recovered",
@@ -264,7 +306,7 @@ func (p *Plugin) applyStateTransition(
 				).Inc()
 			}
 
-		case degraded && prevState == StateVerified:
+		case degraded && (prevState == StateVerified || prevState == StateSkipped):
 			cState.state = StateDegraded
 			cState.lastTriggerHash = triggerHash
 
@@ -455,6 +497,9 @@ func (p *Plugin) updateTrackedContainerGauge() {
 	p.metrics.TrackedContainers.WithLabelValues("verified").Set(
 		float64(counts[StateVerified]),
 	)
+	p.metrics.TrackedContainers.WithLabelValues("skipped").Set(
+		float64(counts[StateSkipped]),
+	)
 	p.metrics.TrackedContainers.WithLabelValues("degraded").Set(
 		float64(counts[StateDegraded]),
 	)
@@ -520,4 +565,5 @@ const (
 	minCPUQuotaMicros         = 1000
 	minCPUShares              = 2
 	minMemoryLimitBytes       = 4 << 20 // 4 MiB
+	consecutiveErrorThreshold = 3
 )

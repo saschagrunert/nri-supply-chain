@@ -43,6 +43,7 @@ func TestContainerRegistryStateCounts(t *testing.T) {
 
 	reg.Store("v1", &containerState{state: StateVerified})  //nolint:exhaustruct_v5 // test
 	reg.Store("v2", &containerState{state: StateVerified})  //nolint:exhaustruct_v5 // test
+	reg.Store("s1", &containerState{state: StateSkipped})   //nolint:exhaustruct_v5 // test
 	reg.Store("d1", &containerState{state: StateDegraded})  //nolint:exhaustruct_v5 // test
 	reg.Store("t1", &containerState{state: StateThrottled}) //nolint:exhaustruct_v5 // test
 
@@ -50,6 +51,10 @@ func TestContainerRegistryStateCounts(t *testing.T) {
 
 	if counts[StateVerified] != 2 {
 		t.Errorf("expected 2 verified, got %d", counts[StateVerified])
+	}
+
+	if counts[StateSkipped] != 1 {
+		t.Errorf("expected 1 skipped, got %d", counts[StateSkipped])
 	}
 
 	if counts[StateDegraded] != 1 {

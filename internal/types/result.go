@@ -70,6 +70,9 @@ const (
 	CheckTypeGUAC CheckType = "guac"
 	// CheckTypeScorecard is the OpenSSF Scorecard check type.
 	CheckTypeScorecard CheckType = "scorecard"
+	// CheckTypeInternal represents internal verification errors
+	// (context cancellation, singleflight failures, panics).
+	CheckTypeInternal CheckType = "internal"
 )
 
 // AttestationCheckTypes lists all check types that correspond to

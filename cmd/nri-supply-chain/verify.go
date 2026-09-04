@@ -244,7 +244,8 @@ func withVerifier(
 ) int {
 	if outputFormat != outputFormatTable && outputFormat != outputFormatJSON &&
 		outputFormat != outputFormatQuiet {
-		slog.Error("Invalid output format", "format", outputFormat)
+		slog.Error("Invalid output format, valid options are: table, json, quiet",
+			"format", outputFormat)
 
 		return exitError
 	}

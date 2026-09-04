@@ -1468,6 +1468,7 @@ func TestVerificationStateString(t *testing.T) {
 		want  string
 	}{
 		{plugin.StateVerified, "verified"},
+		{plugin.StateSkipped, "skipped"},
 		{plugin.StateDegraded, "degraded"},
 		{plugin.StateThrottled, "throttled"},
 		{plugin.VerificationState(99), "unknown"},
@@ -1814,6 +1815,299 @@ func TestCaptureLinuxResources(t *testing.T) {
 			t.Error("expected deep copy, not pointer alias")
 		}
 	})
+}
+
+func TestDuplicateContinuousVerifierBlocked(t *testing.T) {
+	t.Parallel()
+
+	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+		result: &types.Result{
+			Allowed: true, Reason: "", CheckResults: nil,
+		},
+	}
+	plug := newCVTestPlugin(verif)
+	plug.SetRemediationMode(config.RemediationModeWarn)
+
+	plug.ExportSetPrewarmDone(nil)
+	plug.ExportPrewarmCache(context.Background(), nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done1 := make(chan struct{})
+
+	go func() {
+		plug.RunContinuousVerifier(ctx, time.Hour)
+		close(done1)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+
+	done2 := make(chan struct{})
+
+	go func() {
+		plug.RunContinuousVerifier(ctx, time.Hour)
+		close(done2)
+	}()
+
+	// The second call should return immediately.
+	select {
+	case <-done2:
+	case <-time.After(time.Second):
+		t.Fatal("duplicate RunContinuousVerifier did not return")
+	}
+
+	cancel()
+	<-done1
+}
+
+func TestConsecutiveErrorsDegradeFromVerified(t *testing.T) {
+	t.Parallel()
+
+	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+		err: errVerifyFailed,
+	}
+	plug := newCVTestPlugin(verif)
+	plug.SetRemediationMode(config.RemediationModeWarn)
+
+	plug.ExportStoreContainerTime("ctr-consec", time.Now())
+
+	plug.ExportSetPrewarmDone(nil)
+	plug.ExportPrewarmCache(context.Background(), nil)
+
+	// Run 3 cycles to hit the consecutiveErrorThreshold.
+	for range 3 {
+		ctx, cancel := context.WithCancel(context.Background())
+
+		done := make(chan struct{})
+
+		go func() {
+			plug.RunContinuousVerifier(ctx, time.Hour)
+			close(done)
+		}()
+
+		time.Sleep(50 * time.Millisecond)
+		plug.TriggerReverify()
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+		<-done
+	}
+
+	state, found := plug.ExportGetContainerState("ctr-consec")
+	if !found {
+		t.Fatal("expected container in registry")
+	}
+
+	if state.State != plugin.StateDegraded {
+		t.Errorf("expected StateDegraded after 3 consecutive errors, got %v", state.State)
+	}
+}
+
+func TestConsecutiveErrorsDegradeFromSkipped(t *testing.T) {
+	t.Parallel()
+
+	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+		err: errVerifyFailed,
+	}
+	plug := newCVTestPlugin(verif)
+	plug.SetRemediationMode(config.RemediationModeWarn)
+
+	plug.ExportStoreContainerInStateSimple(
+		"ctr-skip-err", "img:latest", "sha256:abc", plugin.StateSkipped,
+	)
+
+	plug.ExportSetPrewarmDone(nil)
+	plug.ExportPrewarmCache(context.Background(), nil)
+
+	for range 3 {
+		ctx, cancel := context.WithCancel(context.Background())
+
+		done := make(chan struct{})
+
+		go func() {
+			plug.RunContinuousVerifier(ctx, time.Hour)
+			close(done)
+		}()
+
+		time.Sleep(50 * time.Millisecond)
+		plug.TriggerReverify()
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+		<-done
+	}
+
+	state, found := plug.ExportGetContainerState("ctr-skip-err")
+	if !found {
+		t.Fatal("expected container in registry")
+	}
+
+	if state.State != plugin.StateDegraded {
+		t.Errorf("expected StateDegraded after 3 errors from Skipped, got %v", state.State)
+	}
+}
+
+func TestConsecutiveErrorsResetOnSuccess(t *testing.T) {
+	t.Parallel()
+
+	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+		err: errVerifyFailed,
+	}
+	plug := newCVTestPlugin(verif)
+	plug.SetRemediationMode(config.RemediationModeWarn)
+
+	plug.ExportStoreContainerTime("ctr-reset", time.Now())
+
+	plug.ExportSetPrewarmDone(nil)
+	plug.ExportPrewarmCache(context.Background(), nil)
+
+	// Run 2 error cycles (below threshold).
+	for range 2 {
+		ctx, cancel := context.WithCancel(context.Background())
+
+		done := make(chan struct{})
+
+		go func() {
+			plug.RunContinuousVerifier(ctx, time.Hour)
+			close(done)
+		}()
+
+		time.Sleep(50 * time.Millisecond)
+		plug.TriggerReverify()
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+		<-done
+	}
+
+	count, found := plug.ExportGetConsecutiveErrors("ctr-reset")
+	if !found {
+		t.Fatal("expected container in registry")
+	}
+
+	if count != 2 {
+		t.Errorf("expected 2 consecutive errors, got %d", count)
+	}
+
+	// Now succeed.
+	verif.mu.Lock()
+	verif.result = &types.Result{Allowed: true, Reason: "", CheckResults: nil}
+	verif.err = nil
+	verif.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+
+	go func() {
+		plug.RunContinuousVerifier(ctx, time.Hour)
+		close(done)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	plug.TriggerReverify()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	<-done
+
+	count, found = plug.ExportGetConsecutiveErrors("ctr-reset")
+	if !found {
+		t.Fatal("expected container in registry")
+	}
+
+	if count != 0 {
+		t.Errorf("expected consecutive errors reset to 0, got %d", count)
+	}
+}
+
+func TestStateTransitionSkippedToVerified(t *testing.T) {
+	t.Parallel()
+
+	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+		result: &types.Result{
+			Allowed: true, Reason: "", CheckResults: nil,
+		},
+	}
+	plug := newCVTestPlugin(verif)
+	plug.SetRemediationMode(config.RemediationModeWarn)
+
+	plug.ExportStoreContainerInStateSimple(
+		"ctr-skipped", "img:latest", "sha256:abc", plugin.StateSkipped,
+	)
+
+	plug.ExportSetPrewarmDone(nil)
+	plug.ExportPrewarmCache(context.Background(), nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+
+	go func() {
+		plug.RunContinuousVerifier(ctx, time.Hour)
+		close(done)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	plug.TriggerReverify()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	<-done
+
+	state, found := plug.ExportGetContainerState("ctr-skipped")
+	if !found {
+		t.Fatal("expected container in registry")
+	}
+
+	if state.State != plugin.StateVerified {
+		t.Errorf("expected StateVerified after passing from Skipped, got %v", state.State)
+	}
+}
+
+func TestStateTransitionSkippedToDegraded(t *testing.T) {
+	t.Parallel()
+
+	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+		result: &types.Result{
+			Allowed: false, Reason: testDegradedReason,
+			CheckResults: []types.CheckResult{
+				{ //nolint:exhaustruct_v5 // zero-value fields intentional
+					Type:   types.CheckTypeSBOM,
+					Passed: false,
+					Status: testFailStatus,
+				},
+			},
+		},
+	}
+	plug := newCVTestPlugin(verif)
+	plug.SetRemediationMode(config.RemediationModeWarn)
+
+	plug.ExportStoreContainerInStateSimple(
+		"ctr-skip-deg", "img:latest", "sha256:abc", plugin.StateSkipped,
+	)
+
+	plug.ExportSetPrewarmDone(nil)
+	plug.ExportPrewarmCache(context.Background(), nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+
+	go func() {
+		plug.RunContinuousVerifier(ctx, time.Hour)
+		close(done)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	plug.TriggerReverify()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	<-done
+
+	state, found := plug.ExportGetContainerState("ctr-skip-deg")
+	if !found {
+		t.Fatal("expected container in registry")
+	}
+
+	if state.State != plugin.StateDegraded {
+		t.Errorf("expected StateDegraded from Skipped, got %v", state.State)
+	}
 }
 
 func TestThrottlePercentsClampsUpperBound(t *testing.T) {

@@ -317,9 +317,14 @@ func (c *Client) QueryScorecard(
 
 	defer resp.Body.Close() //nolint:errcheck // response body is fully read below
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize+1))
 	if err != nil {
 		return nil, fmt.Errorf("%w: reading GraphQL response: %w", ErrGUACQueryFailed, err)
+	}
+
+	if int64(len(body)) > maxResponseSize {
+		return nil, fmt.Errorf("%w: GraphQL response exceeds %d bytes",
+			ErrGUACQueryFailed, maxResponseSize)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -380,9 +385,14 @@ func (c *Client) doGet(ctx context.Context, reqURL string) ([]byte, error) {
 
 	defer resp.Body.Close() //nolint:errcheck // response body is fully read below
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize+1))
 	if err != nil {
 		return nil, fmt.Errorf("%w: reading response: %w", ErrGUACQueryFailed, err)
+	}
+
+	if int64(len(body)) > maxResponseSize {
+		return nil, fmt.Errorf("%w: response exceeds %d bytes",
+			ErrGUACQueryFailed, maxResponseSize)
 	}
 
 	if resp.StatusCode != http.StatusOK {
