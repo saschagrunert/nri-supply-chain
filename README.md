@@ -77,13 +77,13 @@ See the [compatibility section](#compatibility) for supported versions.
 
    ```console
    nri-supply-chain --config config.toml \
-     verify ghcr.io/saschagrunert/nri-supply-chain:0.5.1
+     verify ghcr.io/saschagrunert/nri-supply-chain:0.5.2
    ```
 
    The default output is a colored table:
 
    ```text
-   Image: ghcr.io/saschagrunert/nri-supply-chain:0.5.1
+   Image: ghcr.io/saschagrunert/nri-supply-chain:0.5.2
    Digest: sha256:abc123...
    Namespace: default
    Policy: /etc/nri-supply-chain/policies/default.json
@@ -93,23 +93,23 @@ See the [compatibility section](#compatibility) for supported versions.
    TYPE           STATUS   DETAIL
    SLSA           pass     SLSA provenance verified
    VEX            pass     VEX verification passed
-   NOTATION       pass     no Notation signature found for image ghcr.io/saschagrunert/nri-supply-chain:0.5.1
+   NOTATION       pass     no Notation signature found for image ghcr.io/saschagrunert/nri-supply-chain:0.5.2
    SBOM           pass     SBOM verification passed
-   SCAI           pass     no SCAI attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.5.1
+   SCAI           pass     no SCAI attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.5.2
    SOURCE         pass     source verification passed
    BUILDENV       pass     build environment verification passed
    VULNSCAN       pass     vulnerability scan verification passed
    TESTRESULT     pass     test result verification passed
    RELEASE        pass     release verification passed
-   RUNTIMETRACE   pass     no runtime trace attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.5.1
-   SCORECARD      pass     no OpenSSF Scorecard attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.5.1
+   RUNTIMETRACE   pass     no runtime trace attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.5.2
+   SCORECARD      pass     no OpenSSF Scorecard attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.5.2
    ```
 
    Use `--output json` for machine-readable output:
 
    ```json
    {
-     "image": "ghcr.io/saschagrunert/nri-supply-chain:0.5.1",
+     "image": "ghcr.io/saschagrunert/nri-supply-chain:0.5.2",
      "digest": "sha256:abc123...",
      "namespace": "default",
      "allowed": true,
@@ -130,7 +130,7 @@ See the [compatibility section](#compatibility) for supported versions.
          "type": "notation",
          "passed": true,
          "status": "pass",
-         "detail": "no Notation signature found for image ghcr.io/saschagrunert/nri-supply-chain:0.5.1"
+         "detail": "no Notation signature found for image ghcr.io/saschagrunert/nri-supply-chain:0.5.2"
        },
        {
          "type": "sbom",
@@ -142,7 +142,7 @@ See the [compatibility section](#compatibility) for supported versions.
          "type": "scai",
          "passed": true,
          "status": "pass",
-         "detail": "no SCAI attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.5.1"
+         "detail": "no SCAI attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.5.2"
        },
        {
          "type": "source",
@@ -178,13 +178,13 @@ See the [compatibility section](#compatibility) for supported versions.
          "type": "runtimetrace",
          "passed": true,
          "status": "pass",
-         "detail": "no runtime trace attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.5.1"
+         "detail": "no runtime trace attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.5.2"
        },
        {
          "type": "scorecard",
          "passed": true,
          "status": "pass",
-         "detail": "no OpenSSF Scorecard attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.5.1"
+         "detail": "no OpenSSF Scorecard attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.5.2"
        }
      ]
    }
@@ -218,7 +218,7 @@ See the [compatibility section](#compatibility) for supported versions.
    With this policy the default table output becomes:
 
    ```text
-   Image: ghcr.io/saschagrunert/nri-supply-chain:0.5.1
+   Image: ghcr.io/saschagrunert/nri-supply-chain:0.5.2
    Digest: sha256:abc123...
    Namespace: default
    Policy: /etc/nri-supply-chain/policies/default.json
