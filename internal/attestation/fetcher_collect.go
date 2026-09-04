@@ -160,7 +160,7 @@ func (f *OCIFetcher) fetchBaselineSBOM( //nolint:funlen // mirrors fetchNotation
 		return VerifiedAttestation{}, false
 	}
 
-	slog.DebugContext(ctx, "Collected baseline SBOM without bundle verification",
+	slog.WarnContext(ctx, "Collected baseline SBOM without bundle verification",
 		"digest", desc.Digest.String(),
 		"size", len(data),
 	)

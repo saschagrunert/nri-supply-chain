@@ -389,10 +389,11 @@ func (c *Config) validateFetchAndCache() error {
 	}
 
 	if c.Verification == ModeEnforce && c.FetchFailurePolicy == types.ActionAllow {
-		slog.Warn(
-			"fetch_failure_policy \"allow\" in enforce mode lets unverified " +
-				"containers through on fetch errors; consider \"deny\" or \"warn\"",
-		)
+		errs = append(errs, fmt.Errorf(
+			"%w: fetch_failure_policy \"allow\" in enforce mode would let "+
+				"unverified containers through on fetch errors",
+			ErrInvalidVerificationMode,
+		))
 	}
 
 	errs = append(errs, c.validateTimeoutFields()...)

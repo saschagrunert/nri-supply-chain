@@ -97,7 +97,8 @@ func runEffectivePolicy(
 	writer io.Writer, namespace, image, outputFormat string, cfg *config.Config,
 ) int {
 	if outputFormat != outputFormatTable && outputFormat != outputFormatJSON {
-		slog.Error("Invalid output format", "format", outputFormat)
+		slog.Error("Invalid output format, valid options are: table, json",
+			"format", outputFormat)
 
 		return exitError
 	}

@@ -159,6 +159,12 @@ func buildCheckResult(queryResult *QueryResult) *types.CheckResult {
 			err = fmt.Errorf("%w: %w", errGUACPartialFailure, queryResult.Err)
 		}
 
+		for k := range meta {
+			if k != "available" {
+				delete(meta, k)
+			}
+		}
+
 		result := types.SoftFailResult(types.CheckTypeGUAC,
 			"GUAC queries partially failed", err)
 		result.Metadata = meta

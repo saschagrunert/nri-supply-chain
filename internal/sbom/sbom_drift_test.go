@@ -484,7 +484,7 @@ func TestChecksumsEqual(t *testing.T) {
 			name:     "different algorithm sets (non-overlapping)",
 			left:     map[string]string{testAlgoSHA256: testHashABC},
 			right:    map[string]string{testAlgoSHA512: testHashDef},
-			expected: true,
+			expected: false,
 		},
 		{
 			name:     "overlapping algorithm mismatch with different lengths",
@@ -496,7 +496,7 @@ func TestChecksumsEqual(t *testing.T) {
 			name:     "overlapping algorithm match with different lengths",
 			left:     map[string]string{testAlgoSHA256: testHashABC, testAlgoSHA512: testHashDef},
 			right:    map[string]string{testAlgoSHA256: testHashABC},
-			expected: true,
+			expected: false,
 		},
 		{
 			name:     "baseline has checksums but current has none (stripping)",

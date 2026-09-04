@@ -505,6 +505,8 @@ func handleVerifyError(
 	imageRef, digest, namespace string, err error,
 	info *auditInfo,
 ) (*types.Result, error) {
+	state.metrics.VerificationInterruptedTotal.Inc()
+
 	if mode != config.ModeEnforce {
 		slog.WarnContext(
 			ctx, "Verification error (non-enforce mode, allowing)",
@@ -513,10 +515,19 @@ func handleVerifyError(
 			"error", err,
 		)
 
-		return allowResult(
+		result := allowResult(
 			ctx, state.auditLogger, imageRef, digest,
 			namespace, fmt.Sprintf("verification error: %s", err), info,
-		), nil
+		)
+		//nolint:exhaustruct_v5 // zero-value fields intentional
+		result.CheckResults = append(result.CheckResults, types.CheckResult{
+			Type:   types.CheckTypeInternal,
+			Passed: true,
+			Status: types.StatusWarn,
+			Detail: fmt.Sprintf("verification error (allowed in %s mode): %s", mode, err),
+		})
+
+		return result, nil
 	}
 
 	return nil, fmt.Errorf("verification: %w", err)
@@ -555,6 +566,9 @@ func (v *Verifier) verifyOnce(
 	info *auditInfo,
 ) (*types.Result, error) {
 	flightKey := digest + "\x00" + cacheNS
+	if info != nil && info.podServiceAccount != "" {
+		flightKey += "\x00" + info.podServiceAccount
+	}
 
 	flightCh := v.inflight.DoChan(flightKey, func() (any, error) {
 		// Add(1) is inside the closure so only the executing goroutine
@@ -591,8 +605,6 @@ func (v *Verifier) verifyOnce(
 
 	select {
 	case <-ctx.Done():
-		state.metrics.VerificationInterruptedTotal.Inc()
-
 		return nil, fmt.Errorf("verification interrupted: %w", ctx.Err())
 	case res := <-flightCh:
 		return handleFlightResult(ctx, state, res, imageRef, digest, namespace, info)

@@ -36,6 +36,7 @@ type auditInfo struct {
 
 // auditEvent defines the structured schema for supply chain audit log entries.
 type auditEvent struct {
+	SchemaVersion     string `json:"schemaVersion"`
 	Image             string `json:"image"`
 	Digest            string `json:"digest"`
 	Namespace         string `json:"namespace"`
@@ -51,8 +52,11 @@ type auditEvent struct {
 	VerificationMode  string `json:"verificationMode,omitempty"`
 }
 
+const auditSchemaVersion = "1"
+
 func (e *auditEvent) logAttrs() []any {
 	attrs := []any{
+		"schemaVersion", e.SchemaVersion,
 		"image", e.Image,
 		"digest", e.Digest,
 		"namespace", e.Namespace,
@@ -113,13 +117,14 @@ func logResult(
 ) {
 	for _, checkResult := range result.CheckResults {
 		event := &auditEvent{ //nolint:exhaustruct_v5 // remaining fields set by applyAuditInfo
-			Image:     imageRef,
-			Digest:    digest,
-			Namespace: namespace,
-			Allowed:   result.Allowed,
-			Check:     string(checkResult.Type),
-			Status:    string(checkResult.Status),
-			Detail:    checkResult.Detail,
+			SchemaVersion: auditSchemaVersion,
+			Image:         imageRef,
+			Digest:        digest,
+			Namespace:     namespace,
+			Allowed:       result.Allowed,
+			Check:         string(checkResult.Type),
+			Status:        string(checkResult.Status),
+			Detail:        checkResult.Detail,
 		}
 		applyAuditInfo(event, info)
 		logger.DebugContext(ctx, auditMessage, event.logAttrs()...)
@@ -139,12 +144,13 @@ func logAuditDecision(
 	info *auditInfo,
 ) {
 	event := &auditEvent{ //nolint:exhaustruct_v5 // remaining fields set by applyAuditInfo
-		Image:     imageRef,
-		Digest:    digest,
-		Namespace: namespace,
-		Allowed:   decision == "allowed",
-		Decision:  decision,
-		Reason:    reason,
+		SchemaVersion: auditSchemaVersion,
+		Image:         imageRef,
+		Digest:        digest,
+		Namespace:     namespace,
+		Allowed:       decision == "allowed",
+		Decision:      decision,
+		Reason:        reason,
 	}
 	applyAuditInfo(event, info)
 	logger.InfoContext(ctx, auditMessage, event.logAttrs()...)

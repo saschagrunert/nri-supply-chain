@@ -250,3 +250,29 @@ func (p *Plugin) ExportStoreContainerInState(
 	}
 	p.containers.Store(containerID, cs)
 }
+
+// ExportStoreContainerInStateSimple stores a container in a specific
+// verification state for testing state transitions.
+func (p *Plugin) ExportStoreContainerInStateSimple(
+	containerID, imageRef, digest string,
+	state VerificationState,
+) {
+	cs := &containerState{ //nolint:exhaustruct_v5 // test helper
+		imageRef:  imageRef,
+		digest:    digest,
+		createdAt: time.Now(),
+		state:     state,
+	}
+	p.containers.Store(containerID, cs)
+}
+
+// ExportGetConsecutiveErrors returns the consecutive error count for testing.
+func (p *Plugin) ExportGetConsecutiveErrors(containerID string) (int, bool) {
+	var count int
+
+	found := p.containers.ReadState(containerID, func(cs containerState) {
+		count = cs.consecutiveErrors
+	})
+
+	return count, found
+}

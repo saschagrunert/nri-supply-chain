@@ -79,17 +79,12 @@ write_plugin_config_with_fetch_policy() {
 	EOF
 }
 
-@test "fetch_failure_policy allow admits pod on network error" {
+@test "fetch_failure_policy allow rejected in enforce mode" {
 	stop_plugin
 	write_plugin_config_with_fetch_policy "enforce" "allow"
-	start_plugin
-
-	local ref
-	ref=$(fetch_image_ref)
-
-	run_pod "fetch-allow" "$ref" --image-pull-policy=IfNotPresent
-	wait_for_pod_status "fetch-allow" "Running"
-	assert_pod_verdict "fetch-allow" "verified"
+	LOG_OFFSET=0
+	run ! start_plugin
+	assert_log_contains "fetch_failure_policy"
 }
 
 @test "fetch_failure_policy warn admits pod with warning on network error" {
@@ -140,7 +135,7 @@ write_plugin_config_with_fetch_policy() {
 
 @test "fetch error increments fetch_errors_total metric" {
 	stop_plugin
-	write_plugin_config_with_fetch_policy "enforce" "allow"
+	write_plugin_config_with_fetch_policy "enforce" "warn"
 	start_plugin
 
 	local ref

@@ -54,8 +54,9 @@ func applyEnforcement(
 }
 
 func handleFetchError(
-	ctx context.Context, cfg *config.Config, met *metrics.Metrics,
+	ctx context.Context, met *metrics.Metrics,
 	fetchErr error, imageRef, host string,
+	fetchFailurePolicy types.Action,
 ) *types.Result {
 	met.FetchErrorsTotal.WithLabelValues("attestation", host).Inc()
 
@@ -68,7 +69,7 @@ func handleFetchError(
 		detail += " (circuit breaker open)"
 	}
 
-	checkResult := handleMissingAttestation(cfg.FetchFailurePolicy, types.CheckTypeFetch, detail)
+	checkResult := handleMissingAttestation(fetchFailurePolicy, types.CheckTypeFetch, detail)
 
 	return &types.Result{
 		Allowed:      checkResult.Passed,

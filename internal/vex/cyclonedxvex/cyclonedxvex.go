@@ -82,6 +82,12 @@ func classifyVulnerabilities(
 		}
 
 		if vuln.Analysis == nil || vuln.Analysis.State == "" {
+			slog.Warn("CycloneDX vulnerability has no analysis state, treating as affected",
+				"vulnerability", vulnerabilityName(vuln),
+			)
+
+			affectedNames = append(affectedNames, vulnerabilityName(vuln))
+
 			continue
 		}
 

@@ -101,28 +101,29 @@ const AnnotationServiceAccountPersist = "supply-chain.nri/service-account"
 // Plugin implements the NRI CreateContainer, RemoveContainer, and Configure
 // hooks for supply chain attestation verification.
 type Plugin struct {
-	verifier             ImageVerifier
-	metrics              *metrics.Metrics
-	configPath           string
-	connected            atomic.Bool
-	digestResolver       DigestResolveFunc
-	fetchTimeout         atomic.Int64 // updated via SetFetchTimeout on reload
-	digestResolveTimeout atomic.Int64 // updated via SetDigestResolveTimeout on reload
-	prewarmDone          func()
-	prewarmDoneCh        chan struct{} // closed when prewarmCache first completes
-	prewarmDoneOnce      sync.Once
-	prewarmMu            sync.Mutex
-	prewarmCancel        context.CancelFunc
-	lastPrewarmImages    []prewarmImage // last known running images, for re-warming after reload
-	transportCache       atomic.Pointer[registry.TransportCache]
-	containers           *containerRegistry
-	reverifyTrigger      chan struct{} // buffered(1); signals on-demand re-verify
-	feedTrigger          chan []string // buffered(1); carries feed PURLs for filtered re-verify
-	remediationMode      atomic.Pointer[config.RemediationMode]
-	remediationConfig    atomic.Pointer[config.RemediationConfig]
-	stubUpdater          StubUpdater
-	stubMu               sync.RWMutex
-	feedMu               sync.Mutex
+	verifier                  ImageVerifier
+	metrics                   *metrics.Metrics
+	configPath                string
+	connected                 atomic.Bool
+	digestResolver            DigestResolveFunc
+	fetchTimeout              atomic.Int64 // updated via SetFetchTimeout on reload
+	digestResolveTimeout      atomic.Int64 // updated via SetDigestResolveTimeout on reload
+	prewarmDone               func()
+	prewarmDoneCh             chan struct{} // closed when prewarmCache first completes
+	prewarmDoneOnce           sync.Once
+	prewarmMu                 sync.Mutex
+	prewarmCancel             context.CancelFunc
+	lastPrewarmImages         []prewarmImage // last known running images, for re-warming after reload
+	transportCache            atomic.Pointer[registry.TransportCache]
+	containers                *containerRegistry
+	reverifyTrigger           chan struct{} // buffered(1); signals on-demand re-verify
+	feedTrigger               chan []string // buffered(1); carries feed PURLs for filtered re-verify
+	remediationMode           atomic.Pointer[config.RemediationMode]
+	remediationConfig         atomic.Pointer[config.RemediationConfig]
+	stubUpdater               StubUpdater
+	stubMu                    sync.RWMutex
+	feedMu                    sync.Mutex
+	continuousVerifierStarted atomic.Bool
 }
 
 // New creates a new Plugin with the given verifier, metrics, and config file path.
@@ -362,7 +363,7 @@ func (p *Plugin) CreateContainer(
 					namespace:      namespace,
 					serviceAccount: serviceAccount,
 					createdAt:      createdAt,
-					state:          StateVerified,
+					state:          StateSkipped,
 				},
 			)
 

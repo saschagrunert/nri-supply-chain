@@ -108,6 +108,7 @@ config:
   extraConfig: ""
 
 # Used only when config.policy.source is local. Keys must end in .json.
+# IMPORTANT: Replace "myorg" with your organization before deploying.
 policies:
   default.json: |
     {

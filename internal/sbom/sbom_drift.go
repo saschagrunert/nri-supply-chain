@@ -16,6 +16,7 @@ package sbom
 
 import (
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 
@@ -87,10 +88,19 @@ func computeDrift(baseline, current []sbomPackage) driftResult {
 func indexByPURL(pkgs []sbomPackage) map[string]sbomPackage {
 	index := make(map[string]sbomPackage, len(pkgs))
 
+	skipped := 0
+
 	for idx := range pkgs {
 		if pkgs[idx].PURL != "" {
 			index[pkgs[idx].PURL] = pkgs[idx]
+		} else {
+			skipped++
 		}
+	}
+
+	if skipped > 0 {
+		slog.Warn("Packages without PURL excluded from drift tracking",
+			"skipped", skipped, "total", len(pkgs))
 	}
 
 	return index
@@ -127,8 +137,18 @@ func checksumsEqual(baseline, current map[string]string) bool {
 		return false
 	}
 
+	// Flag when current has fewer algorithms than baseline (partial stripping).
+	if len(current) < len(baseline) {
+		return false
+	}
+
 	for algo, baseVal := range baseline {
-		if curVal, found := current[algo]; found && !strings.EqualFold(baseVal, curVal) {
+		curVal, found := current[algo]
+		if !found {
+			return false
+		}
+
+		if !strings.EqualFold(baseVal, curVal) {
 			return false
 		}
 	}

@@ -3330,7 +3330,7 @@ allowlist_digests = [
 func TestConfigValidateFetchFailurePolicyAllowInEnforceMode(t *testing.T) {
 	t.Parallel()
 
-	t.Run("allow accepted in enforce mode with warning", func(t *testing.T) {
+	t.Run("allow rejected in enforce mode", func(t *testing.T) {
 		t.Parallel()
 
 		cfg := config.DefaultConfig()
@@ -3338,7 +3338,7 @@ func TestConfigValidateFetchFailurePolicyAllowInEnforceMode(t *testing.T) {
 		cfg.FetchFailurePolicy = types.ActionAllow
 
 		err := cfg.Validate()
-		testutil.AssertNoError(t, err)
+		testutil.AssertErrorIs(t, err, config.ErrInvalidVerificationMode)
 	})
 
 	t.Run("allow accepted in warn mode", func(t *testing.T) {

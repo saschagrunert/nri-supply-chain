@@ -80,20 +80,24 @@ func runChecks(
 	host := registryHost(parsedRef, parseErr, imageRef)
 	breaker := registryBreakerByHost(state.circuitBreakers, host)
 
+	fetchPolicy := state.config.FetchFailurePolicy
+
 	if breaker != nil && !breaker.Allow() {
 		return handleFetchError(
-			ctx, state.config, state.metrics,
+			ctx, state.metrics,
 			fmt.Errorf("%w: %s", ErrCircuitBreakerOpen, imageRef),
-			imageRef, host,
+			imageRef, host, fetchPolicy,
 		)
 	}
 
 	if state.fetchSem != nil {
 		releaseSlots, semErr := acquireFetchSlots(ctx, state, host)
 		if semErr != nil {
-			recordBreakerFailure(ctx, breaker, state.metrics, host, state.config.FetchFailurePolicy)
+			recordBreakerFailure(ctx, breaker, state.metrics, host, fetchPolicy)
 
-			return handleFetchError(ctx, state.config, state.metrics, semErr, imageRef, host)
+			return handleFetchError(
+				ctx, state.metrics, semErr, imageRef, host, fetchPolicy,
+			)
 		}
 
 		defer releaseSlots()
@@ -105,9 +109,11 @@ func runChecks(
 		ctx, state, imageRef, digest, indexDigest, pol, host, parsedRef,
 	)
 	if fetchErr != nil {
-		recordBreakerFailure(ctx, breaker, state.metrics, host, state.config.FetchFailurePolicy)
+		recordBreakerFailure(ctx, breaker, state.metrics, host, fetchPolicy)
 
-		return handleFetchError(ctx, state.config, state.metrics, fetchErr, imageRef, host)
+		return handleFetchError(
+			ctx, state.metrics, fetchErr, imageRef, host, fetchPolicy,
+		)
 	}
 
 	if breaker != nil {

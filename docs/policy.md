@@ -1528,7 +1528,7 @@ policy settings apply to both formats.
 - `not_affected`, `false_positive`, `resolved`, `resolved_with_pedigree`: pass
 - `exploitable`: fail
 - `in_triage`: controlled by `underInvestigationPolicy` (default: allow)
-- Missing or empty `analysis`: skipped (no VEX assertion)
+- Missing or empty `analysis`: treated as affected
 
 CycloneDX BOMs without a `vulnerabilities` section are treated as pure SBOMs
 with no VEX data (pass, not an error).

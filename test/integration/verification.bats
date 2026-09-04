@@ -66,7 +66,7 @@ EOF
 	[[ "$status" -ne 0 ]]
 }
 
-@test "fetch failure policy allow accepted" {
+@test "fetch failure policy allow rejected in enforce mode" {
 	mkdir -p "$TEST_DIR/policies"
 	echo '{}' >"$TEST_DIR/policies/default.json"
 	cat >"$TEST_DIR/config.toml" <<EOF
@@ -75,7 +75,7 @@ policy_dir = "$TEST_DIR/policies"
 fetch_failure_policy = "allow"
 EOF
 	run_binary --config "$TEST_DIR/config.toml" validate
-	[[ "$status" -eq 0 ]]
+	[[ "$status" -ne 0 ]]
 }
 
 @test "fetch failure policy deny accepted" {

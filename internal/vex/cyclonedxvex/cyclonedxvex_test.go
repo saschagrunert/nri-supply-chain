@@ -295,7 +295,7 @@ func TestVerifyEmptyPayload(t *testing.T) {
 func TestVerifyNoAnalysis(t *testing.T) {
 	t.Parallel()
 
-	// Vulnerability with nil Analysis should be skipped.
+	// Vulnerability with nil Analysis should be treated as affected.
 	bom := cdx.NewBOM()
 	bom.Components = &[]cdx.Component{
 		{
@@ -326,8 +326,9 @@ func TestVerifyNoAnalysis(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.AffectedNames) > 0 || result.HasUnderInvestigation {
-		t.Error("expected clean result when analysis is nil")
+	if len(result.AffectedNames) != 1 || result.AffectedNames[0] != "CVE-2024-0000" {
+		t.Errorf("expected CVE-2024-0000 to be affected when analysis is nil, got %v",
+			result.AffectedNames)
 	}
 }
 
@@ -458,7 +459,7 @@ func TestVerifyUnrecognizedStateTreatedAsAffected(t *testing.T) {
 func TestVerifyEmptyAnalysisState(t *testing.T) {
 	t.Parallel()
 
-	// Vulnerability with Analysis set but empty State should be skipped.
+	// Vulnerability with Analysis set but empty State should be treated as affected.
 	bom := cdx.NewBOM()
 	bom.Vulnerabilities = &[]cdx.Vulnerability{
 		{
@@ -477,7 +478,8 @@ func TestVerifyEmptyAnalysisState(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.AffectedNames) > 0 || result.HasUnderInvestigation {
-		t.Error("expected clean result when analysis state is empty")
+	if len(result.AffectedNames) != 1 || result.AffectedNames[0] != "CVE-2024-0002" {
+		t.Errorf("expected CVE-2024-0002 to be affected when analysis state is empty, got %v",
+			result.AffectedNames)
 	}
 }

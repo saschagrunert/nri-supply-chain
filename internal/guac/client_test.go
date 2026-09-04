@@ -533,6 +533,55 @@ func TestCACert(t *testing.T) {
 	})
 }
 
+func TestQueryScorecardResponseTooLarge(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+
+		buf := make([]byte, maxResponseSize+1)
+		for i := range buf {
+			buf[i] = 'x'
+		}
+
+		_, _ = w.Write(buf)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv.URL, "", 5*time.Second)
+
+	_, err := client.QueryScorecard(context.Background())
+	if !errors.Is(err, ErrGUACQueryFailed) {
+		t.Fatalf("expected ErrGUACQueryFailed for oversized response, got: %v", err)
+	}
+}
+
+func TestDoGetResponseTooLarge(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+
+		buf := make([]byte, maxResponseSize+1)
+		for i := range buf {
+			buf[i] = 'x'
+		}
+
+		_, _ = w.Write(buf)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv.URL, "", 5*time.Second)
+
+	_, _, err := client.QueryVulnerabilities(
+		context.Background(), "sha256:abc", false,
+	)
+	if !errors.Is(err, ErrGUACQueryFailed) {
+		t.Fatalf("expected ErrGUACQueryFailed for oversized response, got: %v", err)
+	}
+}
+
 func TestContextCancellation(t *testing.T) {
 	t.Parallel()
 
