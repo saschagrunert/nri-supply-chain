@@ -2,8 +2,8 @@ apiVersion: v2
 name: nri-supply-chain
 description: Runtime supply-chain attestation verification for Kubernetes nodes via NRI
 type: application
-version: 0.5.2
-appVersion: "0.5.2"
+version: 0.5.3
+appVersion: "0.5.3"
 keywords:
   - nri
   - supply-chain-security
