@@ -25,8 +25,8 @@ require (
 	github.com/sigstore/sigstore v1.10.9
 	github.com/sigstore/sigstore-go v1.3.0
 	github.com/spf13/cobra v1.10.2
-	golang.org/x/sync v0.22.0
-	golang.org/x/time v0.15.0
+	golang.org/x/sync v0.23.0
+	golang.org/x/time v0.16.0
 	google.golang.org/protobuf v1.36.12
 )
 
