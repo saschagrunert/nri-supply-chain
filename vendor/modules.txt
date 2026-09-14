@@ -240,8 +240,8 @@ github.com/containerd/nri/pkg/net
 github.com/containerd/nri/pkg/net/multiplex
 github.com/containerd/nri/pkg/stub
 github.com/containerd/nri/pkg/version
-# github.com/containerd/ttrpc v1.2.7
-## explicit; go 1.19
+# github.com/containerd/ttrpc v1.2.9
+## explicit; go 1.25.0
 github.com/containerd/ttrpc
 # github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467
 ## explicit
