@@ -610,7 +610,7 @@ github.com/opencontainers/runtime-spec/specs-go
 ## explicit; go 1.25.8
 github.com/openvex/go-vex/pkg/csaf
 github.com/openvex/go-vex/pkg/vex
-# github.com/package-url/packageurl-go v0.1.5
+# github.com/package-url/packageurl-go v0.1.7
 ## explicit; go 1.18
 github.com/package-url/packageurl-go
 # github.com/pb33f/ordered-map/v2 v2.3.1
