@@ -18,6 +18,7 @@ package cache
 import (
 	"container/heap"
 	"math/rand/v2"
+	"strings"
 	"sync"
 	"time"
 
@@ -91,8 +92,11 @@ type Cache struct {
 	evictions *prometheus.CounterVec
 	expHeap   expiryHeap
 	heapIndex map[key]*heapEntry
-	stopOnce  sync.Once
-	stopCh    chan struct{}
+	// digestIndex maps a digest to the keys of all its entries, so that
+	// DeleteAll only touches matching entries instead of scanning the cache.
+	digestIndex map[string]map[key]struct{}
+	stopOnce    sync.Once
+	stopCh      chan struct{}
 }
 
 // New creates a new verification result cache with the given TTL.
@@ -117,16 +121,17 @@ func NewWithGauge(
 	}
 
 	c := &Cache{ //nolint:varnamelen // c is the standard receiver name for Cache
-		mu:        sync.RWMutex{},
-		entries:   make(map[key]entry),
-		ttl:       ttl,
-		maxSize:   effectiveMaxSize,
-		gauge:     gauge,
-		evictions: evictions,
-		expHeap:   nil,
-		heapIndex: make(map[key]*heapEntry),
-		stopOnce:  sync.Once{},
-		stopCh:    make(chan struct{}),
+		mu:          sync.RWMutex{},
+		entries:     make(map[key]entry),
+		ttl:         ttl,
+		maxSize:     effectiveMaxSize,
+		gauge:       gauge,
+		evictions:   evictions,
+		expHeap:     nil,
+		heapIndex:   make(map[key]*heapEntry),
+		digestIndex: make(map[string]map[key]struct{}),
+		stopOnce:    sync.Once{},
+		stopCh:      make(chan struct{}),
 	}
 
 	if ttl > 0 {
@@ -173,13 +178,7 @@ func (c *Cache) Get(digest, namespace string) *types.Result {
 		return cacheEntry.result
 	}
 
-	delete(c.entries, cacheKey)
-
-	if heapEnt, ok := c.heapIndex[cacheKey]; ok {
-		heap.Remove(&c.expHeap, heapEnt.index)
-		delete(c.heapIndex, cacheKey)
-	}
-
+	c.removeLocked(cacheKey)
 	c.updateGaugeLocked()
 
 	return nil
@@ -212,6 +211,8 @@ func (c *Cache) SetWithTTL(digest, namespace string, result *types.Result, ttl t
 
 	expiresAt := time.Now().Add(ttl + jitter(ttl))
 
+	c.indexLocked(cacheKey)
+
 	c.entries[cacheKey] = entry{
 		result:    result,
 		expiresAt: expiresAt,
@@ -241,16 +242,45 @@ func (c *Cache) Delete(digest, namespace string) bool {
 		return false
 	}
 
-	delete(c.entries, cacheKey)
-
-	if heapEnt, ok := c.heapIndex[cacheKey]; ok {
-		heap.Remove(&c.expHeap, heapEnt.index)
-		delete(c.heapIndex, cacheKey)
-	}
-
+	c.removeLocked(cacheKey)
 	c.updateGaugeLocked()
 
 	return true
+}
+
+// DeleteAll removes every cached entry for the given digest whose namespace
+// key equals namespace or extends it with a "\x00" separated suffix (as used
+// for per-image and per-rule result keys). Returns the number of entries
+// removed.
+func (c *Cache) DeleteAll(digest, namespace string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	removed := 0
+
+	// Deleting from the digest's key set while ranging over it is safe;
+	// removeLocked drops the set once it is empty.
+	for cacheKey := range c.digestIndex[digest] {
+		if !namespaceKeyMatches(cacheKey.namespace, namespace) {
+			continue
+		}
+
+		c.removeLocked(cacheKey)
+
+		removed++
+	}
+
+	if removed > 0 {
+		c.updateGaugeLocked()
+	}
+
+	return removed
+}
+
+func namespaceKeyMatches(keyNamespace, namespace string) bool {
+	rest, found := strings.CutPrefix(keyNamespace, namespace)
+
+	return found && (rest == "" || rest[0] == 0)
 }
 
 // Clear removes all cached entries.
@@ -261,6 +291,7 @@ func (c *Cache) Clear() {
 	c.entries = make(map[key]entry)
 	c.expHeap = nil
 	c.heapIndex = make(map[key]*heapEntry)
+	c.digestIndex = make(map[string]map[key]struct{})
 
 	c.updateGaugeLocked()
 }
@@ -325,8 +356,7 @@ func (c *Cache) evictOldestLocked() {
 		return
 	}
 
-	delete(c.entries, popped.cacheKey)
-	delete(c.heapIndex, popped.cacheKey)
+	c.removeLocked(popped.cacheKey)
 	c.recordEviction("capacity")
 }
 
@@ -339,9 +369,41 @@ func (c *Cache) evictExpiredLocked() {
 			return
 		}
 
-		delete(c.entries, popped.cacheKey)
-		delete(c.heapIndex, popped.cacheKey)
+		c.removeLocked(popped.cacheKey)
 		c.recordEviction("expired")
+	}
+}
+
+// indexLocked records cacheKey in the digest index.
+func (c *Cache) indexLocked(cacheKey key) {
+	keys, ok := c.digestIndex[cacheKey.digest]
+	if !ok {
+		keys = make(map[key]struct{})
+		c.digestIndex[cacheKey.digest] = keys
+	}
+
+	keys[cacheKey] = struct{}{}
+}
+
+// removeLocked removes cacheKey from the entries, the expiry heap (unless it
+// was already popped from it), and the digest index.
+func (c *Cache) removeLocked(cacheKey key) {
+	delete(c.entries, cacheKey)
+
+	if heapEnt, ok := c.heapIndex[cacheKey]; ok {
+		if heapEnt.index >= 0 {
+			heap.Remove(&c.expHeap, heapEnt.index)
+		}
+
+		delete(c.heapIndex, cacheKey)
+	}
+
+	if keys, ok := c.digestIndex[cacheKey.digest]; ok {
+		delete(keys, cacheKey)
+
+		if len(keys) == 0 {
+			delete(c.digestIndex, cacheKey.digest)
+		}
 	}
 }
 

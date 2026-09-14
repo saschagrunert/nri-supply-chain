@@ -36,7 +36,14 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
-const fileWatchDebounce = 500 * time.Millisecond
+const (
+	fileWatchDebounce = 500 * time.Millisecond
+
+	// configMapDataDir is the symlink Kubernetes atomically swaps when a
+	// ConfigMap or Secret volume is updated. Its rename is the only event in
+	// the mount directory when a projected key changes.
+	configMapDataDir = "..data"
+)
 
 func setupSignals(
 	ctx context.Context, cancel context.CancelFunc,
@@ -109,7 +116,7 @@ func setupReload(
 	}()
 }
 
-func handleReload( //nolint:funlen // sequential reload steps
+func handleReload(
 	ctx context.Context, configPath string,
 	verif *verifier.Verifier, met *metrics.Metrics,
 	plug pluginReloader, watcher *fsnotify.Watcher,
@@ -166,18 +173,27 @@ func handleReload( //nolint:funlen // sequential reload steps
 		)
 
 		if plug != nil {
-			plug.SetFetchTimeout(newCfg.FetchTimeout.Duration)
-			plug.SetDigestResolveTimeout(newCfg.DigestResolveTimeout.Duration)
-			updatePluginRegistries(plug, newCfg.Registries, verif.TransportCache())
-			plug.SetRemediationMode(newCfg.Remediation.Mode)
-			plug.SetRemediationConfig(&newCfg.Remediation)
-			warnEvictDeferred(newCfg.Remediation.Mode)
-			plug.PrewarmAfterReload(ctx)
-
-			if newCfg.Remediation.Enabled() && newCfg.Remediation.Triggers.OnPolicyChange {
-				plug.TriggerReverify()
-			}
+			applyPluginSettings(ctx, newCfg, verif, plug)
 		}
+	}
+}
+
+// applyPluginSettings applies the plugin-side settings of a reloaded
+// configuration (a config file reload or a configuration passed by the
+// runtime) after the verifier has been reloaded.
+func applyPluginSettings(
+	ctx context.Context, cfg *config.Config, verif *verifier.Verifier, plug pluginReloader,
+) {
+	plug.SetFetchTimeout(cfg.FetchTimeout.Duration)
+	plug.SetDigestResolveTimeout(cfg.DigestResolveTimeout.Duration)
+	updatePluginRegistries(plug, cfg.Registries, verif.TransportCache())
+	plug.SetRemediationMode(cfg.Remediation.Mode)
+	plug.SetRemediationConfig(&cfg.Remediation)
+	warnEvictDeferred(cfg.Remediation.Mode)
+	plug.PrewarmAfterReload(ctx)
+
+	if cfg.Remediation.Enabled() && cfg.Remediation.Triggers.OnPolicyChange {
+		plug.TriggerReverify()
 	}
 }
 
@@ -253,7 +269,7 @@ func updatePluginRegistries(
 	}
 }
 
-func updateWatchedPaths( //nolint:cyclop // sequential path management with feedDirVal update
+func updateWatchedPaths(
 	watcher *fsnotify.Watcher, configPath, newPolicyDir,
 	attestationStore string, offlineMode config.OfflineMode,
 	feedDir string, feedDirVal *atomic.Value,
@@ -293,10 +309,6 @@ func updateWatchedPaths( //nolint:cyclop // sequential path management with feed
 	}
 
 	for path := range keep {
-		if path == configPath {
-			continue
-		}
-
 		addErr := watcher.Add(path)
 		if addErr != nil {
 			slog.Warn("Failed to watch path",
@@ -309,7 +321,11 @@ func buildWatchSet(
 	configPath, policyDir, attestationStore string,
 	offlineMode config.OfflineMode, feedDir string,
 ) map[string]bool {
-	keep := map[string]bool{configPath: true}
+	keep := map[string]bool{}
+
+	if dir := configWatchDir(configPath); dir != "" {
+		keep[dir] = true
+	}
 
 	abs, err := filepath.Abs(policyDir)
 	if policyDir != "" && err == nil {
@@ -348,7 +364,12 @@ func setupFileWatch(
 		return func() {}, nil, feedDirVal
 	}
 
-	addWatchPath(watcher, configPath, "config file")
+	// Watch the directory rather than the file: editors and config
+	// management replace files with a rename, and Kubernetes swaps the
+	// "..data" symlink, both of which drop an inotify watch on the file.
+	if dir := configWatchDir(configPath); dir != "" {
+		addWatchPath(watcher, dir, "config directory")
+	}
 
 	if policyDir != "" {
 		addWatchPath(watcher, policyDir, "policy directory")
@@ -358,26 +379,7 @@ func setupFileWatch(
 		addWatchPath(watcher, attestationStore, "attestation store")
 	}
 
-	absFeedDir := ""
-
-	if feedDir != "" {
-		abs, absErr := filepath.Abs(feedDir)
-		if absErr == nil {
-			absFeedDir = abs
-
-			watchErr := watcher.Add(absFeedDir)
-			if watchErr != nil {
-				slog.Warn("Failed to watch feed directory",
-					"path", absFeedDir,
-					"error", watchErr,
-				)
-
-				absFeedDir = ""
-			}
-		}
-	}
-
-	feedDirVal.Store(absFeedDir)
+	feedDirVal.Store(addFeedDirWatch(watcher, feedDir))
 
 	go runFileWatch(ctx, watcher, configPath, feedDirVal, verif, met, plug, reloadMu)
 
@@ -387,6 +389,31 @@ func setupFileWatch(
 			slog.Warn("Failed to close file watcher", "error", closeErr)
 		}
 	}, watcher, feedDirVal
+}
+
+// addFeedDirWatch watches the feed directory and returns its absolute path,
+// or an empty string if it is unset or cannot be watched.
+func addFeedDirWatch(watcher *fsnotify.Watcher, feedDir string) string {
+	if feedDir == "" {
+		return ""
+	}
+
+	absFeedDir, err := filepath.Abs(feedDir)
+	if err != nil {
+		return ""
+	}
+
+	watchErr := watcher.Add(absFeedDir)
+	if watchErr != nil {
+		slog.Warn("Failed to watch feed directory",
+			"path", absFeedDir,
+			"error", watchErr,
+		)
+
+		return ""
+	}
+
+	return absFeedDir
 }
 
 func addWatchPath(watcher *fsnotify.Watcher, path, label string) {
@@ -460,11 +487,11 @@ func handleFileEvent(
 		return configDebounce, feedDebounce
 	}
 
-	slog.Debug("File change detected", "file", event.Name, "op", event.Op)
-
 	feedDir, _ := feedDirVal.Load().(string)
 
 	if feedDir != "" && strings.HasPrefix(event.Name, feedDir+"/") {
+		slog.Debug("Feed file change detected", "file", event.Name, "op", event.Op)
+
 		if feedDebounce != nil {
 			feedDebounce.Stop()
 		}
@@ -482,6 +509,15 @@ func handleFileEvent(
 
 		return configDebounce, feedDebounce
 	}
+
+	// Filter before logging: the config directory may also hold the plugin's
+	// own log file, and logging its write events would feed back into the
+	// watcher forever.
+	if isConfigDirNoise(event, configPath, verif) {
+		return configDebounce, feedDebounce
+	}
+
+	slog.Debug("File change detected", "file", event.Name, "op", event.Op)
 
 	if configDebounce != nil {
 		configDebounce.Stop()
@@ -519,6 +555,74 @@ func handleFeedEvent(feedDir string, met *metrics.Metrics, plug pluginReloader) 
 
 		plug.TriggerFeedReverify(purls)
 	}
+}
+
+// configWatchDir returns the absolute directory containing the config file,
+// or an empty string if it cannot be resolved.
+func configWatchDir(configPath string) string {
+	if configPath == "" {
+		return ""
+	}
+
+	abs, err := filepath.Abs(configPath)
+	if err != nil {
+		return ""
+	}
+
+	return filepath.Dir(abs)
+}
+
+// isConfigDirNoise reports whether event concerns an unrelated file in the
+// config file's directory. The directory is watched instead of the file, so
+// only the config file itself and the Kubernetes "..data" symlink swap
+// trigger a reload, unless the directory is, or contains, a watched
+// directory. Replacing a watched directory (for example with a rename) drops
+// its watch, and the reload adds it again.
+func isConfigDirNoise(
+	event fsnotify.Event, configPath string, verif *verifier.Verifier,
+) bool {
+	configDir := configWatchDir(configPath)
+	if configDir == "" || filepath.Dir(event.Name) != configDir {
+		return false
+	}
+
+	switch filepath.Base(event.Name) {
+	case filepath.Base(configPath), configMapDataDir:
+		return false
+	}
+
+	if verif == nil {
+		return true
+	}
+
+	cfg := verif.CurrentConfig()
+	if cfg == nil {
+		return true
+	}
+
+	for _, dir := range []string{cfg.PolicyDir, cfg.Offline.AttestationStore, cfg.Remediation.FeedDir} {
+		if watchedDirAffected(dir, configDir, event.Name) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// watchedDirAffected reports whether a change to path in configDir concerns
+// the watched directory dir: dir is configDir itself, path, or below path.
+func watchedDirAffected(dir, configDir, path string) bool {
+	if dir == "" {
+		return false
+	}
+
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return false
+	}
+
+	return abs == configDir || abs == path ||
+		strings.HasPrefix(abs, path+string(filepath.Separator))
 }
 
 func isReloadEvent(event fsnotify.Event) bool {

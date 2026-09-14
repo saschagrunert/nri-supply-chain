@@ -36,8 +36,11 @@ Run all checks before submitting:
 make verify-all
 ```
 
-This runs lint, shfmt, shellcheck, mdtoc, jsonschema, tidy,
-dependencies, govulncheck, prettier, and typos.
+This runs lint, shfmt, shellcheck, mdtoc, jsonschema, helm, manifests, tidy,
+vendor, dependencies, govulncheck, prettier, typos, and dashboard checks.
+`make verify-manifests` schema-validates the raw manifests and the rendered
+Helm chart, validates their embedded config and policies with the plugin
+binary, and fails when the two drift apart.
 
 ## Testing
 
@@ -53,6 +56,9 @@ make bench        # Benchmark tests
 
 External tool versions are tracked in `dependencies.yaml` and verified by
 `make verify-dependencies`. When bumping a tool version, update every file
-listed in its `refPaths` entry.
+listed in its `refPaths` entry. Downloaded tools are pinned by SHA-256 checksum
+in the `Makefile` (`<TOOL>_SHA256_<os>_<arch>`) and the download fails when no
+checksum is pinned for the current platform, so update the checksums together
+with the version.
 
 To bump the project version, run `hack/bump-version.sh X.Y.Z`.

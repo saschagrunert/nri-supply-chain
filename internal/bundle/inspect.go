@@ -79,7 +79,7 @@ func Inspect(storePath string) (*InspectResult, error) {
 		ImageCount:       len(manifest.Images),
 		AttestationCount: 0,
 		Images:           nil,
-		TrustedRoot:      manifest.TrustedRoot != nil,
+		TrustedRoot:      manifest.HasTrustedRoot(),
 		RevocationCount:  len(manifest.Revocation),
 		Signed:           manifest.Signature != nil,
 		SignatureKeyHint: "",

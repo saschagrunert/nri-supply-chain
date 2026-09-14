@@ -17,17 +17,15 @@ package release
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/checker"
 	"github.com/saschagrunert/nri-supply-chain/internal/glob"
-	"github.com/saschagrunert/nri-supply-chain/internal/intoto"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
-
-const checkType = types.CheckTypeRelease
 
 var (
 	// ErrInvalidRelease indicates the release attestation could not be parsed.
@@ -38,6 +36,8 @@ var (
 
 	// ErrMissingPackageID indicates the release attestation is missing the required packageId.
 	ErrMissingPackageID = errors.New("release attestation missing required packageId")
+
+	errMissingPURL = errors.New("purl is required")
 )
 
 type releasePredicate struct {
@@ -45,22 +45,41 @@ type releasePredicate struct {
 	PackageID string `json:"packageId,omitempty"` //nolint:tagliatelle // matches in-toto release spec field name
 }
 
+//nolint:gochecknoglobals // immutable check declaration
+var spec = &checker.Spec[releasePredicate]{
+	Info: checker.Info{
+		Type:  types.CheckTypeRelease,
+		Label: "release",
+	},
+	Aggregation: checker.FirstPass,
+	ErrInvalid:  ErrInvalidRelease,
+	Validate:    validatePredicate,
+	Meta: func(pred *releasePredicate) map[string]any {
+		return map[string]any{
+			"purl":      pred.PURL,
+			"packageId": pred.PackageID,
+		}
+	},
+	Freshness: nil,
+	Rules: []checker.Rule[releasePredicate]{
+		checkTrustedRegistry,
+		checkPackageID,
+	},
+	Merge: nil,
+}
+
+// Info returns the check type and label of the release check.
+func Info() checker.Info {
+	return spec.Info
+}
+
 // Verify checks a single release attestation against the given policy.
 func Verify(
 	ctx context.Context,
 	att []byte, pol *policy.Policy, imageDigest string,
 ) (*types.CheckResult, error) {
-	ctxErr := ctx.Err()
-	if ctxErr != nil {
-		return nil, fmt.Errorf("verification cancelled: %w", ctxErr)
-	}
-
-	predicate, err := intoto.VerifySubjectAndExtractPredicate(att, imageDigest)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidRelease, err)
-	}
-
-	return verifyReleasePredicate(predicate, pol)
+	//nolint:wrapcheck // the generic checker returns domain errors
+	return spec.Verify(ctx, att, pol, imageDigest)
 }
 
 // VerifyMultiple checks multiple release attestations, accepting if any valid one passes.
@@ -68,72 +87,41 @@ func VerifyMultiple(
 	ctx context.Context,
 	attestations [][]byte, pol *policy.Policy, imageDigest string,
 ) (*types.CheckResult, error) {
-	return types.VerifyMultipleFirstPass( //nolint:wrapcheck // direct delegation to shared helper
-		ctx, checkType, "release", attestations,
-		func(att []byte) (*types.CheckResult, error) {
-			return Verify(ctx, att, pol, imageDigest)
-		},
-	)
+	//nolint:wrapcheck // the generic checker returns domain errors
+	return spec.VerifyMultiple(ctx, attestations, pol, imageDigest)
 }
 
-func verifyReleasePredicate(
-	predicate []byte, pol *policy.Policy,
-) (*types.CheckResult, error) {
-	var pred releasePredicate
-
-	err := json.Unmarshal(predicate, &pred)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidRelease, err)
+func validatePredicate(pred *releasePredicate) error {
+	if strings.TrimSpace(pred.PURL) == "" {
+		return errMissingPURL
 	}
 
-	meta := map[string]any{
-		"purl":      pred.PURL,
-		"packageId": pred.PackageID,
-	}
-
-	if pol.Release != nil && len(pol.Release.TrustedRegistries) > 0 {
-		err = verifyTrustedRegistry(pred.PURL, pol.Release.TrustedRegistries)
-		if err != nil {
-			result := check.Fail(err.Error())
-			result.Metadata = meta
-
-			return result, nil
-		}
-	}
-
-	if pol.Release != nil && pol.Release.RequirePackageID && pred.PackageID == "" {
-		result := check.Fail(ErrMissingPackageID.Error())
-		result.Metadata = meta
-
-		return result, nil
-	}
-
-	result := check.Pass()
-	result.Metadata = meta
-
-	return result, nil
+	return nil
 }
 
-func verifyTrustedRegistry(purl string, trustedRegistries []string) error {
-	if purl == "" {
-		return fmt.Errorf("%w: purl not found in attestation", ErrUntrustedRegistry)
+func checkTrustedRegistry(pred *releasePredicate, pol *policy.Policy) string {
+	if pol.Release == nil || len(pol.Release.TrustedRegistries) == 0 {
+		return ""
 	}
 
-	for _, pattern := range trustedRegistries {
-		matched, err := glob.Match(pattern, purl)
+	for _, pattern := range pol.Release.TrustedRegistries {
+		matched, err := glob.Match(pattern, pred.PURL)
 		if err != nil {
-			return fmt.Errorf("invalid registry pattern %q: %w", pattern, err)
+			return fmt.Sprintf("invalid registry pattern %q: %s", pattern, err)
 		}
 
 		if matched {
-			return nil
+			return ""
 		}
 	}
 
-	return fmt.Errorf("%w: %q", ErrUntrustedRegistry, purl)
+	return fmt.Sprintf("%s: %q", ErrUntrustedRegistry, pred.PURL)
 }
 
-var check = types.Checker{ //nolint:gochecknoglobals // package-scoped helper
-	Type:    checkType,
-	PassMsg: "release verification passed",
+func checkPackageID(pred *releasePredicate, pol *policy.Policy) string {
+	if pol.Release != nil && pol.Release.RequirePackageID && pred.PackageID == "" {
+		return ErrMissingPackageID.Error()
+	}
+
+	return ""
 }

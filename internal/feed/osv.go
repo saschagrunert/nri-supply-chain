@@ -46,22 +46,44 @@ var (
 // OSVEntry represents a single OSV vulnerability entry. Only fields needed
 // for PURL extraction are decoded.
 type OSVEntry struct {
-	ID       string        `json:"id"`
-	Affected []OSVAffected `json:"affected"`
+	ID        string        `json:"id"`
+	Withdrawn string        `json:"withdrawn,omitempty"`
+	Affected  []OSVAffected `json:"affected"`
 }
 
 // OSVAffected represents an affected package entry in an OSV record.
 type OSVAffected struct {
-	Package OSVPackage `json:"package"`
+	Package  OSVPackage `json:"package"`
+	Ranges   []OSVRange `json:"ranges,omitempty"`
+	Versions []string   `json:"versions,omitempty"`
 }
 
 // OSVPackage represents the package identifier within an OSV affected entry.
 type OSVPackage struct {
-	PURL string `json:"purl"`
+	Ecosystem string `json:"ecosystem,omitempty"`
+	Name      string `json:"name,omitempty"`
+	PURL      string `json:"purl"`
 }
 
-// ParseFile reads a single OSV JSON file and returns the set of affected
-// PURLs. The file may contain a single OSV entry or an array of entries.
+// OSVRange is an affected version range.
+type OSVRange struct {
+	Type   string     `json:"type"`
+	Events []OSVEvent `json:"events"`
+}
+
+// OSVEvent is a range event (introduced, fixed, last_affected, or limit).
+type OSVEvent struct {
+	Introduced   string `json:"introduced,omitempty"`
+	Fixed        string `json:"fixed,omitempty"`
+	LastAffected string `json:"last_affected,omitempty"` //nolint:tagliatelle // OSV schema field
+	Limit        string `json:"limit,omitempty"`
+}
+
+// ParseFile reads a single OSV JSON file and returns the affected package
+// specs. The file may contain a single OSV entry or an array of entries.
+// Specs are purls: a versionless purl matches every version, a versioned purl
+// matches that version, and a purl with a "vers" qualifier matches the
+// encoded SEMVER range. Use NewMatcher to match specs against SBOM purls.
 func ParseFile(path string) ([]string, error) {
 	linfo, lstatErr := os.Lstat(path)
 	if lstatErr != nil {
@@ -151,18 +173,21 @@ func extractPURLs(entries []OSVEntry) []string {
 	for idx := range entries {
 		entry := &entries[idx]
 
+		if entry.Withdrawn != "" {
+			slog.Debug("Skipping withdrawn OSV entry", "id", entry.ID)
+
+			continue
+		}
+
 		for affIdx := range entry.Affected {
-			purl := entry.Affected[affIdx].Package.PURL
-			if purl == "" {
-				continue
-			}
+			for _, spec := range affectedSpecs(&entry.Affected[affIdx]) {
+				if _, exists := seen[spec]; exists {
+					continue
+				}
 
-			if _, exists := seen[purl]; exists {
-				continue
+				seen[spec] = struct{}{}
+				purls = append(purls, spec)
 			}
-
-			seen[purl] = struct{}{}
-			purls = append(purls, purl)
 		}
 	}
 

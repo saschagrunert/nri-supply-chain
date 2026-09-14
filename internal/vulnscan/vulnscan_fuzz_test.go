@@ -77,7 +77,25 @@ func FuzzVerify(f *testing.F) {
 		`"result":{"vulnerabilities":[]}}` +
 		`}`))
 
+	// Seed: in-toto specification layout with string, numeric, vector, and
+	// EPSS severity entries, exercising score normalization.
+	f.Add([]byte(`{` +
+		`"_type":"https://in-toto.io/Statement/v1",` +
+		`"subject":[{"name":"test","digest":{"sha256":` +
+		`"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"}}],` +
+		`"predicateType":"https://in-toto.io/attestation/vulns/v0.2",` +
+		`"predicate":{"scanner":{"uri":"https://trivy.dev","version":"0.74.0","result":[` +
+		`{"id":"CVE-2024-0001","severity":[{"method":"nvd","score":"9.8"},{"method":"v","score":"CVSS:3.1/AV:N"}]},` +
+		`{"id":"CVE-2024-0002","severity":[{"method":"epss","score":0.5},{"method":"trivy","score":"UNKNOWN"}]}]},` +
+		`"metadata":{"scanStartedOn":"2025-01-15T10:00:00Z","scanFinishedOn":"2025-01-15T10:01:00Z"}}` +
+		`}`))
+
+	strictPolicy := &policy.Policy{
+		VulnScan: &policy.VulnScanPolicy{MaxScore: new(7.0), MinSeverity: testSevHigh},
+	}
+
 	f.Fuzz(func(_ *testing.T, data []byte) {
 		vulnscan.Verify(context.Background(), data, &policy.Policy{}, testDigest)
+		vulnscan.Verify(context.Background(), data, strictPolicy, testDigest)
 	})
 }

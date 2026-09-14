@@ -16,159 +16,160 @@ package verifier
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 	"slices"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/bundle"
-	"github.com/saschagrunert/nri-supply-chain/internal/cache"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/glob"
 	"github.com/saschagrunert/nri-supply-chain/internal/guac"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
-	"github.com/saschagrunert/nri-supply-chain/internal/policy"
+	"github.com/saschagrunert/nri-supply-chain/internal/notation"
 	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 	"github.com/saschagrunert/nri-supply-chain/internal/slsa"
 )
 
 // Reload reloads the verifier's configuration and policies.
 func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
+	v.reloadMu.Lock()
+	defer v.reloadMu.Unlock()
+
+	return v.reload(ctx, cfg)
+}
+
+func (v *Verifier) reload(ctx context.Context, cfg *config.Config) error {
 	cfgCopy := *cfg
 
-	prev := v.state.Load()
+	// Pause OCI policy polling for the whole reload. A poller left running
+	// could apply a newer artifact after prepareReload fetched the policies,
+	// and the reload would then install the older ones. The poller callback
+	// (onPolicyUpdate) acquires mu, so the poller is stopped before taking
+	// mu. The new policy fetcher inherits the rollback guard of the stopped
+	// one.
+	paused := v.stopPoller()
 
-	policies, newHashes, policyFetcher, ociDigest, err := loadAndHashPolicies(
-		ctx,
-		&cfgCopy,
-		prev.fetcher,
-	)
+	plan, err := v.prepareReload(ctx, &cfgCopy, pollerRollbackSeed(paused, cfgCopy.Policy.OCIRef))
 	if err != nil {
+		v.resumePoller(ctx, paused)
+
 		return err
 	}
 
-	newFetcher, err := v.prepareFetcher(ctx, &cfgCopy)
-	if err != nil {
-		return err
+	if v.reloadPrepared != nil {
+		v.reloadPrepared()
 	}
-
-	if cfgCopy.Enabled() {
-		err = validatePoliciesModes(cfgCopy.Verification, policies)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Stop the old poller before acquiring mu to avoid deadlock: the
-	// poller callback (onPolicyUpdate) acquires mu, so stopping under
-	// mu would deadlock if the callback is in progress.
-	v.stopPoller()
 
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
-	// Re-read after lock to use the latest snapshot (onPolicyUpdate may have run).
 	current := v.state.Load()
 
-	// applyReload updates the attestation fetcher (newFetcher) in the snapshot.
-	// The policy fetcher (policyFetcher) is separate and used only by the poller.
-	v.applyReload(ctx, current, &cfgCopy, policies, newHashes, newFetcher)
+	next, err := v.buildSnapshot(ctx, current, &snapshotInput{
+		config:       &cfgCopy,
+		policies:     plan.loaded.policies,
+		policyHashes: plan.loaded.hashes,
+		trust:        plan.trust,
+		fetcher:      v.reloadFetcher(current, &cfgCopy, plan.newFetcher),
+		fetcherBasis: reloadFetcherBasis(current, &cfgCopy, plan.trust),
+		metrics:      current.metrics,
+	})
+	if err != nil {
+		v.resumePoller(ctx, paused)
 
-	// Keep the policy fetcher's transport cache in sync with registry changes.
-	registriesChanged := config.RegistriesChanged(
-		current.config.Registries, cfgCopy.Registries,
-	)
-
-	if policyFetcher != nil && registriesChanged {
-		reloaded := v.state.Load()
-		policyFetcher.SetTransportCache(
-			transportCacheFromFetcher(reloaded.fetcher),
-		)
+		return err
 	}
 
-	// Start new poller if source is OCI (old poller already stopped above).
+	logReloadChanges(
+		ctx, current.config, &cfgCopy, current.policyHashes, plan.loaded.hashes,
+		next.generation != current.generation,
+	)
+
+	v.state.Store(next)
+	retireSnapshot(current, next)
+	closeOldTransportCache(current, plan.newFetcher)
+
+	// Keep the policy fetcher's transport cache in sync with registry changes.
+	if plan.loaded.policyFetcher != nil &&
+		config.RegistriesChanged(current.config.Registries, cfgCopy.Registries) {
+		plan.loaded.policyFetcher.SetTransportCache(transportCacheFromFetcher(next.fetcher))
+	}
+
+	// Start the new poller if the source is OCI (the old one stays stopped).
 	if cfgCopy.Policy.Source == config.PolicySourceOCI {
-		v.startPoller(ctx, policyFetcher, &cfgCopy, ociDigest)
+		v.startPoller(ctx, plan.loaded.policyFetcher, &cfgCopy, plan.loaded.ociDigest)
 	}
 
 	if cfgCopy.Enabled() {
-		WarnEnforceDefaults(ctx, &cfgCopy, policies)
-		WarnWarnModeDefaults(ctx, &cfgCopy, policies)
+		WarnEnforceDefaults(ctx, &cfgCopy, plan.loaded.policies)
+		WarnWarnModeDefaults(ctx, &cfgCopy, plan.loaded.policies)
 	}
 
 	return nil
 }
 
-func (v *Verifier) applyReload(
-	ctx context.Context,
-	current *snapshot,
-	cfgCopy *config.Config,
-	policies map[string]*policy.Policy,
-	newHashes map[string]string,
-	newFetcher attestation.Fetcher,
-) {
-	policiesChanged := !policyHashesEqual(v.policyHashes, newHashes)
-	cacheInvalidated := cacheAffectingFieldsChanged(current.config, cfgCopy) || policiesChanged
-	newCache := reloadCache(current, cfgCopy, cacheInvalidated)
-
-	logReloadChanges(ctx, current.config, cfgCopy, v.policyHashes, newHashes, cacheInvalidated)
-	circuitBreakers := v.reloadCircuitBreakers(current, cfgCopy)
-	fetcher := v.reloadFetcher(current, cfgCopy, newFetcher)
-	closeOldTransportCache(current, newFetcher)
-
-	hostSem := resetCachesIfChanged(current.hostSem, policiesChanged)
-
-	guacClient, guacBreaker, guacErr := reloadGUACClient(current, cfgCopy)
-	if guacErr != nil {
-		slog.ErrorContext(ctx, "Failed to reload GUAC client, keeping previous",
-			"error", guacErr)
-
-		guacClient = current.guacClient
-		guacBreaker = current.guacBreaker
+// resumePoller restarts a poller paused by a reload that failed, so the
+// previous configuration keeps receiving OCI policy updates.
+func (v *Verifier) resumePoller(ctx context.Context, paused *policyPoller) {
+	if paused == nil {
+		return
 	}
 
-	auditLogger, auditLogFile := reloadAuditLogger(ctx, current, cfgCopy)
-
-	v.state.Store(&snapshot{
-		config:           cfgCopy,
-		policies:         policies,
-		policyHashes:     newHashes,
-		cache:            newCache,
-		metrics:          current.metrics,
-		fetcher:          fetcher,
-		circuitBreakers:  circuitBreakers,
-		fetchSem:         current.fetchSem,
-		hostSem:          hostSem,
-		auditLogger:      auditLogger,
-		auditLogFile:     auditLogFile,
-		allowlistDigests: buildAllowlistMap(cfgCopy.AllowlistDigests),
-		guacClient:       guacClient,
-		guacBreaker:      guacBreaker,
-	})
-	v.policyHashes = newHashes
+	v.runPoller(ctx, paused)
 }
 
+// reloadPlan holds everything a reload prepares before it takes the lock.
+type reloadPlan struct {
+	loaded     *loadedPolicies
+	trust      trustFingerprint
+	newFetcher attestation.Fetcher
+}
+
+// prepareReload loads and validates policies and creates a new attestation
+// fetcher when needed, without modifying the verifier. OCI artifacts older
+// than rollbackSeed are rejected.
+func (v *Verifier) prepareReload(
+	ctx context.Context, cfg *config.Config, rollbackSeed time.Time,
+) (*reloadPlan, error) {
+	prev := v.state.Load()
+
+	loaded, err := loadAndHashPolicies(ctx, cfg, prev.fetcher, rollbackSeed)
+	if err != nil {
+		return nil, err
+	}
+
+	err = refuseEmptyPolicyReload(cfg, prev.policies, loaded.policies)
+	if err != nil {
+		return nil, err
+	}
+
+	trust := computeTrustFingerprint(cfg, loaded.policies)
+
+	newFetcher, err := v.prepareFetcher(ctx, cfg, trust)
+	if err != nil {
+		return nil, err
+	}
+
+	if cfg.Enabled() {
+		err = validatePoliciesModes(cfg.Verification, loaded.policies)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &reloadPlan{loaded: loaded, trust: trust, newFetcher: newFetcher}, nil
+}
+
+// reloadAuditLogger returns the audit logger for cfg, reusing the previous
+// one when the path is unchanged. The previous file is closed by
+// retireSnapshot once the new snapshot is published.
 func reloadAuditLogger(
 	ctx context.Context, prev *snapshot, cfg *config.Config,
 ) (*slog.Logger, *os.File) {
 	if prev.config.AuditLog == cfg.AuditLog {
 		return prev.auditLogger, prev.auditLogFile
-	}
-
-	// Close the previous audit log file after a grace period so that
-	// in-flight verification goroutines still holding the old snapshot
-	// can finish their writes without hitting a closed file descriptor.
-	if prev.auditLogFile != nil {
-		oldFile := prev.auditLogFile
-		timeout := prev.config.VerificationTimeout.Duration
-
-		time.AfterFunc(timeout, func() {
-			closeAuditLogFile(oldFile)
-		})
 	}
 
 	logger, auditFile, err := openAuditLogger(cfg.AuditLog)
@@ -185,52 +186,10 @@ func reloadAuditLogger(
 func resetVerificationCaches() {
 	attestation.ResetPEMKeyCache()
 	attestation.ResetSANPatternWarnings()
+	notation.ResetVerifierCache()
 	slsa.ResetWarnings()
 	glob.ResetCache()
-}
-
-func resetCachesIfChanged(prevHostSem *hostSemMap, policiesChanged bool) *hostSemMap {
-	if !policiesChanged {
-		return prevHostSem
-	}
-
-	resetVerificationCaches()
-
-	return &hostSemMap{
-		m: sync.Map{}, count: atomic.Int64{},
-		onOverflow: prevHostSem.onOverflow,
-	}
-}
-
-func reloadCache(prev *snapshot, cfg *config.Config, invalidated bool) *cache.Cache {
-	if !invalidated {
-		return prev.cache
-	}
-
-	prev.cache.Stop()
-
-	return cache.NewWithGauge(
-		cfg.CacheTTL.Duration, cfg.CacheMaxEntries,
-		prev.metrics.CacheEntriesTotal, prev.metrics.CacheEvictionsTotal,
-	)
-}
-
-// reloadCircuitBreakers returns the existing circuit breaker registry if settings
-// are unchanged, or creates a new one. Preserving the registry across reloads
-// prevents a burst of retries to failing registries.
-func (v *Verifier) reloadCircuitBreakers(
-	prev *snapshot, cfg *config.Config,
-) *attestation.CircuitBreakerRegistry {
-	if prev.circuitBreakers != nil &&
-		prev.config.CircuitBreakerThreshold == cfg.CircuitBreakerThreshold &&
-		prev.config.CircuitBreakerCooldown.Duration == cfg.CircuitBreakerCooldown.Duration {
-		return prev.circuitBreakers
-	}
-
-	return attestation.NewCircuitBreakerRegistry(
-		cfg.CircuitBreakerThreshold,
-		cfg.CircuitBreakerCooldown.Duration,
-	)
+	resetBuilderBindingWarnings()
 }
 
 // prepareFetcher creates a new fetcher outside the lock when one is needed
@@ -239,15 +198,20 @@ func (v *Verifier) reloadCircuitBreakers(
 func (v *Verifier) prepareFetcher( //nolint:ireturn // may return OCIFetcher, Fetcher, or FallbackFetcher
 	ctx context.Context,
 	cfg *config.Config,
+	trust trustFingerprint,
 ) (attestation.Fetcher, error) {
 	if !cfg.Enabled() {
 		return nil, nil //nolint:nilnil // nil fetcher means reuse existing
 	}
 
 	prev := v.state.Load()
+	basis := &prev.fetcherBasis
 
-	sigstoreChanged := config.SigstoreConfigChanged(&prev.config.Sigstore, &cfg.Sigstore)
-	offlineChanged := config.OfflineConfigChanged(&prev.config.Offline, &cfg.Offline)
+	// A replaced custom TUF root file needs a new fetcher even when its path
+	// is unchanged.
+	sigstoreChanged := config.SigstoreConfigChanged(&basis.config.Sigstore, &cfg.Sigstore) ||
+		basis.sigstore != trust.sigstore
+	offlineChanged := config.OfflineConfigChanged(&basis.config.Offline, &cfg.Offline)
 
 	if prev.fetcher != nil && !sigstoreChanged && !offlineChanged {
 		if !bundleStoreChangedOnDisk(prev.fetcher, cfg) {
@@ -344,6 +308,17 @@ func applyOCISettings(
 	}
 }
 
+// reloadFetcherBasis returns the basis of the fetcher reloadFetcher returns.
+// With verification disabled the fetcher is kept untouched, so it keeps its
+// basis; otherwise it was rebuilt for or updated to cfg.
+func reloadFetcherBasis(prev *snapshot, cfg *config.Config, trust trustFingerprint) fetcherBasis {
+	if !cfg.Enabled() {
+		return prev.fetcherBasis
+	}
+
+	return fetcherBasis{config: cfg, sigstore: trust.sigstore}
+}
+
 // reloadFetcher returns the fetcher to use for the new snapshot. If a new
 // fetcher was pre-created, it is configured and returned; otherwise the existing
 // fetcher is updated with the new rate limit and registries.
@@ -363,7 +338,7 @@ func (v *Verifier) reloadFetcher( //nolint:ireturn // returns prev.fetcher which
 		return newFetcher
 	}
 
-	applyOCISettings(prev.fetcher, prev.config, cfg)
+	applyOCISettings(prev.fetcher, prev.fetcherBasis.config, cfg)
 
 	return prev.fetcher
 }
@@ -372,13 +347,18 @@ func cacheAffectingFieldsChanged(prev, next *config.Config) bool {
 	return prev.Verification != next.Verification ||
 		prev.PolicyDir != next.PolicyDir ||
 		cacheTimingsChanged(prev, next) ||
-		prev.FetchFailurePolicy != next.FetchFailurePolicy ||
+		fetchFailurePolicyChanged(prev, next) ||
 		config.SigstoreConfigChanged(&prev.Sigstore, &next.Sigstore) ||
 		config.RegistriesChanged(prev.Registries, next.Registries) ||
 		policySourceChanged(prev, next) ||
 		prev.CacheMaxEntries != next.CacheMaxEntries ||
 		guacConfigChanged(prev, next) ||
 		config.OfflineConfigChanged(&prev.Offline, &next.Offline)
+}
+
+func fetchFailurePolicyChanged(prev, next *config.Config) bool {
+	return prev.FetchFailurePolicy != next.FetchFailurePolicy ||
+		prev.FetchFailurePolicyExplicit != next.FetchFailurePolicyExplicit
 }
 
 func guacConfigChanged(prev, next *config.Config) bool {
@@ -413,18 +393,9 @@ func reloadGUACClient(
 		return prev.guacClient, prev.guacBreaker, nil
 	}
 
-	guacClient, err := guac.NewClient(
-		cfg.Guac.Endpoint,
-		cfg.Guac.AuthTokenPath,
-		cfg.Guac.CACertPath,
-		cfg.Guac.Timeout.Duration,
-	)
+	guacClient, err := newGUACClient(cfg)
 	if err != nil {
-		return nil, nil, fmt.Errorf("creating GUAC client: %w", err)
-	}
-
-	if prev.guacClient != nil {
-		prev.guacClient.Close()
+		return nil, nil, err
 	}
 
 	return guacClient, attestation.NewCircuitBreaker(

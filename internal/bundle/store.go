@@ -15,10 +15,14 @@
 package bundle
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	ociV1 "github.com/google/go-containerregistry/pkg/v1"
@@ -26,6 +30,7 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/root"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
+	"github.com/saschagrunert/nri-supply-chain/internal/fileutil"
 )
 
 const (
@@ -115,29 +120,49 @@ func (s *Store) AttestationsFor(digest string) ([]StoredAttestation, error) {
 	return result, nil
 }
 
-// TrustedRoot loads and parses the trusted root from the bundle.
+// TrustedRoot loads and parses the first trusted root embedded in the bundle.
 func (s *Store) TrustedRoot() (*root.TrustedRoot, error) {
+	roots, err := s.TrustedRoots()
+	if err != nil {
+		return nil, err
+	}
+
+	return roots[0].Root, nil
+}
+
+// TrustedRoots loads and parses every trusted root embedded in the bundle,
+// with the name of the Sigstore root source each came from. Roots written by
+// older releases have no name.
+func (s *Store) TrustedRoots() ([]TrustedRootSource, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if s.manifest.TrustedRoot == nil {
+	entries := s.manifest.allTrustedRoots()
+	if len(entries) == 0 {
 		return nil, ErrTrustedRootMissing
 	}
 
-	data, err := s.readBlob(
-		s.manifest.TrustedRoot.BlobDigest,
-		s.manifest.TrustedRoot.Size,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("reading trusted root blob: %w", err)
+	roots := make([]TrustedRootSource, 0, len(entries))
+
+	for idx := range entries {
+		data, err := s.readBlob(entries[idx].BlobDigest, entries[idx].Size)
+		if err != nil {
+			return nil, fmt.Errorf("reading trusted root blob %q: %w", entries[idx].Name, err)
+		}
+
+		trustedRoot, err := root.NewTrustedRootFromJSON(data)
+		if err != nil {
+			return nil, fmt.Errorf("parsing trusted root %q: %w", entries[idx].Name, err)
+		}
+
+		roots = append(roots, TrustedRootSource{
+			Name:    entries[idx].Name,
+			Issuers: entries[idx].Issuers,
+			Root:    trustedRoot,
+		})
 	}
 
-	tr, err := root.NewTrustedRootFromJSON(data)
-	if err != nil {
-		return nil, fmt.Errorf("parsing trusted root: %w", err)
-	}
-
-	return tr, nil
+	return roots, nil
 }
 
 // RevocationData returns all revocation snapshots embedded in the bundle.
@@ -195,7 +220,35 @@ func readAndParseManifest(storeDir string) (*Manifest, error) {
 	return ParseManifest(data)
 }
 
+// readBlob reads a blob and verifies both its declared size and its content
+// digest, so blobs swapped on disk after import are detected on every read.
 func (s *Store) readBlob(digestStr string, expectedSize int64) ([]byte, error) {
+	if !strings.HasPrefix(digestStr, sha256Prefix) {
+		return nil, fmt.Errorf(
+			"%w: expected %q prefix, got %q",
+			ErrUnsupportedDigestAlgorithm, sha256Prefix, digestStr,
+		)
+	}
+
+	data, err := s.readBlobData(digestStr, expectedSize)
+	if err != nil {
+		return nil, err
+	}
+
+	actualHash := sha256.Sum256(data)
+	if hex.EncodeToString(actualHash[:]) != digestStr[len(sha256Prefix):] {
+		return nil, fmt.Errorf("%w: %s", ErrBlobDigestMismatch, digestStr)
+	}
+
+	return data, nil
+}
+
+// readBlobData reads a blob from the OCI layout. A blob that is absent or not
+// a regular file (a directory or FIFO swapped in after import) is an
+// integrity failure. Other errors, such as missing permissions or file
+// descriptor exhaustion, are local availability problems. The blob is opened
+// without blocking, so a FIFO cannot stall verification.
+func (s *Store) readBlobData(digestStr string, expectedSize int64) ([]byte, error) {
 	readLimit, limitErr := blobReadLimit(expectedSize)
 	if limitErr != nil {
 		return nil, fmt.Errorf("%s: %w", digestStr, limitErr)
@@ -206,22 +259,13 @@ func (s *Store) readBlob(digestStr string, expectedSize int64) ([]byte, error) {
 		return nil, fmt.Errorf("%w: invalid digest %q: %w", ErrBlobMissing, digestStr, err)
 	}
 
-	blobReader, err := s.layoutPath.Blob(hash)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %s: %w", ErrBlobMissing, digestStr, err)
-	}
-	defer func() { _ = blobReader.Close() }()
+	blobPath := filepath.Join(string(s.layoutPath), "blobs", hash.Algorithm, hash.Hex)
 
-	data, err := io.ReadAll(io.LimitReader(blobReader, readLimit))
+	// The limit allows one byte more than declared so a grown blob is
+	// reported as a size mismatch below.
+	data, err := fileutil.ReadLimited(blobPath, readLimit)
 	if err != nil {
-		return nil, fmt.Errorf("reading blob %s: %w", digestStr, err)
-	}
-
-	if int64(len(data)) == readLimit && expectedSize == 0 {
-		return nil, fmt.Errorf(
-			"%w: %s exceeds %d byte read limit",
-			ErrBlobTooLarge, digestStr, maxBlobReadSize,
-		)
+		return nil, blobReadError(digestStr, expectedSize, err)
 	}
 
 	if expectedSize > 0 && int64(len(data)) != expectedSize {
@@ -232,6 +276,26 @@ func (s *Store) readBlob(digestStr string, expectedSize int64) ([]byte, error) {
 	}
 
 	return data, nil
+}
+
+// blobReadError classifies an error reading a blob file.
+func blobReadError(digestStr string, expectedSize int64, err error) error {
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return fmt.Errorf("%w: %s: %w", ErrBlobMissing, digestStr, err)
+	case errors.Is(err, fileutil.ErrNotRegularFile), errors.Is(err, fileutil.ErrSymlink):
+		return fmt.Errorf("%w: %s: %w", ErrBlobNotRegular, digestStr, err)
+	case errors.Is(err, fileutil.ErrFileTooLarge) && expectedSize > 0:
+		return fmt.Errorf(
+			"%w: %s (expected %d, got more)", ErrBlobSizeMismatch, digestStr, expectedSize,
+		)
+	case errors.Is(err, fileutil.ErrFileTooLarge):
+		return fmt.Errorf(
+			"%w: %s exceeds %d byte read limit", ErrBlobTooLarge, digestStr, maxBlobReadSize,
+		)
+	default:
+		return fmt.Errorf("reading blob %s: %w", digestStr, err)
+	}
 }
 
 func blobReadLimit(expectedSize int64) (int64, error) {

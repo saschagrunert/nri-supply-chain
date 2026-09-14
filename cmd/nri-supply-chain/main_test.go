@@ -733,11 +733,23 @@ func TestValidateSubcommandDisabled(t *testing.T) {
 	t.Parallel()
 
 	cmd := newRootCmd()
-	cmd.SetArgs([]string{cmdValidate})
+	cmd.SetArgs([]string{cmdValidate, "--allow-missing-config"})
 
 	err := cmd.Execute()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateSubcommandMissingDefaultConfig(t *testing.T) {
+	t.Parallel()
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{cmdValidate})
+
+	err := cmd.Execute()
+	if exitCodeFor(err) != exitError {
+		t.Fatalf("expected exit code %d without a config file, got %v", exitError, err)
 	}
 }
 

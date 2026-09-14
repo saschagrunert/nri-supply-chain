@@ -25,6 +25,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/registry"
@@ -42,6 +43,7 @@ const (
 	testDefaultJSON     = "default.json"
 	testTitleAnnotation = "org.opencontainers.image.title"
 	testWarnPolicyJSON  = `{"slsa":{"missingPolicy":"warn"}}`
+	testDenyPolicyJSON  = `{"slsa":{"missingPolicy":"deny"}}`
 )
 
 func TestFetchFromOCIWithMockRegistry(t *testing.T) {
@@ -51,8 +53,8 @@ func TestFetchFromOCIWithMockRegistry(t *testing.T) {
 	prodPolicy := `{"slsa":{"missingPolicy":"deny"},"inherits":true}`
 
 	img := buildPolicyImage(t, map[string]string{
-		testDefaultJSON:   defaultPolicy,
-		"production.json": prodPolicy,
+		testDefaultJSON:    defaultPolicy,
+		testProductionJSON: prodPolicy,
 	})
 
 	srv := httptest.NewServer(registry.New())
@@ -134,10 +136,8 @@ func TestFetchFromOCIEmptyArtifact(t *testing.T) {
 	ref := pushImage(t, srv, img, "test/policies:empty")
 	fetcher := policy.NewOCIFetcher(nil)
 
-	result, err := fetcher.FetchFromOCI(context.Background(), ref)
-	testutil.AssertNoError(t, err)
-
-	testutil.AssertEqual(t, 0, len(result.Policies))
+	_, err := fetcher.FetchFromOCI(context.Background(), ref)
+	testutil.AssertErrorIs(t, err, policy.ErrNoOCIPolicies)
 }
 
 func TestFetchFromOCIInvalidJSON(t *testing.T) {
@@ -203,7 +203,7 @@ func TestFetchFromOCIInheritance(t *testing.T) {
 
 	img := buildPolicyImage(t, map[string]string{
 		testDefaultJSON: defaultPolicy,
-		"dev.json":      nsPol,
+		testDevJSON:     nsPol,
 	})
 
 	srv := httptest.NewServer(registry.New())
@@ -425,7 +425,7 @@ func TestFetchFromOCITrailingJSONContent(t *testing.T) {
 	trailingContent := `{"slsa":{"missingPolicy":"warn"}}{"extra":true}`
 
 	img := buildPolicyImage(t, map[string]string{
-		testDefaultJSON: `{"slsa":{"missingPolicy":"deny"}}`,
+		testDefaultJSON: testDenyPolicyJSON,
 		"trailing.json": trailingContent,
 	})
 
@@ -444,9 +444,9 @@ func TestFetchFromOCIDuplicateLayerFilenames(t *testing.T) {
 	t.Parallel()
 
 	// Build an image with two layers that both have the same title
-	// annotation. The second layer should overwrite the first.
+	// annotation. The artifact is ambiguous and must be rejected.
 	firstPolicy := `{"slsa":{"missingPolicy":"warn"}}`
-	secondPolicy := `{"slsa":{"missingPolicy":"deny"}}`
+	secondPolicy := testDenyPolicyJSON
 
 	layer1 := &staticLayer{
 		content:   []byte(firstPolicy),
@@ -482,19 +482,8 @@ func TestFetchFromOCIDuplicateLayerFilenames(t *testing.T) {
 
 	fetcher := policy.NewOCIFetcherWithImageFunc(fetchFunc, nil)
 
-	result, err := fetcher.FetchFromOCI(context.Background(), "example.com/test:dup")
-	testutil.AssertNoError(t, err)
-
-	// Only one policy should exist (the second one wins).
-	testutil.AssertEqual(t, 1, len(result.Policies))
-
-	pol, ok := result.Policies[""]
-	if !ok {
-		t.Fatal("expected default policy")
-	}
-
-	// The second layer's value should have won.
-	testutil.AssertEqual(t, "deny", string(pol.SLSAMissingPolicy()))
+	_, err = fetcher.FetchFromOCI(context.Background(), "example.com/test:dup")
+	testutil.AssertErrorIs(t, err, policy.ErrDuplicatePolicyNamespace)
 }
 
 func TestFetchFromOCIWithCustomFetchFunc(t *testing.T) {
@@ -538,4 +527,289 @@ func TestFetchFromOCIWithCustomFetchFunc(t *testing.T) {
 	}
 
 	testutil.AssertEqual(t, "deny", string(pol.SLSAMissingPolicy()))
+}
+
+const testOCIRef = "example.com/test/policies:v1"
+
+type testLayer struct {
+	title     string
+	mediaType string
+	content   string
+}
+
+func buildLayeredImage(t *testing.T, layers []testLayer, created string) ociV1.Image {
+	t.Helper()
+
+	img := empty.Image
+
+	for _, layer := range layers {
+		annotations := map[string]string{}
+		if layer.title != "" {
+			annotations[testTitleAnnotation] = layer.title
+		}
+
+		var err error
+
+		img, err = mutate.Append(img, mutate.Addendum{
+			Layer: &staticLayer{
+				content:     []byte(layer.content),
+				mediaType:   ociTypes.MediaType(layer.mediaType),
+				annotations: annotations,
+			},
+			Annotations: annotations,
+		})
+		testutil.AssertNoError(t, err)
+	}
+
+	if created != "" {
+		annotated, ok := mutate.Annotations(img, map[string]string{
+			policy.CreatedAnnotation: created,
+		}).(ociV1.Image)
+		if !ok {
+			t.Fatal("expected annotated image")
+		}
+
+		img = annotated
+	}
+
+	return img
+}
+
+func fetcherForImage(current func() ociV1.Image) *policy.OCIFetcher {
+	return policy.NewOCIFetcherWithImageFunc(
+		func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+			return current(), nil
+		}, nil,
+	)
+}
+
+func staticImage(img ociV1.Image) func() ociV1.Image {
+	return func() ociV1.Image { return img }
+}
+
+func TestFetchFromOCIRejectsInvalidLayers(t *testing.T) {
+	t.Parallel()
+
+	valid := testLayer{
+		title:     testDefaultJSON,
+		mediaType: policy.PolicyMediaType,
+		content:   testWarnPolicyJSON,
+	}
+
+	tests := []struct {
+		name    string
+		layers  []testLayer
+		wantErr error
+	}{
+		{
+			name: "untitled strict layer",
+			layers: []testLayer{
+				valid,
+				{title: "", mediaType: policy.PolicyMediaType, content: testWarnPolicyJSON},
+			},
+			wantErr: policy.ErrOCIPolicyLayerUntitled,
+		},
+		{
+			name: "invalid generic JSON layer",
+			layers: []testLayer{
+				valid,
+				{
+					title:     "prod.json",
+					mediaType: "application/json",
+					content:   `{"slsa": {"bogus": true}}`,
+				},
+			},
+			wantErr: nil,
+		},
+		{
+			name: "invalid namespace title",
+			layers: []testLayer{
+				valid,
+				{
+					title:     "Prod.json",
+					mediaType: policy.PolicyMediaType,
+					content:   testWarnPolicyJSON,
+				},
+			},
+			wantErr: policy.ErrInvalidPolicyFilename,
+		},
+		{
+			name: "duplicate namespace from path titles",
+			layers: []testLayer{
+				{
+					title:     "a/prod.json",
+					mediaType: policy.PolicyMediaType,
+					content:   testWarnPolicyJSON,
+				},
+				{
+					title:     "b/prod.json",
+					mediaType: policy.PolicyMediaType,
+					content:   testWarnPolicyJSON,
+				},
+			},
+			wantErr: policy.ErrDuplicatePolicyNamespace,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			img := buildLayeredImage(t, test.layers, "")
+
+			_, err := fetcherForImage(staticImage(img)).FetchFromOCI(t.Context(), testOCIRef)
+			testutil.AssertError(t, err)
+
+			if test.wantErr != nil {
+				testutil.AssertErrorIs(t, err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestFetchFromOCISkipsUntitledGenericLayers(t *testing.T) {
+	t.Parallel()
+
+	img := buildLayeredImage(t, []testLayer{
+		{title: testDefaultJSON, mediaType: policy.PolicyMediaType, content: testWarnPolicyJSON},
+		{title: "", mediaType: "application/vnd.oci.image.layer.v1.tar", content: "not json"},
+		{title: "README.md", mediaType: "application/json", content: "# docs"},
+	}, "")
+
+	result, err := fetcherForImage(staticImage(img)).FetchFromOCI(t.Context(), testOCIRef)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqual(t, 1, len(result.Policies))
+}
+
+func TestFetchFromOCIMapsPathTitlesToNamespaces(t *testing.T) {
+	t.Parallel()
+
+	img := buildLayeredImage(t, []testLayer{
+		{
+			title:     "policies/production.json",
+			mediaType: policy.PolicyMediaType,
+			content:   testWarnPolicyJSON,
+		},
+	}, "")
+
+	result, err := fetcherForImage(staticImage(img)).FetchFromOCI(t.Context(), testOCIRef)
+	testutil.AssertNoError(t, err)
+
+	if _, ok := result.Policies["production"]; !ok {
+		t.Fatalf("expected production policy, got %v", result.Policies)
+	}
+}
+
+func TestFetchFromOCIRejectsRollback(t *testing.T) {
+	t.Parallel()
+
+	layers := []testLayer{
+		{title: testDefaultJSON, mediaType: policy.PolicyMediaType, content: testWarnPolicyJSON},
+	}
+
+	newer := buildLayeredImage(t, layers, "2026-09-01T00:00:00Z")
+	older := buildLayeredImage(t, layers, "2026-08-01T00:00:00Z")
+	unannotated := buildLayeredImage(t, layers, "")
+
+	current := newer
+	fetcher := fetcherForImage(func() ociV1.Image { return current })
+
+	result, err := fetcher.FetchFromOCI(t.Context(), testOCIRef)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqual(
+		t,
+		"2026-09-01T00:00:00Z",
+		result.Created.UTC().Format("2006-01-02T15:04:05Z07:00"),
+	)
+	fetcher.SeedNewestCreated(result.Created)
+
+	current = older
+	_, err = fetcher.FetchFromOCI(t.Context(), testOCIRef)
+	testutil.AssertErrorIs(t, err, policy.ErrOCIPolicyRollback)
+
+	current = unannotated
+	_, err = fetcher.FetchFromOCI(t.Context(), testOCIRef)
+	testutil.AssertErrorIs(t, err, policy.ErrOCIPolicyRollback)
+
+	current = newer
+	_, err = fetcher.FetchFromOCI(t.Context(), testOCIRef)
+	testutil.AssertNoError(t, err)
+}
+
+func TestFetchFromOCIRejectsInvalidCreatedAnnotation(t *testing.T) {
+	t.Parallel()
+
+	img := buildLayeredImage(t, []testLayer{
+		{title: testDefaultJSON, mediaType: policy.PolicyMediaType, content: testWarnPolicyJSON},
+	}, "yesterday")
+
+	_, err := fetcherForImage(staticImage(img)).FetchFromOCI(t.Context(), testOCIRef)
+	testutil.AssertErrorIs(t, err, policy.ErrInvalidCreatedAnnotation)
+}
+
+func TestSeedNewestCreatedCarriesRollbackGuard(t *testing.T) {
+	t.Parallel()
+
+	layers := []testLayer{
+		{title: testDefaultJSON, mediaType: policy.PolicyMediaType, content: testWarnPolicyJSON},
+	}
+
+	older := buildLayeredImage(t, layers, "2026-08-01T00:00:00Z")
+	newer := buildLayeredImage(t, layers, "2026-09-01T00:00:00Z")
+
+	previous := fetcherForImage(staticImage(newer))
+
+	result, err := previous.FetchFromOCI(t.Context(), testOCIRef)
+	testutil.AssertNoError(t, err)
+	previous.SeedNewestCreated(result.Created)
+
+	// A replacement fetcher (e.g. after a config reload) inherits the guard.
+	replacement := fetcherForImage(staticImage(older))
+	replacement.SeedNewestCreated(previous.NewestCreated())
+	replacement.SeedNewestCreated(time.Time{})
+
+	testutil.AssertEqual(t, previous.NewestCreated(), replacement.NewestCreated())
+
+	_, err = replacement.FetchFromOCI(t.Context(), testOCIRef)
+	testutil.AssertErrorIs(t, err, policy.ErrOCIPolicyRollback)
+}
+
+func TestFetchFromOCIDoesNotAdvanceGuardBeforeAcceptance(t *testing.T) {
+	t.Parallel()
+
+	layers := []testLayer{
+		{title: testDefaultJSON, mediaType: policy.PolicyMediaType, content: testWarnPolicyJSON},
+	}
+
+	good := buildLayeredImage(t, layers, "2026-08-01T00:00:00Z")
+	rejected := buildLayeredImage(t, layers, "2026-09-01T00:00:00Z")
+
+	current := good
+	fetcher := fetcherForImage(func() ociV1.Image { return current })
+
+	result, err := fetcher.FetchFromOCI(t.Context(), testOCIRef)
+	testutil.AssertNoError(t, err)
+	fetcher.SeedNewestCreated(result.Created)
+
+	// A newer artifact is fetched but its policies are rejected by the caller,
+	// so the guard must not advance past the still applied artifact.
+	current = rejected
+	_, err = fetcher.FetchFromOCI(t.Context(), testOCIRef)
+	testutil.AssertNoError(t, err)
+
+	current = good
+	_, err = fetcher.FetchFromOCI(t.Context(), testOCIRef)
+	testutil.AssertNoError(t, err)
+}
+
+func TestFetchFromOCIRejectsFutureCreated(t *testing.T) {
+	t.Parallel()
+
+	future := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	img := buildLayeredImage(t, []testLayer{
+		{title: testDefaultJSON, mediaType: policy.PolicyMediaType, content: testWarnPolicyJSON},
+	}, future)
+
+	_, err := fetcherForImage(staticImage(img)).FetchFromOCI(t.Context(), testOCIRef)
+	testutil.AssertErrorIs(t, err, policy.ErrInvalidCreatedAnnotation)
 }

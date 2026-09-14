@@ -40,6 +40,16 @@ type CircuitBreaker struct {
 	lastFailureTime     time.Time
 	threshold           int
 	cooldown            time.Duration
+	// probe identifies the request admitted as the half-open probe; it is
+	// incremented for every new probe so stale permits never match.
+	probe uint64
+}
+
+// Permit records how Acquire admitted a request. Only the permit of the
+// half-open probe can release the probe or decide its outcome, so a request
+// admitted before the breaker tripped cannot interfere with the probe.
+type Permit struct {
+	probe uint64
 }
 
 // NewCircuitBreaker creates a circuit breaker that opens after threshold
@@ -52,20 +62,31 @@ func NewCircuitBreaker(threshold int, cooldown time.Duration) *CircuitBreaker {
 		lastFailureTime:     time.Time{},
 		threshold:           threshold,
 		cooldown:            cooldown,
+		probe:               0,
 	}
 }
 
-// Allow returns true if the request should proceed. Uses RLock for the
-// common closed-state fast path to avoid write-lock contention. When the
-// circuit is open and the cooldown has elapsed, it transitions to half-open
-// and allows a single probe request.
+// Allow returns true if the request should proceed. When the circuit is open
+// and the cooldown has elapsed, it transitions to half-open and allows a
+// single probe request. Use Acquire when the caller needs to release the
+// probe or report its outcome.
 func (cb *CircuitBreaker) Allow() bool {
+	_, allowed := cb.Acquire()
+
+	return allowed
+}
+
+// Acquire reports whether a request should proceed and returns its permit.
+// Uses RLock for the common closed-state fast path to avoid write-lock
+// contention. When the circuit is open and the cooldown has elapsed, it
+// transitions to half-open and admits a single probe request.
+func (cb *CircuitBreaker) Acquire() (Permit, bool) {
 	cb.mu.RLock()
 	state := cb.state
 	cb.mu.RUnlock()
 
 	if state == circuitClosed {
-		return true
+		return Permit{probe: 0}, true
 	}
 
 	cb.mu.Lock()
@@ -73,22 +94,23 @@ func (cb *CircuitBreaker) Allow() bool {
 
 	switch cb.state {
 	case circuitClosed:
-		return true
+		return Permit{probe: 0}, true
 
 	case circuitOpen:
 		if time.Since(cb.lastFailureTime) >= cb.cooldown {
 			cb.state = circuitHalfOpen
+			cb.probe++
 
-			return true
+			return Permit{probe: cb.probe}, true
 		}
 
-		return false
+		return Permit{probe: 0}, false
 
 	case circuitHalfOpen:
-		return false
+		return Permit{probe: 0}, false
 
 	default:
-		return true
+		return Permit{probe: 0}, true
 	}
 }
 
@@ -97,8 +119,20 @@ func (cb *CircuitBreaker) RecordSuccess() {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
-	cb.consecutiveFailures = 0
-	cb.state = circuitClosed
+	cb.recordSuccessLocked()
+}
+
+// Succeeded records a successful request admitted with permit. While the
+// breaker is half-open only the probe's outcome counts.
+func (cb *CircuitBreaker) Succeeded(permit Permit) {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+
+	if !cb.decidesLocked(permit) {
+		return
+	}
+
+	cb.recordSuccessLocked()
 }
 
 // RecordFailure records a failure. If the failure count reaches the threshold,
@@ -108,6 +142,50 @@ func (cb *CircuitBreaker) RecordFailure() bool {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
+	return cb.recordFailureLocked()
+}
+
+// Failed records a failed request admitted with permit and reports whether
+// it tripped the breaker. While the breaker is half-open only the probe's
+// outcome counts.
+func (cb *CircuitBreaker) Failed(permit Permit) bool {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+
+	if !cb.decidesLocked(permit) {
+		return false
+	}
+
+	return cb.recordFailureLocked()
+}
+
+// Release returns a half-open breaker to the open state without recording a
+// failure when permit belongs to the probe. Call it when a request ended
+// without a registry outcome (for example a local concurrency limit), so the
+// next request can probe again instead of the breaker staying half-open.
+// Permits of other requests are ignored.
+func (cb *CircuitBreaker) Release(permit Permit) {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+
+	if cb.state == circuitHalfOpen && permit.probe != 0 && permit.probe == cb.probe {
+		cb.state = circuitOpen
+	}
+}
+
+// decidesLocked reports whether the outcome of the request admitted with
+// permit may change the breaker state: always, except while half-open, when
+// only the probe decides.
+func (cb *CircuitBreaker) decidesLocked(permit Permit) bool {
+	return cb.state != circuitHalfOpen || (permit.probe != 0 && permit.probe == cb.probe)
+}
+
+func (cb *CircuitBreaker) recordSuccessLocked() {
+	cb.consecutiveFailures = 0
+	cb.state = circuitClosed
+}
+
+func (cb *CircuitBreaker) recordFailureLocked() bool {
 	cb.consecutiveFailures++
 	cb.lastFailureTime = time.Now()
 

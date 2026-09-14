@@ -25,6 +25,88 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
+var (
+	// ErrPolicyModeWhileDisabled indicates that a policy requests warn or
+	// enforce mode while verification is globally disabled.
+	ErrPolicyModeWhileDisabled = errors.New(
+		"policy mode has no effect while verification is disabled; " +
+			"set verification to warn or enforce, or remove the policy mode",
+	)
+
+	// ErrNoPolicies indicates a reload or policy update would replace the
+	// loaded policies with an empty policy set.
+	ErrNoPolicies = errors.New("refusing to replace loaded policies with an empty policy set")
+)
+
+func policyLabel(namespace string) string {
+	if namespace == "" {
+		return policy.DefaultPolicyLabel
+	}
+
+	return namespace
+}
+
+// refuseEmptyPolicyReload rejects a reload that would replace loaded
+// policies with an empty set (e.g. a policy directory that was emptied by
+// accident), which would otherwise deny or admit every container.
+func refuseEmptyPolicyReload(
+	cfg *config.Config, previous, next map[string]*policy.Policy,
+) error {
+	if cfg.Enabled() && len(previous) > 0 && len(next) == 0 {
+		return ErrNoPolicies
+	}
+
+	return nil
+}
+
+// anyPolicyEnforcing reports whether the global mode or any policy's
+// effective mode is enforce.
+func anyPolicyEnforcing(cfg *config.Config, policies map[string]*policy.Policy) bool {
+	if cfg.Verification == config.ModeEnforce {
+		return true
+	}
+
+	for _, pol := range policies {
+		if pol.EffectiveMode(cfg.Verification) == config.ModeEnforce {
+			return true
+		}
+	}
+
+	return false
+}
+
+// validatePoliciesAgainstConfig applies the enforce mode safety checks of the
+// operational config to namespaces that enforce through their policy mode,
+// not only to a global enforce mode: insecure registries and unsigned OCI
+// policy artifacts are rejected as soon as any policy enforces.
+func validatePoliciesAgainstConfig(
+	cfg *config.Config, policies map[string]*policy.Policy,
+) error {
+	if !anyPolicyEnforcing(cfg, policies) {
+		return nil
+	}
+
+	var errs []error
+
+	for idx := range cfg.Registries {
+		if cfg.Registries[idx].Insecure {
+			errs = append(errs, fmt.Errorf(
+				"%w: registries[%d] %q (a policy enforces)",
+				config.ErrInsecureRegistryInEnforceMode, idx, cfg.Registries[idx].Prefix,
+			))
+		}
+	}
+
+	if cfg.Policy.Source == config.PolicySourceOCI && !cfg.Policy.SignatureVerificationRequired() {
+		errs = append(
+			errs,
+			fmt.Errorf("%w (a policy enforces)", config.ErrPolicyOCIUnsignedInEnforce),
+		)
+	}
+
+	return errors.Join(errs...)
+}
+
 func policyForNamespace(
 	policies map[string]*policy.Policy, namespace string,
 ) *policy.Policy {
@@ -53,8 +135,10 @@ func handleMissingPolicy(
 	)
 
 	return applyEnforcement(ctx, cfg.Verification, &types.Result{
-		Allowed: false,
-		Reason:  reason,
+		Allowed:  false,
+		Verified: false,
+		Mode:     "",
+		Reason:   reason,
 		CheckResults: []types.CheckResult{
 			*types.FailResult(types.CheckTypePolicy, "no matching policy found", nil),
 		},
@@ -64,15 +148,10 @@ func handleMissingPolicy(
 func validatePoliciesRuntime(policies map[string]*policy.Policy) error {
 	var errs []error
 
-	for ns, pol := range policies {
+	for namespace, pol := range policies {
 		err := pol.ValidateRuntime()
 		if err != nil {
-			label := ns
-			if label == "" {
-				label = policy.DefaultPolicyLabel
-			}
-
-			errs = append(errs, fmt.Errorf("policy %q: %w", label, err))
+			errs = append(errs, fmt.Errorf("policy %q: %w", policyLabel(namespace), err))
 		}
 	}
 
@@ -84,11 +163,8 @@ func validatePoliciesModes(
 ) error {
 	var errs []error
 
-	for ns, pol := range policies {
-		label := ns
-		if label == "" {
-			label = policy.DefaultPolicyLabel
-		}
+	for namespace, pol := range policies {
+		label := policyLabel(namespace)
 
 		// Validate per-namespace mode strictness against global mode.
 		err := pol.ValidateModeStrictness(mode)

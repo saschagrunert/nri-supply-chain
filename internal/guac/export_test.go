@@ -28,5 +28,20 @@ func ExportParseDepsResponse(body []byte, maxDeps int) (*DependencyInfo, error) 
 
 // ExportParseScorecardResponse exposes parseScorecardResponse for fuzz testing.
 func ExportParseScorecardResponse(body []byte) (*ScorecardResult, error) {
-	return parseScorecardResponse(body)
+	return parseScorecardResponse(body, nil)
+}
+
+// ExportParseSourcesResponse exposes parseSourcesResponse for fuzz testing.
+func ExportParseSourcesResponse(body []byte) (int, error) {
+	sources, packages, err := parseSourcesResponse(body)
+
+	return len(sources) + len(packages), err
+}
+
+// ExportParsePackageSourcesResponse exposes parsePackageSourcesResponse for
+// fuzz testing.
+func ExportParsePackageSourcesResponse(body []byte) (int, error) {
+	sources, err := parsePackageSourcesResponse(body)
+
+	return len(sources), err
 }

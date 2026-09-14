@@ -6,6 +6,8 @@ nri-supply-chain plugin.
 <!-- toc -->
 
 - [Operational Config](#operational-config)
+  - [Admission deadline](#admission-deadline)
+  - [Fetch failures](#fetch-failures)
   - [GUAC](#guac)
   - [Remediation](#remediation)
   - [Runtime reload](#runtime-reload)
@@ -40,6 +42,7 @@ verification = "warn"
 log_level = "info"
 fetch_timeout = "30s"
 # digest_resolve_timeout = "1s"
+# admission_timeout = "1500ms"
 # fetch_failure_policy = "warn"
 cache_ttl = "24h"
 cache_failure_ttl = "5m"
@@ -61,6 +64,7 @@ circuit_breaker_cooldown = "30s"
 # source = "oci"
 # oci_ref = "ghcr.io/myorg/supply-chain-policies:v1"
 # poll_interval = "5m"
+# oci_max_staleness = "0s"
 
 # [sigstore]
 # tuf_mirror = "https://tuf.internal.example.com"
@@ -75,27 +79,88 @@ circuit_breaker_cooldown = "30s"
 # bundle_signature_key = ""
 ```
 
-| Field                       | Default                          | Description                                                                                                                                                                                                                                                                                                |
-| --------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `config_version`            | `1`                              | Schema version of the config file. Omitting defaults to 1. The plugin rejects versions newer than it supports.                                                                                                                                                                                             |
-| `verification`              | `disabled`                       | Global mode: `disabled`, `warn` (log-only), `enforce` (reject on failure). Per-namespace overrides are set in policy files via the `mode` field (see [policy.md](policy.md)).                                                                                                                              |
-| `log_level`                 | (CLI flag)                       | Log verbosity override: `debug`, `info`, `warn`, `error`                                                                                                                                                                                                                                                   |
-| `fetch_timeout`             | `30s`                            | Per-request timeout for attestation fetches. Max 5m. Also used for digest resolution in the CLI `verify` command (the NRI plugin uses `digest_resolve_timeout` instead).                                                                                                                                   |
-| `digest_resolve_timeout`    | `1s`                             | Timeout for resolving an image tag to its digest when the runtime does not provide one. Max 5s. Keep below containerd's ~2s ttrpc deadline.                                                                                                                                                                |
-| `fetch_failure_policy`      | `warn` (`deny` in enforce mode)  | Behavior when attestation fetch fails: `allow`, `warn`, `deny`. In enforce mode, defaults to `deny` unless explicitly set. Setting `allow` in enforce mode is rejected during config validation. If upgrading from a version that permitted this combination, change to `warn` or `deny` before upgrading. |
-| `cache_ttl`                 | `24h`                            | TTL for cached verification results (`0s` disables caching). Max 7d.                                                                                                                                                                                                                                       |
-| `cache_failure_ttl`         | `5m`                             | TTL for cached failure results, so transient errors retry sooner. Max 1h.                                                                                                                                                                                                                                  |
-| `policy_dir`                | `/etc/nri-supply-chain/policies` | Directory containing JSON policy files                                                                                                                                                                                                                                                                     |
-| `metrics_addr`              | `127.0.0.1:9090`                 | Prometheus metrics HTTP listen address                                                                                                                                                                                                                                                                     |
-| `circuit_breaker_threshold` | `5`                              | Consecutive fetch failures before a per-host circuit breaker opens                                                                                                                                                                                                                                         |
-| `circuit_breaker_cooldown`  | `30s`                            | Duration the circuit breaker stays open before allowing a probe. Max 10m.                                                                                                                                                                                                                                  |
-| `verification_timeout`      | `5m`                             | Maximum time for a single image verification. Must be positive, maximum 30m.                                                                                                                                                                                                                               |
-| `check_timeout`             | `2m`                             | Maximum time for a single attestation check (e.g. SLSA, VEX, SBOM) within a verification. Must not exceed `verification_timeout`.                                                                                                                                                                          |
-| `fetch_rate_limit`          | `0` (unlimited)                  | Maximum registry fetch requests per second (max 10,000)                                                                                                                                                                                                                                                    |
-| `max_attestation_size`      | `10485760` (10 MiB)              | Maximum allowed size in bytes for a single attestation bundle. Min 1 MiB, max 100 MiB.                                                                                                                                                                                                                     |
-| `cache_max_entries`         | `10000`                          | Maximum number of entries in the verification result cache. Min 100, max 1,000,000.                                                                                                                                                                                                                        |
-| `allowlist_digests`         | `[]`                             | Global list of trusted image digests that skip verification in all namespaces, overriding per-namespace policies. Accepts bare digests (`sha256:...`) or full references (`image@sha256:...`). Reloaded with the config on SIGHUP.                                                                         |
-| `audit_log`                 | (empty)                          | Absolute path for a dedicated audit log file. When set, supply chain audit events are written as JSON to this file instead of the application logger. Reloaded on SIGHUP.                                                                                                                                  |
+| Field                       | Default                          | Description                                                                                                                                                                                                                                                                                                                                       |
+| --------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `config_version`            | `1`                              | Schema version of the config file. Omitting defaults to 1. The plugin rejects versions newer than it supports.                                                                                                                                                                                                                                    |
+| `verification`              | `disabled`                       | Global mode: `disabled`, `warn` (log-only), `enforce` (reject on failure). Per-namespace overrides are set in policy files via the `mode` field (see [policy.md](policy.md)).                                                                                                                                                                     |
+| `log_level`                 | (CLI flag)                       | Log verbosity override: `debug`, `info`, `warn`, `error`                                                                                                                                                                                                                                                                                          |
+| `fetch_timeout`             | `30s`                            | Per-request timeout for attestation fetches. Max 5m. Also used for digest resolution in the CLI `verify` command (the NRI plugin uses `digest_resolve_timeout` instead).                                                                                                                                                                          |
+| `digest_resolve_timeout`    | `1s`                             | Timeout for resolving an image tag to its digest when the runtime does not provide one. Max 5s. Keep below containerd's ~2s ttrpc deadline.                                                                                                                                                                                                       |
+| `admission_timeout`         | `1500ms`                         | Upper bound for the whole CreateContainer admission (digest resolution plus waiting for the verification result). Max 1m. Must stay below the runtime's NRI plugin request timeout (2s by default); see [Admission deadline](#admission-deadline).                                                                                                |
+| `fetch_failure_policy`      | `warn` (`deny` in enforce mode)  | Behavior when attestation fetch fails: `allow`, `warn`, `deny`. In enforce mode, defaults to `deny` unless explicitly set. Setting `allow` in enforce mode is rejected during config validation. If upgrading from a version that permitted this combination, change to `warn` or `deny` before upgrading. See [Fetch failures](#fetch-failures). |
+| `cache_ttl`                 | `24h`                            | TTL for cached verification results (`0s` disables caching). Max 7d.                                                                                                                                                                                                                                                                              |
+| `cache_failure_ttl`         | `5m`                             | TTL for cached failure results, so transient errors retry sooner. Max 1h. Fetch errors are cached for at most `circuit_breaker_cooldown`; circuit breaker open results are not cached.                                                                                                                                                            |
+| `policy_dir`                | `/etc/nri-supply-chain/policies` | Directory containing JSON policy files                                                                                                                                                                                                                                                                                                            |
+| `metrics_addr`              | `127.0.0.1:9090`                 | Prometheus metrics HTTP listen address                                                                                                                                                                                                                                                                                                            |
+| `circuit_breaker_threshold` | `5`                              | Consecutive registry transport failures (connection errors, timeouts, HTTP 5xx and 429) before a per-host circuit breaker opens. Attestations that fail verification and other registry responses do not count.                                                                                                                                   |
+| `circuit_breaker_cooldown`  | `30s`                            | Duration the circuit breaker stays open before allowing a probe. Max 10m.                                                                                                                                                                                                                                                                         |
+| `verification_timeout`      | `5m`                             | Maximum time for a single image verification. Must be positive, maximum 30m.                                                                                                                                                                                                                                                                      |
+| `check_timeout`             | `2m`                             | Maximum time for a single attestation check (e.g. SLSA, VEX, SBOM) within a verification. Must not exceed `verification_timeout`.                                                                                                                                                                                                                 |
+| `fetch_rate_limit`          | `0` (unlimited)                  | Maximum registry fetch requests per second (max 10,000)                                                                                                                                                                                                                                                                                           |
+| `max_attestation_size`      | `10485760` (10 MiB)              | Maximum allowed size in bytes for a single attestation bundle. Min 1 MiB, max 100 MiB.                                                                                                                                                                                                                                                            |
+| `cache_max_entries`         | `10000`                          | Maximum number of entries in the verification result cache. Min 100, max 1,000,000.                                                                                                                                                                                                                                                               |
+| `allowlist_digests`         | `[]`                             | Global list of trusted image digests that skip verification in all namespaces, overriding per-namespace policies. Accepts bare digests (`sha256:...`) or full references (`image@sha256:...`). Reloaded with the config on SIGHUP.                                                                                                                |
+| `audit_log`                 | (empty)                          | Absolute path for a dedicated audit log file. When set, supply chain audit events are written as JSON to this file instead of the application logger. Reloaded on SIGHUP.                                                                                                                                                                         |
+
+### Admission deadline
+
+The NRI runtime bounds every plugin call with a request timeout (2s by
+default in containerd and CRI-O). A plugin that misses it is closed by the
+runtime and the container is created without a verdict, so verification must
+answer in time. `admission_timeout` bounds the whole CreateContainer
+admission: resolving a missing digest and waiting for the verification
+result. When the runtime propagates its request deadline, the plugin also
+answers ahead of that deadline if it comes first, keeping a safety margin of
+10% of the remaining time (at least 100ms).
+
+When the admission timeout expires:
+
+- In `enforce` mode the container is rejected with an admission timeout error.
+- In `warn` mode the container is admitted and annotated with
+  `supply-chain.nri/verified: "false"` and `supply-chain.nri/incomplete: "true"`.
+- The verification keeps running in the background and stores its result in
+  the cache, so a retried container creation is usually answered from the
+  cache.
+
+A container creation that would wait for a verification of the same image
+that has already been running for longer than `admission_timeout` is answered
+right away instead (rejected in `enforce` mode, admitted as incomplete in
+`warn` mode), because the runtime handles NRI requests one at a time and a
+slow registry would otherwise stall container creation on the whole node.
+
+Images that need no verification (verification disabled for the namespace,
+excluded or not included by the policy) skip the registry digest lookup. The
+digest from the runtime's image annotations is used when present. Otherwise
+the digest reported in the NRI container image is used; since it may be an
+image index digest, the digest-pinned reference is resolved through the
+registry to find the platform manifest, and the reported digest is used as is
+when the registry cannot be reached. Resolving a tag through the registry is a
+last resort and is logged as a warning in enforce mode, since the registry can
+point the tag at a different image than the one the node runs.
+
+### Fetch failures
+
+`fetch_failure_policy` applies to registry and network problems (unreachable
+registry, timeouts, error responses) and to trust material that cannot be loaded
+(a Sigstore trusted root that cannot be fetched, an unreadable key file). A
+transport failure on any referrer, including the fetch deadline, wins over
+referrers that failed verification. Attestations that were found but did not
+verify (for example, a bundle signed by an untrusted key) are not a fetch
+failure: they are ignored like absent attestations, so the `missingPolicy` of
+each check type decides regardless of `fetch_failure_policy`, and the result
+reports them as a warning. An incomplete attestation set (a referrer limit was
+exceeded or a stored bundle blob failed its integrity check) always fails
+verification. An image admitted by `fetch_failure_policy` without fetched
+attestations is reported as not verified and incomplete.
+
+Namespaces whose policy sets `mode: enforce` while the global mode is `warn`
+use `deny` for fetch failures unless `fetch_failure_policy` is set
+explicitly, and never use `allow`.
+
+Cached results are keyed by image digest, namespace, image reference and the
+matched policy rule. Replacing a key or certificate file referenced by a
+policy (for example `trust.verifiers[].keys`) and reloading invalidates cached
+results, even when the policy file itself is unchanged.
 
 ### GUAC
 
@@ -132,6 +197,13 @@ The GUAC client has its own circuit breaker (separate from the per-registry
 breakers) using the global `circuit_breaker_threshold` and
 `circuit_breaker_cooldown` settings.
 
+`fallback_policy` also applies when only some queries fail; results of the
+queries that succeeded are kept. `allow` and `warn` admit the image while GUAC
+data is missing, so set `fallback_policy = "deny"` in enforce mode when policy
+decisions depend on GUAC. Missing GUAC data is absent from the CEL variables
+(rules reading it fail closed), and per-query `*_available` flags report which
+data is present (see [policy.md](policy.md#cel-object)).
+
 See [operations.md](operations.md) for the metrics reference, config reload
 behavior, and health/readiness probes.
 
@@ -150,7 +222,7 @@ feed_dir = "/etc/nri-supply-chain/feeds"
 
 [remediation.throttle]
 cpu_quota_percent = 10
-memory_limit_percent = 50
+memory_limit_percent = 100
 
 [remediation.triggers]
 on_new_cve = true
@@ -168,7 +240,7 @@ Remediation is disabled by default (no `mode` set). Setting `mode` to `warn`, `t
 | `remediation.cooldown`                        | `5m`    | Minimum time between successive remediation actions on the same container. Min 30s, max 1h.                                                                |
 | `remediation.feed_dir`                        | (empty) | Absolute path to a directory watched for OSV JSON vulnerability feed files. Changes trigger PURL-filtered re-verification of affected containers.          |
 | `remediation.throttle.cpu_quota_percent`      | `10`    | Percentage of the container's original CPU quota to allow after throttling. Range: 1-100.                                                                  |
-| `remediation.throttle.memory_limit_percent`   | `50`    | Percentage of the container's original memory limit to allow after throttling. Range: 1-100.                                                               |
+| `remediation.throttle.memory_limit_percent`   | `100`   | Percent of the original memory limit allowed after throttling (1-100). `100` leaves memory untouched; lower values can OOM-kill.                           |
 | `remediation.triggers.on_new_cve`             | `true`  | Re-verify when new CVE feed files appear in `feed_dir`.                                                                                                    |
 | `remediation.triggers.on_attestation_revoked` | `true`  | Re-verify when attestation state changes.                                                                                                                  |
 | `remediation.triggers.on_policy_change`       | `true`  | Re-verify after a config or policy reload (SIGHUP or file watch).                                                                                          |
@@ -185,6 +257,32 @@ work normally.
 Timer-triggered cycles use cached verification results when available. Feed
 and manual triggers invalidate the cache before re-verification to ensure
 fresh attestation data is fetched.
+
+Feed files use the [OSV schema](https://ossf.github.io/osv-schema/). A
+container is re-verified when a feed entry names a package from its SBOM:
+
+- Packages are compared by PURL type, namespace, and name (case-insensitive,
+  PyPI names normalized per PEP 503); qualifiers and subpaths are ignored.
+  SBOM packages with an `upstream` qualifier (Debian, RPM, and Alpine binary
+  packages) also match feed entries for their source package, because
+  distribution feeds name source packages. When `package.purl` is missing,
+  the PURL is derived from `package.ecosystem` and `package.name` for common
+  ecosystems (npm, PyPI, Go, Maven, crates.io, RubyGems, NuGet, Packagist,
+  Hex, Pub, Debian, Ubuntu, Alpine, Wolfi, Rocky, AlmaLinux, Red Hat, SUSE);
+  entries of other ecosystems without a PURL are ignored and logged once.
+- The affected versions are the union of the enumerated `versions`, the
+  version in `package.purl` (if any), and the ranges. Versions compare
+  semantically when both parse as semantic versions (`1.0` equals `1.0.0`, a
+  leading `v` is ignored). `SEMVER` ranges, and `ECOSYSTEM` ranges of npm, Go,
+  crates.io, Hex, and Pub packages, are evaluated against the SBOM package
+  version. Other range types (other `ECOSYSTEM` ranges, `GIT`) cannot be
+  evaluated and match every version. SBOM packages without a version, or with
+  a version that is not semver, match conservatively.
+- Entries with `withdrawn` set are ignored.
+- Containers whose stored PURL list was truncated match every feed entry.
+
+Feed matching only selects containers for re-verification; the verification
+result itself comes from the image's attestations.
 
 Setting `mode = "evict"` requires `verification = "enforce"`. Eviction is
 accepted in the config but logs a warning that it is deferred until the
@@ -230,6 +328,11 @@ bundle_signature_key = "/etc/nri-supply-chain/bundle-key.pub"
 | `offline.require_bundle_signature` | `false`                             | Require bundles to have a valid cryptographic signature                                                                                  |
 | `offline.bundle_signature_key`     | (empty)                             | Absolute path to PEM-encoded public key for bundle signature verification. Required when `require_bundle_signature` is true.             |
 
+When `bundle_signature_key` is set, the bundle manifest must carry a valid
+signature from that key, regardless of `require_bundle_signature`. An unsigned
+or stripped manifest is rejected, because otherwise whoever writes the bundle
+could choose the embedded trusted root and the staleness timestamp.
+
 The three modes control how the plugin sources attestation data:
 
 **disabled** (default): All attestations are fetched from OCI registries via the Referrers API. The bundle store is ignored. This is the standard mode for environments with registry connectivity.
@@ -242,15 +345,22 @@ When `offline.mode` is changed via config reload, the plugin creates a new fetch
 
 The `attestation_store` path must be absolute and must not be a symbolic link. In `offline` and `prefer-bundle` modes, the directory must exist at startup (validated during runtime validation).
 
-**Important:** When a bundle does not contain an embedded Sigstore trusted root
-(e.g. it was created without `--trusted-root`), the plugin cannot perform
-Sigstore signature verification on individual attestations. In this case,
-attestation payloads are extracted from the DSSE envelope without verifying the
-Sigstore signature chain. Bundle-level integrity (blob SHA-256 checksums) still
-applies, but the cryptographic link to a Sigstore identity is absent. To ensure
-full verification in this scenario, set `require_bundle_signature = true` and
-provide a `bundle_signature_key` so that at least the bundle as a whole is
-cryptographically authenticated.
+**Attestation verification:** Every bundled attestation is cryptographically
+re-verified against the policy trust configuration (signature, image digest
+binding, and signer identity), and blob SHA-256 checksums are re-checked on
+every read. Key-based attestations verify without an embedded Sigstore trusted
+root. Keyless attestations, and key-based attestations when
+`signatures.requireTransparencyLog` is set, require a trusted root embedded
+in the bundle (see `bundle create --trusted-root`); without it they fail
+closed. Without `--trusted-root`, `bundle create` embeds every cached trusted
+root together with its Sigstore root source name (`public-sigstore` or
+`sigstore.roots[].name`), and the verifying node applies the `issuers` it
+configures for that source. A root without a matching source name, such as one
+passed with `--trusted-root` or embedded by older releases, is only trusted for
+issuers that every configured `sigstore.roots` entry allows (see
+[verification.md](verification.md)). Bundles created by releases that stored
+unsigned payloads instead of the Sigstore bundle fail verification and must be
+recreated. Notation signatures are not packaged into bundles.
 
 ## Private Sigstore Instances
 
@@ -302,10 +412,12 @@ verification time through the normal fetch failure policy. The plugin does not
 fall back to the public Sigstore instance when a configured mirror is
 unreachable.
 
-When `tuf_mirror` or `tuf_root` is changed via config reload, the plugin
-creates a new fetcher with the updated settings and invalidates the
-verification cache. Changes to the file content at the same `tuf_root` path
-are not detected; update the config value to force a re-read.
+When `tuf_mirror` or `tuf_root` (or `[[sigstore.roots]]`) is changed via
+config reload, or the content of a `tuf_root` file changed, the plugin creates
+a new fetcher with the updated settings and invalidates the verification
+cache. The settings are compared with the ones the current fetcher was built
+with, so changes made while verification was `disabled` take effect when a
+later reload enables it.
 
 ### Multiple Sigstore Trusted Roots
 
@@ -334,13 +446,24 @@ tuf_mirror = "https://tuf.internal.example.com"
 | `sigstore.roots[].name`        | (required)                | Human-readable label, must be unique across entries                     |
 | `sigstore.roots[].tuf_mirror`  | (empty = public Sigstore) | HTTPS URL of the TUF mirror for this root                               |
 | `sigstore.roots[].tuf_root`    | (empty)                   | Absolute path to a custom root.json for TUF trust anchor initialization |
+| `sigstore.roots[].issuers`     | (empty = any)             | OIDC issuers whose certificates this root may vouch for                 |
 | `sigstore.include_public_root` | `true`                    | Include the public Sigstore trusted root alongside custom roots         |
 
-Each entry creates an independent trusted root cache that refreshes from its
-TUF mirror on the same schedule as the single-root case (1h TTL, 24h max
-staleness). During verification, the plugin builds a combined trusted material
-set from all configured roots. A bundle is accepted if it validates against any
-one of the trusted roots.
+Each entry creates an independent trusted root cache that refreshes from its TUF
+mirror on the same schedule as the single-root case (1h TTL, 24h max staleness).
+During verification, each trusted root is tried on its own. A bundle is accepted
+if it validates against one of the trusted roots and, when that root lists
+`issuers`, the signing certificate's OIDC issuer is one of them (and is trusted
+by the policy). When a root that could have verified the bundle cannot be
+loaded, the result follows `fetch_failure_policy`, even if another root loaded
+and rejected the bundle. Set `issuers` on private roots so that a private Fulcio
+instance cannot mint certificates for public issuers such as
+`https://token.actions.githubusercontent.com`; the plugin logs a warning for
+private roots without an `issuers` restriction. The restriction also applies to
+a single root with `include_public_root = false`. An entry without `tuf_mirror`
+describes the public Sigstore root: when `include_public_root` is true, its
+`issuers` restrict the included public root instead of adding a second copy of
+it.
 
 When `include_public_root` is true (the default), the public Sigstore trusted
 root is automatically prepended to the list. Set it to false when you only
@@ -436,7 +559,9 @@ Setting `insecure = true` disables TLS certificate verification for the matched
 registry. A warning is logged at startup. This should only be used for
 development and testing. In `enforce` mode, `insecure = true` is rejected
 during config validation because insecure connections undermine the integrity
-guarantees that enforcement provides. Use `ca_cert` instead for registries with
+guarantees that enforcement provides. The same applies when the global mode is
+`warn` but any policy sets `"mode": "enforce"`: loading such policies is
+rejected at startup, reload, and OCI policy update. Use `ca_cert` instead for registries with
 custom certificate authorities.
 
 **Trust considerations for mirrors:** When configuring a mirror, be aware that
@@ -457,7 +582,11 @@ retries requests against the original registry if the mirror is unreachable.
 Fallback triggers on connection-level errors such as DNS failures, TCP
 connection refused, TLS handshake errors, timeouts, and server errors (HTTP
 5xx). Application-level errors (401, 403, 404) do not trigger fallback
-because the mirror responded successfully at the transport layer.
+because the mirror responded successfully at the transport layer. Fallback
+connections to the original registry always verify TLS certificates: the
+entry's `insecure` field never applies to them. The entry's `ca_cert` is kept
+in addition to the system CA pool, so an upstream registry signed by the same
+enterprise CA stays reachable.
 
 ## Policy Distribution
 
@@ -473,11 +602,12 @@ oci_ref = "ghcr.io/myorg/supply-chain-policies:v1"
 poll_interval = "5m"
 ```
 
-| Field                  | Default | Description                                                                                                                                             |
-| ---------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `policy.source`        | `local` | Policy source: `local` (read from `policy_dir`) or `oci` (fetch from registry)                                                                          |
-| `policy.oci_ref`       | (empty) | OCI image reference containing policy layers (required when source is `oci`). Using a digest reference is recommended over a mutable tag for integrity. |
-| `policy.poll_interval` | `5m`    | How often to poll the OCI registry for policy updates (minimum 30s)                                                                                     |
+| Field                      | Default          | Description                                                                                                                                                                                                                                                                                           |
+| -------------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `policy.source`            | `local`          | Policy source: `local` (read from `policy_dir`) or `oci` (fetch from registry)                                                                                                                                                                                                                        |
+| `policy.oci_ref`           | (empty)          | OCI image reference containing policy layers (required when source is `oci`). Using a digest reference is recommended over a mutable tag for integrity.                                                                                                                                               |
+| `policy.poll_interval`     | `5m`             | How often to poll the OCI registry for policy updates (minimum 30s)                                                                                                                                                                                                                                   |
+| `policy.oci_max_staleness` | `0s` (unlimited) | Maximum time since the policies were confirmed current. When exceeded, the plugin reports not ready (`/readyz`) and logs errors; applied policies stay in effect. Must be at least `poll_interval` when set. The `nri_supply_chain_policy_oci_staleness_seconds` gauge reports the current staleness. |
 
 ### Policy Signature Verification
 
@@ -503,6 +633,11 @@ san_patterns = ["policy-signer@myorg.iam.gserviceaccount.com"]
 | `policy.san_patterns` | (empty) | Subject Alternative Name patterns to match against signing certificates (requires `issuers`) |
 | `policy.keys`         | (empty) | Absolute paths to PEM-encoded public key files for key-based signature verification          |
 
+Unsigned OCI policies (no `issuers` or `keys`) are rejected in `enforce` mode,
+and also when any loaded policy sets `"mode": "enforce"`, because anyone with
+push access to the repository could otherwise change the policies. In other
+modes a warning is logged.
+
 The `issuers` and `keys` fields are mutually exclusive: set `issuers` for
 keyless (OIDC-based) verification or `keys` for key-based verification, but not
 both. The `san_patterns` field requires `issuers` to be set. In enforce mode,
@@ -517,10 +652,45 @@ When `source = "oci"` is set, the `policy_dir` field is ignored for policy
 loading. The plugin fetches the OCI image at startup and polls for changes at
 the configured interval. Each layer in the OCI image is treated as a policy
 JSON file. The filename is determined by the `org.opencontainers.image.title`
-annotation on the layer descriptor. Layers whose media type is not one of the recognized policy types are skipped.
-The accepted media types are: `application/vnd.nri-supply-chain.policy.v1+json`,
-`application/json`, `application/vnd.oci.image.layer.v1.tar+gzip`,
-`application/vnd.oci.image.layer.v1.tar`, and empty (unset).
+annotation on the layer descriptor and maps to a namespace like a local policy
+file name (directory components are ignored, so `policies/prod.json` applies to
+the `prod` namespace). Layers whose media type is not one of the recognized
+policy types are skipped. The accepted media types are:
+`application/vnd.nri-supply-chain.policy.v1+json`, `application/json`,
+`application/vnd.oci.image.layer.v1.tar+gzip`,
+`application/vnd.oci.image.layer.v1.tar`, and empty (unset). Layers with a
+generic media type are skipped when they have no title or a title that does
+not end in `.json`.
+
+Every layer identified as a policy must be valid: an invalid policy, an
+invalid file name, an untitled layer with the policy media type, two layers
+mapping to the same namespace, or an artifact without any policy rejects the
+whole artifact, and the previously applied policies stay in effect.
+
+**Rollback protection.** Set the `org.opencontainers.image.created` manifest
+annotation (RFC 3339) when publishing policy artifacts (`oras push` sets it by
+default). The annotation is covered by the manifest digest and therefore by the
+signature. The plugin refuses to apply an artifact that is older than the
+newest artifact it has applied since startup, or that lacks the annotation
+after an annotated artifact was applied. Only applied artifacts raise the
+guard: an artifact whose policies are rejected (for example by validation)
+does not, so re-tagging the previous good artifact keeps working. Artifacts
+created more than 5 minutes in the future are rejected, so a single bogus
+timestamp cannot block all later updates. The guard is carried over config
+reloads as long as `oci_ref` is unchanged, and OCI polling is paused while a
+reload runs, so a reload never installs policies older than ones the poller
+applied during the reload. This prevents re-tagging an older, more permissive
+signed artifact. The check does not persist across restarts,
+so prefer digest references for `oci_ref` where possible.
+
+**Staleness.** While the registry is unreachable, or while a changed artifact
+keeps being rejected, the last applied policies stay in effect. Failed polls
+and rejected updates are logged with a `stale_for` attribute and are logged at
+error level after 10 poll intervals without the policies being confirmed
+current.
+Set `policy.oci_max_staleness` to report the plugin as not ready once the
+policies have not been confirmed current for that long, and alert on the
+`nri_supply_chain_policy_oci_staleness_seconds` gauge.
 
 Policy changes are detected by comparing the image manifest digest. When a new
 digest is found, the plugin reloads all policies from the updated image
@@ -560,8 +730,11 @@ oras push ghcr.io/myorg/supply-chain-policies:v1 \
 
 Policy files are JSON documents in `policy_dir`. The file `default.json`
 applies to all namespaces. A file named `<namespace>.json` overrides the
-default for that namespace. By default this is a full replacement; set
-`"inherits": true` to inherit unset fields from the default policy.
+default for that namespace; the namespace part must be a lowercase RFC 1123
+label. By default this is a full replacement; set `"inherits": true` to inherit
+unset fields from the default policy. Symlinks resolving inside `policy_dir`
+(as created by ConfigMap volumes) are followed. Any invalid policy file fails
+the load, and a reload that would leave no policies is refused.
 
 ```json
 {
@@ -574,7 +747,7 @@ default for that namespace. By default this is a full replacement; set
       }
     ],
     "issuers": ["https://accounts.google.com"],
-    "sanPatterns": ["*@myorg.com", "https://github.com/myorg/*"],
+    "sanPatterns": ["*@myorg.com", "https://github.com/myorg/**"],
     "sources": ["https://github.com/myorg/*"],
     "buildTypes": ["https://actions.github.io/buildtypes/workflow/v1"]
   },
@@ -638,9 +811,20 @@ Global flags (available on all subcommands):
 Plugin flags (root command only):
 
 ```text
---plugin-name      NRI plugin name (default: supply-chain)
---plugin-idx       NRI plugin index (default: 10)
+--plugin-name      NRI plugin name (default: supply-chain, ignored when NRI_PLUGIN_NAME is set)
+--plugin-idx       NRI plugin index (default: 10, ignored when NRI_PLUGIN_IDX is set)
+--nri-socket       Path to the NRI runtime socket (default: /var/run/nri/nri.sock)
+--nri-disconnect-timeout
+                   Fail /healthz after the NRI connection has been down this long while
+                   the NRI socket exists (default: 5m, 0 disables)
+--health-addr      Address of a dedicated server for /healthz, /readyz and /status
+                   (default: empty, the probes are only served on metrics_addr)
+--version          Print the version
 ```
+
+Without an explicit `--config`, the plugin uses the configuration passed by the
+runtime when the default config file does not exist. `--config ""` always uses
+the runtime-provided configuration.
 
 The `validate` subcommand loads the config, parses all policy files, and runs
 `ValidateRuntime()` on each policy (checking that referenced key and certificate
@@ -648,12 +832,17 @@ files exist and are readable). In enforce mode it also runs `ValidateEnforce()`
 to verify that trust roots, SAN patterns, and required fields are properly
 configured. Finally, it emits warnings for permissive defaults (such as
 `missingPolicy=allow` or key-only verification without a transparency log).
+Policies are validated even when verification is disabled, and a policy that
+sets a `mode` while the global mode is `disabled` is an error (the plugin itself
+only logs a warning, so `disabled` keeps working as a kill switch). Without
+`--config`, `validate` fails when the default config file does not exist; pass
+`--allow-missing-config` to validate the built-in defaults instead.
 
 Verify flags:
 
 ```text
 -n, --namespace        Namespace for verification (default: default)
--o, --output           Output format: table, json (default: table)
+-o, --output           Output format: table, json, quiet (default: table)
 -q, --quiet            Suppress all output except the exit code
 -v, --verbose          Show step-by-step diagnostic output
     --preview-policy   Path to a policy JSON file for dry-run verification
@@ -725,13 +914,17 @@ nri-supply-chain verify alpine:latest nginx:1.25 --output json
 
 ### Exit Codes
 
-The verify command uses distinct exit codes for CI/CD integration:
+All commands use these exit codes; the verify command uses them to
+distinguish denials from errors in CI/CD integration:
 
 | Exit code | Meaning                                                  |
 | --------- | -------------------------------------------------------- |
 | 0         | Verification passed                                      |
 | 1         | Verification denied (policy violation)                   |
 | 2         | Internal/infrastructure error (config, network, parsing) |
+
+The plugin daemon exits with 0 after `SIGTERM` or `SIGINT` and with 2 on
+errors.
 
 When verifying multiple images, the exit code is the worst (highest) across all
 images. If any image is denied (exit 1), the overall exit is 1. If any image
@@ -859,6 +1052,9 @@ nri-supply-chain json-schema result
         },
         "metadata": {
           "type": "object"
+        },
+        "missing": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false,
@@ -922,7 +1118,7 @@ The `bundle` subcommand group manages portable attestation bundles for air-gappe
 nri-supply-chain bundle create \
   --image ghcr.io/myorg/app:v1.0 \
   --image ghcr.io/myorg/sidecar:v2.0 \
-  --output bundle.tar.gz \
+  --output-file bundle.tar.gz \
   --sign-key /path/to/private-key.pem
 ```
 
@@ -930,7 +1126,8 @@ Create flags:
 
 ```text
     --image           Image reference to include (repeatable)
--o, --output          Output file path for the bundle tar.gz (required)
+    --output-file     Output file path for the bundle tar.gz (required;
+                      -o/--output is a deprecated alias)
     --sign-key        Path to private key PEM for signing the bundle manifest
     --from-policy     Path to policy file to extract image references from
     --trusted-root    Path to trusted root JSON to embed in the bundle
@@ -939,7 +1136,7 @@ Create flags:
 
 When `--from-policy` is specified, concrete image references from the policy's `include` and `rules[].images` fields are added to the bundle. Glob patterns are skipped. This can be combined with `--image` flags.
 
-If `--trusted-root` is not specified, the command embeds the cached Sigstore trusted root from the warmed OCI fetcher (if available).
+If `--trusted-root` is not specified, the command embeds every cached Sigstore trusted root from the warmed OCI fetcher (if available), named after its root source (see [Offline Bundles](#offline-bundles)).
 
 **bundle inspect**: Show the contents of a bundle store directory.
 

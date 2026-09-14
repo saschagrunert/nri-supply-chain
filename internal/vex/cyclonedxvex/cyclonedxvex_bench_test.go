@@ -34,6 +34,6 @@ func BenchmarkVerify(b *testing.B) {
 	b.ResetTimer()
 
 	for range b.N {
-		_, _ = cyclonedxvex.Verify(data, testDigest, "")
+		_, _ = cyclonedxvex.Verify(data, testImage())
 	}
 }

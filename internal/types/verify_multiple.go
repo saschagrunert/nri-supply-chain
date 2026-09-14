@@ -30,18 +30,36 @@ func VerifyMultipleFirstPass(
 	attestations [][]byte,
 	verifyOne func(att []byte) (*CheckResult, error),
 ) (*CheckResult, error) {
+	return VerifyMultipleFirstPassOf(
+		ctx, checkType, label, attestations,
+		func(att *[]byte) (*CheckResult, error) {
+			return verifyOne(*att)
+		},
+	)
+}
+
+// VerifyMultipleFirstPassOf is the generic form of VerifyMultipleFirstPass
+// for callers that need more than the raw payload of each item (for example
+// the signer identity of a verified attestation).
+func VerifyMultipleFirstPassOf[T any](
+	ctx context.Context,
+	checkType CheckType,
+	label string,
+	items []T,
+	verifyOne func(item *T) (*CheckResult, error),
+) (*CheckResult, error) {
 	var (
 		failReasons []string
 		parseErrors []string
 	)
 
-	for _, att := range attestations {
+	for idx := range items {
 		ctxErr := ctx.Err()
 		if ctxErr != nil {
 			return nil, fmt.Errorf("verification cancelled: %w", ctxErr)
 		}
 
-		result, err := verifyOne(att)
+		result, err := verifyOne(&items[idx])
 		if err != nil {
 			parseErrors = append(parseErrors, err.Error())
 
@@ -75,10 +93,13 @@ func VerifyMultipleFirstPass(
 	return FailResult(checkType, "no valid "+label+" attestation found", nil), nil
 }
 
-// VerifyMultipleWithMerge verifies multiple attestations, collecting failures
-// and merging metadata from passing results. This is the common pattern used
-// by scai, buildenv, vulnscan, and testresult packages.
-func VerifyMultipleWithMerge( //nolint:cyclop // shared helper consolidating 4 duplicated implementations
+// VerifyMultipleWithMerge verifies multiple attestations that must all pass,
+// merging metadata from the passing results. A document that cannot be
+// parsed or validated fails the aggregate: dropping it would let a newer
+// report that happens to be malformed be masked by an older valid one.
+// Inconclusive results (Passed=false, Status=warn) yield an inconclusive
+// aggregate unless a hard failure is also present.
+func VerifyMultipleWithMerge(
 	ctx context.Context,
 	checkType CheckType,
 	label string,
@@ -87,12 +108,7 @@ func VerifyMultipleWithMerge( //nolint:cyclop // shared helper consolidating 4 d
 	verifyOne func(att []byte) (*CheckResult, error),
 	mergeMeta func(dst, src map[string]any),
 ) (*CheckResult, error) {
-	var (
-		failDetails  []string
-		verifyErrors []string
-		anyValid     bool
-		mergedMeta   map[string]any
-	)
+	agg := mergeAggregate{mergeMeta: mergeMeta} //nolint:exhaustruct_v5 // accumulators start empty
 
 	for _, att := range attestations {
 		ctxErr := ctx.Err()
@@ -100,42 +116,66 @@ func VerifyMultipleWithMerge( //nolint:cyclop // shared helper consolidating 4 d
 			return nil, fmt.Errorf("verification cancelled: %w", ctxErr)
 		}
 
-		result, err := verifyOne(att)
-		if err != nil {
-			verifyErrors = append(verifyErrors, err.Error())
-
-			continue
-		}
-
-		anyValid = true
-
-		if !result.Passed && result.Status == StatusFail {
-			failDetails = append(failDetails, result.Detail)
-		}
-
-		if result.Passed && result.Metadata != nil {
-			if mergedMeta == nil {
-				mergedMeta = make(map[string]any)
-			}
-
-			mergeMeta(mergedMeta, result.Metadata)
-		}
+		agg.add(verifyOne(att))
 	}
 
-	if len(failDetails) > 0 {
-		return FailResult(checkType, strings.Join(failDetails, "; "), nil), nil
+	if len(agg.verifyErrors) > 0 {
+		agg.failDetails = append(agg.failDetails, invalidDocumentsDetail(
+			label, len(agg.verifyErrors), len(attestations), agg.verifyErrors,
+		))
 	}
 
-	if len(attestations) > 0 && !anyValid {
-		return FailResult(
-			checkType,
-			"all "+label+" documents failed verification: "+strings.Join(verifyErrors, "; "),
-			nil,
-		), nil
+	if len(agg.failDetails) > 0 {
+		return FailResult(checkType, strings.Join(agg.failDetails, "; "), nil), nil
+	}
+
+	if len(agg.softDetails) > 0 {
+		return SoftFailResult(checkType, strings.Join(agg.softDetails, "; "), nil), nil
 	}
 
 	result := PassResult(checkType, passDetail)
-	result.Metadata = mergedMeta
+	result.Metadata = agg.mergedMeta
 
 	return result, nil
+}
+
+// mergeAggregate accumulates per-document outcomes for VerifyMultipleWithMerge.
+type mergeAggregate struct {
+	failDetails  []string
+	softDetails  []string
+	verifyErrors []string
+	mergedMeta   map[string]any
+	mergeMeta    func(dst, src map[string]any)
+}
+
+func (a *mergeAggregate) add(result *CheckResult, err error) {
+	switch {
+	case err != nil:
+		a.verifyErrors = append(a.verifyErrors, err.Error())
+	case result.Passed:
+		if result.Metadata == nil {
+			return
+		}
+
+		if a.mergedMeta == nil {
+			a.mergedMeta = make(map[string]any)
+		}
+
+		a.mergeMeta(a.mergedMeta, result.Metadata)
+	case result.Status == StatusFail:
+		a.failDetails = append(a.failDetails, result.Detail)
+	default:
+		a.softDetails = append(a.softDetails, result.Detail)
+	}
+}
+
+func invalidDocumentsDetail(label string, invalid, total int, errs []string) string {
+	if invalid == total {
+		return "all " + label + " documents failed verification: " + strings.Join(errs, "; ")
+	}
+
+	return fmt.Sprintf(
+		"%d of %d %s documents failed verification: %s",
+		invalid, total, label, strings.Join(errs, "; "),
+	)
 }

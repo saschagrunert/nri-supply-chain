@@ -4,13 +4,40 @@ load helpers
 
 @test "missing config file fails" {
 	run_binary --config /nonexistent/config.toml validate
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
+}
+
+@test "validate without config file fails" {
+	if [[ -e /etc/nri-supply-chain/config.toml ]]; then
+		skip "default config file exists on this host"
+	fi
+	run_binary validate
+	[[ "$status" -eq 2 ]]
+}
+
+@test "validate allows missing config file when requested" {
+	if [[ -e /etc/nri-supply-chain/config.toml ]]; then
+		skip "default config file exists on this host"
+	fi
+	run_binary validate --allow-missing-config
+	[[ "$status" -eq 0 ]]
+}
+
+@test "validate checks policies when verification is disabled" {
+	mkdir -p "$TEST_DIR/policies"
+	echo '{"mode": "enforce"}' >"$TEST_DIR/policies/default.json"
+	cat >"$TEST_DIR/config.toml" <<CFG
+verification = "disabled"
+policy_dir = "$TEST_DIR/policies"
+CFG
+	run_binary --config "$TEST_DIR/config.toml" validate
+	[[ "$status" -eq 2 ]]
 }
 
 @test "invalid config file fails" {
 	echo "invalid = [" >"$TEST_DIR/bad.toml"
 	run_binary --config "$TEST_DIR/bad.toml" validate
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 }
 
 @test "valid config file succeeds validation" {
@@ -28,7 +55,7 @@ verification = "invalid"
 policy_dir = "/tmp"
 EOF
 	run_binary --config "$TEST_DIR/config.toml" validate
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 }
 
 @test "warn mode with missing policy dir fails at runtime" {
@@ -38,7 +65,7 @@ fetch_timeout = "10s"
 policy_dir = "/nonexistent/policies"
 EOF
 	run_binary --config "$TEST_DIR/config.toml" validate
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 }
 
 @test "warn mode with valid policy dir succeeds" {
@@ -73,7 +100,7 @@ verification = "disabled"
 source = "oci"
 EOF
 	run_binary --config "$TEST_DIR/config.toml" validate
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 	[[ "$output" == *"oci_ref"* ]]
 }
 
@@ -87,7 +114,7 @@ oci_ref = "ghcr.io/myorg/policies:v1"
 poll_interval = "10s"
 EOF
 	run_binary --config "$TEST_DIR/config.toml" validate
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 	[[ "$output" == *"30s"* ]]
 }
 
@@ -100,7 +127,7 @@ source = "ftp"
 oci_ref = "ghcr.io/myorg/policies:v1"
 EOF
 	run_binary --config "$TEST_DIR/config.toml" validate
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 	[[ "$output" == *"source"* ]]
 }
 
@@ -138,7 +165,7 @@ verification = "disabled"
 max_attestation_size = 1000
 EOF
 	run_binary --config "$TEST_DIR/config.toml" validate
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 	[[ "$output" == *"max_attestation_size"* ]]
 }
 
@@ -148,7 +175,7 @@ verification = "disabled"
 max_attestation_size = 209715200
 EOF
 	run_binary --config "$TEST_DIR/config.toml" validate
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 	[[ "$output" == *"max_attestation_size"* ]]
 }
 
@@ -176,7 +203,7 @@ verification = "disabled"
 cache_max_entries = 50
 EOF
 	run_binary --config "$TEST_DIR/config.toml" validate
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 	[[ "$output" == *"cache_max_entries"* ]]
 }
 
@@ -186,7 +213,7 @@ verification = "disabled"
 cache_max_entries = 2000000
 EOF
 	run_binary --config "$TEST_DIR/config.toml" validate
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 	[[ "$output" == *"cache_max_entries"* ]]
 }
 
@@ -197,7 +224,7 @@ max_attestation_size = 500
 cache_max_entries = 10
 EOF
 	run_binary --config "$TEST_DIR/config.toml" validate
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 	[[ "$output" == *"max_attestation_size"* ]]
 	[[ "$output" == *"cache_max_entries"* ]]
 }

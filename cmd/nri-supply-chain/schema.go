@@ -60,11 +60,8 @@ func newJSONSchemaCmd() *cobra.Command {
 			cmd.SilenceUsage = true
 
 			code := printJSONSchema(args[0])
-			if code != 0 {
-				return errExitNonZero
-			}
 
-			return nil
+			return exitWith(code)
 		},
 	}
 }

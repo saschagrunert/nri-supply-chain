@@ -22,25 +22,41 @@ import (
 	"strings"
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
+
+	"github.com/saschagrunert/nri-supply-chain/internal/vex/imagematch"
 )
 
-// digestSeparatorParts is the expected number of parts when splitting
-// a digest string on ":".
-const digestSeparatorParts = 2
+// bomLinkPrefix identifies CycloneDX BOM-Link references, which point into a
+// BOM describing the attested image.
+const bomLinkPrefix = "urn:cdx:"
+
+// maxComponentDepth bounds recursion into nested components.
+const maxComponentDepth = 32
 
 // Result holds the outcome of a CycloneDX VEX verification.
 type Result struct {
-	AffectedNames         []string
+	// AffectedNames lists vulnerabilities that apply to the image and are
+	// exploitable or have an unknown analysis state.
+	AffectedNames []string
+	// HasUnderInvestigation is true when an applicable vulnerability is in
+	// triage.
 	HasUnderInvestigation bool
+	// MatchedVulnerabilities counts vulnerabilities with an analysis state
+	// that apply to the image. Zero means the document makes no VEX statement
+	// about the image.
+	MatchedVulnerabilities int
 }
 
-// Verify checks a CycloneDX BOM predicate for VEX vulnerability data
-// and returns the verification result.
-// The purl parameter is the pre-computed OCI Package URL for the image.
-func Verify(
-	predicate []byte,
-	imageDigest, purl string,
-) (*Result, error) {
+// Verify checks a CycloneDX BOM predicate for VEX vulnerability data and
+// returns the verification result.
+//
+// The in-toto statement carrying the BOM is bound to the image digest, so
+// the BOM describes the image: vulnerabilities that affect components of the
+// BOM (including metadata.component, nested components, BOM-Links, and
+// package purls) apply to the image. Only references that clearly identify a
+// different image (another digest or OCI purl) are ignored. Vulnerabilities
+// without any affects entry apply to the BOM subject, which is the image.
+func Verify(predicate []byte, image *imagematch.Image) (*Result, error) {
 	bom := new(cdx.BOM)
 
 	decoder := cdx.NewBOMDecoder(bytes.NewReader(predicate), cdx.BOMFileFormatJSON)
@@ -50,71 +66,65 @@ func Verify(
 		return nil, fmt.Errorf("parsing CycloneDX BOM: %w", err)
 	}
 
-	if bom.Vulnerabilities == nil || len(*bom.Vulnerabilities) == 0 {
-		return &Result{
-			AffectedNames:         nil,
-			HasUnderInvestigation: false,
-		}, nil
-	}
-
-	componentIndex := buildComponentIndex(bom)
-
-	return classifyVulnerabilities(bom.Vulnerabilities, componentIndex, imageDigest, purl), nil
+	return Evaluate(bom, image), nil
 }
 
-// classifyVulnerabilities iterates over the BOM vulnerabilities, matches
-// them against the image, and classifies their analysis states.
-func classifyVulnerabilities(
-	vulns *[]cdx.Vulnerability,
-	componentIndex map[string]*cdx.Component,
-	imageDigest, purl string,
-) *Result {
-	var (
-		affectedNames         []string
-		hasUnderInvestigation bool
-	)
-
-	for idx := range *vulns {
-		vuln := &(*vulns)[idx]
-
-		if !vulnerabilityAffectsImage(vuln, componentIndex, imageDigest, purl) {
-			continue
-		}
-
-		if vuln.Analysis == nil || vuln.Analysis.State == "" {
-			slog.Warn("CycloneDX vulnerability has no analysis state, treating as affected",
-				"vulnerability", vulnerabilityName(vuln),
-			)
-
-			affectedNames = append(affectedNames, vulnerabilityName(vuln))
-
-			continue
-		}
-
-		switch vuln.Analysis.State {
-		case cdx.IASExploitable:
-			affectedNames = append(affectedNames, vulnerabilityName(vuln))
-
-		case cdx.IASInTriage:
-			hasUnderInvestigation = true
-
-		case cdx.IASNotAffected, cdx.IASFalsePositive,
-			cdx.IASResolved, cdx.IASResolvedWithPedigree:
-			// These states are acceptable.
-
-		default:
-			slog.Warn("Unrecognized CycloneDX analysis state, treating as affected",
-				"state", vuln.Analysis.State,
-				"vulnerability", vulnerabilityName(vuln),
-			)
-
-			affectedNames = append(affectedNames, vulnerabilityName(vuln))
-		}
+// Evaluate classifies the vulnerabilities of a decoded BOM for the image.
+func Evaluate(bom *cdx.BOM, image *imagematch.Image) *Result {
+	result := &Result{
+		AffectedNames:          nil,
+		HasUnderInvestigation:  false,
+		MatchedVulnerabilities: 0,
 	}
 
-	return &Result{
-		AffectedNames:         affectedNames,
-		HasUnderInvestigation: hasUnderInvestigation,
+	if bom == nil || bom.Vulnerabilities == nil || len(*bom.Vulnerabilities) == 0 {
+		return result
+	}
+
+	index := buildComponentIndex(bom)
+	subject := subjectRef(bom)
+
+	for idx := range *bom.Vulnerabilities {
+		vuln := &(*bom.Vulnerabilities)[idx]
+
+		// A vulnerability without an analysis state is a finding (for example
+		// scanner output in an SBOM), not a VEX statement. Its severity is
+		// gated by the sbom.cvss policy instead.
+		if vuln.Analysis == nil || vuln.Analysis.State == "" {
+			continue
+		}
+
+		if !vulnerabilityAffectsImage(vuln, index, subject, image) {
+			continue
+		}
+
+		result.MatchedVulnerabilities++
+
+		classifyVulnerability(vuln, result)
+	}
+
+	return result
+}
+
+func classifyVulnerability(vuln *cdx.Vulnerability, result *Result) {
+	switch vuln.Analysis.State {
+	case cdx.IASExploitable:
+		result.AffectedNames = append(result.AffectedNames, vulnerabilityName(vuln))
+
+	case cdx.IASInTriage:
+		result.HasUnderInvestigation = true
+
+	case cdx.IASNotAffected, cdx.IASFalsePositive,
+		cdx.IASResolved, cdx.IASResolvedWithPedigree:
+		// These states are acceptable.
+
+	default:
+		slog.Warn("Unrecognized CycloneDX analysis state, treating as affected",
+			"state", vuln.Analysis.State,
+			"vulnerability", vulnerabilityName(vuln),
+		)
+
+		result.AffectedNames = append(result.AffectedNames, vulnerabilityName(vuln))
 	}
 }
 
@@ -126,45 +136,63 @@ func vulnerabilityName(vuln *cdx.Vulnerability) string {
 	return "unknown"
 }
 
-// buildComponentIndex creates a map from BOM-ref to component for quick lookups.
+// buildComponentIndex maps BOM-refs to components, including
+// metadata.component and nested components.
 func buildComponentIndex(bom *cdx.BOM) map[string]*cdx.Component {
 	index := make(map[string]*cdx.Component)
 
-	if bom.Components == nil {
-		return index
+	if bom.Metadata != nil && bom.Metadata.Component != nil {
+		indexComponent(index, bom.Metadata.Component, 0)
 	}
 
-	for idx := range *bom.Components {
-		comp := &(*bom.Components)[idx]
-		if comp.BOMRef != "" {
-			index[comp.BOMRef] = comp
+	if bom.Components != nil {
+		for idx := range *bom.Components {
+			indexComponent(index, &(*bom.Components)[idx], 0)
 		}
 	}
 
 	return index
 }
 
-// vulnerabilityAffectsImage checks whether a vulnerability targets the image
-// being verified. It resolves each Affects[].Ref to a component via the
-// BOM-ref index and matches via digest or PURL.
+func indexComponent(index map[string]*cdx.Component, comp *cdx.Component, depth int) {
+	if depth > maxComponentDepth {
+		return
+	}
+
+	if comp.BOMRef != "" {
+		index[comp.BOMRef] = comp
+	}
+
+	if comp.Components == nil {
+		return
+	}
+
+	for idx := range *comp.Components {
+		indexComponent(index, &(*comp.Components)[idx], depth+1)
+	}
+}
+
+// vulnerabilityAffectsImage reports whether a vulnerability applies to the
+// image. See Verify for the rules. Entries that are not resolved
+// (exploitable, in triage, or unknown state) are matched leniently:
+// only references that carry a different image digest are excluded, so
+// unknown BOM-refs, CPEs, and renamed or retagged image components still
+// apply. Resolved entries must identify the image or one of its components.
 func vulnerabilityAffectsImage(
 	vuln *cdx.Vulnerability,
-	componentIndex map[string]*cdx.Component,
-	imageDigest, purl string,
+	index map[string]*cdx.Component,
+	subject string,
+	image *imagematch.Image,
 ) bool {
 	if vuln.Affects == nil || len(*vuln.Affects) == 0 {
-		return false
+		return true
 	}
+
+	lenient := !isResolved(vuln)
 
 	for idx := range *vuln.Affects {
 		ref := (*vuln.Affects)[idx].Ref
-
-		if matchesRef(ref, imageDigest, purl) {
-			return true
-		}
-
-		comp, ok := componentIndex[ref]
-		if ok && matchesComponent(comp, imageDigest, purl) {
+		if refAffectsImage(ref, index, image, lenient, subject != "" && ref == subject) {
 			return true
 		}
 	}
@@ -172,58 +200,114 @@ func vulnerabilityAffectsImage(
 	return false
 }
 
-// matchesRef checks if a raw affects reference matches the image digest or PURL.
-func matchesRef(ref, imageDigest, purl string) bool {
-	if imageDigest != "" && strings.Contains(ref, imageDigest) {
-		return true
-	}
-
-	return purl != "" && ref == purl
-}
-
-// matchesComponent checks whether a CycloneDX component matches the image
-// by comparing its PURL or hashes against the image digest.
-func matchesComponent(comp *cdx.Component, imageDigest, purl string) bool {
-	if purl != "" && comp.PackageURL == purl {
-		return true
-	}
-
-	if imageDigest != "" && strings.Contains(comp.PackageURL, imageDigest) {
-		return true
-	}
-
-	return matchesComponentHash(comp, imageDigest)
-}
-
-// matchesComponentHash checks if any of the component's hashes match the
-// image digest, normalizing algorithm names between CycloneDX ("SHA-256")
-// and OCI ("sha256") conventions.
-func matchesComponentHash(comp *cdx.Component, imageDigest string) bool {
-	if imageDigest == "" || comp.Hashes == nil {
+func isResolved(vuln *cdx.Vulnerability) bool {
+	if vuln.Analysis == nil {
 		return false
 	}
 
-	parts := strings.SplitN(imageDigest, ":", digestSeparatorParts)
-	if len(parts) != digestSeparatorParts {
+	switch vuln.Analysis.State {
+	case cdx.IASNotAffected, cdx.IASFalsePositive, cdx.IASResolved, cdx.IASResolvedWithPedigree:
+		return true
+	case cdx.IASExploitable, cdx.IASInTriage:
+		return false
+	default:
 		return false
 	}
+}
 
-	normalizedAlgo := normalizeHashAlgorithm(parts[0])
+func refAffectsImage(
+	ref string, index map[string]*cdx.Component, image *imagematch.Image, lenient, subject bool,
+) bool {
+	if comp, ok := index[ref]; ok {
+		return componentAffectsImage(comp, image, lenient, subject)
+	}
+
+	if strings.HasPrefix(strings.ToLower(ref), bomLinkPrefix) {
+		return true
+	}
+
+	kind := classify(image, ref, lenient)
+
+	switch kind {
+	case imagematch.KindImage, imagematch.KindPackage:
+		return true
+	case imagematch.KindOtherImage:
+		return false
+	case imagematch.KindUnrelated:
+		return lenient && !image.ConflictsByDigest(ref)
+	default:
+		return lenient && !image.ConflictsByDigest(ref)
+	}
+}
+
+// classify matches an identifier strictly, or leniently for entries that can
+// only raise severity: an image purl with the image name still applies when
+// its tag or namespace differ, while a purl naming another image does not.
+func classify(image *imagematch.Image, identifier string, lenient bool) imagematch.Kind {
+	if lenient {
+		kind, _ := image.MatchLenient(identifier)
+
+		return kind
+	}
+
+	return image.Classify(identifier)
+}
+
+// subjectRef returns the BOM-ref of metadata.component, the subject the
+// digest-bound BOM describes, or "" when there is none.
+func subjectRef(bom *cdx.BOM) string {
+	if bom.Metadata == nil || bom.Metadata.Component == nil {
+		return ""
+	}
+
+	return bom.Metadata.Component.BOMRef
+}
+
+// componentAffectsImage reports whether a BOM component is the image or a
+// component of it. Components that identify a different image by digest or
+// hash are excluded; in strict mode components that name a different image
+// are excluded too. In lenient mode only the BOM subject (metadata.component)
+// may carry a different image name, since the digest-bound BOM describes the
+// image under whatever name it was built; other image components must match
+// the image name.
+func componentAffectsImage(
+	comp *cdx.Component,
+	image *imagematch.Image,
+	lenient, subject bool,
+) bool {
+	if comp.PackageURL != "" {
+		if classify(image, comp.PackageURL, lenient) != imagematch.KindOtherImage {
+			return true
+		}
+
+		return lenient && subject && !image.ConflictsByDigest(comp.PackageURL)
+	}
+
+	if comp.Type == cdx.ComponentTypeContainer && comp.Hashes != nil {
+		for idx := range *comp.Hashes {
+			hash := &(*comp.Hashes)[idx]
+			if image.MatchesHash(string(hash.Algorithm), hash.Value) {
+				return true
+			}
+		}
+
+		return !hasComparableHash(comp, image)
+	}
+
+	return true
+}
+
+// hasComparableHash reports whether the component carries a hash using the
+// image digest algorithm, which makes a mismatch meaningful.
+func hasComparableHash(comp *cdx.Component, image *imagematch.Image) bool {
+	algorithm, _, _ := strings.Cut(image.Digest, ":")
 
 	for idx := range *comp.Hashes {
-		hash := &(*comp.Hashes)[idx]
-		if normalizeHashAlgorithm(string(hash.Algorithm)) == normalizedAlgo &&
-			strings.EqualFold(hash.Value, parts[1]) {
+		if imagematch.NormalizeAlgorithm(string((*comp.Hashes)[idx].Algorithm)) ==
+			imagematch.NormalizeAlgorithm(algorithm) {
 			return true
 		}
 	}
 
 	return false
-}
-
-// normalizeHashAlgorithm converts hash algorithm names to a canonical
-// lowercase form without hyphens. CycloneDX uses "SHA-256" while OCI
-// digests use "sha256"; this normalization makes them comparable.
-func normalizeHashAlgorithm(algo string) string {
-	return strings.ToLower(strings.ReplaceAll(algo, "-", ""))
 }

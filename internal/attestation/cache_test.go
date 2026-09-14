@@ -25,6 +25,7 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/root"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
+	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 )
 
 var errRootFetchFailed = errors.New("root fetch failed")
@@ -456,7 +457,7 @@ func TestTrustedRootCacheNegativeCacheSkipsCDN(t *testing.T) {
 	}
 }
 
-func TestTrustedRootCacheNegativeCacheDoesNotApplyWithoutPreSeeded(t *testing.T) {
+func TestTrustedRootCacheNegativeCacheWithoutAnyRoot(t *testing.T) {
 	t.Parallel()
 
 	var fetchCount atomic.Int32
@@ -467,22 +468,23 @@ func TestTrustedRootCacheNegativeCacheDoesNotApplyWithoutPreSeeded(t *testing.T)
 		return nil, errRootFetchFailed
 	})
 
-	// First call fails with no pre-seeded root available.
+	// First call fails with no cached or pre-seeded root available.
 	_, err := cache.GetTrustedRoot(context.Background())
-	if err == nil {
-		t.Fatal("expected error when no pre-seeded root and fetch fails")
-	}
+	testutil.AssertErrorIs(t, err, errRootFetchFailed)
 
-	// Second call should still attempt CDN (no negative cache without pre-seeded root).
+	// A second call within the retry interval returns the recorded failure
+	// without contacting the TUF repository again, so every verification in
+	// a disconnected environment does not wait for the network.
 	_, err = cache.GetTrustedRoot(context.Background())
-	if err == nil {
-		t.Fatal("expected error on second call")
-	}
+	testutil.AssertErrorIs(t, err, errRootFetchFailed)
+	testutil.AssertEqual(t, int32(1), fetchCount.Load())
 
-	if fetchCount.Load() < 2 {
-		t.Errorf("expected at least 2 CDN fetches without pre-seeded root, got %d",
-			fetchCount.Load())
-	}
+	// Once the retry interval has passed, the fetch is attempted again.
+	cache.ExportExpireFailure()
+
+	_, err = cache.GetTrustedRoot(context.Background())
+	testutil.AssertErrorIs(t, err, errRootFetchFailed)
+	testutil.AssertEqual(t, int32(2), fetchCount.Load())
 }
 
 func TestTrustedRootCacheNegativeCacheServesPreSeeded(t *testing.T) {
@@ -525,5 +527,43 @@ func TestTrustedRootCacheNegativeCacheServesPreSeeded(t *testing.T) {
 
 	if got != preSeeded {
 		t.Error("expected pre-seeded root on second call (within negative cache window)")
+	}
+}
+
+func TestTrustedRootCacheNegativeCachePrefersStaleRootOverPreSeeded(t *testing.T) {
+	t.Parallel()
+
+	staleRoot := fakeTrustedRoot()
+	preSeeded := fakeTrustedRoot()
+
+	var fetchCount atomic.Int32
+
+	cache := attestation.NewTestTrustedRootCacheWithRootAndPreSeeded(
+		func() (*root.TrustedRoot, error) {
+			fetchCount.Add(1)
+
+			return nil, errRootFetchFailed
+		},
+		staleRoot,
+		time.Now().Add(-2*attestation.ExportTrustedRootCacheTTL()),
+		preSeeded,
+	)
+
+	for call := range 3 {
+		got, err := cache.GetTrustedRoot(context.Background())
+		if err != nil {
+			t.Fatalf("call %d: unexpected error: %v", call, err)
+		}
+
+		// The stale root is within the staleness limit, so verification must
+		// keep using it instead of alternating with the pre-seeded root.
+		if got != staleRoot {
+			t.Fatalf("call %d: expected stale cached root, got pre-seeded root", call)
+		}
+	}
+
+	if fetchCount.Load() != 1 {
+		t.Errorf("expected a single refresh attempt within the negative cache window, got %d",
+			fetchCount.Load())
 	}
 }

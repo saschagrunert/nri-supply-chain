@@ -117,7 +117,7 @@ func TestApplyMigrationsSkipsOlderVersions(t *testing.T) {
 	testutil.AssertEqual(t, 2, cfg.ConfigVersion)
 }
 
-func TestApplyMigrationsBreaksOnGap(t *testing.T) {
+func TestApplyMigrationsFailsOnGap(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.DefaultConfig()
@@ -137,8 +137,9 @@ func TestApplyMigrationsBreaksOnGap(t *testing.T) {
 	}
 
 	err := config.ExportApplyMigrations(cfg, steps)
-	testutil.AssertNoError(t, err)
+	testutil.AssertErrorIs(t, err, config.ErrMigrationGap)
 	testutil.AssertEqual(t, false, applied)
+	testutil.AssertEqual(t, 1, cfg.ConfigVersion)
 }
 
 func TestApplyMigrationsApplyError(t *testing.T) {

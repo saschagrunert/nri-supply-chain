@@ -21,6 +21,7 @@ import (
 	"github.com/containerd/nri/pkg/api"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
+	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
@@ -37,11 +38,13 @@ func NewExportPrewarmImage(
 	imageRef, digest, indexDigest, namespace, container string,
 ) ExportPrewarmImage {
 	return prewarmImage{
-		imageRef:    imageRef,
-		digest:      digest,
-		indexDigest: indexDigest,
-		namespace:   namespace,
-		container:   container,
+		imageRef:      imageRef,
+		digest:        digest,
+		indexDigest:   indexDigest,
+		runtimeDigest: "",
+		namespace:     namespace,
+		container:     container,
+		containerIDs:  nil,
 	}
 }
 
@@ -60,13 +63,12 @@ func ExportDefaultDigestResolver(
 	ctx context.Context, imageRef string,
 ) (digest, indexDigest string, err error) {
 	plug := &Plugin{ //nolint:exhaustruct_v5 // zero-value fields are intentional
-		verifier:        nil,
-		metrics:         nil,
-		configPath:      "",
-		containers:      newContainerRegistry(),
-		prewarmDoneCh:   make(chan struct{}),
-		reverifyTrigger: make(chan struct{}, 1),
-		feedTrigger:     make(chan []string, 1),
+		verifier:    nil,
+		metrics:     nil,
+		configPath:  "",
+		containers:  newContainerRegistry(),
+		prewarm:     newPrewarmState(),
+		remediation: newRemediationState(),
 	}
 
 	return plug.registryAwareResolver(ctx, imageRef)
@@ -74,7 +76,7 @@ func ExportDefaultDigestResolver(
 
 // ExportSetPrewarmDone sets a callback that fires when prewarmCache completes.
 func (p *Plugin) ExportSetPrewarmDone(fn func()) {
-	p.prewarmDone = fn
+	p.prewarm.done = fn
 }
 
 // ExportFilterRelevantAnnotations exposes filterRelevantAnnotations for testing.
@@ -87,6 +89,18 @@ func ExportBuildVerificationAdjustment(
 	result *types.Result, mode config.VerificationMode,
 ) *api.ContainerAdjustment {
 	return buildVerificationAdjustment(result, mode)
+}
+
+// ExportMetrics returns the plugin metrics.
+func (p *Plugin) ExportMetrics() *metrics.Metrics {
+	return p.metrics
+}
+
+// ExportSetRuntimeConfigRetry sets the backoff used to retry a configuration
+// passed by the runtime that failed to apply.
+func (p *Plugin) ExportSetRuntimeConfigRetry(initial, maximum time.Duration) {
+	p.runtimeConfig.retryInitial.Store(int64(initial))
+	p.runtimeConfig.retryMaximum.Store(int64(maximum))
 }
 
 // ExportFetchTimeout returns the current fetch timeout value.
@@ -102,11 +116,16 @@ func (p *Plugin) ExportDigestResolveTimeout() time.Duration {
 // ExportStoreContainerTime stores a creation timestamp for a container ID.
 func (p *Plugin) ExportStoreContainerTime(containerID string, t time.Time) {
 	state := &containerState{ //nolint:exhaustruct_v5 // test helper, zero-value fields intentional
+		digest:    exportTestDigest,
 		createdAt: t,
 		state:     StateVerified,
 	}
 	p.containers.Store(containerID, state)
 }
+
+// exportTestDigest is the digest assigned by test helpers that do not take
+// one; the continuous verifier skips containers without a digest.
+const exportTestDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
 // ExportLoadContainerTime loads the creation timestamp for a container ID.
 func (p *Plugin) ExportLoadContainerTime(containerID string) (time.Time, bool) {
@@ -166,6 +185,7 @@ func (p *Plugin) ExportStoreRecoveredContainer(
 // testing feed PURL matching.
 func (p *Plugin) ExportStoreContainerWithPURLs(containerID string, purls []string) {
 	state := &containerState{ //nolint:exhaustruct_v5 // test helper, zero-value fields intentional
+		digest:    exportTestDigest,
 		createdAt: time.Now(),
 		state:     StateVerified,
 		purls:     purls,
@@ -182,8 +202,11 @@ func (p *Plugin) ExportMatchFeedPURLs(feedPURLs []string) map[string]struct{} {
 type ExportContainerState struct {
 	RecoveredOnRestart bool
 	ServiceAccount     string
+	Digest             string
+	IndexDigest        string
 	PURLs              []string
 	State              VerificationState
+	HasOriginals       bool
 }
 
 // ExportGetContainerState returns exported container state fields for testing.
@@ -195,8 +218,11 @@ func (p *Plugin) ExportGetContainerState(containerID string) (ExportContainerSta
 		result = ExportContainerState{
 			RecoveredOnRestart: cs.recoveredOnRestart,
 			ServiceAccount:     cs.serviceAccount,
+			Digest:             cs.digest,
+			IndexDigest:        cs.indexDigest,
 			PURLs:              cs.purls,
 			State:              cs.state,
+			HasOriginals:       cs.originalResources != nil,
 		}
 	})
 
@@ -209,7 +235,7 @@ func (p *Plugin) ExportGetContainerState(containerID string) (ExportContainerSta
 
 // ExportFeedTrigger returns the feed trigger channel for test assertions.
 func (p *Plugin) ExportFeedTrigger() <-chan []string {
-	return p.feedTrigger
+	return p.remediation.feedTrigger
 }
 
 // ExportDeepCopyLinuxResources exposes deepCopyLinuxResources for testing.
@@ -275,4 +301,56 @@ func (p *Plugin) ExportGetConsecutiveErrors(containerID string) (int, bool) {
 	})
 
 	return count, found
+}
+
+// ExportRunVerificationCycle runs a single continuous verification cycle.
+func (p *Plugin) ExportRunVerificationCycle(ctx context.Context, trigger string) {
+	p.runVerificationCycle(ctx, trigger, nil, nil)
+}
+
+// ExportTriggerTimer and ExportTriggerManual expose the cycle trigger names.
+const (
+	ExportTriggerTimer  = triggerTimer
+	ExportTriggerManual = triggerManual
+)
+
+// ExportStoreContainerState stores a container with the given digest, state,
+// original resources, and recovery flag for remediation tests.
+func (p *Plugin) ExportStoreContainerState(
+	containerID, digest string, state VerificationState,
+	resources *api.LinuxResources, recoveredOnRestart bool,
+) {
+	p.containers.Store(containerID, &containerState{ //nolint:exhaustruct_v5 // test helper
+		imageRef:           "img:latest",
+		digest:             digest,
+		createdAt:          time.Now(),
+		state:              state,
+		originalResources:  resources,
+		recoveredOnRestart: recoveredOnRestart,
+	})
+}
+
+// ExportBuildThrottleUpdate exposes buildThrottleUpdate for testing.
+func (p *Plugin) ExportBuildThrottleUpdate(
+	containerID string, original *api.LinuxResources,
+) *api.ContainerUpdate {
+	return p.buildThrottleUpdate(containerID, original)
+}
+
+// ExportDecodeOriginalResources exposes decodeOriginalResources for testing.
+func ExportDecodeOriginalResources(value string) (*api.LinuxResources, error) {
+	return decodeOriginalResources(value)
+}
+
+// ExportStoreContainerWithPURLsFor sets the SBOM purls of an already tracked
+// container.
+func (p *Plugin) ExportStoreContainerWithPURLsFor(containerID string, purls []string) {
+	p.containers.UpdateState(containerID, func(cs *containerState) {
+		cs.purls = purls
+	})
+}
+
+// ExportAdmissionContext exposes admissionContext for external tests.
+func (p *Plugin) ExportAdmissionContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return p.admissionContext(ctx)
 }

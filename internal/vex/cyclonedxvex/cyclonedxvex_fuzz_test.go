@@ -67,6 +67,6 @@ func FuzzVerify(f *testing.F) {
 		`]}`))
 
 	f.Fuzz(func(_ *testing.T, data []byte) {
-		cyclonedxvex.Verify(data, testDigest, "")
+		cyclonedxvex.Verify(data, testImage())
 	})
 }

@@ -16,6 +16,7 @@ package bundle
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -47,7 +48,7 @@ type Metrics struct {
 // local on-disk bundle store, enabling fully offline verification.
 type Fetcher struct {
 	store                  *Store
-	verifyBundle           attestation.BundleVerifyFunc
+	verifyBundle           attestation.SignedBundleVerifyFunc
 	maxAge                 time.Duration
 	expiryPolicy           ExpiryPolicy
 	requireBundleSignature bool
@@ -63,7 +64,7 @@ type FetcherOption func(*Fetcher)
 // NewFetcher creates a Fetcher backed by the given store.
 func NewFetcher(
 	store *Store,
-	verifyBundle attestation.BundleVerifyFunc,
+	verifyBundle attestation.SignedBundleVerifyFunc,
 	opts ...FetcherOption,
 ) *Fetcher {
 	fetcher := &Fetcher{
@@ -163,6 +164,16 @@ func (f *Fetcher) Fetch(
 	if err != nil {
 		f.recordVerification("error")
 
+		// A blob listed in the bundle manifest that was modified, truncated or
+		// removed after import is tampering, so it must be denied instead of
+		// being handled with the fetch failure policy.
+		if isBlobIntegrityError(err) {
+			return nil, fmt.Errorf(
+				"%w: %w: %w",
+				attestation.ErrVerificationFailed, attestation.ErrIncompleteAttestationSet, err,
+			)
+		}
+
 		return nil, err
 	}
 
@@ -183,7 +194,9 @@ func (f *Fetcher) verifyStoredAttestations(
 ) ([]attestation.VerifiedAttestation, error) {
 	result := make([]attestation.VerifiedAttestation, 0, len(stored))
 
-	for _, att := range stored {
+	var failures int
+
+	for idx := range stored {
 		ctxErr := ctx.Err()
 		if ctxErr != nil {
 			return nil, fmt.Errorf(
@@ -191,27 +204,92 @@ func (f *Fetcher) verifyStoredAttestations(
 			)
 		}
 
-		payload, verifyErr := f.verifyBundle(ctx, att.BundleBytes, opts)
-		if verifyErr != nil {
+		att, err := f.verifyStoredAttestation(ctx, &stored[idx], opts)
+		if err != nil {
 			slog.WarnContext(ctx,
 				"Skipping attestation that failed verification",
-				"digest", att.Digest,
-				"predicateType", att.PredicateType,
-				"error", verifyErr,
+				"digest", stored[idx].Digest,
+				"predicateType", stored[idx].PredicateType,
+				"error", err,
 			)
+
+			// Without its trust material the attestation set cannot be
+			// evaluated completely; report that instead of a verification
+			// failure so the fetch failure policy applies.
+			if errors.Is(err, attestation.ErrTrustMaterialUnavailable) {
+				f.recordVerification("error")
+
+				return nil, err
+			}
+
+			if !errors.Is(err, errUnsupportedSignatureType) {
+				failures++
+			}
 
 			continue
 		}
 
-		result = append(result, attestation.VerifiedAttestation{
-			PredicateType: att.PredicateType,
-			Payload:       payload,
-			Digest:        att.Digest,
-			SignatureType: att.SignatureType,
-		})
+		result = append(result, *att)
+	}
+
+	if len(result) == 0 && failures > 0 {
+		f.recordVerification("error")
+
+		return nil, fmt.Errorf(
+			"%w: all %d bundled attestations failed verification "+
+				"(bundles created by older releases must be recreated)",
+			attestation.ErrVerificationFailed, failures,
+		)
 	}
 
 	return result, nil
+}
+
+// verifyStoredAttestation cryptographically verifies one bundled attestation.
+// The predicate type is always taken from the verified statement, never from
+// the unsigned bundle manifest.
+func (f *Fetcher) verifyStoredAttestation(
+	ctx context.Context,
+	stored *StoredAttestation,
+	opts *attestation.FetchOptions,
+) (*attestation.VerifiedAttestation, error) {
+	if stored.SignatureType != "" && stored.SignatureType != attestation.SignatureTypeSigstore {
+		return nil, fmt.Errorf("%w: %q", errUnsupportedSignatureType, stored.SignatureType)
+	}
+
+	verified, err := f.verifyBundle(ctx, stored.BundleBytes, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	if verified.PredicateType == "" {
+		return nil, errMissingPredicateType
+	}
+
+	if stored.PredicateType != "" && stored.PredicateType != verified.PredicateType {
+		slog.WarnContext(ctx, "Bundle manifest predicate type differs from signed statement",
+			"manifest", stored.PredicateType,
+			"statement", verified.PredicateType,
+		)
+	}
+
+	payload := verified.Payload
+
+	if verified.PredicateType == attestation.PredicateBaselineSBOM {
+		payload, err = attestation.BaselineSBOMDocument(payload, stored.Digest)
+		if err != nil {
+			return nil, fmt.Errorf("verifying baseline SBOM: %w", err)
+		}
+	}
+
+	return &attestation.VerifiedAttestation{
+		PredicateType: verified.PredicateType,
+		Payload:       payload,
+		Digest:        stored.Digest,
+		SignatureType: attestation.SignatureTypeSigstore,
+		Signer:        verified.Signer,
+		Bundle:        stored.BundleBytes,
+	}, nil
 }
 
 func (f *Fetcher) checkStaleness() error {
@@ -284,15 +362,24 @@ func (f *Fetcher) verifySignature() error {
 	}
 
 	if f.bundleSignatureKey != "" {
+		// A configured key always requires a valid signature: accepting an
+		// unsigned (or stripped) manifest would let whoever writes the bundle
+		// choose the embedded trusted root and staleness timestamp.
 		if manifest.Signature == nil {
-			slog.Warn("Bundle is unsigned but bundle_signature_key is configured; " +
-				"set require_bundle_signature to enforce signing")
-
-			return nil
+			return fmt.Errorf(
+				"%w: bundle_signature_key is configured", ErrBundleSignatureRequired,
+			)
 		}
 
 		return VerifyManifestSignature(manifest, f.bundleSignatureKey)
 	}
 
 	return nil
+}
+
+func isBlobIntegrityError(err error) bool {
+	return errors.Is(err, ErrBlobDigestMismatch) ||
+		errors.Is(err, ErrBlobSizeMismatch) ||
+		errors.Is(err, ErrBlobMissing) ||
+		errors.Is(err, ErrBlobNotRegular)
 }

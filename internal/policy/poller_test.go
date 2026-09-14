@@ -17,6 +17,7 @@ package policy_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -350,4 +351,128 @@ type testError string
 
 func (e testError) Error() string {
 	return string(e)
+}
+
+var errRegistryDown = errors.New("registry unreachable")
+
+func TestPollerLastSuccessTracksRegistryChecks(t *testing.T) {
+	t.Parallel()
+
+	img := buildTestPolicyImage(t, `{}`)
+
+	var failing atomic.Bool
+
+	failing.Store(true)
+
+	fetcher := policy.NewOCIFetcherWithImageFunc(
+		func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+			if failing.Load() {
+				return nil, errRegistryDown
+			}
+
+			return img, nil
+		}, nil,
+	)
+
+	poller := policy.NewPoller(fetcher, "example.com/test:v1", 20*time.Millisecond,
+		func(map[string]*policy.Policy) error { return nil },
+	)
+
+	created := poller.LastSuccess()
+	if created.IsZero() {
+		t.Fatal("expected LastSuccess to start at the poller creation time")
+	}
+
+	poller.Start(t.Context())
+	defer poller.Stop()
+
+	// Fail for more than ten poll intervals so failures escalate to error level.
+	time.Sleep(300 * time.Millisecond)
+
+	if !poller.LastSuccess().Equal(created) {
+		t.Error("expected LastSuccess to stay unchanged while the registry fails")
+	}
+
+	failing.Store(false)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for !poller.LastSuccess().After(created) {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for LastSuccess to advance")
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestPollerCommitsRollbackGuardOnlyAfterReload(t *testing.T) {
+	t.Parallel()
+
+	layers := []testLayer{
+		{title: testDefaultJSON, mediaType: policy.PolicyMediaType, content: testWarnPolicyJSON},
+	}
+	img := buildLayeredImage(t, layers, "2026-09-01T00:00:00Z")
+
+	var accept atomic.Bool
+
+	fetcher := fetcherForImage(staticImage(img))
+	poller := policy.NewPoller(fetcher, testOCIRef, 10*time.Millisecond,
+		func(map[string]*policy.Policy) error {
+			if !accept.Load() {
+				return errTestReload
+			}
+
+			return nil
+		},
+	)
+
+	poller.Start(t.Context())
+	defer poller.Stop()
+
+	time.Sleep(100 * time.Millisecond)
+
+	if created := fetcher.NewestCreated(); !created.IsZero() {
+		t.Fatalf("expected no rollback guard for a rejected artifact, got %s", created)
+	}
+
+	accept.Store(true)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for fetcher.NewestCreated().IsZero() {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for the accepted artifact to raise the rollback guard")
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestPollerStaleWhileChangedDigestCannotBeApplied(t *testing.T) {
+	t.Parallel()
+
+	img := buildTestPolicyImage(t, `{}`)
+
+	fetcher := policy.NewOCIFetcherWithImageFunc(
+		func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+			return img, nil
+		}, nil,
+	)
+
+	poller := policy.NewPoller(fetcher, "example.com/test:v1", 10*time.Millisecond,
+		func(map[string]*policy.Policy) error { return errTestReload },
+	)
+	poller.SetCachedDigest("sha256:previous")
+
+	created := poller.LastSuccess()
+
+	poller.Start(t.Context())
+	defer poller.Stop()
+
+	// The registry answers, but the changed artifact is rejected on every
+	// poll, so the applied policies are stale.
+	time.Sleep(150 * time.Millisecond)
+
+	if !poller.LastSuccess().Equal(created) {
+		t.Error("expected LastSuccess to stay unchanged while a changed digest cannot be applied")
+	}
 }

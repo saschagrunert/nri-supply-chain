@@ -30,6 +30,11 @@ cache_failure_ttl = "5m"
 # Per-fetch timeout for resolving image digests.
 # digest_resolve_timeout = "1s"
 
+# Upper bound for the whole CreateContainer admission (digest resolution plus
+# waiting for the verification result). Keep it below the runtime's NRI
+# request timeout (2s by default).
+# admission_timeout = "1500ms"
+
 # Maximum size (bytes) of a single attestation payload to accept.
 # max_attestation_size = 10485760
 

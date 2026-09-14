@@ -45,7 +45,7 @@ func TestQuery(t *testing.T) {
 		client := newTestClient(t, srv.URL, "", 5*time.Second)
 
 		result := Query(
-			context.Background(), client, "sha256:test",
+			context.Background(), client, testArtifactDigest,
 			[]string{CheckCertifyVuln, CheckCertifyScorecard, CheckIsDependency},
 			5,
 		)
@@ -77,7 +77,7 @@ func TestQuery(t *testing.T) {
 		client := newTestClient(t, srv.URL, "", 5*time.Second)
 
 		result := Query(
-			context.Background(), client, "sha256:test",
+			context.Background(), client, testArtifactDigest,
 			[]string{CheckCertifyVuln},
 			5,
 		)
@@ -86,9 +86,19 @@ func TestQuery(t *testing.T) {
 			t.Errorf("expected result to pass")
 		}
 
-		depCount, ok := result.Metadata["dependency_count"].(int64)
-		if !ok || depCount != 0 {
-			t.Errorf("expected dependency_count=0 when is_dependency not checked, got %v", depCount)
+		if depCount, present := result.Metadata[MetaKeyDependencyCount]; present {
+			t.Errorf(
+				"expected no dependency_count when is_dependency not checked, got %v",
+				depCount,
+			)
+		}
+
+		if result.Metadata[MetaKeyDependenciesAvailable] != false {
+			t.Errorf("expected dependencies_available=false")
+		}
+
+		if result.Metadata[MetaKeyVulnerabilitiesAvailable] != true {
+			t.Errorf("expected vulnerabilities_available=true")
 		}
 	})
 
@@ -98,7 +108,7 @@ func TestQuery(t *testing.T) {
 		client := newTestClient(t, "http://127.0.0.1:1", "", 1*time.Second)
 
 		result := Query(
-			context.Background(), client, "sha256:test",
+			context.Background(), client, testArtifactDigest,
 			[]string{CheckCertifyVuln},
 			5,
 		)
@@ -118,6 +128,77 @@ func TestQuery(t *testing.T) {
 	})
 }
 
+func TestQueryPartialFailureKeepsResults(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/query/dependencies" {
+			w.Header().Set("Content-Type", "application/json")
+
+			_, _ = w.Write([]byte(`{"purls":["pkg:npm/dep@1.0"]}`))
+
+			return
+		}
+
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv.URL, "", 5*time.Second)
+
+	result := Query(
+		context.Background(), client, testArtifactDigest,
+		[]string{CheckCertifyVuln, CheckIsDependency},
+		5,
+	)
+
+	if result.Passed {
+		t.Fatal("expected soft fail when the vulnerability query fails")
+	}
+
+	if result.Metadata[MetaKeyDependenciesAvailable] != true {
+		t.Errorf("expected dependency data to be kept")
+	}
+
+	if count, _ := result.Metadata[MetaKeyDependencyCount].(int64); count != 1 {
+		t.Errorf("expected dependency_count 1, got %v", result.Metadata[MetaKeyDependencyCount])
+	}
+
+	if result.Metadata[MetaKeyVulnerabilitiesAvailable] != false {
+		t.Errorf("expected vulnerabilities to be marked unavailable")
+	}
+
+	for _, key := range []string{MetaKeyVulnerabilities, MetaKeyTransitiveVulns} {
+		if value, present := result.Metadata[key]; present {
+			t.Errorf("expected no %s data for a failed query, got %v", key, value)
+		}
+	}
+}
+
+func TestUnavailableMetadataOmitsData(t *testing.T) {
+	t.Parallel()
+
+	meta := UnavailableMetadata()
+
+	for _, key := range []string{
+		MetaKeyVulnerabilities, MetaKeyTransitiveVulns, MetaKeyScorecard,
+		MetaKeyDependencies, MetaKeyDependencyCount,
+	} {
+		if value, present := meta[key]; present {
+			t.Errorf("expected no %s data when GUAC data is unavailable, got %v", key, value)
+		}
+	}
+
+	for _, key := range []string{
+		MetaKeyAvailable, MetaKeyVulnerabilitiesAvailable,
+		MetaKeyScorecardAvailable, MetaKeyDependenciesAvailable,
+	} {
+		if meta[key] != false {
+			t.Errorf("expected %s=false, got %v", key, meta[key])
+		}
+	}
+}
+
 func TestBuildCheckResult(t *testing.T) {
 	t.Parallel()
 
@@ -132,14 +213,17 @@ func TestBuildCheckResult(t *testing.T) {
 			TransitiveVulns: []Vulnerability{
 				{ID: testGUACCVE5678, Package: "pkg:npm/foo@1.0"},
 			},
+			VulnerabilitiesAvailable: true,
 			Scorecard: &ScorecardResult{
 				Aggregate: 7.5,
 				Checks:    map[string]float64{testGUACCheckName: 8.0},
 			},
+			ScorecardAvailable: true,
 			DependencyInfo: &DependencyInfo{
 				Dependencies:    []string{"pkg:npm/foo@1.0"},
 				DependencyCount: 1,
 			},
+			DependenciesAvailable: true,
 		}
 
 		result := buildCheckResult(qr)
@@ -211,7 +295,7 @@ func TestQueryAuthErrorPreserved(t *testing.T) {
 	client := newTestClient(t, srv.URL, "/nonexistent/token", 5*time.Second)
 
 	result := Query(
-		context.Background(), client, "sha256:test",
+		context.Background(), client, testArtifactDigest,
 		[]string{CheckCertifyVuln},
 		5,
 	)
@@ -271,12 +355,20 @@ func newTestServer(t *testing.T) *httptest.Server {
 		case "/query":
 			resp := graphQLResponse{
 				Data: graphQLData{
+					IsOccurrence: []graphQLIsOccurrence{{
+						Subject: graphQLSource{
+							Typename:  "Source",
+							Type:      testSourceType,
+							Namespace: "github.com/test",
+							Name:      testSourceRepo,
+						},
+					}},
 					Scorecards: []graphQLScorecard{
 						{
 							Source: graphQLSource{
-								Type:      "git",
+								Type:      testSourceType,
 								Namespace: "github.com/test",
-								Name:      "repo",
+								Name:      testSourceRepo,
 							},
 							Scorecard: graphQLScorecardData{
 								AggregateScore: 8.0,

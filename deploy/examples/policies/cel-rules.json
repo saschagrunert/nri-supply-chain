@@ -13,6 +13,10 @@
         "match": "image.registry == 'ghcr.io'",
         "require": "slsa.verified == true",
         "message": "GHCR images must have SLSA provenance"
+      },
+      {
+        "require": "!vulnscan.present || vulnscan.criticalCount == 0",
+        "message": "Vulnerability scans must not report critical findings"
       }
     ]
   }

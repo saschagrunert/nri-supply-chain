@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -42,26 +43,55 @@ type trustedRootCache struct {
 	inflight     singleflight.Group
 	onFallback   func()
 	lastFetchErr time.Time
-	preSeeded    *root.TrustedRoot
+	// lastErr is the refresh failure recorded at lastFetchErr when no root
+	// could be returned. It is served for failedRootRetryInterval instead of
+	// contacting the TUF repository on every verification.
+	lastErr   error
+	preSeeded *root.TrustedRoot
+	// name labels the root source in errors and logs.
+	name string
+	// issuers restricts the certificate issuers this root may vouch for.
+	// Empty means no restriction.
+	issuers []string
 }
 
 // cachedHit returns a cached result without network access. It checks two
-// cases: a fresh cache hit (within TTL) and a negative cache hit (a recent CDN
-// failure with a pre-seeded root available). The caller must hold mu.RLock.
+// cases: a fresh cache hit (within TTL) and a negative cache hit (a recent
+// refresh failure). During the negative cache window the stale cached root is
+// preferred while it is within the staleness limit, so verification does not
+// alternate between the fetched root and the pre-seeded root. The caller must
+// hold mu.RLock.
 func (c *trustedRootCache) cachedHit() (*root.TrustedRoot, bool) {
 	if c.root != nil && time.Since(c.fetchedAt) < trustedRootCacheTTL {
 		return c.root, true
 	}
 
-	// When a recent CDN failure was recorded and a pre-seeded root is
-	// available, skip the network retry to avoid repeated blocking in
-	// air-gapped environments.
-	if c.preSeeded != nil && !c.lastFetchErr.IsZero() &&
-		time.Since(c.lastFetchErr) < negativeCacheTTL {
+	if c.lastFetchErr.IsZero() || time.Since(c.lastFetchErr) >= negativeCacheTTL {
+		return nil, false
+	}
+
+	// A recent refresh failure was recorded: skip the network retry to avoid
+	// repeated blocking in air-gapped environments.
+	if c.root != nil && time.Since(c.fetchedAt) <= trustedRootMaxStaleness {
+		return c.root, true
+	}
+
+	if c.preSeeded != nil {
 		return c.preSeeded, true
 	}
 
 	return nil, false
+}
+
+// recentFailure returns the refresh failure recorded when no root could be
+// returned, while it is within failedRootRetryInterval. The caller must hold
+// mu.RLock.
+func (c *trustedRootCache) recentFailure() error {
+	if c.lastErr == nil || time.Since(c.lastFetchErr) >= failedRootRetryInterval {
+		return nil
+	}
+
+	return c.lastErr
 }
 
 func (c *trustedRootCache) get(ctx context.Context) (*root.TrustedRoot, error) {
@@ -73,7 +103,13 @@ func (c *trustedRootCache) get(ctx context.Context) (*root.TrustedRoot, error) {
 		return hit, nil
 	}
 
+	failure := c.recentFailure()
+
 	c.mu.RUnlock()
+
+	if failure != nil {
+		return nil, fmt.Errorf("trusted root refresh failed recently: %w", failure)
+	}
 
 	err := ctx.Err()
 	if err != nil {
@@ -124,6 +160,7 @@ func (c *trustedRootCache) refreshRoot() (any, error) {
 	c.root = trustedRoot
 	c.fetchedAt = time.Now()
 	c.lastFetchErr = time.Time{}
+	c.lastErr = nil
 
 	return trustedRoot, nil
 }
@@ -158,10 +195,10 @@ func (c *trustedRootCache) handleRefreshError(err error) (*root.TrustedRoot, err
 			return c.preSeeded, nil
 		}
 
-		return nil, fmt.Errorf(
+		return nil, c.recordFailure(fmt.Errorf(
 			"trusted root is stale (%s old, max %s) and refresh failed: %w",
 			age.Truncate(time.Second), trustedRootMaxStaleness, err,
-		)
+		))
 	}
 
 	if c.preSeeded != nil {
@@ -176,7 +213,17 @@ func (c *trustedRootCache) handleRefreshError(err error) (*root.TrustedRoot, err
 		return c.preSeeded, nil
 	}
 
-	return nil, fmt.Errorf("fetching sigstore trusted root: %w", err)
+	return nil, c.recordFailure(fmt.Errorf("fetching sigstore trusted root: %w", err))
+}
+
+// recordFailure remembers a refresh failure that left no root to return, so
+// verifications within failedRootRetryInterval fail fast. The caller must
+// hold mu.
+func (c *trustedRootCache) recordFailure(err error) error {
+	c.lastFetchErr = time.Now()
+	c.lastErr = err
+
+	return err
 }
 
 func (c *trustedRootCache) fireFallback() {
@@ -192,9 +239,39 @@ type RootSourceConfig struct {
 	Name         string
 	TUFMirror    string // empty = public Sigstore
 	TUFRootBytes []byte // nil = use default root.json
+	// Issuers restricts the OIDC issuers whose certificates this root may
+	// vouch for. Empty means any issuer trusted by the policy is accepted.
+	Issuers []string
 }
 
-func newBaseFetcher(verifyFn BundleVerifyFunc) *OCIFetcher {
+// RootScope describes one trusted root source of a fetcher and the issuers
+// it may vouch for. Empty Issuers means no restriction.
+type RootScope struct {
+	Name    string
+	Issuers []string
+}
+
+// RootScopes returns the trusted root sources of the fetcher with their
+// issuer restrictions.
+func (f *OCIFetcher) RootScopes() []RootScope {
+	caches := f.rootCaches
+	if f.rootCache != nil {
+		caches = []*trustedRootCache{f.rootCache}
+	}
+
+	scopes := make([]RootScope, 0, len(caches))
+
+	for _, cache := range caches {
+		scopes = append(scopes, RootScope{
+			Name:    cache.name,
+			Issuers: slices.Clone(cache.issuers),
+		})
+	}
+
+	return scopes
+}
+
+func newBaseFetcher(verifyFn SignedBundleVerifyFunc) *OCIFetcher {
 	fetcher := &OCIFetcher{
 		verifyBundle:       verifyFn,
 		fetchImage:         remote.Image,
@@ -204,6 +281,7 @@ func newBaseFetcher(verifyFn BundleVerifyFunc) *OCIFetcher {
 		limiter:            atomic.Pointer[rate.Limiter]{},
 		transportCache:     atomic.Pointer[registry.TransportCache]{},
 		maxAttestationSize: atomic.Int64{},
+		downloadLimit:      atomic.Int64{},
 		onMirrorFallback:   nil,
 		onMirrorFallbackMu: sync.RWMutex{},
 	}
@@ -222,12 +300,15 @@ func NewOCIFetcher() *OCIFetcher {
 		inflight:     singleflight.Group{},
 		onFallback:   nil,
 		lastFetchErr: time.Time{},
+		lastErr:      nil,
 		preSeeded:    nil,
+		name:         "",
+		issuers:      nil,
 	}
 
 	fetcher := newBaseFetcher(func(
 		ctx context.Context, bundleBytes []byte, opts *FetchOptions,
-	) ([]byte, error) {
+	) (*VerifiedBundle, error) {
 		return verifyBundleWithCache(ctx, bundleBytes, opts, cachedRoot)
 	})
 	fetcher.rootCache = cachedRoot
@@ -254,12 +335,15 @@ func NewOCIFetcherWithPreSeededRoot(preSeeded *root.TrustedRoot) *OCIFetcher {
 		inflight:     singleflight.Group{},
 		onFallback:   nil,
 		lastFetchErr: time.Time{},
+		lastErr:      nil,
 		preSeeded:    preSeeded,
+		name:         "",
+		issuers:      nil,
 	}
 
 	fetcher := newBaseFetcher(func(
 		ctx context.Context, bundleBytes []byte, opts *FetchOptions,
-	) ([]byte, error) {
+	) (*VerifiedBundle, error) {
 		return verifyBundleWithCache(ctx, bundleBytes, opts, cachedRoot)
 	})
 	fetcher.rootCache = cachedRoot
@@ -267,9 +351,33 @@ func NewOCIFetcherWithPreSeededRoot(preSeeded *root.TrustedRoot) *OCIFetcher {
 	return fetcher
 }
 
-// NewOCIFetcherWithVerifier creates a fetcher with a custom bundle verification function.
+// NewOCIFetcherWithVerifier creates a fetcher with a custom payload-only
+// bundle verification function. Attestations returned by such a fetcher carry
+// a zero Signer, so identity bindings evaluated later fail closed. Use
+// NewOCIFetcherWithSignedVerifier when the signer identity is needed.
 func NewOCIFetcherWithVerifier(verifier BundleVerifyFunc) *OCIFetcher {
+	return newBaseFetcher(payloadOnlyVerifier(verifier))
+}
+
+// NewOCIFetcherWithSignedVerifier creates a fetcher with a custom bundle
+// verification function that reports the signer identity.
+func NewOCIFetcherWithSignedVerifier(verifier SignedBundleVerifyFunc) *OCIFetcher {
 	return newBaseFetcher(verifier)
+}
+
+func payloadOnlyVerifier(verifier BundleVerifyFunc) SignedBundleVerifyFunc {
+	return func(ctx context.Context, bundleBytes []byte, opts *FetchOptions) (*VerifiedBundle, error) {
+		payload, err := verifier(ctx, bundleBytes, opts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &VerifiedBundle{
+			Payload:       payload,
+			PredicateType: extractPredicateType(payload),
+			Signer:        SignerIdentity{KeyPath: "", KeyPaths: nil, Issuer: "", SAN: ""},
+		}, nil
+	}
 }
 
 // NewOCIFetcherWithTUFMirror creates an OCI-based attestation fetcher that
@@ -302,12 +410,15 @@ func NewOCIFetcherWithTUFMirror(tufMirror string, tufRootBytes []byte) *OCIFetch
 		inflight:     singleflight.Group{},
 		onFallback:   nil,
 		lastFetchErr: time.Time{},
+		lastErr:      nil,
 		preSeeded:    nil,
+		name:         "",
+		issuers:      nil,
 	}
 
 	fetcher := newBaseFetcher(func(
 		ctx context.Context, bundleBytes []byte, opts *FetchOptions,
-	) ([]byte, error) {
+	) (*VerifiedBundle, error) {
 		return verifyBundleWithCache(ctx, bundleBytes, opts, cachedRoot)
 	})
 	fetcher.rootCache = cachedRoot
@@ -326,7 +437,7 @@ func NewOCIFetcherWithMultipleRoots(sources []RootSourceConfig) *OCIFetcher {
 	caches := make([]*trustedRootCache, len(sources))
 
 	for i, src := range sources {
-		fetchFn := buildFetchFunc(src)
+		fetchFn := buildFetchFunc(&sources[i])
 		caches[i] = &trustedRootCache{
 			mu:           sync.RWMutex{},
 			root:         nil,
@@ -335,13 +446,16 @@ func NewOCIFetcherWithMultipleRoots(sources []RootSourceConfig) *OCIFetcher {
 			inflight:     singleflight.Group{},
 			onFallback:   nil,
 			lastFetchErr: time.Time{},
+			lastErr:      nil,
 			preSeeded:    nil,
+			name:         src.Name,
+			issuers:      src.Issuers,
 		}
 	}
 
 	fetcher := newBaseFetcher(func(
 		ctx context.Context, bundleBytes []byte, opts *FetchOptions,
-	) ([]byte, error) {
+	) (*VerifiedBundle, error) {
 		return verifyBundleWithMultipleRoots(ctx, bundleBytes, opts, caches)
 	})
 	fetcher.rootCaches = caches
@@ -349,7 +463,7 @@ func NewOCIFetcherWithMultipleRoots(sources []RootSourceConfig) *OCIFetcher {
 	return fetcher
 }
 
-func buildFetchFunc(src RootSourceConfig) trustedRootFetchFunc {
+func buildFetchFunc(src *RootSourceConfig) trustedRootFetchFunc {
 	if src.TUFMirror == "" {
 		return root.FetchTrustedRoot
 	}

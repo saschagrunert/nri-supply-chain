@@ -100,26 +100,57 @@ runs:
         PRODUCT="pkg:oci/nri-supply-chain@${{ inputs.digest }}"
         TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-        # Parse .trivyignore for suppressed vulnerability IDs (CVE-* or GO-*)
-        SUPPRESSED_IDS=()
-        while IFS= read -r line; do
-          id=$(echo "$line" | sed 's/#.*//' | xargs)
-          if [[ "$id" =~ ^(CVE-[0-9-]+|GO-[0-9-]+)$ ]]; then
-            SUPPRESSED_IDS+=("$id")
-          fi
-        done < .trivyignore
-
-        # Build per-CVE VEX statements for suppressed vulnerabilities
+        # Parse .trivyignore for suppressed vulnerability IDs (CVE-*, GO-*, or
+        # GHSA-*).
+        # A suppression only becomes a not_affected VEX statement when the
+        # comment block directly above the ID documents an OpenVEX
+        # justification, for example:
+        #   # vex-justification: vulnerable_code_not_in_execute_path
+        #   GO-2026-5932
+        # Suppressions without a valid justification are published as
+        # under_investigation instead of asserting that the image is not
+        # affected.
+        VALID_JUSTIFICATIONS="component_not_present vulnerable_code_not_present vulnerable_code_cannot_be_controlled_by_adversary vulnerable_code_not_in_execute_path inline_mitigations_already_exist"
         PER_CVE_STATEMENTS=""
-        for id in "${SUPPRESSED_IDS[@]}"; do
-          PER_CVE_STATEMENTS+=",
+        justification=""
+        while IFS= read -r line || [ -n "$line" ]; do
+          trimmed="${line#"${line%%[![:space:]]*}"}"
+          trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+          if [ -z "$trimmed" ]; then
+            justification=""
+            continue
+          fi
+          if [[ "$trimmed" =~ ^#[[:space:]]*vex-justification:[[:space:]]*([a-z_]+)[[:space:]]*$ ]]; then
+            justification="${BASH_REMATCH[1]}"
+            continue
+          fi
+          if [[ "$trimmed" == \#* ]]; then
+            continue
+          fi
+          read -r id _ <<<"$trimmed"
+          if [[ ! "$id" =~ ^(CVE-[0-9-]+|GO-[0-9-]+|GHSA(-[0-9a-z]{4}){3})$ ]]; then
+            echo "::warning::${id} in .trivyignore is not a recognized vulnerability ID, no VEX statement is published for it"
+          else
+            if [ -n "$justification" ] && [[ " $VALID_JUSTIFICATIONS " == *" $justification "* ]]; then
+              PER_CVE_STATEMENTS+=",
             {
               \"vulnerability\": {\"name\": \"${id}\"},
               \"products\": [{\"@id\": \"${PRODUCT}\"}],
               \"status\": \"not_affected\",
-              \"justification\": \"vulnerable_code_not_present\"
+              \"justification\": \"${justification}\"
             }"
-        done
+            else
+              echo "::warning::${id} is suppressed in .trivyignore without a valid vex-justification, publishing it as under_investigation"
+              PER_CVE_STATEMENTS+=",
+            {
+              \"vulnerability\": {\"name\": \"${id}\"},
+              \"products\": [{\"@id\": \"${PRODUCT}\"}],
+              \"status\": \"under_investigation\"
+            }"
+            fi
+          fi
+          justification=""
+        done < .trivyignore
 
         cat > /tmp/vex-predicate.json <<EOF
         {
@@ -160,23 +191,34 @@ runs:
         TRIVY_VERSION=$(trivy --version 2>/dev/null | head -1 | awk '{print $2}' || echo "unknown")
         TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-        # Extract actual vulnerabilities from Trivy JSON output
+        # Extract vulnerabilities from Trivy JSON output using the in-toto
+        # vulnerability predicate layout: severity is a list of
+        # {method, score} entries with scores encoded as strings. The same
+        # vulnerability can be reported for several packages, so entries are
+        # grouped by ID and their severity lists merged, which keeps the most
+        # severe rating. A jq failure fails the step instead of attesting an
+        # empty result.
         VULNS=$(jq '[
           .Results[]? |
           .Vulnerabilities[]? |
-          {id: .VulnerabilityID, severity: (.Severity | ascii_downcase), score: (.CVSS.nvd.V3Score // .CVSS.redhat.V3Score // null)}
-        ] | unique_by(.id)' /tmp/trivy-results.json 2>/dev/null || echo "[]")
+          {
+            id: .VulnerabilityID,
+            severity: (
+              [{method: "trivy", score: (.Severity // "UNKNOWN")}] +
+              ([.CVSS.nvd.V3Score // .CVSS.redhat.V3Score // empty] | map({method: "cvss_v3", score: tostring}))
+            )
+          }
+        ] | group_by(.id) | map({id: .[0].id, severity: ([.[].severity[]] | unique)})' /tmp/trivy-results.json)
 
         jq -n \
           --arg uri "https://trivy.dev" \
           --arg version "$TRIVY_VERSION" \
-          --arg scannedOn "$TIMESTAMP" \
+          --arg scanFinishedOn "$TIMESTAMP" \
           --arg ciRun "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
           --argjson vulns "$VULNS" \
           '{
-            scanner: {uri: $uri, version: $version},
-            metadata: {scannedOn: $scannedOn, ciRun: $ciRun},
-            result: {vulnerabilities: $vulns}
+            scanner: {uri: $uri, version: $version, result: $vulns},
+            metadata: {scanFinishedOn: $scanFinishedOn, ciRun: $ciRun}
           }' > /tmp/vulnscan-predicate.json
 
         cosign attest --predicate /tmp/vulnscan-predicate.json \
@@ -242,8 +284,17 @@ runs:
           --yes \
           "${IMAGE}@${{ inputs.digest }}"
 
+    # The source attestation records the commit the image was built from. On
+    # workflow_run events github.sha is the default branch head at the time
+    # the release workflow started, not necessarily the commit CI tested and
+    # built, so the workflow_run head SHA and branch take precedence. No SLSA
+    # source level is claimed because this workflow does not verify the
+    # source control requirements for one.
     - name: Attest source provenance
       shell: bash
+      env:
+        SOURCE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        SOURCE_BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
       run: |
         TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
         cat > /tmp/source-predicate.json <<EOF
@@ -251,12 +302,11 @@ runs:
           "sourceLocations": [
             {
               "uri": "https://github.com/${{ github.repository }}",
-              "branch": "${{ github.ref_name }}",
-              "digest": {"sha1": "${{ github.sha }}"}
+              "branch": "${SOURCE_BRANCH}",
+              "digest": {"sha1": "${SOURCE_SHA}"}
             }
           ],
           "sourceMetadata": {
-            "sourceLevel": 3,
             "verifiedOn": "${TIMESTAMP}"
           }
         }
@@ -266,6 +316,9 @@ runs:
           --yes \
           "${IMAGE}@${{ inputs.digest }}"
 
+    # Only properties established by the build definition are recorded. The
+    # image build pulls base images over the network and its reproducibility
+    # is not verified, so no HERMETIC or REPRODUCIBLE claims are made.
     - name: Attest build environment
       shell: bash
       run: |
@@ -277,8 +330,8 @@ runs:
             {"name": "RUNNER_OS", "value": "${{ runner.os }}"},
             {"name": "RUNNER_ARCH", "value": "${{ runner.arch }}"},
             {"name": "GO_VERSION", "value": "${GO_VERSION}"},
-            {"name": "HERMETIC", "value": "true"},
-            {"name": "REPRODUCIBLE", "value": "true"}
+            {"name": "CGO_ENABLED", "value": "0"},
+            {"name": "GO_FLAGS", "value": "-mod=vendor -trimpath"}
           ]
         }
         EOF

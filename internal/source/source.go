@@ -17,18 +17,16 @@ package source
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/checker"
 	"github.com/saschagrunert/nri-supply-chain/internal/glob"
-	"github.com/saschagrunert/nri-supply-chain/internal/intoto"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
-
-const checkType = types.CheckTypeSource
 
 var (
 	// ErrInvalidSource indicates the source attestation could not be parsed.
@@ -45,6 +43,8 @@ var (
 
 	// ErrFutureTimestamp indicates the source attestation timestamp is in the future.
 	ErrFutureTimestamp = errors.New("source attestation timestamp is in the future")
+
+	errNoSourceLocation = errors.New("sourceLocations with a non-empty uri is required")
 )
 
 // sourcePredicate represents the SLSA source track v1 predicate.
@@ -64,22 +64,54 @@ type sourceMetadata struct {
 	VerifiedOn  *time.Time `json:"verifiedOn,omitempty"`
 }
 
+//nolint:gochecknoglobals // immutable check declaration
+var spec = &checker.Spec[sourcePredicate]{
+	Info: checker.Info{
+		Type:  types.CheckTypeSource,
+		Label: "source",
+	},
+	Aggregation: checker.FirstPass,
+	ErrInvalid:  ErrInvalidSource,
+	Validate:    validatePredicate,
+	Meta:        predicateMeta,
+	Freshness: &checker.Freshness[sourcePredicate]{
+		Timestamp: func(pred *sourcePredicate) *time.Time {
+			if pred.SourceMetadata == nil {
+				return nil
+			}
+
+			return pred.SourceMetadata.VerifiedOn
+		},
+		MaxAge: func(pol *policy.Policy) *time.Duration {
+			if pol.Source == nil || pol.Source.MaxAge == "" {
+				return nil
+			}
+
+			return &pol.Source.MaxAgeDuration
+		},
+		Label:     "verified",
+		ErrStale:  ErrStaleSource,
+		ErrFuture: ErrFutureTimestamp,
+	},
+	Rules: []checker.Rule[sourcePredicate]{
+		checkTrustedSource,
+		checkSourceLevel,
+	},
+	Merge: nil,
+}
+
+// Info returns the check type and label of the source check.
+func Info() checker.Info {
+	return spec.Info
+}
+
 // Verify checks a single source attestation against the given policy.
 func Verify(
 	ctx context.Context,
 	att []byte, pol *policy.Policy, imageDigest string,
 ) (*types.CheckResult, error) {
-	ctxErr := ctx.Err()
-	if ctxErr != nil {
-		return nil, fmt.Errorf("verification cancelled: %w", ctxErr)
-	}
-
-	predicate, err := intoto.VerifySubjectAndExtractPredicate(att, imageDigest)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidSource, err)
-	}
-
-	return verifySourcePredicate(predicate, pol)
+	//nolint:wrapcheck // the generic checker returns domain errors
+	return spec.Verify(ctx, att, pol, imageDigest)
 }
 
 // VerifyMultiple checks multiple source attestations, accepting if any valid one passes.
@@ -87,133 +119,90 @@ func VerifyMultiple(
 	ctx context.Context,
 	attestations [][]byte, pol *policy.Policy, imageDigest string,
 ) (*types.CheckResult, error) {
-	return types.VerifyMultipleFirstPass( //nolint:wrapcheck // direct delegation to shared helper
-		ctx, checkType, "source", attestations,
-		func(att []byte) (*types.CheckResult, error) {
-			return Verify(ctx, att, pol, imageDigest)
-		},
-	)
+	//nolint:wrapcheck // the generic checker returns domain errors
+	return spec.VerifyMultiple(ctx, attestations, pol, imageDigest)
 }
 
-//nolint:cyclop,funlen // sequential verification steps
-func verifySourcePredicate(
-	predicate []byte, pol *policy.Policy,
-) (*types.CheckResult, error) {
-	var pred sourcePredicate
+func validatePredicate(pred *sourcePredicate) error {
+	if len(pred.SourceLocations) == 0 || strings.TrimSpace(pred.SourceLocations[0].URI) == "" {
+		return errNoSourceLocation
+	}
 
-	err := json.Unmarshal(predicate, &pred)
+	return nil
+}
+
+func predicateMeta(pred *sourcePredicate) map[string]any {
+	return map[string]any{
+		"source": pred.SourceLocations[0].URI,
+		"branch": pred.SourceLocations[0].Branch,
+		"level":  int64(sourceLevel(pred)),
+	}
+}
+
+func sourceLevel(pred *sourcePredicate) int {
+	if pred.SourceMetadata == nil {
+		return 0
+	}
+
+	return pred.SourceMetadata.SourceLevel
+}
+
+func checkTrustedSource(pred *sourcePredicate, pol *policy.Policy) string {
+	if pol.Trust == nil || len(pol.Trust.Sources) == 0 {
+		return ""
+	}
+
+	err := verifySourceRepo(&pred.SourceLocations[0], pol.Trust.Sources)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidSource, err)
+		return err.Error()
 	}
 
-	sourceURI := ""
-	branch := ""
-
-	if len(pred.SourceLocations) > 0 {
-		sourceURI = pred.SourceLocations[0].URI
-		branch = pred.SourceLocations[0].Branch
-	}
-
-	sourceLevel := 0
-	if pred.SourceMetadata != nil {
-		sourceLevel = pred.SourceMetadata.SourceLevel
-	}
-
-	meta := map[string]any{
-		"source": sourceURI,
-		"branch": branch,
-		"level":  int64(sourceLevel),
-	}
-
-	if pol.Trust != nil && len(pol.Trust.Sources) > 0 {
-		err = verifySourceRepo(sourceURI, pol.Trust.Sources)
-		if err != nil {
-			result := check.Fail(err.Error())
-			result.Metadata = meta
-
-			return result, nil
-		}
-	}
-
-	if pol.Source != nil {
-		if sourceLevel < pol.Source.MinimumLevel {
-			result := check.Fail(fmt.Sprintf(
-				"%s: got %d, minimum %d",
-				ErrSourceLevelInsufficient, sourceLevel, pol.Source.MinimumLevel,
-			))
-			result.Metadata = meta
-
-			return result, nil
-		}
-
-		var verifiedOn *time.Time
-		if pred.SourceMetadata != nil {
-			verifiedOn = pred.SourceMetadata.VerifiedOn
-		}
-
-		err = verifyFreshness(verifiedOn, pol)
-		if err != nil {
-			result := check.Fail(err.Error())
-			result.Metadata = meta
-
-			return result, nil
-		}
-	}
-
-	result := check.Pass()
-	result.Metadata = meta
-
-	return result, nil
+	return ""
 }
 
-func verifySourceRepo(sourceURI string, trustedSources []string) error {
-	if sourceURI == "" {
-		return fmt.Errorf("%w: source URI not found in attestation", ErrUntrustedSourceRepo)
+func checkSourceLevel(pred *sourcePredicate, pol *policy.Policy) string {
+	if pol.Source == nil {
+		return ""
+	}
+
+	level := sourceLevel(pred)
+	if level < pol.Source.MinimumLevel {
+		return fmt.Sprintf(
+			"%s: got %d, minimum %d",
+			ErrSourceLevelInsufficient, level, pol.Source.MinimumLevel,
+		)
+	}
+
+	return ""
+}
+
+// verifySourceRepo matches the source location against trust.sources the
+// same way as SLSA provenance sources (see glob.MatchSource). The branch
+// takes precedence over a ref embedded in the URI, and a short branch name
+// also matches as "refs/heads/<branch>".
+func verifySourceRepo(location *sourceLocation, trustedSources []string) error {
+	repository, ref, _ := glob.SplitGitRef(location.URI)
+	if location.Branch != "" {
+		ref = location.Branch
+	}
+
+	refs := []string{ref}
+	if ref != "" && !strings.HasPrefix(ref, "refs/") {
+		refs = append(refs, "refs/heads/"+ref)
 	}
 
 	for _, pattern := range trustedSources {
-		matched, err := glob.Match(pattern, sourceURI)
-		if err != nil {
-			return fmt.Errorf("invalid source pattern %q: %w", pattern, err)
-		}
+		for _, candidate := range refs {
+			matched, err := glob.MatchSource(pattern, repository, candidate)
+			if err != nil {
+				return fmt.Errorf("invalid source pattern %q: %w", pattern, err)
+			}
 
-		if matched {
-			return nil
+			if matched {
+				return nil
+			}
 		}
 	}
 
-	return fmt.Errorf("%w: %q", ErrUntrustedSourceRepo, sourceURI)
-}
-
-func verifyFreshness(verifiedOn *time.Time, pol *policy.Policy) error {
-	maxAgeConfigured := pol.Source != nil && pol.Source.MaxAge != ""
-
-	if verifiedOn == nil {
-		if maxAgeConfigured {
-			return fmt.Errorf("%w: no verified timestamp in attestation", ErrStaleSource)
-		}
-
-		return nil
-	}
-
-	if !maxAgeConfigured {
-		return nil
-	}
-
-	maxAge := &pol.Source.MaxAgeDuration
-
-	//nolint:wrapcheck // VerifyFreshness wraps the caller's sentinel errors
-	return types.VerifyFreshness(
-		*verifiedOn,
-		maxAge,
-		"verified",
-		ErrFutureTimestamp,
-		ErrStaleSource,
-		ErrStaleSource,
-	)
-}
-
-var check = types.Checker{ //nolint:gochecknoglobals // package-scoped helper
-	Type:    checkType,
-	PassMsg: "source verification passed",
+	return fmt.Errorf("%w: %q", ErrUntrustedSourceRepo, location.URI)
 }

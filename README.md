@@ -16,10 +16,15 @@ before a container is allowed to run. It also integrates with
 [GUAC](https://guac.sh/) for transitive dependency analysis, vulnerability
 correlation, and OpenSSF Scorecard queries.
 
-Runtime-level enforcement cannot be bypassed by misconfigured admission
-webhooks, disabled policy controllers, or direct kubelet API calls. The plugin
-operates below the Kubernetes API layer, so every container that runs on a node
-must pass verification.
+Runtime-level enforcement is not affected by misconfigured admission webhooks,
+disabled policy controllers, or direct kubelet API calls, because the plugin
+operates below the Kubernetes API layer. It only covers containers the runtime
+actually hands to the plugin, though. By default, NRI runtimes create
+containers without verification while the plugin is not registered (not yet
+started, crashed, or restarting) and when the plugin does not answer within
+the runtime's NRI request timeout. To fail closed, configure the runtime to
+require the plugin and keep verification below the request timeout, as
+described in [Failing Closed](docs/deployment.md#failing-closed).
 
 For a detailed introduction, see the [CNCF blog post](https://www.cncf.io/blog/2026/07/30/runtime-supply-chain-verification-using-the-node-resource-interface-nri/).
 
@@ -190,8 +195,9 @@ See the [compatibility section](#compatibility) for supported versions.
    }
    ```
 
-   To enable VSA-accelerated verification, add a `trust.verifiers` entry.
-   A trusted VSA short-circuits all other checks:
+   To enable VSA-accelerated verification, add a `trust.verifiers` entry
+   bound to the identity that signs the VSA. A VSA signed by that identity
+   short-circuits all other checks:
 
    <!-- quickstart-policy-vsa -->
 
@@ -203,7 +209,13 @@ See the [compatibility section](#compatibility) for supported versions.
        "sources": ["https://github.com/saschagrunert/*"],
        "verifiers": [
          {
-           "id": "https://github.com/saschagrunert/nri-supply-chain/.github/workflows/release.yml"
+           "id": "https://github.com/saschagrunert/nri-supply-chain/.github/workflows/release.yml",
+           "identities": [
+             {
+               "issuer": "https://token.actions.githubusercontent.com",
+               "sanPattern": "https://github.com/saschagrunert/nri-supply-chain/.github/workflows/release.yml@**"
+             }
+           ]
          }
        ]
      },
@@ -240,8 +252,13 @@ See the [compatibility section](#compatibility) for supported versions.
    Edit the placeholder values (`myorg`) in the ConfigMap before deploying:
 
    ```console
-   kubectl apply -f deploy/kubernetes/
+   kubectl apply -f deploy/kubernetes/daemonset.yaml
    ```
+
+   Before switching to `enforce` mode, configure the container runtime to
+   require the plugin so that containers are not created unverified while
+   the plugin is unavailable. See
+   [Failing Closed](docs/deployment.md#failing-closed).
 
 6. Check the logs and metrics to observe verification decisions.
 
@@ -295,10 +312,10 @@ flowchart TD
     GUAC <--> GUACServer
     Fetch <--> Registry
     Fetch --> VSA
-    VSA -- "PASSED (GUAC discarded)" --> Enforce
-    VSA -- "FAILED" --> Enforce
+    VSA -- "PASSED (skip checks)" --> CEL
+    VSA -- "FAILED / missing (deny)" --> Enforce
     VSA -- "untrusted / stale / missing" --> Parallel
-    GUAC --> Parallel
+    GUAC --> CEL
     Parallel --> CEL --> Enforce
     Enforce -- pass --> Allow
     Enforce -- "fail (enforce mode)" --> Reject
@@ -309,7 +326,7 @@ flowchart TD
 
 The plugin runs as a long-lived process that connects to the container runtime
 via NRI. It exposes Prometheus metrics and supports live config reload via
-SIGHUP.
+SIGHUP or filesystem watching.
 
 At startup, the NRI Synchronize callback delivers the list of pods and
 containers already running on the node. The plugin collects their image

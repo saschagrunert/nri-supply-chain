@@ -26,6 +26,7 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/name"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/imageref"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
@@ -58,6 +59,9 @@ var (
 	// ErrResourceMismatch indicates the VSA resource URI does not match the image.
 	ErrResourceMismatch = errors.New("VSA resource URI mismatch")
 
+	// ErrSubjectMismatch indicates no VSA subject digest matches the image digest.
+	ErrSubjectMismatch = errors.New("VSA subject digest mismatch")
+
 	// ErrSLSAVersionTooOld indicates the SLSA version is below the minimum.
 	ErrSLSAVersionTooOld = errors.New("SLSA version below minimum")
 
@@ -74,8 +78,15 @@ var (
 // Statement represents an in-toto statement wrapping a VSA predicate.
 type Statement struct {
 	Type          string    `json:"_type"` //nolint:tagliatelle // In-toto spec field name.
+	Subject       []Subject `json:"subject"`
 	PredicateType string    `json:"predicateType"`
 	Predicate     Predicate `json:"predicate"`
+}
+
+// Subject represents an in-toto subject with name and digests.
+type Subject struct {
+	Name   string            `json:"name,omitempty"`
+	Digest map[string]string `json:"digest"`
 }
 
 // Predicate represents the VSA predicate fields.
@@ -103,12 +114,21 @@ type Policy struct {
 type VerifyResult struct {
 	Check      *types.CheckResult
 	HardReject bool
+	// MatchedVerifiers lists the trusted verifier entries whose ID equals the
+	// verifier.id claimed by the VSA. The claim is only a string inside the
+	// signed payload; callers must confirm that the attestation signer is one
+	// of these verifiers before honoring a PASSED or FAILED result.
+	MatchedVerifiers []policy.TrustedVerifier
 }
 
 // Verify checks a VSA attestation against the given policy.
-// HardReject is true when a trusted verifier reports FAILED, preventing fallback to direct verification.
+//
+// The VSA is first bound to the image: the resource URI must name the same
+// repository and digest as imageRef, and a statement subject must carry the
+// image digest. Only a bound VSA from a trusted verifier can report FAILED,
+// which sets HardReject and prevents fallback to direct verification.
 // When parsedImageRef is non-nil it is used instead of re-parsing imageRef.
-func Verify( //nolint:cyclop,funlen // ctx cancellation check adds a branch and lines
+func Verify( //nolint:cyclop,funlen // sequential verification steps
 	ctx context.Context,
 	att []byte,
 	pol *policy.Policy,
@@ -129,61 +149,86 @@ func Verify( //nolint:cyclop,funlen // ctx cancellation check adds a branch and 
 
 	meta := predicateMetadata(&stmt.Predicate)
 
-	err = verifyTrustedVerifier(stmt.Predicate.Verifier, pol)
+	matched, err := verifyTrustedVerifier(stmt.Predicate.Verifier, pol)
 	if err != nil {
-		return withMetadata(untrustedResult(err.Error()), meta), nil
+		return withMetadata(untrustedResult(err.Error()), meta, nil), nil
+	}
+
+	err = verifyBinding(&stmt, imageRef, parsedImageRef)
+	if err != nil {
+		return withMetadata(failResult(err.Error()), meta, matched), nil
 	}
 
 	if stmt.Predicate.VerificationResult == ResultFailed {
-		return withMetadata(hardRejectResult(), meta), nil
+		return withMetadata(hardRejectResult(), meta, matched), nil
 	}
 
 	if stmt.Predicate.VerificationResult != ResultPassed {
 		return withMetadata(untrustedResult(
 			fmt.Sprintf("unexpected verification result: %q", stmt.Predicate.VerificationResult),
-		), meta), nil
+		), meta, matched), nil
 	}
 
 	err = verifyLevels(stmt.Predicate.VerifiedLevels, pol)
 	if err != nil {
-		return withMetadata(failResult(err.Error()), meta), nil
-	}
-
-	err = verifyResourceURI(stmt.Predicate.ResourceURI, imageRef, parsedImageRef)
-	if err != nil {
-		return withMetadata(failResult(err.Error()), meta), nil
+		return withMetadata(failResult(err.Error()), meta, matched), nil
 	}
 
 	err = verifySLSAVersion(stmt.Predicate.SLSAVersion)
 	if err != nil {
-		return withMetadata(failResult(err.Error()), meta), nil
+		return withMetadata(failResult(err.Error()), meta, matched), nil
 	}
 
 	err = verifyPolicyURI(stmt.Predicate.Policy, pol)
 	if err != nil {
-		return withMetadata(failResult(err.Error()), meta), nil
+		return withMetadata(failResult(err.Error()), meta, matched), nil
 	}
 
 	err = verifyFreshness(stmt.Predicate.TimeVerified, pol)
 	if err != nil {
-		return withMetadata(staleResult(err.Error()), meta), nil
+		return withMetadata(staleResult(err.Error()), meta, matched), nil
 	}
 
-	return withMetadata(passResult(), meta), nil
+	return withMetadata(passResult(), meta, matched), nil
 }
 
-func verifyTrustedVerifier(ver Verifier, pol *policy.Policy) error {
+func verifyTrustedVerifier(ver Verifier, pol *policy.Policy) ([]policy.TrustedVerifier, error) {
 	if pol.Trust == nil || len(pol.Trust.Verifiers) == 0 {
-		return fmt.Errorf("%w: no verifiers configured", ErrUntrustedVerifier)
+		return nil, fmt.Errorf("%w: no verifiers configured", ErrUntrustedVerifier)
 	}
 
-	for _, trusted := range pol.Trust.Verifiers {
-		if trusted.ID == ver.ID {
+	var matched []policy.TrustedVerifier
+
+	for idx := range pol.Trust.Verifiers {
+		if pol.Trust.Verifiers[idx].ID == ver.ID {
+			matched = append(matched, pol.Trust.Verifiers[idx])
+		}
+	}
+
+	if len(matched) == 0 {
+		return nil, fmt.Errorf("%w: %q", ErrUntrustedVerifier, ver.ID)
+	}
+
+	return matched, nil
+}
+
+// verifyBinding ties the VSA to the image through both the resource URI and
+// the statement subject.
+func verifyBinding(stmt *Statement, imageRef string, parsedImageRef name.Reference) error {
+	imageDigest, err := verifyResourceURI(stmt.Predicate.ResourceURI, imageRef, parsedImageRef)
+	if err != nil {
+		return err
+	}
+
+	for idx := range stmt.Subject {
+		if types.MatchDigestInMap(imageDigest.DigestStr(), stmt.Subject[idx].Digest) {
 			return nil
 		}
 	}
 
-	return fmt.Errorf("%w: %q", ErrUntrustedVerifier, ver.ID)
+	return fmt.Errorf(
+		"%w: no subject matches %q", ErrSubjectMismatch, imageDigest.DigestStr(),
+	)
 }
 
 func verifyLevels(levels []string, pol *policy.Policy) error {
@@ -224,62 +269,68 @@ func extractLevelNumber(level string) int {
 	return num
 }
 
-func verifyResourceURI(resourceURI, imageRef string, parsedImageRef name.Reference) error {
+// verifyResourceURI requires the VSA resource URI and the image reference to
+// be digest-pinned references to the same repository and digest. Repository
+// names are normalized with imageref.NormalizeRepository, so every Docker Hub
+// alias (docker.io, index.docker.io, registry-1.docker.io,
+// registry.hub.docker.com) compares equal. It returns the image digest.
+func verifyResourceURI(
+	resourceURI, imageRef string, parsedImageRef name.Reference,
+) (name.Digest, error) {
 	if resourceURI == "" {
-		return fmt.Errorf("%w: empty resource URI", ErrResourceMismatch)
-	}
-
-	if resourceURI == imageRef {
-		return nil
+		return name.Digest{}, fmt.Errorf("%w: empty resource URI", ErrResourceMismatch)
 	}
 
 	if !strings.Contains(resourceURI, "@") {
-		return fmt.Errorf(
+		return name.Digest{}, fmt.Errorf(
 			"%w: resource URI %q is tag-based (not digest-pinned)",
 			ErrResourceMismatch, resourceURI,
 		)
 	}
 
-	normalizedResource, err := normalizeRef(resourceURI)
+	resource, err := parseDigestRef(resourceURI, nil)
 	if err != nil {
-		return fmt.Errorf("%w: invalid resource URI %q: %w", ErrResourceMismatch, resourceURI, err)
+		return name.Digest{}, fmt.Errorf(
+			"%w: invalid resource URI %q: %w", ErrResourceMismatch, resourceURI, err,
+		)
 	}
 
-	normalizedImage, err := normalizeImageRef(imageRef, parsedImageRef)
+	image, err := parseDigestRef(imageRef, parsedImageRef)
 	if err != nil {
-		return fmt.Errorf("%w: invalid image ref %q: %w", ErrResourceMismatch, imageRef, err)
+		return name.Digest{}, fmt.Errorf(
+			"%w: image reference %q: %w", ErrResourceMismatch, imageRef, err,
+		)
 	}
 
-	if normalizedResource != normalizedImage {
-		return fmt.Errorf("%w: expected %q, got %q", ErrResourceMismatch, imageRef, resourceURI)
+	if imageref.NormalizeRepository(resource.Context().Name()) !=
+		imageref.NormalizeRepository(image.Context().Name()) ||
+		resource.DigestStr() != image.DigestStr() {
+		return name.Digest{}, fmt.Errorf(
+			"%w: expected %q, got %q", ErrResourceMismatch, imageRef, resourceURI,
+		)
 	}
 
-	return nil
+	return image, nil
 }
 
-func normalizeImageRef(imageRef string, parsed name.Reference) (string, error) {
+var errNotDigestPinned = errors.New("reference is not digest-pinned")
+
+func parseDigestRef(ref string, parsed name.Reference) (name.Digest, error) {
 	if parsed == nil {
-		return normalizeRef(imageRef)
+		var err error
+
+		parsed, err = name.ParseReference(ref)
+		if err != nil {
+			return name.Digest{}, fmt.Errorf("parsing reference: %w", err)
+		}
 	}
 
-	if digest, ok := parsed.(name.Digest); ok {
-		return digest.String(), nil
+	digest, ok := parsed.(name.Digest)
+	if !ok {
+		return name.Digest{}, errNotDigestPinned
 	}
 
-	return parsed.Context().String(), nil
-}
-
-func normalizeRef(ref string) (string, error) {
-	parsed, err := name.ParseReference(ref)
-	if err != nil {
-		return "", fmt.Errorf("parsing reference: %w", err)
-	}
-
-	if digest, ok := parsed.(name.Digest); ok {
-		return digest.String(), nil
-	}
-
-	return parsed.Context().String(), nil
+	return digest, nil
 }
 
 func verifySLSAVersion(ver string) error {
@@ -347,8 +398,10 @@ func verifyPolicyURI(vsaPolicy Policy, pol *policy.Policy) error {
 	return nil
 }
 
+// verifyFreshness parses timeVerified as RFC 3339, which permits lowercase
+// "t" and "z" separators that Go's layout parser does not accept.
 func verifyFreshness(timeVerified string, pol *policy.Policy) error {
-	verified, err := time.Parse(time.RFC3339Nano, timeVerified)
+	verified, err := time.Parse(time.RFC3339Nano, strings.ToUpper(timeVerified))
 	if err != nil {
 		return fmt.Errorf("parsing time_verified %q: %w", timeVerified, err)
 	}
@@ -385,23 +438,28 @@ func maxVerifiedLevel(levels []string) int {
 	return result
 }
 
-func withMetadata(vr *VerifyResult, meta map[string]any) *VerifyResult {
+func withMetadata(
+	vr *VerifyResult, meta map[string]any, matched []policy.TrustedVerifier,
+) *VerifyResult {
 	vr.Check.Metadata = meta
+	vr.MatchedVerifiers = matched
 
 	return vr
 }
 
 func passResult() *VerifyResult {
 	return &VerifyResult{
-		Check:      types.PassResult(checkType, "VSA verification passed"),
-		HardReject: false,
+		Check:            types.PassResult(checkType, "VSA verification passed"),
+		HardReject:       false,
+		MatchedVerifiers: nil,
 	}
 }
 
 func failResult(detail string) *VerifyResult {
 	return &VerifyResult{
-		Check:      types.FailResult(checkType, detail, nil),
-		HardReject: false,
+		Check:            types.FailResult(checkType, detail, nil),
+		HardReject:       false,
+		MatchedVerifiers: nil,
 	}
 }
 
@@ -410,20 +468,23 @@ func hardRejectResult() *VerifyResult {
 		Check: types.FailResult(
 			checkType, "trusted verifier reported FAILED verification", nil,
 		),
-		HardReject: true,
+		HardReject:       true,
+		MatchedVerifiers: nil,
 	}
 }
 
 func untrustedResult(detail string) *VerifyResult {
 	return &VerifyResult{
-		Check:      types.SoftFailResult(checkType, detail, nil),
-		HardReject: false,
+		Check:            types.SoftFailResult(checkType, detail, nil),
+		HardReject:       false,
+		MatchedVerifiers: nil,
 	}
 }
 
 func staleResult(detail string) *VerifyResult {
 	return &VerifyResult{
-		Check:      types.SoftFailResult(checkType, detail, nil),
-		HardReject: false,
+		Check:            types.SoftFailResult(checkType, detail, nil),
+		HardReject:       false,
+		MatchedVerifiers: nil,
 	}
 }

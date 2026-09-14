@@ -121,7 +121,28 @@ func FuzzVerify(f *testing.F) {
 		`"metadata":{"invocationId":"run-1","startedOn":"2025-01-15T10:30:00Z"}}}` +
 		`}`))
 
+	// Seed: GitHub workflow layout with resolved dependencies, exercising
+	// per-buildType source extraction and the dependency cross-check.
+	f.Add([]byte(`{` +
+		`"_type":"https://in-toto.io/Statement/v1",` +
+		`"subject":[{"name":"nginx","digest":{"sha256":"` +
+		testDigestHash + `"}}],` +
+		`"predicateType":"https://slsa.dev/provenance/v1",` +
+		`"predicate":{"buildDefinition":{"buildType":"https://actions.github.io/buildtypes/workflow/v1",` +
+		`"externalParameters":{"workflow":{"repository":"https://github.com/example/repo",` +
+		`"ref":"refs/heads/main","path":".github/workflows/release.yml"}},` +
+		`"resolvedDependencies":[{"uri":"git+https://github.com/example/repo@refs/heads/main",` +
+		`"digest":{"gitCommit":"7d5b4f8a0f0e2c1b9a8d7c6b5a4f3e2d1c0b9a8f"}}]},` +
+		`"runDetails":{"builder":{"id":"https://github.com/actions/runner"}}}` +
+		`}`))
+
+	sourcesPolicy := &policy.Policy{
+		Trust: &policy.TrustPolicy{Sources: []string{testSourceGlob}},
+	}
+
 	f.Fuzz(func(t *testing.T, data []byte) {
+		_, _ = slsa.Verify(context.Background(), data, sourcesPolicy, testDigest)
+
 		result, err := slsa.Verify(context.Background(), data, &policy.Policy{}, testDigest)
 		if err == nil && result == nil {
 			t.Error("Verify returned nil result and nil error")

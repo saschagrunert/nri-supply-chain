@@ -15,7 +15,6 @@
 package sbom
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -41,7 +40,44 @@ var severityRank = map[string]int{ //nolint:gochecknoglobals // immutable lookup
 	"critical": severityRankCritical,
 }
 
-var errNotCycloneDX = errors.New("no components found, not a valid CycloneDX document")
+// maxComponentDepth bounds recursion into nested CycloneDX components.
+const maxComponentDepth = 32
+
+const (
+	// formatCycloneDXName is the bomFormat value of CycloneDX documents.
+	formatCycloneDXName = "CycloneDX"
+
+	componentTypeApplication = "application"
+
+	// trivyClassProperty and trivyLangPkgsClass identify Trivy components
+	// that stand for a language lock or manifest file.
+	trivyClassProperty = "aquasecurity:trivy:Class"
+	trivyLangPkgsClass = "lang-pkgs"
+)
+
+var (
+	errNotCycloneDX = errors.New("no components found, not a valid CycloneDX document")
+
+	// errNoSBOMContent marks a CycloneDX document without components and
+	// without a subject, such as a VEX-only document. It is not an SBOM, so
+	// the SBOM check treats it as not applicable.
+	errNoSBOMContent = fmt.Errorf(
+		"%w: CycloneDX document has neither components nor metadata.component",
+		types.ErrNotApplicable,
+	)
+)
+
+// cyclonedxExemptTypes lists component types that are not packages and are
+// therefore not expected to carry a purl.
+var cyclonedxExemptTypes = map[string]struct{}{ //nolint:gochecknoglobals // immutable lookup table
+	"operating-system":    {},
+	"file":                {},
+	"data":                {},
+	"device":              {},
+	"firmware":            {},
+	"platform":            {},
+	"cryptographic-asset": {},
+}
 
 type cyclonedxBOM struct {
 	Components      []cyclonedxComponent     `json:"components"`
@@ -49,8 +85,24 @@ type cyclonedxBOM struct {
 }
 
 type cyclonedxVulnerability struct {
-	ID      string            `json:"id"`
-	Ratings []cyclonedxRating `json:"ratings"`
+	ID       string             `json:"id"`
+	Ratings  []cyclonedxRating  `json:"ratings"`
+	Analysis *cyclonedxAnalysis `json:"analysis,omitempty"`
+}
+
+// cyclonedxAnalysis is the impact analysis of a vulnerability.
+type cyclonedxAnalysis struct {
+	State string `json:"state,omitempty"`
+}
+
+// cyclonedxResolvedStates lists the analysis states that resolve a
+// vulnerability. Every other state (exploitable, in_triage, or none) leaves
+// it unresolved.
+var cyclonedxResolvedStates = map[string]struct{}{ //nolint:gochecknoglobals // immutable lookup set
+	"resolved":               {},
+	"resolved_with_pedigree": {},
+	"false_positive":         {},
+	"not_affected":           {},
 }
 
 type cyclonedxRating struct {
@@ -60,11 +112,24 @@ type cyclonedxRating struct {
 }
 
 type cyclonedxComponent struct {
-	Name     string             `json:"name"`
-	Version  string             `json:"version"`
-	PURL     string             `json:"purl"`
-	Licenses []cyclonedxLicense `json:"licenses"`
-	Hashes   []cyclonedxHash    `json:"hashes"`
+	Type       string               `json:"type,omitempty"`
+	Name       string               `json:"name"`
+	Version    string               `json:"version"`
+	PURL       string               `json:"purl"`
+	Licenses   []cyclonedxLicense   `json:"licenses"`
+	Hashes     []cyclonedxHash      `json:"hashes"`
+	Properties []cyclonedxProperty  `json:"properties,omitempty"`
+	Components []cyclonedxComponent `json:"components,omitempty"`
+}
+
+type cyclonedxProperty struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+// cyclonedxMetadata holds the document subject of a CycloneDX BOM.
+type cyclonedxMetadata struct {
+	Component *cyclonedxComponent `json:"component,omitempty"`
 }
 
 type cyclonedxHash struct {
@@ -72,8 +137,11 @@ type cyclonedxHash struct {
 	Content   string `json:"content"`
 }
 
+// cyclonedxLicense is a CycloneDX license choice: either a license object or
+// an SPDX license expression.
 type cyclonedxLicense struct {
-	License *cyclonedxLicenseRef `json:"license,omitempty"`
+	License    *cyclonedxLicenseRef `json:"license,omitempty"`
+	Expression string               `json:"expression,omitempty"`
 }
 
 type cyclonedxLicenseRef struct {
@@ -82,58 +150,163 @@ type cyclonedxLicenseRef struct {
 }
 
 func parseCycloneDX(data []byte) (sbomData, error) {
-	var bom cyclonedxBOM
-
-	err := json.Unmarshal(data, &bom)
+	raw, err := decodeRawSBOM(data)
 	if err != nil {
-		return sbomData{}, fmt.Errorf("parsing CycloneDX: %w", err)
+		return sbomData{}, err
 	}
 
-	if len(bom.Components) == 0 {
+	return cyclonedxFromRaw(raw)
+}
+
+// cyclonedxFromRaw extracts SBOM data from a CycloneDX BOM. A BOM declaring
+// bomFormat CycloneDX (or carrying a components array) without components is
+// an SBOM only when it names its subject (metadata.component), which is
+// normal for scratch and static images. Without components and subject, the
+// document carries no inventory (for example a VEX-only document) and
+// errNoSBOMContent is returned. The licenses of the document subject are
+// checked like component licenses.
+func cyclonedxFromRaw(raw *rawSBOM) (sbomData, error) {
+	if raw.Components == nil && !strings.EqualFold(raw.BOMFormat, formatCycloneDXName) {
 		return sbomData{}, errNotCycloneDX
 	}
 
+	hasSubject := raw.Metadata != nil && raw.Metadata.Component != nil
+
 	var result sbomData
 
-	uniqueLicenses := make(map[string]struct{})
-
-	for idx := range bom.Components {
-		comp := &bom.Components[idx]
-		sp := buildCycloneDXPackage(comp, &result, uniqueLicenses)
-		result.Packages = append(result.Packages, sp)
+	if hasSubject {
+		addCycloneDXLicenses(raw.Metadata.Component, &result)
 	}
 
-	result.componentCount = len(bom.Components)
-	result.licenseCount = len(uniqueLicenses)
-	result.vulns = bom.Vulnerabilities
+	walkCycloneDXComponents(raw.Components, 0, &result)
+
+	if len(result.Packages) == 0 && !hasSubject {
+		return vulnerabilityOnlyData(raw.Vulnerabilities)
+	}
+
+	result.componentCount = len(result.Packages)
+	result.vulns = raw.Vulnerabilities
 
 	return result, nil
 }
 
-func buildCycloneDXPackage(
-	comp *cyclonedxComponent, result *sbomData, uniqueLicenses map[string]struct{},
-) sbomPackage {
-	pkg := sbomPackage{
-		Name:    comp.Name,
-		Version: comp.Version,
-		PURL:    comp.PURL,
-	}
+// vulnerabilityOnlyData returns the unresolved, rated vulnerabilities of a
+// CycloneDX document without components and subject (a vulnerability
+// disclosure report or VEX document). Such a document is not an SBOM, but its
+// unresolved findings must still be evaluated against sbom.cvss, otherwise
+// moving them into a separate document would hide them. Without unresolved
+// rated findings there is nothing to evaluate and errNoSBOMContent is
+// returned.
+func vulnerabilityOnlyData(vulns []cyclonedxVulnerability) (sbomData, error) {
+	var unresolved []cyclonedxVulnerability
 
-	for lidx := range comp.Licenses {
-		lic := &comp.Licenses[lidx]
-		if lic.License == nil {
+	for idx := range vulns {
+		if vulnerabilityResolved(&vulns[idx]) || !vulnerabilityRated(&vulns[idx]) {
 			continue
 		}
 
-		if lic.License.ID != "" {
-			result.licenses = append(result.licenses, lic.License.ID)
-			uniqueLicenses[lic.License.ID] = struct{}{}
-			pkg.Licenses = append(pkg.Licenses, lic.License.ID)
-		} else if lic.License.Name != "" {
-			result.licenses = append(result.licenses, lic.License.Name)
-			uniqueLicenses[lic.License.Name] = struct{}{}
-			pkg.Licenses = append(pkg.Licenses, lic.License.Name)
+		unresolved = append(unresolved, vulns[idx])
+	}
+
+	if len(unresolved) == 0 {
+		return sbomData{}, errNoSBOMContent
+	}
+
+	return sbomData{ //nolint:exhaustruct_v5 // a vulnerability-only document has no inventory
+		vulns:             unresolved,
+		vulnerabilityOnly: true,
+	}, nil
+}
+
+func vulnerabilityResolved(vuln *cyclonedxVulnerability) bool {
+	if vuln.Analysis == nil {
+		return false
+	}
+
+	_, resolved := cyclonedxResolvedStates[strings.ToLower(vuln.Analysis.State)]
+
+	return resolved
+}
+
+func vulnerabilityRated(vuln *cyclonedxVulnerability) bool {
+	for idx := range vuln.Ratings {
+		if vuln.Ratings[idx].Score != nil || vuln.Ratings[idx].Severity != "" {
+			return true
 		}
+	}
+
+	return false
+}
+
+// walkCycloneDXComponents flattens nested components into result.
+func walkCycloneDXComponents(components []cyclonedxComponent, depth int, result *sbomData) {
+	if depth > maxComponentDepth {
+		return
+	}
+
+	for idx := range components {
+		comp := &components[idx]
+		sp := buildCycloneDXPackage(comp, result)
+
+		result.addPackage(&sp, cyclonedxPURLExempt(comp))
+
+		walkCycloneDXComponents(comp.Components, depth+1, result)
+	}
+}
+
+// cyclonedxPURLExempt reports whether a component is not expected to carry a
+// purl: non-package component types, and application components that
+// describe a lock or manifest file rather than a versioned package (Trivy
+// emits one per lock file, classified as lang-pkgs, without purl or version).
+func cyclonedxPURLExempt(comp *cyclonedxComponent) bool {
+	if _, exempt := cyclonedxExemptTypes[strings.ToLower(comp.Type)]; exempt {
+		return true
+	}
+
+	if !strings.EqualFold(comp.Type, componentTypeApplication) || comp.PURL != "" {
+		return false
+	}
+
+	if comp.Version == "" {
+		return true
+	}
+
+	for idx := range comp.Properties {
+		if comp.Properties[idx].Name == trivyClassProperty &&
+			comp.Properties[idx].Value == trivyLangPkgsClass {
+			return true
+		}
+	}
+
+	return false
+}
+
+func addCycloneDXLicenses(comp *cyclonedxComponent, result *sbomData) {
+	for lidx := range comp.Licenses {
+		value, expression := cyclonedxLicenseValue(&comp.Licenses[lidx])
+		if value != "" {
+			result.addLicense(value, expression)
+		}
+	}
+}
+
+func buildCycloneDXPackage(comp *cyclonedxComponent, result *sbomData) sbomPackage {
+	pkg := sbomPackage{
+		Name:      comp.Name,
+		Version:   comp.Version,
+		PURL:      comp.PURL,
+		Licenses:  nil,
+		Checksums: nil,
+	}
+
+	for lidx := range comp.Licenses {
+		value, expression := cyclonedxLicenseValue(&comp.Licenses[lidx])
+		if value == "" {
+			continue
+		}
+
+		result.addLicense(value, expression)
+		pkg.Licenses = append(pkg.Licenses, value)
 	}
 
 	if comp.PURL != "" {
@@ -151,6 +324,22 @@ func buildCycloneDXPackage(
 	}
 
 	return pkg
+}
+
+// cyclonedxLicenseValue returns the license value of a license choice and
+// whether it is an SPDX expression or identifier (as opposed to a free-text
+// name).
+func cyclonedxLicenseValue(lic *cyclonedxLicense) (value string, expression bool) {
+	switch {
+	case lic.Expression != "":
+		return lic.Expression, true
+	case lic.License == nil:
+		return "", false
+	case lic.License.ID != "":
+		return lic.License.ID, true
+	default:
+		return lic.License.Name, false
+	}
 }
 
 type vulnAggregate struct {
@@ -309,7 +498,10 @@ func mergeCVSSMeta(dst, src map[string]any) { //nolint:cyclop // type assertions
 					dst[key] = srcScore
 				}
 			}
-		case "cvssCriticalCount", "cvssHighCount", "cvssMediumCount":
+		case metaKeyFormat:
+			dst[key] = mergeFormats(existing, val)
+		case "cvssCriticalCount", "cvssHighCount", "cvssMediumCount",
+			metaKeyComponentCount, metaKeyComponentsWithoutPURL:
 			if srcCount, ok := val.(int64); ok {
 				if dstCount, ok := existing.(int64); ok {
 					dst[key] = dstCount + srcCount
@@ -329,6 +521,19 @@ func mergeCVSSMeta(dst, src map[string]any) { //nolint:cyclop // type assertions
 		default:
 		}
 	}
+}
+
+// mergeFormats combines the format metadata of two documents into a sorted,
+// comma separated set such as "CycloneDX,SPDX".
+func mergeFormats(existing, val any) string {
+	existingFormat, _ := existing.(string)
+	valFormat, _ := val.(string)
+
+	formats := slices.Concat(strings.Split(existingFormat, ","), strings.Split(valFormat, ","))
+	formats = slices.DeleteFunc(formats, func(format string) bool { return format == "" })
+	slices.Sort(formats)
+
+	return strings.Join(slices.Compact(formats), ",")
 }
 
 func toStringSlice(v any) []string {

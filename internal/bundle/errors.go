@@ -32,6 +32,10 @@ var (
 	// ErrBlobMissing indicates a blob referenced by the manifest is missing from the OCI layout.
 	ErrBlobMissing = errors.New("referenced blob missing from OCI layout")
 
+	// ErrBlobNotRegular indicates a blob path in the OCI layout is not a regular
+	// file (for example a directory or FIFO swapped in after import).
+	ErrBlobNotRegular = errors.New("blob is not a regular file")
+
 	// ErrBlobSizeMismatch indicates a blob's actual size does not match the manifest entry.
 	ErrBlobSizeMismatch = errors.New("blob size does not match manifest")
 
@@ -79,4 +83,7 @@ var (
 
 	// ErrUnsupportedDigestAlgorithm indicates a digest uses an unsupported hash algorithm.
 	ErrUnsupportedDigestAlgorithm = errors.New("unsupported digest algorithm")
+
+	errUnsupportedSignatureType = errors.New("signature type is not supported in offline bundles")
+	errMissingPredicateType     = errors.New("verified statement has no predicate type")
 )

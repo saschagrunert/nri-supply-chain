@@ -16,6 +16,7 @@ package testresult_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -513,7 +514,7 @@ func TestVerifyMultipleMergesMetadata(t *testing.T) {
 				Result: testResultPass,
 				Count:  new(50),
 				Passed: new(48),
-				Failed: new(2),
+				Failed: new(0),
 			},
 		},
 	}
@@ -560,8 +561,96 @@ func TestVerifyMultipleMergesMetadata(t *testing.T) {
 	}
 
 	failed, ok := result.Metadata["failed"].(int64)
-	if !ok || failed != 2 {
-		t.Errorf("failed = %v, want 2", result.Metadata["failed"])
+	if !ok || failed != 0 {
+		t.Errorf("failed = %v, want 0", result.Metadata["failed"])
+	}
+}
+
+func TestVerifyPassedWithReportedFailures(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		predicate json.RawMessage
+		wantInErr string
+	}{
+		{
+			name: "spec failedTests with PASSED",
+			predicate: json.RawMessage(
+				`{"result":"PASSED","passedTests":["a"],"failedTests":["b"]}`,
+			),
+			wantInErr: "failed tests reported: b",
+		},
+		{
+			name: "suite failed count with PASSED",
+			predicate: json.RawMessage(
+				`{"result":"PASSED","suites":[{"name":"unit","result":"pass","failed":1}]}`,
+			),
+			wantInErr: "failed suites reported: unit",
+		},
+		{
+			name: "suite failed result with PASSED",
+			predicate: json.RawMessage(
+				`{"result":"PASSED","suites":[{"name":"unit","result":"error"}]}`,
+			),
+			wantInErr: "failed suites reported: unit",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			att := testutil.WrapInToto(t, tc.predicate, testDigest, testPredicateType)
+
+			result, err := testresult.Verify(
+				context.Background(),
+				att,
+				&policy.Policy{},
+				testDigest,
+			)
+			testutil.AssertNoError(t, err)
+			testutil.AssertEqual(t, false, result.Passed)
+			testutil.AssertContains(t, result.Detail, tc.wantInErr)
+		})
+	}
+}
+
+func TestVerifySpecFormat(t *testing.T) {
+	t.Parallel()
+
+	att := testutil.WrapInToto(t, json.RawMessage(
+		`{"result":"PASSED","configuration":[{"uri":"https://ci.example.com"}],"passedTests":["unit","e2e"]}`,
+	), testDigest, testPredicateType)
+
+	result, err := testresult.Verify(context.Background(), att, &policy.Policy{
+		TestResult: &policy.TestResultPolicy{
+			RequiredSuites: []string{testSuiteE2E},
+		},
+	}, testDigest)
+	testutil.AssertNoError(t, err)
+	testutil.AssertTrue(t, result.Passed)
+
+	passed, ok := result.Metadata["passed"].(int64)
+	if !ok || passed != 2 {
+		t.Errorf("passed = %v, want 2", result.Metadata["passed"])
+	}
+}
+
+func TestVerifyRejectsIncompletePredicates(t *testing.T) {
+	t.Parallel()
+
+	for _, predicate := range []string{`{}`, `null`, `{"result":""}`} {
+		t.Run(predicate, func(t *testing.T) {
+			t.Parallel()
+
+			att := testutil.WrapInToto(t, json.RawMessage(predicate), testDigest, testPredicateType)
+
+			_, err := testresult.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+			if !errors.Is(err, testresult.ErrInvalidTestResult) {
+				t.Fatalf("expected ErrInvalidTestResult, got %v", err)
+			}
+		})
 	}
 }
 
@@ -607,7 +696,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		testutil.AssertEqual(t, types.StatusFail, result.Status)
 	})
 
-	t.Run("mix of valid and invalid with valid passing", func(t *testing.T) {
+	t.Run("mix of valid and invalid fails", func(t *testing.T) {
 		t.Parallel()
 
 		attestations := [][]byte{
@@ -623,8 +712,8 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		)
 		testutil.AssertNoError(t, err)
 
-		if !result.Passed {
-			t.Errorf("expected pass with valid doc, got: %s", result.Detail)
+		if result.Passed {
+			t.Error("expected fail when any document is invalid")
 		}
 	})
 }

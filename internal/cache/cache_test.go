@@ -16,6 +16,7 @@ package cache_test
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -58,7 +59,7 @@ func TestNewWithGaugeNilGauge(t *testing.T) {
 	t.Cleanup(testCache.Stop)
 
 	testCache.Set(testDigest, "default", &types.Result{
-		Allowed: true, Reason: "ok", CheckResults: nil,
+		Allowed: true, Verified: true, Mode: "", Reason: "ok", CheckResults: nil,
 	})
 
 	if testCache.Len() != 1 {
@@ -79,7 +80,7 @@ func TestGaugeUpdatesOnSetAndClear(t *testing.T) {
 
 	testCache.Set("sha256:b2c3d4e5f6a1b2c3d4e5f6a1b2"+
 		"c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3", "default", &types.Result{
-		Allowed: true, Reason: "", CheckResults: nil,
+		Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
 	})
 
 	if val := testutil.ToFloat64(testGauge); val != 1 {
@@ -88,7 +89,7 @@ func TestGaugeUpdatesOnSetAndClear(t *testing.T) {
 
 	testCache.Set("sha256:c3d4e5f6a1b2c3d4e5f6a1b2"+
 		"c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4", "default", &types.Result{
-		Allowed: true, Reason: "", CheckResults: nil,
+		Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
 	})
 
 	if val := testutil.ToFloat64(testGauge); val != 2 {
@@ -115,7 +116,7 @@ func TestGaugeUpdatesOnExpiry(t *testing.T) {
 
 	testCache.Set("sha256:b2c3d4e5f6a1b2c3d4e5f6a1b2"+
 		"c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3", "default", &types.Result{
-		Allowed: true, Reason: "", CheckResults: nil,
+		Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
 	})
 
 	if val := testutil.ToFloat64(testGauge); val != 1 {
@@ -141,7 +142,13 @@ func TestCacheGetSet(t *testing.T) {
 	c := cache.New(time.Hour)
 	t.Cleanup(c.Stop)
 
-	result := &types.Result{Allowed: true, Reason: "test", CheckResults: nil}
+	result := &types.Result{
+		Allowed:      true,
+		Verified:     true,
+		Mode:         "",
+		Reason:       "test",
+		CheckResults: nil,
+	}
 	c.Set(testDigest, "default", result)
 
 	got := c.Get(testDigest, "default")
@@ -173,10 +180,10 @@ func TestCacheNamespaceIsolation(t *testing.T) {
 	t.Cleanup(testCache.Stop)
 
 	testCache.Set(testDigest, "ns1", &types.Result{
-		Allowed: true, Reason: "ns1", CheckResults: nil,
+		Allowed: true, Verified: true, Mode: "", Reason: "ns1", CheckResults: nil,
 	})
 	testCache.Set(testDigest, "ns2", &types.Result{
-		Allowed: false, Reason: "ns2", CheckResults: nil,
+		Allowed: false, Verified: false, Mode: "", Reason: "ns2", CheckResults: nil,
 	})
 
 	got1 := testCache.Get(testDigest, "ns1")
@@ -197,7 +204,7 @@ func TestCacheExpiry(t *testing.T) {
 	t.Cleanup(testCache.Stop)
 
 	testCache.Set(testDigest, "default", &types.Result{
-		Allowed: true, Reason: "", CheckResults: nil,
+		Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
 	})
 
 	time.Sleep(5 * time.Millisecond)
@@ -213,7 +220,7 @@ func TestCacheZeroTTLSkipsSet(t *testing.T) {
 	testCache := cache.New(0)
 
 	testCache.Set(testDigest, "default", &types.Result{
-		Allowed: true, Reason: "", CheckResults: nil,
+		Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
 	})
 
 	if got := testCache.Get(testDigest, "default"); got != nil {
@@ -230,7 +237,7 @@ func TestCacheCapacityEviction(t *testing.T) {
 	for idx := range 10001 {
 		testCache.Set(
 			fmt.Sprintf("sha256:%d", idx), "default",
-			&types.Result{Allowed: true, Reason: "", CheckResults: nil},
+			&types.Result{Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil},
 		)
 	}
 
@@ -256,7 +263,7 @@ func TestCacheLen(t *testing.T) {
 	}
 
 	testCache.Set(testDigest, "default", &types.Result{
-		Allowed: true, Reason: "", CheckResults: nil,
+		Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
 	})
 
 	if testCache.Len() != 1 {
@@ -273,7 +280,7 @@ func TestCacheCapacityEvictsExpired(t *testing.T) {
 	for idx := range 10000 {
 		testCache.Set(
 			fmt.Sprintf("sha256:%d", idx), "default",
-			&types.Result{Allowed: true, Reason: "", CheckResults: nil},
+			&types.Result{Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil},
 		)
 	}
 
@@ -282,9 +289,11 @@ func TestCacheCapacityEvictsExpired(t *testing.T) {
 	const freshDigest = "sha256:dddddddddddddddddddddddddddddddd" +
 		"dddddddddddddddddddddddddddddddd"
 
-	testCache.Set(freshDigest, "default", &types.Result{
-		Allowed: true, Reason: "fresh", CheckResults: nil,
-	})
+	// The fresh entry uses a long TTL so a slow scheduler cannot expire it
+	// before it is read back.
+	testCache.SetWithTTL(freshDigest, "default", &types.Result{
+		Allowed: true, Verified: true, Mode: "", Reason: "fresh", CheckResults: nil,
+	}, time.Hour)
 
 	if got := testCache.Get(freshDigest, "default"); got == nil {
 		t.Fatal("expected new entry after expired eviction")
@@ -300,10 +309,10 @@ func TestCacheOverwriteUpdatesExpiry(t *testing.T) {
 	t.Cleanup(testCache.Stop)
 
 	testCache.Set(testDigest, "default", &types.Result{
-		Allowed: true, Reason: "old", CheckResults: nil,
+		Allowed: true, Verified: true, Mode: "", Reason: "old", CheckResults: nil,
 	})
 	testCache.Set(testDigest, "default", &types.Result{
-		Allowed: true, Reason: "new", CheckResults: nil,
+		Allowed: true, Verified: true, Mode: "", Reason: "new", CheckResults: nil,
 	})
 
 	if testCache.Len() != 1 {
@@ -338,7 +347,7 @@ func TestCacheConcurrent(t *testing.T) {
 				digest := fmt.Sprintf("sha256:%d-%d", goroutine, iter)
 
 				testCache.Set(digest, "default", &types.Result{
-					Allowed: true, Reason: digest, CheckResults: nil,
+					Allowed: true, Verified: true, Mode: "", Reason: digest, CheckResults: nil,
 				})
 
 				testCache.Get(digest, "default")
@@ -368,7 +377,7 @@ func TestCacheCapacityEvictionUpdatesGauge(t *testing.T) {
 	for idx := range 10001 {
 		testCache.Set(
 			fmt.Sprintf("sha256:%d", idx), "default",
-			&types.Result{Allowed: true, Reason: "", CheckResults: nil},
+			&types.Result{Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil},
 		)
 	}
 
@@ -395,15 +404,22 @@ func TestCacheOverwriteAtCapacityKeepsGauge(t *testing.T) {
 
 	for idx := range cache.DefaultMaxSize {
 		testCache.Set(
-			fmt.Sprintf("sha256:%d", idx), "default",
-			&types.Result{Allowed: true, Reason: "old", CheckResults: nil},
+			fmt.Sprintf("sha256:%d", idx),
+			"default",
+			&types.Result{
+				Allowed:      true,
+				Verified:     true,
+				Mode:         "",
+				Reason:       "old",
+				CheckResults: nil,
+			},
 		)
 	}
 
 	testCache.Set(
 		"sha256:0", "default",
 		&types.Result{
-			Allowed: true, Reason: "updated", CheckResults: nil,
+			Allowed: true, Verified: true, Mode: "", Reason: "updated", CheckResults: nil,
 		},
 	)
 
@@ -432,7 +448,7 @@ func TestCacheSetWithTTLOverride(t *testing.T) {
 		"sha256:1111111111111111111111111111111111111111111111111111111111111111",
 		"default",
 		&types.Result{
-			Allowed: false, Reason: "fetch failed", CheckResults: nil,
+			Allowed: false, Verified: false, Mode: "", Reason: "fetch failed", CheckResults: nil,
 		},
 		10*time.Millisecond,
 	)
@@ -442,7 +458,7 @@ func TestCacheSetWithTTLOverride(t *testing.T) {
 		"sha256:2222222222222222222222222222222222222222222222222222222222222222",
 		"default",
 		&types.Result{
-			Allowed: true, Reason: "ok", CheckResults: nil,
+			Allowed: true, Verified: true, Mode: "", Reason: "ok", CheckResults: nil,
 		},
 	)
 
@@ -489,7 +505,7 @@ func TestCacheSetWithTTLZeroDoesNotCache(t *testing.T) {
 
 	// Zero TTL should skip caching entirely.
 	testCache.SetWithTTL(testDigest, "default", &types.Result{
-		Allowed: true, Reason: "ok", CheckResults: nil,
+		Allowed: true, Verified: true, Mode: "", Reason: "ok", CheckResults: nil,
 	}, 0)
 
 	if got := testCache.Get(testDigest, "default"); got != nil {
@@ -520,7 +536,7 @@ func TestCacheConcurrentStress(t *testing.T) {
 				digest := fmt.Sprintf("sha256:%064d", goroutine*iterations+iter)
 
 				testCache.Set(digest, "default", &types.Result{
-					Allowed: true, Reason: digest, CheckResults: nil,
+					Allowed: true, Verified: true, Mode: "", Reason: digest, CheckResults: nil,
 				})
 
 				testCache.Get(digest, "default")
@@ -531,7 +547,11 @@ func TestCacheConcurrentStress(t *testing.T) {
 				)
 
 				testCache.SetWithTTL(shortDigest, "default", &types.Result{
-					Allowed: false, Reason: "short-ttl", CheckResults: nil,
+					Allowed:      false,
+					Verified:     false,
+					Mode:         "",
+					Reason:       "short-ttl",
+					CheckResults: nil,
 				}, time.Millisecond)
 
 				testCache.Len()
@@ -563,7 +583,7 @@ func TestCacheCustomMaxSizeEviction(t *testing.T) {
 	for idx := range customMax + 1 {
 		testCache.Set(
 			fmt.Sprintf("sha256:%d", idx), "default",
-			&types.Result{Allowed: true, Reason: "", CheckResults: nil},
+			&types.Result{Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil},
 		)
 	}
 
@@ -598,7 +618,7 @@ func TestCacheClear(t *testing.T) {
 	t.Cleanup(testCache.Stop)
 
 	testCache.Set(testDigest, "default", &types.Result{
-		Allowed: true, Reason: "", CheckResults: nil,
+		Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
 	})
 
 	testCache.Clear()
@@ -620,7 +640,7 @@ func TestDeleteExistingEntry(t *testing.T) {
 	t.Cleanup(testCache.Stop)
 
 	testCache.Set(testDigest, "default", &types.Result{
-		Allowed: true, Reason: "", CheckResults: nil,
+		Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
 	})
 
 	if got := testCache.Get(testDigest, "default"); got == nil {
@@ -663,10 +683,10 @@ func TestDeleteDoesNotAffectOtherEntries(t *testing.T) {
 	digest2 := "sha256:b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b200"
 
 	testCache.Set(digest1, "ns1", &types.Result{
-		Allowed: true, Reason: "", CheckResults: nil,
+		Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
 	})
 	testCache.Set(digest2, "ns2", &types.Result{
-		Allowed: false, Reason: "fail", CheckResults: nil,
+		Allowed: false, Verified: false, Mode: "", Reason: "fail", CheckResults: nil,
 	})
 
 	testCache.Delete(digest1, "ns1")
@@ -677,5 +697,48 @@ func TestDeleteDoesNotAffectOtherEntries(t *testing.T) {
 
 	if got := testCache.Get(digest2, "ns2"); got == nil {
 		t.Error("expected other entry to remain after deleting a different entry")
+	}
+}
+
+func TestDeleteAllRemovesSuffixedKeys(t *testing.T) {
+	t.Parallel()
+
+	testCache := cache.New(time.Hour)
+	t.Cleanup(testCache.Stop)
+
+	otherDigest := "sha256:b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b200"
+	result := &types.Result{Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil}
+	removedKeys := []string{"ns", "ns\x00ghcr.io/org/app:v1", "ns\x00ghcr.io/org/app:v1\x00r0"}
+	keptKeys := []string{"ns-other", "other"}
+
+	for _, namespace := range append(slices.Clone(removedKeys), keptKeys...) {
+		testCache.Set(testDigest, namespace, result)
+	}
+
+	testCache.Set(otherDigest, "ns", result)
+
+	removed := testCache.DeleteAll(testDigest, "ns")
+	if removed != len(removedKeys) {
+		t.Fatalf("expected %d removed entries, got %d", len(removedKeys), removed)
+	}
+
+	for _, namespace := range removedKeys {
+		if testCache.Get(testDigest, namespace) != nil {
+			t.Errorf("expected entry %q to be removed", namespace)
+		}
+	}
+
+	for _, namespace := range keptKeys {
+		if testCache.Get(testDigest, namespace) == nil {
+			t.Errorf("expected entry %q to remain", namespace)
+		}
+	}
+
+	if testCache.Get(otherDigest, "ns") == nil {
+		t.Error("expected entry for another digest to remain")
+	}
+
+	if testCache.DeleteAll(testDigest, "missing") != 0 {
+		t.Error("expected no entries removed for unknown namespace")
 	}
 }

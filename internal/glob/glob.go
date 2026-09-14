@@ -78,7 +78,8 @@ func compile(pattern string) (*regexp.Regexp, error) {
 // characters including '/', '?' matches a single non-'/' character, and
 // '[...]' character classes have backslash escapes consumed to prevent
 // glob/regex semantic divergence (e.g. [\d] in glob matches only 'd', not
-// the regex digit class).
+// the regex digit class). Negated classes ('[^...]' or '[!...]') never match
+// '/', so they cannot be used to cross a path segment.
 func ToRegex(pattern string) string {
 	var builder strings.Builder
 
@@ -148,9 +149,9 @@ func convertBracketExpr(runes []rune, idx int) (converted string, end int) {
 func escapeCharClass(runes []rune) string {
 	var builder strings.Builder
 
-	builder.WriteRune(runes[0])
+	start := writeClassOpening(&builder, runes)
 
-	for idx := 1; idx < len(runes)-1; idx++ {
+	for idx := start; idx < len(runes)-1; idx++ {
 		if runes[idx] == '\\' && idx+1 < len(runes)-1 {
 			idx++
 
@@ -170,9 +171,56 @@ func escapeCharClass(runes []rune) string {
 	return builder.String()
 }
 
+// writeClassOpening writes the opening bracket, translating a leading '!' or
+// '^' into a negation that never matches '/' (mirroring '?'), and escapes a
+// leading literal ']'. It returns the index of the first unprocessed member.
+func writeClassOpening(builder *strings.Builder, runes []rune) int {
+	builder.WriteRune(runes[0])
+
+	start := 1
+
+	if len(runes) > 2 && isClassNegation(runes[1]) {
+		builder.WriteString("^/")
+
+		start = 2
+	}
+
+	if start < len(runes)-1 && runes[start] == ']' {
+		builder.WriteString(`\]`)
+
+		start++
+	}
+
+	return start
+}
+
+// HasBangNegation reports whether pattern contains a character class negated
+// with '!' (e.g. "[!x]"). Earlier releases matched such a class literally, so
+// callers warn about these patterns to surface the changed meaning.
+func HasBangNegation(pattern string) bool {
+	runes := []rune(pattern)
+
+	for idx := 0; idx < len(runes); idx++ {
+		switch runes[idx] {
+		case '\\':
+			idx++
+		case '[':
+			if idx+1 < len(runes) && runes[idx+1] == '!' && findBracketEnd(runes, idx) > idx {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func isClassNegation(r rune) bool {
+	return r == '^' || r == '!'
+}
+
 func findBracketEnd(runes []rune, start int) int {
 	idx := start + 1
-	if idx < len(runes) && runes[idx] == '^' {
+	if idx < len(runes) && isClassNegation(runes[idx]) {
 		idx++
 	}
 

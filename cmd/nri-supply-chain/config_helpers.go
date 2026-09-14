@@ -37,6 +37,29 @@ func setupConfig(configPath string) (*config.Config, error) {
 	return cfg, nil
 }
 
+// serveConfigPath returns the config file the plugin serves with. An empty
+// result means the plugin has no config file: it starts from the built-in
+// defaults and applies the configuration the runtime passes inline when it
+// configures the plugin. That is the case for an explicit empty --config and
+// when --config was not set and the default file does not exist.
+func serveConfigPath(path string, explicit bool) string {
+	if path == "" || (!explicit && !shouldUseConfigFile(path)) {
+		return ""
+	}
+
+	return path
+}
+
+// setupServeConfig loads the config for the plugin process. Without a config
+// file the built-in defaults apply until the runtime passes a configuration.
+func setupServeConfig(path string) (*config.Config, error) {
+	if path == "" {
+		return config.DefaultConfig(), nil
+	}
+
+	return setupConfig(path)
+}
+
 func shouldUseConfigFile(path string) bool {
 	if path == "" {
 		return false

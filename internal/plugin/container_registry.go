@@ -15,6 +15,8 @@
 package plugin
 
 import (
+	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 
@@ -73,6 +75,14 @@ type containerState struct {
 	purls              []string
 	recoveredOnRestart bool
 	consecutiveErrors  int
+	// consecutiveIncomplete counts re-verifications in a row that could not
+	// complete (for example during a registry outage).
+	consecutiveIncomplete int
+	// unresolvedDigest is the digest the runtime reports for the image while
+	// digest and indexDigest are not resolved from it: digest is empty, or
+	// the runtime digest itself when the registry was unreachable. The
+	// continuous verifier resolves it before re-verifying the container.
+	unresolvedDigest string
 }
 
 // containerRegistry is a typed concurrent map from container ID to
@@ -93,6 +103,22 @@ func (r *containerRegistry) Store(id string, cs *containerState) {
 	r.mu.Lock()
 	r.m[id] = cs
 	r.mu.Unlock()
+}
+
+// StoreIfAbsent adds a container state entry unless one is already tracked
+// for id. Returns true when cs was stored.
+func (r *containerRegistry) StoreIfAbsent(containerID string, state *containerState) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	_, exists := r.m[containerID]
+	if exists {
+		return false
+	}
+
+	r.m[containerID] = state
+
+	return true
 }
 
 // Load retrieves a container state by ID.
@@ -171,6 +197,23 @@ func (r *containerRegistry) StateCounts() map[VerificationState]int {
 	return counts
 }
 
+// IncompleteCount returns the number of containers whose last threshold (or
+// more) re-verifications in a row were incomplete.
+func (r *containerRegistry) IncompleteCount(threshold int) int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	count := 0
+
+	for _, state := range r.m {
+		if state.consecutiveIncomplete >= threshold {
+			count++
+		}
+	}
+
+	return count
+}
+
 // ReadState reads container fields under the read lock to avoid races with
 // UpdateState. Returns false if the container does not exist.
 func (r *containerRegistry) ReadState(
@@ -198,4 +241,84 @@ func (r *containerRegistry) cleanStale(activeIDs map[string]struct{}) {
 	}
 
 	r.mu.Unlock()
+}
+
+// AnnotationOriginalResources records the CPU and memory limits a container
+// was created with. Throttling is only applied to, and rolled back from,
+// recorded limits: after a plugin restart the container's current limits
+// may already be throttled and cannot be trusted as originals.
+const AnnotationOriginalResources = "supply-chain.nri/original-resources"
+
+// originalResourcesRecord is the JSON form of AnnotationOriginalResources.
+// It only holds the limits the continuous verifier changes.
+type originalResourcesRecord struct {
+	CPUQuota    *int64  `json:"cpuQuota,omitempty"`
+	CPUShares   *uint64 `json:"cpuShares,omitempty"`
+	MemoryLimit *int64  `json:"memoryLimit,omitempty"`
+}
+
+// OriginalResourcesAnnotation encodes the throttleable limits of res as the
+// value of AnnotationOriginalResources. ok is false when res carries no such
+// limits. CreateContainer adds the annotation so throttling survives plugin
+// restarts.
+func OriginalResourcesAnnotation(res *api.LinuxResources) (value string, ok bool) {
+	var record originalResourcesRecord
+
+	if quota := res.GetCpu().GetQuota(); quota != nil {
+		v := quota.GetValue()
+		record.CPUQuota = &v
+	}
+
+	if shares := res.GetCpu().GetShares(); shares != nil {
+		v := shares.GetValue()
+		record.CPUShares = &v
+	}
+
+	if limit := res.GetMemory().GetLimit(); limit != nil {
+		v := limit.GetValue()
+		record.MemoryLimit = &v
+	}
+
+	if record.CPUQuota == nil && record.CPUShares == nil && record.MemoryLimit == nil {
+		return "", false
+	}
+
+	data, err := json.Marshal(record)
+	if err != nil {
+		return "", false
+	}
+
+	return string(data), true
+}
+
+// decodeOriginalResources parses an AnnotationOriginalResources value.
+func decodeOriginalResources(value string) (*api.LinuxResources, error) {
+	var record originalResourcesRecord
+
+	err := json.Unmarshal([]byte(value), &record)
+	if err != nil {
+		return nil, fmt.Errorf("decoding %s annotation: %w", AnnotationOriginalResources, err)
+	}
+
+	resources := &api.LinuxResources{}
+
+	if record.CPUQuota != nil || record.CPUShares != nil {
+		resources.Cpu = &api.LinuxCPU{}
+
+		if record.CPUQuota != nil {
+			resources.Cpu.Quota = &api.OptionalInt64{Value: *record.CPUQuota}
+		}
+
+		if record.CPUShares != nil {
+			resources.Cpu.Shares = &api.OptionalUInt64{Value: *record.CPUShares}
+		}
+	}
+
+	if record.MemoryLimit != nil {
+		resources.Memory = &api.LinuxMemory{
+			Limit: &api.OptionalInt64{Value: *record.MemoryLimit},
+		}
+	}
+
+	return resources, nil
 }

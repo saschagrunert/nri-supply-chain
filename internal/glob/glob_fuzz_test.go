@@ -42,3 +42,25 @@ func FuzzGlobToRegex(f *testing.F) {
 		}
 	})
 }
+
+func FuzzNegatedClassNeverMatchesSlash(f *testing.F) {
+	f.Add("abc")
+	f.Add("/")
+	f.Add("a-z")
+	f.Add(`\]`)
+
+	f.Fuzz(func(t *testing.T, members string) {
+		for _, negation := range []string{"^", "!"} {
+			pattern := "[" + negation + members + "]"
+
+			matched, err := glob.Match(pattern, "/")
+			if err != nil {
+				continue
+			}
+
+			if matched {
+				t.Errorf("negated class %q matched '/'", pattern)
+			}
+		}
+	})
+}

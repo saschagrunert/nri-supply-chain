@@ -22,15 +22,52 @@ env:
   IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
+  # Decides whether this run may push, sign, and attest images. workflow_run
+  # also fires for pull requests (including forks whose branch is named main),
+  # so only successful CI runs for pushes to main of this repository, or manual
+  # dispatches on main, are allowed to publish.
+  gate:
+    permissions: {}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      publish: ${{ steps.check.outputs.publish }}
+    steps:
+      - id: check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_EVENT: ${{ github.event.workflow_run.event }}
+          RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_HEAD_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
+        run: |
+          publish=false
+          case "$EVENT_NAME" in
+            workflow_run)
+              if [ "$RUN_CONCLUSION" = "success" ] &&
+                [ "$RUN_EVENT" = "push" ] &&
+                [ "$RUN_HEAD_BRANCH" = "main" ] &&
+                [ "$RUN_HEAD_REPOSITORY" = "$REPOSITORY" ]; then
+                publish=true
+              fi
+              ;;
+            workflow_dispatch)
+              if [ "$REF" = "refs/heads/main" ]; then
+                publish=true
+              fi
+              ;;
+          esac
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
   build:
     name: build (${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }})
     permissions:
       contents: read
       packages: write
-    if: >-
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
-      github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'pull_request'
+    needs: gate
+    if: needs.gate.outputs.publish == 'true' || github.event_name == 'pull_request'
     strategy:
       matrix:
         include:
@@ -46,7 +83,7 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Login to GHCR
-        if: github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch'
+        if: needs.gate.outputs.publish == 'true'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
@@ -65,17 +102,17 @@ jobs:
             VERSION=${{ github.event.workflow_run.head_sha || github.sha }}
           cache-from: type=gha,scope=${{ matrix.platform }}
           cache-to: type=gha,scope=${{ matrix.platform }},mode=max
-          outputs: ${{ (github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch') && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE) || 'type=docker' }}
+          outputs: ${{ needs.gate.outputs.publish == 'true' && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE) || 'type=docker' }}
 
       - name: Export digest
-        if: github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch'
+        if: needs.gate.outputs.publish == 'true'
         run: |
           mkdir -p /tmp/digests
           digest="${{ steps.build.outputs.digest }}"
           touch "/tmp/digests/${digest#sha256:}"
 
       - name: Upload digest
-        if: github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch'
+        if: needs.gate.outputs.publish == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: digests-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
@@ -87,10 +124,10 @@ jobs:
     permissions:
       contents: read
       packages: write
-    if: github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch'
+    needs: [gate, build]
+    if: needs.gate.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: build
     outputs:
       digest: ${{ steps.manifest.outputs.digest }}
     steps:
@@ -108,8 +145,9 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.IMAGE }}
+          # "latest" is only added by the deploy job after the image was
+          # scanned, attested, and verified.
           tags: |
-            type=raw,value=latest
             type=sha,prefix=,format=short
 
       - name: Download digests
@@ -131,7 +169,8 @@ jobs:
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
   provenance:
-    needs: merge
+    needs: [gate, merge]
+    if: needs.gate.outputs.publish == 'true'
     permissions:
       actions: read
       id-token: write
@@ -154,10 +193,10 @@ jobs:
       packages: write
       id-token: write
       deployments: write
-    if: github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch'
+    needs: [gate, merge, provenance]
+    if: needs.gate.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [merge, provenance]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -165,6 +204,7 @@ jobs:
           sparse-checkout: |
             .github/actions/attest
             .trivyignore
+            Makefile
             go.mod
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -196,6 +236,16 @@ jobs:
         with:
           digest: ${{ needs.merge.outputs.digest }}
           policy-ref: main
+
+      # Only a scanned, attested, and verified image may become "latest".
+      # crane adds the tag to the existing manifest, so the digest (and its
+      # signatures and attestations) stays the same.
+      - name: Tag verified image as latest
+        env:
+          DIGEST: ${{ needs.merge.outputs.digest }}
+        run: |
+          make build/crane
+          ./build/crane tag "${IMAGE}@${DIGEST}" latest
 
       - name: Create deployment
         env:
@@ -247,7 +297,7 @@ jobs:
       - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
-          version: "~> v2"
+          version: "v2.18.1"
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -316,6 +366,7 @@ jobs:
           sparse-checkout: |
             .github/actions/attest
             .trivyignore
+            Makefile
             go.mod
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -354,3 +405,12 @@ jobs:
           digest: ${{ needs.release.outputs.digest }}
           policy-ref: ${{ github.ref_name }}
           verify-binary: /tmp/verify-binary/nri-supply-chain
+
+      # goreleaser only pushes the version tag. "latest" moves to the release
+      # after it was scanned, attested, and verified.
+      - name: Tag verified release as latest
+        env:
+          DIGEST: ${{ needs.release.outputs.digest }}
+        run: |
+          make build/crane
+          ./build/crane tag "${IMAGE}@${DIGEST}" latest

@@ -319,6 +319,8 @@ func TestRunCELCheckNilCompiledCEL(t *testing.T) {
 	pol := &policy.Policy{}
 	result := &types.Result{
 		Allowed:      false,
+		Verified:     false,
+		Mode:         "",
 		Reason:       "",
 		CheckResults: nil,
 	}
@@ -345,8 +347,10 @@ func TestRunCELCheckNilParsedRef(t *testing.T) {
 	pol.CompiledCEL = compiled
 
 	result := &types.Result{
-		Allowed: false,
-		Reason:  "",
+		Allowed:  false,
+		Verified: false,
+		Mode:     "",
+		Reason:   "",
 		CheckResults: []types.CheckResult{
 			*types.PassResult(types.CheckTypeSLSA, "verified"),
 		},
@@ -381,8 +385,10 @@ func TestRunCELCheckRequirePass(t *testing.T) {
 	pol.CompiledCEL = compiled
 
 	result := &types.Result{
-		Allowed: false,
-		Reason:  "",
+		Allowed:  false,
+		Verified: false,
+		Mode:     "",
+		Reason:   "",
 		CheckResults: []types.CheckResult{
 			*types.PassResult(types.CheckTypeSLSA, "verified"),
 		},
@@ -416,8 +422,10 @@ func TestRunCELCheckRequireFail(t *testing.T) {
 	pol.CompiledCEL = compiled
 
 	result := &types.Result{
-		Allowed: false,
-		Reason:  "",
+		Allowed:  false,
+		Verified: false,
+		Mode:     "",
+		Reason:   "",
 		CheckResults: []types.CheckResult{
 			*types.FailResult(types.CheckTypeSLSA, "no provenance found", nil),
 		},
@@ -455,8 +463,10 @@ func TestRunCELCheckMatchFilter(t *testing.T) {
 	pol.CompiledCEL = compiled
 
 	result := &types.Result{
-		Allowed: false,
-		Reason:  "",
+		Allowed:  false,
+		Verified: false,
+		Mode:     "",
+		Reason:   "",
 		CheckResults: []types.CheckResult{
 			*types.FailResult(types.CheckTypeSLSA, "no provenance", nil),
 		},
@@ -490,8 +500,10 @@ func TestRunCELCheckMultipleCheckTypes(t *testing.T) {
 	pol.CompiledCEL = compiled
 
 	result := &types.Result{
-		Allowed: false,
-		Reason:  "",
+		Allowed:  false,
+		Verified: false,
+		Mode:     "",
+		Reason:   "",
 		CheckResults: []types.CheckResult{
 			*types.PassResult(types.CheckTypeSLSA, "verified"),
 			*types.PassResult(types.CheckTypeVEX, "no vulnerabilities"),

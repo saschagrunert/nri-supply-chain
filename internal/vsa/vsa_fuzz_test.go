@@ -26,6 +26,7 @@ import (
 func FuzzVerify(f *testing.F) {
 	seed := vsa.Statement{
 		Type:          "https://in-toto.io/Statement/v1",
+		Subject:       testSubjects(),
 		PredicateType: "https://slsa.dev/verification_summary/v1",
 		Predicate: vsa.Predicate{
 			Verifier:           vsa.Verifier{ID: testVerifierID},

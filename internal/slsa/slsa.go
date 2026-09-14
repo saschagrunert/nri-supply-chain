@@ -35,9 +35,22 @@ import (
 const (
 	checkType = types.CheckTypeSLSA
 
-	metaBuilderID = "builderID"
-	metaBuildType = "buildType"
-	metaSource    = "source"
+	metaBuilderID    = "builderID"
+	metaBuildType    = "buildType"
+	metaSource       = "source"
+	metaSourceRef    = "sourceRef"
+	metaSourceDigest = "sourceDigest"
+	metaTrustScoped  = "trustConfigured"
+
+	paramWorkflow      = "workflow"
+	paramSourceToBuild = "sourceToBuild"
+	paramConfigSource  = "configSource"
+
+	sha1HexLength   = 40
+	sha256HexLength = 64
+
+	emptyTrustDetail = "SLSA provenance verified, but no trusted builders, sources, " +
+		"or build types are configured"
 )
 
 var (
@@ -52,6 +65,10 @@ var (
 
 	// ErrUntrustedSource indicates the source repository is not in the allowed list.
 	ErrUntrustedSource = errors.New("untrusted source repository")
+
+	// ErrSourceMismatch indicates the provenance source is inconsistent with
+	// its resolved dependencies.
+	ErrSourceMismatch = errors.New("provenance source inconsistent with resolved dependencies")
 
 	// ErrUnknownParameters indicates unrecognized external parameters were found.
 	ErrUnknownParameters = errors.New("unrecognized external parameters")
@@ -113,9 +130,90 @@ type Metadata struct {
 	StartedOn    *time.Time `json:"startedOn,omitempty"`
 }
 
+// VerifyOptions carries optional hooks for provenance verification.
+type VerifyOptions struct {
+	// BindBuilder is called after runDetails.builder.id (or builder.id for
+	// v0.2) matched one or more trusted builders. The builder ID is only a
+	// claim inside the signed payload, so the hook should confirm that the
+	// attestation signer is authorized for one of the matched entries. A
+	// returned error fails that attestation.
+	BindBuilder func(att *attestation.VerifiedAttestation, matched []policy.TrustedBuilder) error
+}
+
+// resourceDescriptor is the SLSA v1 ResourceDescriptor subset used for
+// resolved dependency checks.
+type resourceDescriptor struct {
+	URI    string            `json:"uri"`
+	Digest map[string]string `json:"digest"`
+}
+
+// resolvedDependencies is decoded separately from Statement so that the
+// exported provenance types stay unchanged.
+type resolvedDependencies struct {
+	Predicate struct {
+		BuildDefinition struct {
+			ResolvedDependencies []resourceDescriptor `json:"resolvedDependencies"`
+		} `json:"buildDefinition"`
+	} `json:"predicate"`
+}
+
+// sourceInfo describes the source repository a build was started from.
+type sourceInfo struct {
+	// URI is the normalized repository URI without scheme prefix or ref.
+	URI string
+	// Ref is the git ref or commit SHA the build used, when known.
+	Ref string
+	// Digest is the source commit digest ("algorithm:value"), when known.
+	Digest string
+	// Config is the build configuration source when it differs from the
+	// built source in repository or ref (Cloud Build configSource).
+	Config *sourceInfo
+}
+
+// builderBinder binds a matched builder to the attestation being verified.
+type builderBinder func(matched []policy.TrustedBuilder) error
+
 // Verify checks a SLSA provenance attestation against the given policy.
 func Verify(
 	ctx context.Context, att []byte, pol *policy.Policy, imageDigest string,
+) (*types.CheckResult, error) {
+	return verify(ctx, att, pol, imageDigest, nil)
+}
+
+// VerifyMultiple checks multiple provenance attestations, accepting if any valid one passes.
+func VerifyMultiple(
+	ctx context.Context,
+	attestations []attestation.VerifiedAttestation, pol *policy.Policy, imageDigest string,
+) (*types.CheckResult, error) {
+	return VerifyMultipleWithOptions(ctx, attestations, pol, imageDigest, nil)
+}
+
+// VerifyMultipleWithOptions checks multiple provenance attestations with
+// optional verification hooks, accepting if any valid one passes.
+func VerifyMultipleWithOptions(
+	ctx context.Context,
+	attestations []attestation.VerifiedAttestation, pol *policy.Policy, imageDigest string,
+	opts *VerifyOptions,
+) (*types.CheckResult, error) {
+	//nolint:wrapcheck // shared helper returns domain errors
+	return types.VerifyMultipleFirstPassOf(
+		ctx, checkType, "provenance", attestations,
+		func(att *attestation.VerifiedAttestation) (*types.CheckResult, error) {
+			var bind builderBinder
+
+			if opts != nil && opts.BindBuilder != nil {
+				bind = func(matched []policy.TrustedBuilder) error {
+					return opts.BindBuilder(att, matched)
+				}
+			}
+
+			return verify(ctx, att.Payload, pol, imageDigest, bind)
+		},
+	)
+}
+
+func verify(
+	ctx context.Context, att []byte, pol *policy.Policy, imageDigest string, bind builderBinder,
 ) (*types.CheckResult, error) {
 	ctxErr := ctx.Err()
 	if ctxErr != nil {
@@ -132,14 +230,14 @@ func Verify(
 	}
 
 	if header.PredicateType == attestation.PredicateSLSAProvenanceV02 {
-		return verifyV02(ctx, att, pol, imageDigest)
+		return verifyV02(ctx, att, pol, imageDigest, bind)
 	}
 
-	return verifyV1(ctx, att, pol, imageDigest)
+	return verifyV1(ctx, att, pol, imageDigest, bind)
 }
 
 func verifyV1(
-	ctx context.Context, att []byte, pol *policy.Policy, imageDigest string,
+	ctx context.Context, att []byte, pol *policy.Policy, imageDigest string, bind builderBinder,
 ) (*types.CheckResult, error) {
 	var stmt Statement
 
@@ -154,46 +252,46 @@ func verifyV1(
 		)
 	}
 
+	var deps resolvedDependencies
+
+	err = json.Unmarshal(att, &deps)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidProvenance, err)
+	}
+
 	warnEmptyTrust(ctx, pol)
 
-	err = verifySubjectDigest(stmt.Subject, imageDigest)
-	if err != nil {
-		return check.Fail(err.Error()), nil
+	buildDef := &stmt.Predicate.BuildDefinition
+	source := extractSourceV1(buildDef.BuildType, buildDef.ExternalParameters)
+
+	checks := []func() error{
+		func() error { return verifySubjectDigest(stmt.Subject, imageDigest) },
+		func() error { return verifyBuilder(ctx, stmt.Predicate.RunDetails.Builder, pol, bind) },
+		func() error { return verifyBuildType(buildDef.BuildType, pol) },
+		func() error { return verifySource(&source, pol) },
+		func() error {
+			return verifyResolvedSource(
+				&source, deps.Predicate.BuildDefinition.ResolvedDependencies,
+			)
+		},
+		func() error { return verifyParameters(buildDef.ExternalParameters, pol) },
+		func() error { return verifyFreshness(stmt.Predicate.RunDetails.Metadata.StartedOn, pol) },
 	}
 
-	err = verifyBuilder(ctx, stmt.Predicate.RunDetails.Builder, pol)
-	if err != nil {
-		return check.Fail(err.Error()), nil
+	for _, check := range checks {
+		err = check()
+		if err != nil {
+			return types.FailResult(checkType, err.Error(), nil), nil
+		}
 	}
 
-	err = verifyBuildType(stmt.Predicate.BuildDefinition.BuildType, pol)
-	if err != nil {
-		return check.Fail(err.Error()), nil
-	}
-
-	err = verifySources(stmt.Predicate.BuildDefinition.ExternalParameters, pol)
-	if err != nil {
-		return check.Fail(err.Error()), nil
-	}
-
-	err = verifyParameters(stmt.Predicate.BuildDefinition.ExternalParameters, pol)
-	if err != nil {
-		return check.Fail(err.Error()), nil
-	}
-
-	err = verifyFreshness(stmt.Predicate.RunDetails.Metadata.StartedOn, pol)
-	if err != nil {
-		return check.Fail(err.Error()), nil
-	}
-
-	result := check.Pass()
-	result.Metadata = map[string]any{
-		metaBuilderID: stmt.Predicate.RunDetails.Builder.ID,
-		metaBuildType: stmt.Predicate.BuildDefinition.BuildType,
-		metaSource:    extractSource(stmt.Predicate.BuildDefinition.ExternalParameters),
-	}
-
-	return result, nil
+	return passResult(pol, map[string]any{
+		metaBuilderID:    stmt.Predicate.RunDetails.Builder.ID,
+		metaBuildType:    buildDef.BuildType,
+		metaSource:       source.URI,
+		metaSourceRef:    source.Ref,
+		metaSourceDigest: source.Digest,
+	}), nil
 }
 
 // StatementV02 represents an in-toto v0.1 statement wrapping a SLSA provenance v0.2 predicate.
@@ -234,7 +332,7 @@ type MaterialV02 struct {
 }
 
 func verifyV02(
-	ctx context.Context, att []byte, pol *policy.Policy, imageDigest string,
+	ctx context.Context, att []byte, pol *policy.Policy, imageDigest string, bind builderBinder,
 ) (*types.CheckResult, error) {
 	var stmt StatementV02
 
@@ -245,66 +343,50 @@ func verifyV02(
 
 	warnEmptyTrust(ctx, pol)
 
-	err = verifySubjectDigest(stmt.Subject, imageDigest)
-	if err != nil {
-		return check.Fail(err.Error()), nil
-	}
-
-	err = verifyBuilder(ctx, stmt.Predicate.Builder, pol)
-	if err != nil {
-		return check.Fail(err.Error()), nil
-	}
-
-	err = verifyBuildType(stmt.Predicate.BuildType, pol)
-	if err != nil {
-		return check.Fail(err.Error()), nil
-	}
-
-	err = verifySourceV02(&stmt.Predicate, pol)
-	if err != nil {
-		return check.Fail(err.Error()), nil
-	}
+	sourceURI, sourceRef := normalizeSourceURI(sourceV02(&stmt.Predicate))
+	source := sourceInfo{URI: sourceURI, Ref: sourceRef, Digest: "", Config: nil}
 
 	// v0.2 has no externalParameters, so rejectUnknownParameters does not
 	// apply. Parameter validation is only meaningful for v1 provenance.
-
-	err = verifyFreshness(stmt.Predicate.Metadata.BuildStartedOn, pol)
-	if err != nil {
-		return check.Fail(err.Error()), nil
+	checks := []func() error{
+		func() error { return verifySubjectDigest(stmt.Subject, imageDigest) },
+		func() error { return verifyBuilder(ctx, stmt.Predicate.Builder, pol, bind) },
+		func() error { return verifyBuildType(stmt.Predicate.BuildType, pol) },
+		func() error { return verifySource(&source, pol) },
+		func() error { return verifyFreshness(stmt.Predicate.Metadata.BuildStartedOn, pol) },
 	}
 
-	result := check.Pass()
-	result.Metadata = map[string]any{
-		metaBuilderID: stmt.Predicate.Builder.ID,
-		metaBuildType: stmt.Predicate.BuildType,
-		metaSource:    normalizeSourceV02(sourceV02(&stmt.Predicate)),
+	for _, check := range checks {
+		err = check()
+		if err != nil {
+			return types.FailResult(checkType, err.Error(), nil), nil
+		}
 	}
 
-	return result, nil
+	return passResult(pol, map[string]any{
+		metaBuilderID:    stmt.Predicate.Builder.ID,
+		metaBuildType:    stmt.Predicate.BuildType,
+		metaSource:       source.URI,
+		metaSourceRef:    source.Ref,
+		metaSourceDigest: "",
+	}), nil
 }
 
-func verifySourceV02(pred *ProvenancePredicateV02, pol *policy.Policy) error {
-	if pol.Trust == nil || len(pol.Trust.Sources) == 0 {
-		return nil
+// passResult returns a passing result, or a warning when the policy has no
+// builder, source, or build type constraints so that an unconstrained
+// provenance check is visible in results and annotations.
+func passResult(pol *policy.Policy, meta map[string]any) *types.CheckResult {
+	constrained := trustConfigured(pol)
+	meta[metaTrustScoped] = constrained
+
+	result := check.Pass()
+	if !constrained {
+		result = types.WarnResult(checkType, emptyTrustDetail)
 	}
 
-	source := normalizeSourceV02(sourceV02(pred))
-	if source == "" {
-		return fmt.Errorf("%w: source not found in v0.2 provenance", ErrUntrustedSource)
-	}
+	result.Metadata = meta
 
-	for _, pattern := range pol.Trust.Sources {
-		matched, err := glob.Match(pattern, source)
-		if err != nil {
-			return fmt.Errorf("invalid source pattern %q: %w", pattern, err)
-		}
-
-		if matched {
-			return nil
-		}
-	}
-
-	return fmt.Errorf("%w: %q", ErrUntrustedSource, source)
+	return result
 }
 
 // sourceV02 returns the raw source URI from a v0.2 provenance predicate.
@@ -322,66 +404,370 @@ func sourceV02(pred *ProvenancePredicateV02) string {
 	return ""
 }
 
-// normalizeSourceV02 converts v0.2 git URIs like
+// normalizeSourceURI converts git URIs like
 // "git+https://github.com/org/repo@refs/heads/main" into
-// "https://github.com/org/repo" so they match the same trust policy
-// source patterns used for v1 provenance and source track attestations.
-func normalizeSourceV02(uri string) string {
-	normalized := strings.TrimPrefix(uri, "git+")
+// "https://github.com/org/repo" and the ref "refs/heads/main" so they match
+// the same trust policy source patterns used for source track attestations.
+// An '@' in the authority (for example git+ssh://git@host/...) is kept.
+func normalizeSourceURI(uri string) (normalized, ref string) {
+	normalized, ref, _ = glob.SplitGitRef(uri)
 
-	if idx := strings.IndexByte(normalized, '@'); idx > 0 {
-		normalized = normalized[:idx]
-	}
-
-	return normalized
+	return normalized, ref
 }
 
-// VerifyMultiple checks multiple provenance attestations, accepting if any valid one passes.
-func VerifyMultiple(
-	ctx context.Context,
-	attestations []attestation.VerifiedAttestation, pol *policy.Policy, imageDigest string,
-) (*types.CheckResult, error) {
+const (
+	// BuildTypeGitHubActionsWorkflow is the buildType of GitHub artifact
+	// attestations (actions/attest-build-provenance).
+	BuildTypeGitHubActionsWorkflow = "https://actions.github.io/buildtypes/workflow/v1"
+
+	// BuildTypeSLSAGitHubWorkflow is the buildType used by
+	// slsa-github-generator for GitHub Actions workflows.
+	BuildTypeSLSAGitHubWorkflow = "https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1"
+
+	// BuildTypeGCBTriggered is the buildType of Google Cloud Build triggered builds.
+	BuildTypeGCBTriggered = "https://slsa-framework.github.io/gcb-buildtypes/triggered-build/v1"
+)
+
+// sourceExtractors maps known build types to the externalParameters layout
+// that carries the source repository.
+//
+//nolint:gochecknoglobals // immutable lookup table
+var sourceExtractors = map[string]func(params map[string]any) sourceInfo{
+	BuildTypeGitHubActionsWorkflow: func(params map[string]any) sourceInfo {
+		return nestedSource(params, paramWorkflow)
+	},
+	BuildTypeSLSAGitHubWorkflow: func(params map[string]any) sourceInfo {
+		return nestedSource(params, paramWorkflow)
+	},
+	BuildTypeGCBTriggered: gcbSource,
+}
+
+// gcbSource returns the source of a Cloud Build triggered build. The
+// specification omits sourceToBuild (or leaves only its dir) when the built
+// source is the configSource repository and ref. When both are present and
+// differ, the configSource is recorded as the build configuration source:
+// the build configuration controls the build steps, so it is verified too.
+func gcbSource(params map[string]any) sourceInfo {
+	config := nestedSource(params, paramConfigSource)
+
+	built := nestedSource(params, paramSourceToBuild)
+	if built.URI == "" {
+		return config
+	}
+
+	if config.URI == "" {
+		return built
+	}
+
+	if !sameRepository(built.URI, config.URI) {
+		built.Config = &config
+
+		return built
+	}
+
+	if built.Ref == "" {
+		built.Ref = config.Ref
+	}
+
+	if config.Ref != "" && built.Ref != config.Ref {
+		built.Config = &config
+	}
+
+	return built
+}
+
+// extractSourceV1 returns the source repository of a v1 provenance. Known
+// build types use their documented layout first. Otherwise, or when that
+// layout is absent, a top-level "source" parameter (a URI string or a
+// ResourceDescriptor-like object) is used, falling back to the GitHub
+// workflow and Cloud Build layouts.
+func extractSourceV1(buildType string, params map[string]any) sourceInfo {
+	if extract, known := sourceExtractors[buildType]; known {
+		if info := extract(params); info.URI != "" {
+			return info
+		}
+	}
+
+	if info := topLevelSource(params); info.URI != "" {
+		return info
+	}
+
+	if info := nestedSource(params, paramWorkflow); info.URI != "" {
+		return info
+	}
+
+	return gcbSource(params)
+}
+
+// topLevelSource reads externalParameters.source, either as a URI string or
+// as an object with "uri" and "digest".
+func topLevelSource(params map[string]any) sourceInfo {
 	var (
-		failReasons []string
-		parseErrors []string
+		raw    string
+		digest string
 	)
 
-	for idx := range attestations {
-		ctxErr := ctx.Err()
-		if ctxErr != nil {
-			return nil, fmt.Errorf("verification cancelled: %w", ctxErr)
+	switch source := params[metaSource].(type) {
+	case string:
+		raw = source
+	case map[string]any:
+		raw, _ = source["uri"].(string)
+		digest = firstDigest(stringMap(source["digest"]))
+	default:
+	}
+
+	if raw == "" {
+		return sourceInfo{URI: "", Ref: "", Digest: "", Config: nil}
+	}
+
+	normalized, ref := normalizeSourceURI(raw)
+	if explicitRef, isString := params["ref"].(string); isString && explicitRef != "" {
+		ref = explicitRef
+	}
+
+	return sourceInfo{URI: normalized, Ref: ref, Digest: digest, Config: nil}
+}
+
+func nestedSource(params map[string]any, container string) sourceInfo {
+	nested, ok := params[container].(map[string]any)
+	if !ok {
+		return sourceInfo{URI: "", Ref: "", Digest: "", Config: nil}
+	}
+
+	uri, _ := nested["repository"].(string)
+	normalized, ref := normalizeSourceURI(uri)
+
+	if explicitRef, isString := nested["ref"].(string); isString && explicitRef != "" {
+		ref = explicitRef
+	}
+
+	return sourceInfo{URI: normalized, Ref: ref, Digest: "", Config: nil}
+}
+
+// stringMap converts a decoded JSON object with string values.
+func stringMap(value any) map[string]string {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	converted := make(map[string]string, len(object))
+
+	for key, val := range object {
+		if text, isString := val.(string); isString {
+			converted[key] = text
+		}
+	}
+
+	return converted
+}
+
+// verifyResolvedSource cross-checks the source repository against
+// resolvedDependencies. Every dependency that refers to the same repository
+// must carry a digest and, when both sides name a ref, the same ref. A ref
+// that is a commit SHA is compared against the dependency's commit digest
+// instead, as is a source digest. When a build configuration source is
+// recorded, a dependency of its repository may match either source, so the
+// configuration and the built source of one repository can use different
+// refs. The digest of the first matching dependency is recorded on the
+// source it matched.
+func verifyResolvedSource(source *sourceInfo, deps []resourceDescriptor) error {
+	if source.URI == "" {
+		return nil
+	}
+
+	sources := []*sourceInfo{source}
+	if source.Config != nil && source.Config.URI != "" {
+		sources = append(sources, source.Config)
+	}
+
+	for idx := range deps {
+		err := verifyDependencyAgainst(sources, &deps[idx])
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// verifyDependencyAgainst verifies a dependency against the first source of
+// the same repository it is consistent with. Dependencies of other
+// repositories are ignored.
+func verifyDependencyAgainst(sources []*sourceInfo, dep *resourceDescriptor) error {
+	depURI, depRef := normalizeSourceURI(dep.URI)
+
+	var firstErr error
+
+	for _, candidate := range sources {
+		if !sameRepository(depURI, candidate.URI) {
+			continue
 		}
 
-		result, err := Verify(ctx, attestations[idx].Payload, pol, imageDigest)
+		err := verifyDependency(candidate, dep, depRef)
 		if err != nil {
-			parseErrors = append(parseErrors, err.Error())
+			if firstErr == nil {
+				firstErr = err
+			}
 
 			continue
 		}
 
-		if result.Passed {
-			return result, nil
+		if candidate.Digest == "" {
+			candidate.Digest = firstDigest(dep.Digest)
 		}
 
-		failReasons = append(failReasons, result.Detail)
+		return nil
 	}
 
-	if len(failReasons) > 0 {
-		detail := strings.Join(failReasons, "; ")
-		if len(parseErrors) > 0 {
-			detail += " (also failed to parse: " + strings.Join(parseErrors, "; ") + ")"
+	return firstErr
+}
+
+func verifyDependency(source *sourceInfo, dep *resourceDescriptor, depRef string) error {
+	if firstDigest(dep.Digest) == "" {
+		return fmt.Errorf("%w: dependency %q has no digest", ErrSourceMismatch, dep.URI)
+	}
+
+	err := verifyDependencyRef(source, dep, depRef)
+	if err != nil {
+		return err
+	}
+
+	return verifyDependencyDigest(source, dep)
+}
+
+// verifyDependencyRef compares the source ref with the dependency ref, or a
+// commit SHA source ref with the dependency's commit digest.
+func verifyDependencyRef(source *sourceInfo, dep *resourceDescriptor, depRef string) error {
+	if isCommitSHA(source.Ref) {
+		commit := commitDigest(dep.Digest, source.Ref)
+		if commit != "" && !strings.EqualFold(commit, source.Ref) {
+			return fmt.Errorf(
+				"%w: dependency %q resolved commit %q, source ref is commit %q",
+				ErrSourceMismatch, dep.URI, commit, source.Ref,
+			)
 		}
 
-		return check.Fail(detail), nil
+		return nil
 	}
 
-	if len(parseErrors) > 0 {
-		return check.Fail(
-			"no valid provenance: " + strings.Join(parseErrors, "; "),
-		), nil
+	if source.Ref == "" || depRef == "" || isCommitSHA(depRef) || sameRef(source.Ref, depRef) {
+		return nil
 	}
 
-	return check.Fail("no valid provenance attestation found"), nil
+	return fmt.Errorf(
+		"%w: dependency %q has ref %q, source ref is %q",
+		ErrSourceMismatch, dep.URI, depRef, source.Ref,
+	)
+}
+
+// verifyDependencyDigest compares a known source digest with the dependency
+// digest of the same algorithm.
+func verifyDependencyDigest(source *sourceInfo, dep *resourceDescriptor) error {
+	algorithm, value, found := strings.Cut(source.Digest, ":")
+	if !found {
+		return nil
+	}
+
+	depValue, present := dep.Digest[algorithm]
+	if !present || strings.EqualFold(depValue, value) {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"%w: dependency %q has %s digest %q, source digest is %q",
+		ErrSourceMismatch, dep.URI, algorithm, depValue, value,
+	)
+}
+
+// isCommitSHA reports whether ref is a git commit SHA (SHA-1 or SHA-256,
+// lowercase hex).
+func isCommitSHA(ref string) bool {
+	if len(ref) != sha1HexLength && len(ref) != sha256HexLength {
+		return false
+	}
+
+	for _, char := range ref {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+
+	return true
+}
+
+// commitDigest returns the git commit digest of a dependency that is
+// comparable with the commit SHA ref: a 40 hex character ref is compared with
+// a gitCommit or sha1 digest, a 64 hex character ref with a gitCommit or
+// sha256 digest. It returns "" when the dependency has no digest of the
+// ref's length.
+func commitDigest(digests map[string]string, ref string) string {
+	algorithm := "sha1"
+	if len(ref) == sha256HexLength {
+		algorithm = "sha256"
+	}
+
+	for _, candidate := range []string{"gitCommit", algorithm} {
+		value := digests[candidate]
+		if len(value) == len(ref) && isCommitSHA(strings.ToLower(value)) {
+			return value
+		}
+	}
+
+	return ""
+}
+
+func sameRepository(a, b string) bool {
+	normalize := func(uri string) string {
+		return strings.TrimSuffix(strings.TrimSuffix(uri, "/"), ".git")
+	}
+
+	return strings.EqualFold(normalize(a), normalize(b))
+}
+
+// sameRef compares git refs. Two fully qualified refs must be identical, so
+// refs/tags/v1 and refs/heads/v1 differ. A short name matches a branch or
+// tag of that name.
+func sameRef(left, right string) bool {
+	if left == right {
+		return true
+	}
+
+	const qualifiedPrefix = "refs/"
+
+	if strings.HasPrefix(left, qualifiedPrefix) && strings.HasPrefix(right, qualifiedPrefix) {
+		return false
+	}
+
+	short := func(ref string) string {
+		for _, prefix := range []string{"refs/heads/", "refs/tags/"} {
+			if name, found := strings.CutPrefix(ref, prefix); found {
+				return name
+			}
+		}
+
+		return ref
+	}
+
+	return short(left) == short(right)
+}
+
+func firstDigest(digests map[string]string) string {
+	algorithms := make([]string, 0, len(digests))
+
+	for algorithm, value := range digests {
+		if value != "" {
+			algorithms = append(algorithms, algorithm)
+		}
+	}
+
+	if len(algorithms) == 0 {
+		return ""
+	}
+
+	slices.Sort(algorithms)
+
+	return algorithms[0] + ":" + digests[algorithms[0]]
 }
 
 func verifySubjectDigest(subjects []Subject, imageDigest string) error {
@@ -397,31 +783,49 @@ func verifySubjectDigest(subjects []Subject, imageDigest string) error {
 // verifyBuilder checks whether the builder is in the trusted builders list.
 // When a matched builder has a MaxLevel configured, a warning is logged because
 // SLSA provenance does not declare a build level, so MaxLevel can only be
-// enforced via VSA verification (vsa.minimumLevel).
-func verifyBuilder(ctx context.Context, builder Builder, pol *policy.Policy) error {
+// enforced via VSA verification (vsa.minimumLevel). When bind is set it is
+// called with all matched builder entries.
+func verifyBuilder(
+	ctx context.Context, builder Builder, pol *policy.Policy, bind builderBinder,
+) error {
 	builders := pol.Builders()
 	if len(builders) == 0 {
 		return nil
 	}
 
-	for _, trusted := range builders {
-		if trusted.ID == builder.ID {
-			if trusted.MaxLevel > 0 {
-				if _, loaded := warnedMaxLevel.LoadOrStore(builder.ID, struct{}{}); !loaded {
-					slog.WarnContext(ctx,
-						"Builder has maxLevel configured but SLSA provenance does not "+
-							"declare build levels; use VSA verification to enforce levels",
-						"builder", builder.ID,
-						"maxLevel", trusted.MaxLevel,
-					)
-				}
-			}
+	var matched []policy.TrustedBuilder
 
-			return nil
+	for _, trusted := range builders {
+		if trusted.ID != builder.ID {
+			continue
+		}
+
+		matched = append(matched, trusted)
+
+		if trusted.MaxLevel > 0 {
+			if _, loaded := warnedMaxLevel.LoadOrStore(builder.ID, struct{}{}); !loaded {
+				slog.WarnContext(ctx,
+					"Builder has maxLevel configured but SLSA provenance does not "+
+						"declare build levels; use VSA verification to enforce levels",
+					"builder", builder.ID,
+					"maxLevel", trusted.MaxLevel,
+				)
+			}
 		}
 	}
 
-	return fmt.Errorf("%w: %q", ErrUntrustedBuilder, builder.ID)
+	if len(matched) == 0 {
+		return fmt.Errorf("%w: %q", ErrUntrustedBuilder, builder.ID)
+	}
+
+	if bind != nil {
+		err := bind(matched)
+		if err != nil {
+			return fmt.Errorf("%w: %q: %w", ErrUntrustedBuilder, builder.ID, err)
+		}
+	}
+
+	return nil
 }
 
 func verifyBuildType(buildType string, pol *policy.Policy) error {
@@ -436,26 +840,42 @@ func verifyBuildType(buildType string, pol *policy.Policy) error {
 	return fmt.Errorf("%w: %q", ErrUntrustedBuildType, buildType)
 }
 
-// verifySources checks whether the provenance source matches any trusted
+// verifySource checks whether the provenance source matches any trusted
 // source pattern. '*' matches non-'/' characters, '**' matches any
-// characters including '/'.
-func verifySources(params map[string]any, pol *policy.Policy) error {
+// characters including '/'. See glob.MatchSource for ref-pinned patterns.
+// The resolved ref is the explicit ref parameter when the provenance
+// carries one, so a ref embedded in a URI cannot satisfy a ref-pinned
+// pattern, and ref text cannot satisfy a repository wildcard.
+// A build configuration source (from a different repository, or from the
+// same repository at another ref) must match a trusted source pattern as
+// well.
+func verifySource(source *sourceInfo, pol *policy.Policy) error {
 	if pol.Trust == nil || len(pol.Trust.Sources) == 0 {
 		return nil
 	}
 
-	sourceVal, exists := params[metaSource]
-	if !exists {
-		return fmt.Errorf("%w: source parameter missing", ErrUntrustedSource)
+	if source.URI == "" {
+		return fmt.Errorf("%w: source not found in provenance", ErrUntrustedSource)
 	}
 
-	source, isString := sourceVal.(string)
-	if !isString {
-		return fmt.Errorf("%w: source parameter is not a string", ErrUntrustedSource)
+	err := verifySourcePatterns(source, pol.Trust.Sources)
+	if err != nil {
+		return err
 	}
 
-	for _, pattern := range pol.Trust.Sources {
-		matched, err := glob.Match(pattern, source)
+	if source.Config != nil && source.Config.URI != "" {
+		err = verifySourcePatterns(source.Config, pol.Trust.Sources)
+		if err != nil {
+			return fmt.Errorf("build configuration source: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func verifySourcePatterns(source *sourceInfo, patterns []string) error {
+	for _, pattern := range patterns {
+		matched, err := glob.MatchSource(pattern, source.URI, source.Ref)
 		if err != nil {
 			return fmt.Errorf("invalid source pattern %q: %w", pattern, err)
 		}
@@ -465,15 +885,7 @@ func verifySources(params map[string]any, pol *policy.Policy) error {
 		}
 	}
 
-	return fmt.Errorf("%w: %q", ErrUntrustedSource, source)
-}
-
-func extractSource(params map[string]any) string {
-	if s, ok := params[metaSource].(string); ok {
-		return s
-	}
-
-	return ""
+	return fmt.Errorf("%w: %q", ErrUntrustedSource, source.URI)
 }
 
 // verifyParameters rejects provenance with unrecognized externalParameters
@@ -499,7 +911,7 @@ func verifyParameters(params map[string]any, pol *policy.Policy) error {
 }
 
 func defaultKnownParameters() []string {
-	return []string{metaSource, "repository", "ref", "workflow", metaBuildType}
+	return []string{metaSource, "repository", "ref", paramWorkflow, metaBuildType}
 }
 
 var check = types.Checker{ //nolint:gochecknoglobals // package-scoped helper
@@ -515,12 +927,16 @@ func ResetWarnings() {
 	warnedEmptyTrust.Clear()
 }
 
-func warnEmptyTrust(ctx context.Context, pol *policy.Policy) {
+func trustConfigured(pol *policy.Policy) bool {
 	if len(pol.Builders()) > 0 {
-		return
+		return true
 	}
 
-	if pol.Trust != nil && (len(pol.Trust.Sources) > 0 || len(pol.Trust.BuildTypes) > 0) {
+	return pol.Trust != nil && (len(pol.Trust.Sources) > 0 || len(pol.Trust.BuildTypes) > 0)
+}
+
+func warnEmptyTrust(ctx context.Context, pol *policy.Policy) {
+	if trustConfigured(pol) {
 		return
 	}
 
@@ -530,13 +946,15 @@ func warnEmptyTrust(ctx context.Context, pol *policy.Policy) {
 
 	slog.WarnContext(ctx,
 		"SLSA verification has no trusted builders, sources, or build types configured; "+
-			"any provenance will pass builder and source checks")
+			"any provenance passes builder and source checks with a warning status")
 }
 
 func verifyFreshness(buildStarted *time.Time, pol *policy.Policy) error {
 	maxAgeConfigured := pol.SLSA != nil && pol.SLSA.MaxAge != ""
 
-	if buildStarted == nil {
+	// A zero time (as emitted for an unset Go time.Time) carries no
+	// information and is treated as absent.
+	if buildStarted == nil || buildStarted.IsZero() {
 		if maxAgeConfigured {
 			return fmt.Errorf("%w: no build timestamp in provenance", ErrStaleProvenance)
 		}

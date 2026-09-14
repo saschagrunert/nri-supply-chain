@@ -16,6 +16,7 @@ package vulnscan_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -53,7 +54,7 @@ type scanMeta struct {
 }
 
 type scanResult struct {
-	Vulnerabilities []vuln `json:"vulnerabilities,omitempty"`
+	Vulnerabilities []vuln `json:"vulnerabilities"`
 }
 
 type vuln struct {
@@ -67,6 +68,7 @@ const (
 	testSevLow      = "low"
 	testSevHigh     = "high"
 	testSevCritical = "critical"
+	testSevUnknown  = "UNKNOWN"
 )
 
 func validDoc() vulnScanDoc {
@@ -549,7 +551,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		testutil.AssertEqual(t, types.StatusFail, result.Status)
 	})
 
-	t.Run("mix of valid and invalid with valid passing", func(t *testing.T) {
+	t.Run("mix of valid and invalid fails", func(t *testing.T) {
 		t.Parallel()
 
 		attestations := [][]byte{
@@ -565,8 +567,8 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		)
 		testutil.AssertNoError(t, err)
 
-		if !result.Passed {
-			t.Errorf("expected pass with valid doc, got: %s", result.Detail)
+		if result.Passed {
+			t.Error("expected fail when any document is invalid")
 		}
 	})
 }
@@ -630,7 +632,7 @@ func TestVerifyFreshness(t *testing.T) {
 				},
 			},
 			wantPassed: false,
-			wantSubstr: "no scan timestamp",
+			wantSubstr: "no scanned timestamp",
 		},
 		{
 			name:       "no timestamp without maxAge passes",
@@ -771,31 +773,177 @@ func TestVerifyMultiplePassAndFail(t *testing.T) {
 	testutil.AssertEqual(t, types.StatusFail, result.Status)
 }
 
-func TestVerifyUnknownSeverityTreatedAsNone(t *testing.T) {
+func TestVerifySeverityAliasesAndUnknown(t *testing.T) {
 	t.Parallel()
 
-	doc := vulnScanDoc{ //nolint:exhaustruct_v5 // test omits Metadata
-		Scanner: scannerInfo{URI: testScannerURI}, //nolint:exhaustruct_v5 // test omits Version
-		Result: scanResult{
-			Vulnerabilities: []vuln{
-				{ID: testCVE1, Severity: "moderate", Score: new(4.0)},
+	tests := []struct {
+		name       string
+		vuln       vuln
+		pol        *policy.VulnScanPolicy
+		wantPassed bool
+		wantSubstr string
+	}{
+		{
+			name: "moderate alias ranks as medium",
+			vuln: vuln{ID: testCVE1, Severity: "moderate", Score: nil},
+			pol: &policy.VulnScanPolicy{
+				MinSeverity: testSevMedium,
 			},
+			wantPassed: false,
+			wantSubstr: "severity medium",
+		},
+		{
+			name: "score raises textual severity",
+			vuln: vuln{ID: testCVE1, Severity: testSevLow, Score: new(9.8)},
+			pol: &policy.VulnScanPolicy{
+				MinSeverity: testSevCritical,
+			},
+			wantPassed: false,
+			wantSubstr: "severity critical",
+		},
+		{
+			name: "unknown severity without score fails closed",
+			vuln: vuln{ID: testCVE1, Severity: testSevUnknown, Score: nil},
+			pol: &policy.VulnScanPolicy{
+				MinSeverity: testSevCritical,
+			},
+			wantPassed: false,
+			wantSubstr: "no recognizable severity",
+		},
+		{
+			name: "unknown severity ignored explicitly",
+			vuln: vuln{ID: testCVE1, Severity: testSevUnknown, Score: nil},
+			pol: &policy.VulnScanPolicy{
+				MinSeverity: testSevCritical,
+				IgnoreCVEs:  []string{testCVE1},
+			},
+			wantPassed: true,
+			wantSubstr: "",
+		},
+		{
+			name:       "unknown severity without thresholds passes",
+			vuln:       vuln{ID: testCVE1, Severity: testSevUnknown, Score: nil},
+			pol:        &policy.VulnScanPolicy{},
+			wantPassed: true,
+			wantSubstr: "",
+		},
+		{
+			name: "critical severity without score exceeds maxScore",
+			vuln: vuln{ID: testCVE1, Severity: testSevCritical, Score: nil},
+			pol: &policy.VulnScanPolicy{
+				MaxScore: new(7.0),
+			},
+			wantPassed: false,
+			wantSubstr: "threshold exceeded",
 		},
 	}
-	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-	result, err := vulnscan.Verify(context.Background(), att, &policy.Policy{
-		VulnScan: &policy.VulnScanPolicy{
-			MinSeverity: testSevLow,
-		},
-	}, testDigest)
-	testutil.AssertNoError(t, err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	if !result.Passed {
-		t.Errorf(
-			"expected pass: unknown severity 'moderate' should rank as none, got: %s",
-			result.Detail,
-		)
+			doc := vulnScanDoc{ //nolint:exhaustruct_v5 // test omits Metadata
+				Scanner: scannerInfo{URI: testScannerURI, Version: ""},
+				Result:  scanResult{Vulnerabilities: []vuln{tc.vuln}},
+			}
+			att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
+
+			result, err := vulnscan.Verify(
+				context.Background(),
+				att,
+				&policy.Policy{VulnScan: tc.pol},
+				testDigest,
+			)
+			testutil.AssertNoError(t, err)
+			testutil.AssertEqual(t, tc.wantPassed, result.Passed)
+
+			if tc.wantSubstr != "" {
+				testutil.AssertContains(t, result.Detail, tc.wantSubstr)
+			}
+		})
+	}
+}
+
+const specScanPredicate = `{
+  "scanner": {
+    "uri": "pkg:github/aquasecurity/trivy@244fd47e07d1004f0aed9",
+    "version": "0.19.2",
+    "db": {"uri": "pkg:github/aquasecurity/trivy-db/commit/4c76bb5", "version": "v1-2021080612"},
+    "result": [
+      {"id": "CVE-2024-9999", "severity": [
+        {"method": "nvd", "score": "9.8"},
+        {"method": "cvss_vector", "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}
+      ]},
+      {"id": "CVE-2024-1111", "severity": [{"method": "epss", "score": 0.97}, {"method": "vendor", "score": "LOW"}]},
+      {"id": "CVE-2024-2222", "severity": [{"method": "nvd", "score": 5.3}]}
+    ]
+  },
+  "metadata": {"scanStartedOn": "2021-08-06T17:45:50.52Z", "scanFinishedOn": "%s"}
+}`
+
+func TestVerifySpecPredicate(t *testing.T) {
+	t.Parallel()
+
+	finished := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
+	att := testutil.WrapInToto(t,
+		json.RawMessage(strings.Replace(specScanPredicate, "%s", finished, 1)),
+		testDigest, testPredicateType)
+
+	t.Run("CVSS score string exceeds minSeverity high", func(t *testing.T) {
+		t.Parallel()
+
+		result, err := vulnscan.Verify(context.Background(), att, &policy.Policy{
+			VulnScan: &policy.VulnScanPolicy{
+				MinSeverity: testSevHigh,
+			},
+		}, testDigest)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, false, result.Passed)
+		testutil.AssertContains(t, result.Detail, "CVE-2024-9999 (score 9.8, severity critical)")
+	})
+
+	t.Run("metadata derived from spec layout", func(t *testing.T) {
+		t.Parallel()
+
+		result, err := vulnscan.Verify(context.Background(), att, &policy.Policy{
+			VulnScan: &policy.VulnScanPolicy{
+				MaxAge:         "1h",
+				MaxAgeDuration: time.Hour,
+			},
+		}, testDigest)
+		testutil.AssertNoError(t, err)
+		testutil.AssertTrue(t, result.Passed)
+		testutil.AssertEqual[any](t, int64(3), result.Metadata["vulnCount"])
+		testutil.AssertEqual[any](t, int64(1), result.Metadata["criticalCount"])
+		testutil.AssertEqual[any](t, "critical", result.Metadata["maxSeverity"])
+		testutil.AssertEqual[any](t, 9.8, result.Metadata["maxScore"])
+	})
+}
+
+func TestVerifyRejectsIncompletePredicates(t *testing.T) {
+	t.Parallel()
+
+	tests := []string{
+		`{}`,
+		`null`,
+		`{"result":{"vulnerabilities":[]}}`,
+		`{"scanner":{"version":"1"},"result":{}}`,
+		`{"scanner":{"uri":"https://trivy.dev"}}`,
+		`{"scanner":{"uri":"https://trivy.dev","result":[{"severity":[]}]}}`,
+		`{"scanner":{"uri":"https://trivy.dev","result":[{"id":"x","severity":[{"score":true}]}]}}`,
+	}
+
+	for _, predicate := range tests {
+		t.Run(predicate, func(t *testing.T) {
+			t.Parallel()
+
+			att := testutil.WrapInToto(t, json.RawMessage(predicate), testDigest, testPredicateType)
+
+			_, err := vulnscan.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+			if !errors.Is(err, vulnscan.ErrInvalidVulnScan) {
+				t.Fatalf("expected ErrInvalidVulnScan, got %v", err)
+			}
+		})
 	}
 }
 

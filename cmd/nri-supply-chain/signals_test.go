@@ -1086,8 +1086,8 @@ func TestUpdateWatchedPathsSwapsDirectory(t *testing.T) {
 		t.Errorf("new policy directory %s not found in watch list %v", absNew, watchList)
 	}
 
-	if !slices.Contains(watchList, configPath) {
-		t.Error("config file should still be in watch list")
+	if !slices.Contains(watchList, dir) {
+		t.Errorf("config directory %s should be in watch list %v", dir, watchList)
 	}
 }
 
@@ -1508,4 +1508,87 @@ func TestHandleReloadPanicRecovery(t *testing.T) {
 		t.Errorf("expected config reload error counter to increment by 1, got delta %v",
 			errorsAfter-errorsBefore)
 	}
+}
+
+// TestFileWatchPolicyDirReplaced replaces the policy directory inside the
+// config directory. The replacement must trigger a reload, and the reload must
+// watch the new directory.
+func TestFileWatchPolicyDirReplaced(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	policyDir := filepath.Join(dir, "policies")
+	policy := []byte(`{"slsa": {"missingPolicy": "deny"}}`)
+
+	err := os.Mkdir(policyDir, 0o750)
+	if err != nil {
+		t.Fatalf("creating policy dir: %v", err)
+	}
+
+	writeTestConfig(t, configPath, policyDir, "warn")
+
+	cfg, err := config.LoadFromFile(configPath)
+	if err != nil {
+		t.Fatalf("loading config: %v", err)
+	}
+
+	met := metrics.New()
+
+	verif, err := verifier.New(t.Context(), cfg, met, nil)
+	if err != nil {
+		t.Fatalf("creating verifier: %v", err)
+	}
+
+	cleanup, _, _ := setupFileWatch(
+		t.Context(), configPath, policyDir, "",
+		config.OfflineModeDisabled, verif, met, nil,
+		"", &sync.Mutex{},
+	)
+	defer cleanup()
+
+	waitForReloads := func(want float64, step string) {
+		t.Helper()
+
+		deadline := time.Now().Add(5 * time.Second)
+		for testutil.ToFloat64(met.ConfigReloadsTotal) < want {
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: expected at least %v reloads, got %v",
+					step, want, testutil.ToFloat64(met.ConfigReloadsTotal))
+			}
+
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	staged := filepath.Join(dir, "policies.new")
+
+	err = os.Mkdir(staged, 0o750)
+	if err != nil {
+		t.Fatalf("creating staged policy dir: %v", err)
+	}
+
+	err = os.WriteFile(filepath.Join(staged, "default.json"), policy, 0o600)
+	if err != nil {
+		t.Fatalf("writing staged policy: %v", err)
+	}
+
+	err = os.Remove(policyDir)
+	if err != nil {
+		t.Fatalf("removing policy dir: %v", err)
+	}
+
+	err = os.Rename(staged, policyDir)
+	if err != nil {
+		t.Fatalf("replacing policy dir: %v", err)
+	}
+
+	waitForReloads(1, "replace")
+
+	err = os.WriteFile(filepath.Join(policyDir, "team.json"), policy, 0o600)
+	if err != nil {
+		t.Fatalf("writing policy: %v", err)
+	}
+
+	waitForReloads(2, "write after replace")
 }

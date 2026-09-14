@@ -76,6 +76,17 @@ func FuzzVerify(f *testing.F) {
 		`"metadata":{"finishedOn":"2025-01-15T11:00:00Z","framework":"go-test"}}` +
 		`}`))
 
+	// Seed: in-toto specification fields with a PASSED result that still
+	// reports failed tests, exercising the consistency check.
+	f.Add([]byte(`{` +
+		`"_type":"https://in-toto.io/Statement/v1",` +
+		`"subject":[{"name":"test","digest":{"sha256":` +
+		`"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"}}],` +
+		`"predicateType":"https://in-toto.io/attestation/test-result/v0.1",` +
+		`"predicate":{"result":"PASSED","configuration":[{"uri":"https://ci.example.com"}],` +
+		`"passedTests":["unit"],"warnedTests":["lint"],"failedTests":["e2e"]}` +
+		`}`))
+
 	f.Fuzz(func(_ *testing.T, data []byte) {
 		testresult.Verify(context.Background(), data, &policy.Policy{}, testDigest)
 	})

@@ -23,8 +23,10 @@ spec:
       {{- with .Values.monitoring.serviceMonitor.scrapeTimeout }}
       scrapeTimeout: {{ . }}
       {{- end }}
+      honorLabels: {{ .Values.monitoring.serviceMonitor.honorLabels }}
 {{- end }}
 {{- if .Values.monitoring.prometheusRule.enabled }}
+{{- $job := include "nri-supply-chain.fullname" . }}
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
@@ -40,6 +42,18 @@ spec:
   groups:
     - name: nri-supply-chain
       rules:
+        - alert: NRISupplyChainPluginDown
+          expr: up{job="{{ $job }}"} == 0 or absent(up{job="{{ $job }}"})
+          for: {{ .Values.monitoring.prometheusRule.pluginDownFor }}
+          labels: {severity: critical}
+          annotations:
+            summary: Supply-chain plugin is not running or not scraped; containers on affected nodes are not verified unless the runtime requires the plugin.
+        - alert: NRISupplyChainNRIDisconnected
+          expr: nri_supply_chain_nri_connected == 0
+          for: {{ .Values.monitoring.prometheusRule.nriDisconnectedFor }}
+          labels: {severity: critical}
+          annotations:
+            summary: Supply-chain plugin is not connected to the NRI runtime; new containers on this node are not verified unless the runtime requires the plugin.
         - alert: NRISupplyChainVerificationFailures
           expr: sum(rate(nri_supply_chain_verification_total{result="fail"}[5m])) > {{ .Values.monitoring.prometheusRule.failureRateThreshold }}
           for: 5m
@@ -64,12 +78,12 @@ spec:
           labels: {severity: warning}
           annotations:
             summary: Verifications are being interrupted by context cancellation.
-        - alert: NRISupplyChainHighVerificationLatency
-          expr: histogram_quantile(0.99, sum(rate(nri_supply_chain_verification_duration_seconds_bucket[5m])) by (le)) > {{ .Values.monitoring.prometheusRule.verificationLatencyThresholdSeconds }}
-          for: {{ .Values.monitoring.prometheusRule.verificationLatencyFor }}
+        - alert: NRISupplyChainHighAdmissionLatency
+          expr: histogram_quantile(0.99, sum by (le, instance) (rate(nri_supply_chain_create_container_duration_seconds_bucket[5m]))) > {{ .Values.monitoring.prometheusRule.admissionLatencyThresholdSeconds }}
+          for: {{ .Values.monitoring.prometheusRule.admissionLatencyFor }}
           labels: {severity: warning}
           annotations:
-            summary: Verification p99 latency exceeds the configured threshold.
+            summary: CreateContainer p99 latency is approaching the runtime's NRI request timeout.
         - alert: NRISupplyChainConfigReloadFailure
           expr: increase(nri_supply_chain_config_reload_errors_total[15m]) > 0
           for: {{ .Values.monitoring.prometheusRule.reloadFailureFor }}
@@ -99,9 +113,9 @@ spec:
           annotations:
             summary: Remediation UpdateContainers calls are failing.
         - alert: NRISupplyChainContinuousVerifierStale
-          expr: time() - nri_supply_chain_continuous_verifier_last_run > {{ .Values.monitoring.prometheusRule.continuousVerifierStaleThreshold }}
+          expr: (time() - nri_supply_chain_continuous_verifier_last_run) > {{ .Values.monitoring.prometheusRule.continuousVerifierStaleThreshold }} and nri_supply_chain_continuous_verifier_last_run > 0
           for: {{ .Values.monitoring.prometheusRule.continuousVerifierStaleFor }}
           labels: {severity: critical}
           annotations:
-            summary: Continuous verifier has not run recently.
+            summary: Continuous verifier has not completed a cycle recently.
 {{- end }}

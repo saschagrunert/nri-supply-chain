@@ -45,7 +45,7 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 5,
+        "w": 4,
         "x": 0,
         "y": 1
       },
@@ -111,8 +111,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 5,
-        "x": 5,
+        "w": 4,
+        "x": 4,
         "y": 1
       },
       "id": 3,
@@ -167,8 +167,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 5,
-        "x": 10,
+        "w": 4,
+        "x": 8,
         "y": 1
       },
       "id": 4,
@@ -223,8 +223,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 5,
-        "x": 15,
+        "w": 4,
+        "x": 12,
         "y": 1
       },
       "id": 5,
@@ -290,7 +290,7 @@
       "gridPos": {
         "h": 4,
         "w": 4,
-        "x": 20,
+        "x": 16,
         "y": 1
       },
       "id": 6,
@@ -319,6 +319,81 @@
       "title": "Cache Hit Ratio",
       "type": "gauge",
       "description": "Ratio of cache hits to total cache lookups"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Disconnected",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "Connected",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 1
+      },
+      "id": 49,
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "value",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "colorMode": "background"
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "min(nri_supply_chain_nri_connected{job=~\"$job\",instance=~\"$instance\"})",
+          "legendFormat": "NRI Connected",
+          "refId": "A"
+        }
+      ],
+      "title": "NRI Connected",
+      "type": "stat",
+      "description": "Connected when every selected plugin instance is connected to the NRI runtime. Disconnected means new containers on at least one node are not verified unless the runtime requires the plugin."
     },
     {
       "collapsed": true,
@@ -2161,14 +2236,14 @@
                 "type": "prometheus",
                 "uid": "${datasource}"
               },
-              "expr": "time() - nri_supply_chain_continuous_verifier_last_run{job=~\"$job\",instance=~\"$instance\"}",
+              "expr": "(time() - nri_supply_chain_continuous_verifier_last_run{job=~\"$job\",instance=~\"$instance\"}) and nri_supply_chain_continuous_verifier_last_run{job=~\"$job\",instance=~\"$instance\"} > 0",
               "legendFormat": "Last Run",
               "refId": "A"
             }
           ],
           "title": "Last Verifier Run",
           "type": "stat",
-          "description": "Seconds since the continuous verifier last completed a run"
+          "description": "Seconds since the continuous verifier last completed a cycle. Empty while remediation is disabled or before the first cycle completes."
         }
       ]
     },

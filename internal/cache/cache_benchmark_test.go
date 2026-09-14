@@ -29,7 +29,13 @@ const benchDigest = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4" +
 func BenchmarkCacheGet(b *testing.B) {
 	testCache := cache.New(time.Hour)
 
-	result := &types.Result{Allowed: true, Reason: "ok", CheckResults: nil}
+	result := &types.Result{
+		Allowed:      true,
+		Verified:     true,
+		Mode:         "",
+		Reason:       "ok",
+		CheckResults: nil,
+	}
 	testCache.Set(benchDigest, "default", result)
 
 	b.ResetTimer()
@@ -54,7 +60,13 @@ func BenchmarkCacheGetMiss(b *testing.B) {
 
 func BenchmarkCacheSet(b *testing.B) {
 	testCache := cache.New(time.Hour)
-	result := &types.Result{Allowed: true, Reason: "ok", CheckResults: nil}
+	result := &types.Result{
+		Allowed:      true,
+		Verified:     true,
+		Mode:         "",
+		Reason:       "ok",
+		CheckResults: nil,
+	}
 
 	b.ResetTimer()
 
@@ -66,7 +78,13 @@ func BenchmarkCacheSet(b *testing.B) {
 func BenchmarkCacheGetParallel(b *testing.B) {
 	testCache := cache.New(time.Hour)
 
-	result := &types.Result{Allowed: true, Reason: "ok", CheckResults: nil}
+	result := &types.Result{
+		Allowed:      true,
+		Verified:     true,
+		Mode:         "",
+		Reason:       "ok",
+		CheckResults: nil,
+	}
 	testCache.Set(benchDigest, "default", result)
 
 	b.ResetTimer()
@@ -80,7 +98,13 @@ func BenchmarkCacheGetParallel(b *testing.B) {
 
 func BenchmarkCacheSetParallel(b *testing.B) {
 	testCache := cache.New(time.Hour)
-	result := &types.Result{Allowed: true, Reason: "ok", CheckResults: nil}
+	result := &types.Result{
+		Allowed:      true,
+		Verified:     true,
+		Mode:         "",
+		Reason:       "ok",
+		CheckResults: nil,
+	}
 
 	b.ResetTimer()
 
@@ -96,7 +120,13 @@ func BenchmarkCacheSetParallel(b *testing.B) {
 
 func BenchmarkCacheGetSetParallel(b *testing.B) {
 	testCache := cache.New(time.Hour)
-	result := &types.Result{Allowed: true, Reason: "ok", CheckResults: nil}
+	result := &types.Result{
+		Allowed:      true,
+		Verified:     true,
+		Mode:         "",
+		Reason:       "ok",
+		CheckResults: nil,
+	}
 
 	const prefillSize = 100
 
@@ -125,7 +155,13 @@ func BenchmarkCacheGetSetParallel(b *testing.B) {
 
 func BenchmarkCacheSetWithTTLOverride(b *testing.B) {
 	testCache := cache.New(time.Hour)
-	result := &types.Result{Allowed: false, Reason: "fetch failed", CheckResults: nil}
+	result := &types.Result{
+		Allowed:      false,
+		Verified:     false,
+		Mode:         "",
+		Reason:       "fetch failed",
+		CheckResults: nil,
+	}
 
 	b.ResetTimer()
 

@@ -1346,17 +1346,28 @@ type capturingVerifier struct {
 }
 
 func (v *capturingVerifier) Verify(
-	_ context.Context,
-	_, _, _, _, serviceAccount string,
+	_ context.Context, req *scTypes.VerifyRequest,
 ) (*scTypes.Result, error) {
 	v.mu.Lock()
-	v.serviceAccount = serviceAccount
+	v.serviceAccount = req.ServiceAccount
 	v.mu.Unlock()
 
-	return &scTypes.Result{Allowed: true, Reason: "", CheckResults: nil}, nil
+	return &scTypes.Result{
+		Allowed:      true,
+		Verified:     true,
+		Mode:         "",
+		Reason:       "",
+		CheckResults: nil,
+	}, nil
 }
 
 func (v *capturingVerifier) Ready() (ready bool, reason string) { return true, "" }
+
+func (v *capturingVerifier) ShouldVerify(
+	_ context.Context, _, _ string,
+) (verify bool, reason string) {
+	return true, ""
+}
 
 func (v *capturingVerifier) Enforcing() bool { return false }
 
@@ -1372,9 +1383,15 @@ var errVerifyFailed = errors.New("verification failed")
 type failingVerifier struct{}
 
 func (v *failingVerifier) Verify(
-	_ context.Context, _, _, _, _, _ string,
+	_ context.Context, _ *scTypes.VerifyRequest,
 ) (*scTypes.Result, error) {
 	return nil, errVerifyFailed
+}
+
+func (v *failingVerifier) ShouldVerify(
+	_ context.Context, _, _ string,
+) (verify bool, reason string) {
+	return true, ""
 }
 
 func (v *failingVerifier) Ready() (ready bool, reason string)               { return true, "" }
@@ -1525,7 +1542,13 @@ func TestBuildVerificationAdjustmentNilResult(t *testing.T) {
 func TestBuildVerificationAdjustmentDisabledMode(t *testing.T) {
 	t.Parallel()
 
-	result := &scTypes.Result{Allowed: true, Reason: "", CheckResults: nil}
+	result := &scTypes.Result{
+		Allowed:      true,
+		Verified:     true,
+		Mode:         "",
+		Reason:       "",
+		CheckResults: nil,
+	}
 
 	adj := plugin.ExportBuildVerificationAdjustment(result, config.ModeDisabled)
 	if adj != nil {
@@ -1537,8 +1560,10 @@ func TestBuildVerificationAdjustmentWarnAllowed(t *testing.T) {
 	t.Parallel()
 
 	result := &scTypes.Result{
-		Allowed: true,
-		Reason:  "",
+		Allowed:  true,
+		Verified: true,
+		Mode:     "",
+		Reason:   "",
 		CheckResults: []scTypes.CheckResult{
 			*scTypes.PassResult(scTypes.CheckTypeSLSA, "ok"),
 			*scTypes.WarnResult(scTypes.CheckTypeSBOM, "partial"),
@@ -1569,8 +1594,10 @@ func TestBuildVerificationAdjustmentEnforceDenied(t *testing.T) {
 	t.Parallel()
 
 	result := &scTypes.Result{
-		Allowed: false,
-		Reason:  "",
+		Allowed:  false,
+		Verified: false,
+		Mode:     "",
+		Reason:   "",
 		CheckResults: []scTypes.CheckResult{
 			*scTypes.PassResult(scTypes.CheckTypeVEX, "ok"),
 			*scTypes.FailResult(scTypes.CheckTypeNotation, "invalid signature", nil),
@@ -1601,8 +1628,10 @@ func TestBuildVerificationAdjustmentEnforceAllowed(t *testing.T) {
 	t.Parallel()
 
 	result := &scTypes.Result{
-		Allowed: true,
-		Reason:  "",
+		Allowed:  true,
+		Verified: true,
+		Mode:     "",
+		Reason:   "",
 		CheckResults: []scTypes.CheckResult{
 			*scTypes.PassResult(scTypes.CheckTypeSLSA, "ok"),
 			*scTypes.PassResult(scTypes.CheckTypeVEX, "ok"),
@@ -1632,7 +1661,13 @@ func TestBuildVerificationAdjustmentEnforceAllowed(t *testing.T) {
 func TestBuildVerificationAdjustmentNoCheckResults(t *testing.T) {
 	t.Parallel()
 
-	result := &scTypes.Result{Allowed: true, Reason: "", CheckResults: nil}
+	result := &scTypes.Result{
+		Allowed:      true,
+		Verified:     true,
+		Mode:         "",
+		Reason:       "",
+		CheckResults: nil,
+	}
 
 	adj := plugin.ExportBuildVerificationAdjustment(result, config.ModeWarn)
 	if adj == nil {
@@ -1658,8 +1693,10 @@ func TestBuildVerificationAdjustmentAllCheckTypes(t *testing.T) {
 	t.Parallel()
 
 	result := &scTypes.Result{
-		Allowed: true,
-		Reason:  "",
+		Allowed:  true,
+		Verified: true,
+		Mode:     "",
+		Reason:   "",
 		CheckResults: []scTypes.CheckResult{
 			*scTypes.PassResult(scTypes.CheckTypeSLSA, ""),
 			*scTypes.PassResult(scTypes.CheckTypeVEX, ""),

@@ -80,7 +80,24 @@ func FuzzVerify(f *testing.F) {
 		`"fileAccesses":[]}` +
 		`}`))
 
+	// Seed: file access with a benign name and a forbidden file URI,
+	// exercising name and URI matching.
+	f.Add([]byte(`{` +
+		`"_type":"https://in-toto.io/Statement/v1",` +
+		`"subject":[{"name":"test","digest":{"sha256":` +
+		`"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"}}],` +
+		`"predicateType":"https://in-toto.io/attestation/runtime-trace/v0.1",` +
+		`"predicate":{"monitor":{"type":"tetragon"},` +
+		`"monitorLog":{"fileAccess":[{"name":"shadow","uri":"file:///etc/shadow"}]},` +
+		`"metadata":{"buildFinishedOn":"2025-01-15T10:00:00Z"}}` +
+		`}`))
+
+	forbiddenPolicy := &policy.Policy{
+		RuntimeTrace: &policy.RuntimeTracePolicy{ForbiddenFilePatterns: []string{"/etc/**"}},
+	}
+
 	f.Fuzz(func(_ *testing.T, data []byte) {
 		runtimetrace.Verify(context.Background(), data, &policy.Policy{}, testDigest)
+		runtimetrace.Verify(context.Background(), data, forbiddenPolicy, testDigest)
 	})
 }

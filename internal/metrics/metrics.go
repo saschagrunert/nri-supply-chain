@@ -117,11 +117,22 @@ type Metrics struct {
 	FeedFilesProcessedTotal *prometheus.CounterVec
 	// ContinuousVerifierLastRun is the unix timestamp of the last completed cycle.
 	ContinuousVerifierLastRun prometheus.Gauge
+	// NRIConnected reports 1 while the plugin is connected to the NRI runtime.
+	NRIConnected prometheus.Gauge
 	// CreateContainerDuration measures end-to-end NRI CreateContainer hook latency.
 	CreateContainerDuration *prometheus.HistogramVec
 	// HostSemOverflowTotal counts per-host semaphore overflow events.
 	HostSemOverflowTotal prometheus.Counter
-	registry             *prometheus.Registry
+	// PolicyOCIStalenessSeconds reports the time since the last successful
+	// OCI policy registry check.
+	PolicyOCIStalenessSeconds prometheus.Gauge
+	// RuntimeConfigApplyFailed reports 1 while the latest configuration passed
+	// by the runtime failed to apply and is being retried.
+	RuntimeConfigApplyFailed prometheus.Gauge
+	// ReverificationIncompleteContainers reports the number of containers
+	// whose recent re-verifications were all incomplete.
+	ReverificationIncompleteContainers prometheus.Gauge
+	registry                           *prometheus.Registry
 }
 
 // New creates and registers all supply chain verification metrics.
@@ -274,6 +285,10 @@ func New() *Metrics {
 			"continuous_verifier_last_run",
 			"Unix timestamp of the last completed continuous verification cycle.",
 		),
+		NRIConnected: newGauge(
+			"nri_connected",
+			"Whether the plugin is connected to the NRI runtime (1) or not (0).",
+		),
 		CreateContainerDuration: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
 				Namespace: namespace,
@@ -289,6 +304,18 @@ func New() *Metrics {
 		HostSemOverflowTotal: newCounter(
 			"host_sem_overflow_total",
 			"Total number of per-host semaphore overflow events.",
+		),
+		PolicyOCIStalenessSeconds: newGauge(
+			"policy_oci_staleness_seconds",
+			"Seconds since the last successful OCI policy registry check.",
+		),
+		RuntimeConfigApplyFailed: newGauge(
+			"runtime_config_apply_failed",
+			"Whether the latest configuration passed by the runtime failed to apply (1) or not (0).",
+		),
+		ReverificationIncompleteContainers: newGauge(
+			"reverify_incomplete_containers",
+			"Number of containers whose last consecutive re-verifications could not complete.",
 		),
 		registry: prometheus.NewRegistry(),
 	}
@@ -473,8 +500,12 @@ func (m *Metrics) register() {
 		m.RemediationErrorsTotal,
 		m.FeedFilesProcessedTotal,
 		m.ContinuousVerifierLastRun,
+		m.NRIConnected,
 		m.CreateContainerDuration,
 		m.HostSemOverflowTotal,
+		m.PolicyOCIStalenessSeconds,
+		m.RuntimeConfigApplyFailed,
+		m.ReverificationIncompleteContainers,
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{
 			PidFn:        nil,
 			Namespace:    "",

@@ -99,18 +99,15 @@ func newVerifyCmd( //nolint:funlen // cobra command setup
 			}
 
 			code := runVerifyCmd(args, namespace, outputFormat, cfg, previewPolicy)
-			if code != 0 {
-				return errExitNonZero
-			}
 
-			return nil
+			return exitWith(code)
 		},
 	}
 
 	cmd.Flags().StringVarP(&namespace, "namespace", "n",
 		policy.DefaultPolicyLabel, "namespace for verification")
 	cmd.Flags().StringVarP(&outputFormat, "output", "o",
-		outputFormatTable, "output format: table, json")
+		outputFormatTable, "output format: table, json, quiet")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false,
 		"show step-by-step diagnostic output")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false,
@@ -183,9 +180,13 @@ func executeVerify(
 		return exitError
 	}
 
-	result, err := verif.Verify(
-		ctx, imageRef, resolved.digest, resolved.indexDigest, namespace, "",
-	)
+	result, err := verif.Verify(ctx, &types.VerifyRequest{
+		ImageRef:       imageRef,
+		Digest:         resolved.digest,
+		IndexDigest:    resolved.indexDigest,
+		Namespace:      namespace,
+		ServiceAccount: "",
+	})
 	out := newVerifyOutput(imageRef, resolved.digest, namespace, policyFile)
 	out.Mode = string(verif.EffectiveModeForNamespace(namespace))
 	out.PreviewPolicy = previewPolicy
@@ -378,9 +379,13 @@ func verifySingleImage(
 		return exitCodeForVerifyError(err), out
 	}
 
-	result, err := verif.Verify(
-		ctx, imageRef, resolved.digest, resolved.indexDigest, namespace, "",
-	)
+	result, err := verif.Verify(ctx, &types.VerifyRequest{
+		ImageRef:       imageRef,
+		Digest:         resolved.digest,
+		IndexDigest:    resolved.indexDigest,
+		Namespace:      namespace,
+		ServiceAccount: "",
+	})
 	out := newVerifyOutput(imageRef, resolved.digest, namespace, policyFile)
 	out.Mode = string(verif.EffectiveModeForNamespace(namespace))
 	out.PreviewPolicy = previewPolicy

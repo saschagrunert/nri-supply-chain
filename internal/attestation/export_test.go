@@ -17,6 +17,7 @@ package attestation
 import (
 	"context"
 	"crypto"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -41,8 +42,65 @@ import (
 func ExportDefaultVerifyBundle(
 	ctx context.Context, data []byte,
 	opts *FetchOptions,
-) ([]byte, error) {
+) (*VerifiedBundle, error) {
 	return verifyBundleWithCache(ctx, data, opts, nil)
+}
+
+// ExportVerifyBundleWithRoots verifies a bundle against the given trusted
+// roots, each scoped to the matching issuer list. skipSCTs disables the SCT
+// requirement for virtual Fulcio instances.
+func ExportVerifyBundleWithRoots(
+	ctx context.Context, data []byte, opts *FetchOptions,
+	roots []*root.TrustedRoot, issuers [][]string, skipSCTs bool,
+) (*VerifiedBundle, error) {
+	sources := make([]rootSource, 0, len(roots))
+
+	for idx, trustedRoot := range roots {
+		var scoped []string
+		if idx < len(issuers) {
+			scoped = issuers[idx]
+		}
+
+		sources = append(sources, rootSource{
+			name:    "test",
+			issuers: scoped,
+			get: func(context.Context) (*root.TrustedRoot, error) {
+				return trustedRoot, nil
+			},
+			keylessDisabled: false,
+			skipSCTs:        skipSCTs,
+		})
+	}
+
+	return verifyBundleCommon(ctx, data, opts, sources)
+}
+
+// ExportVerifyBundleWithFailingRoot verifies a bundle against a single root
+// source whose trusted root cannot be fetched.
+func ExportVerifyBundleWithFailingRoot(
+	ctx context.Context, data []byte, opts *FetchOptions, rootErr error,
+) (*VerifiedBundle, error) {
+	return verifyBundleCommon(ctx, data, opts, []rootSource{{
+		name:    "failing",
+		issuers: nil,
+		get: func(context.Context) (*root.TrustedRoot, error) {
+			return nil, rootErr
+		},
+		keylessDisabled: false,
+		skipSCTs:        true,
+	}})
+}
+
+// ExportScopeIssuers exposes scopeIssuers for external tests.
+func ExportScopeIssuers(policyIssuers, rootIssuers []string) []string {
+	return scopeIssuers(policyIssuers, rootIssuers)
+}
+
+// ExportLegacyLayerToBundles exposes legacyLayerToBundles for external tests.
+func ExportLegacyLayerToBundles(
+	envelopeJSON []byte, annotations map[string]string, keyHints []string,
+) ([][]byte, error) {
+	return legacyLayerToBundles(envelopeJSON, annotations, keyHints)
 }
 
 // ExportBuildCertificateID exposes buildCertificateIdentity for external tests.
@@ -52,35 +110,36 @@ func ExportBuildCertificateID(issuers, sanPatterns []string) (verify.Certificate
 
 // ExportBuildKeyMaterial exposes buildKeyMaterial for external tests.
 func ExportBuildKeyMaterial(keys []TrustedKeyRef) (*root.TrustedPublicKeyMaterial, error) {
-	return buildKeyMaterial(keys)
+	loaded, err := buildKeyMaterial(keys)
+	if err != nil {
+		return nil, err
+	}
+
+	return loaded.material, nil
+}
+
+// ExportBuildKeyMaterialPaths exposes the configured paths per key hint of
+// buildKeyMaterial.
+func ExportBuildKeyMaterialPaths(keys []TrustedKeyRef) (map[string][]string, error) {
+	loaded, err := buildKeyMaterial(keys)
+	if err != nil {
+		return nil, err
+	}
+
+	paths := make(map[string][]string, len(loaded.byHint))
+
+	for hint, key := range loaded.byHint {
+		for idx := range key.entries {
+			paths[hint] = append(paths[hint], key.entries[idx].path)
+		}
+	}
+
+	return paths, nil
 }
 
 // ExportLoadPublicKeyFromPEM exposes loadPublicKeyFromPEM for external tests.
 func ExportLoadPublicKeyFromPEM(path string) (crypto.PublicKey, error) {
 	return loadPublicKeyFromPEM(path)
-}
-
-// ExportBuildVerificationCfgErr exposes buildVerificationConfig for external tests,
-// returning only the error to avoid the dogsled linter issue.
-func ExportBuildVerificationCfgErr(
-	ctx context.Context,
-	opts *FetchOptions,
-) error {
-	_, _, _, err := buildVerificationConfig(ctx, opts, nil)
-
-	return err
-}
-
-// ExportBuildVerificationCfgWithCache exposes buildVerificationConfig with a cache
-// for external tests.
-func ExportBuildVerificationCfgWithCache(
-	ctx context.Context,
-	opts *FetchOptions,
-	cache *trustedRootCache,
-) error {
-	_, _, _, err := buildVerificationConfig(ctx, opts, cache)
-
-	return err
 }
 
 // ExportParseDigestRef exposes parseDigestRef for external tests.
@@ -110,6 +169,15 @@ func ExportErrInvalidPayloadType() error { return errInvalidPayloadType }
 // ExportErrNoTrustedMaterial returns the errNoTrustedMaterial sentinel for external tests.
 func ExportErrNoTrustedMaterial() error { return errNoTrustedMaterial }
 
+// ExportErrNoTrustedRoot returns the errNoTrustedRoot sentinel for external tests.
+func ExportErrNoTrustedRoot() error { return errNoTrustedRoot }
+
+// ExportErrNoTrustedIssuers returns the errNoTrustedIssuers sentinel for external tests.
+func ExportErrNoTrustedIssuers() error { return errNoTrustedIssuers }
+
+// ExportErrMissingPredicateType returns the errMissingPredicateType sentinel for external tests.
+func ExportErrMissingPredicateType() error { return errMissingPredicateType }
+
 // ExportErrAllBundlesFailed returns the errAllBundlesFailed sentinel for external tests.
 func ExportErrAllBundlesFailed() error { return errAllBundlesFailed }
 
@@ -121,7 +189,12 @@ func (f *OCIFetcher) VerifyBundle(
 	ctx context.Context, data []byte,
 	opts *FetchOptions,
 ) ([]byte, error) {
-	return f.verifyBundle(ctx, data, opts)
+	verified, err := f.verifyBundle(ctx, data, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	return verified.Payload, nil
 }
 
 // CollectAttestations exposes the OCIFetcher's collectAttestations for testing.
@@ -133,8 +206,54 @@ func (f *OCIFetcher) CollectAttestations(
 	remoteOpts []remote.Option,
 	opts *FetchOptions,
 ) ([]VerifiedAttestation, bool) {
-	return f.collectAttestations(ctx, manifests, ref, digest, remoteOpts, opts)
+	selection := selectReferrers(ctx, manifests)
+	atts, _ := f.collectBundles(ctx, selection.bundles, ref, digest, remoteOpts, opts)
+
+	return atts, len(selection.bundles) > 0
 }
+
+// CollectAttestationsStats exposes collectBundles with its verification failure count.
+func (f *OCIFetcher) CollectAttestationsStats(
+	ctx context.Context,
+	manifests []v1.Descriptor,
+	ref name.Digest,
+	digest string,
+	remoteOpts []remote.Option,
+	opts *FetchOptions,
+) (atts []VerifiedAttestation, verifyFailures int, fetchErr error) {
+	selection := selectReferrers(ctx, manifests)
+	atts, stats := f.collectBundles(ctx, selection.bundles, ref, digest, remoteOpts, opts)
+
+	return atts, stats.verifyFailures, stats.fetchErr
+}
+
+// ExportSelectReferrers returns the digests of the selected bundle, Notation,
+// and baseline referrers.
+func ExportSelectReferrers(
+	ctx context.Context, manifests []v1.Descriptor,
+) (bundles, notation, baselines []string) {
+	selection := selectReferrers(ctx, manifests)
+
+	for _, desc := range selection.bundles {
+		bundles = append(bundles, desc.Digest.String())
+	}
+
+	for _, desc := range selection.notation {
+		notation = append(notation, desc.Digest.String())
+	}
+
+	for _, desc := range selection.baselines {
+		baselines = append(baselines, desc.Digest.String())
+	}
+
+	return bundles, notation, baselines
+}
+
+// ExportMaxNotationReferrers exposes maxNotationReferrers for external tests.
+const ExportMaxNotationReferrers = maxNotationReferrers
+
+// ExportMaxReferrerManifestSize exposes maxReferrerManifestSize for external tests.
+const ExportMaxReferrerManifestSize = maxReferrerManifestSize
 
 // TrustedRootFetchFunc is the type alias for trustedRootFetchFunc.
 type TrustedRootFetchFunc = trustedRootFetchFunc
@@ -152,7 +271,10 @@ func NewTestTrustedRootCache(fetchFn TrustedRootFetchFunc) *trustedRootCache {
 		inflight:     singleflight.Group{},
 		onFallback:   nil,
 		lastFetchErr: time.Time{},
+		lastErr:      nil,
 		preSeeded:    nil,
+		name:         "",
+		issuers:      nil,
 	}
 }
 
@@ -168,7 +290,10 @@ func NewTestTrustedRootCacheWithRoot(
 		inflight:     singleflight.Group{},
 		onFallback:   nil,
 		lastFetchErr: time.Time{},
+		lastErr:      nil,
 		preSeeded:    nil,
+		name:         "",
+		issuers:      nil,
 	}
 }
 
@@ -184,7 +309,10 @@ func NewTestTrustedRootCacheWithPreSeeded(
 		inflight:     singleflight.Group{},
 		onFallback:   nil,
 		lastFetchErr: time.Time{},
+		lastErr:      nil,
 		preSeeded:    preSeeded,
+		name:         "",
+		issuers:      nil,
 	}
 }
 
@@ -204,7 +332,10 @@ func NewTestTrustedRootCacheWithRootAndPreSeeded(
 		inflight:     singleflight.Group{},
 		onFallback:   nil,
 		lastFetchErr: time.Time{},
+		lastErr:      nil,
 		preSeeded:    preSeeded,
+		name:         "",
+		issuers:      nil,
 	}
 }
 
@@ -222,7 +353,7 @@ func ExportTrustedRootMaxStaleness() time.Duration { return trustedRootMaxStalen
 // NewTestOCIFetcher creates a fetcher with injectable dependencies for testing.
 func NewTestOCIFetcher(verifier BundleVerifyFunc, imageFetcher ImageFetchFunc) *OCIFetcher {
 	fetcher := &OCIFetcher{
-		verifyBundle:       verifier,
+		verifyBundle:       payloadOnlyVerifier(verifier),
 		fetchImage:         imageFetcher,
 		referrers:          nil,
 		rootCache:          nil,
@@ -230,6 +361,7 @@ func NewTestOCIFetcher(verifier BundleVerifyFunc, imageFetcher ImageFetchFunc) *
 		limiter:            atomic.Pointer[rate.Limiter]{},
 		transportCache:     atomic.Pointer[registry.TransportCache]{},
 		maxAttestationSize: atomic.Int64{},
+		downloadLimit:      atomic.Int64{},
 		onMirrorFallback:   nil,
 		onMirrorFallbackMu: sync.RWMutex{},
 	}
@@ -243,7 +375,7 @@ func NewTestOCIFetcherFull(
 	verifier BundleVerifyFunc, imageFetcher ImageFetchFunc, referrersFn ReferrersFunc,
 ) *OCIFetcher {
 	fetcher := &OCIFetcher{
-		verifyBundle:       verifier,
+		verifyBundle:       payloadOnlyVerifier(verifier),
 		fetchImage:         imageFetcher,
 		referrers:          referrersFn,
 		rootCache:          nil,
@@ -251,6 +383,7 @@ func NewTestOCIFetcherFull(
 		limiter:            atomic.Pointer[rate.Limiter]{},
 		transportCache:     atomic.Pointer[registry.TransportCache]{},
 		maxAttestationSize: atomic.Int64{},
+		downloadLimit:      atomic.Int64{},
 		onMirrorFallback:   nil,
 		onMirrorFallbackMu: sync.RWMutex{},
 	}
@@ -275,14 +408,45 @@ func (f *OCIFetcher) FetchCosignTagAttestations(
 	remoteOpts []remote.Option,
 	fetchOpts *FetchOptions,
 ) ([]VerifiedAttestation, error) {
-	return f.fetchCosignTagAttestations(ctx, ref, digest, remoteOpts, fetchOpts)
+	atts, _, err := f.fetchCosignTagAttestations(ctx, ref, digest, remoteOpts, fetchOpts)
+
+	return atts, err
+}
+
+// CosignTagFallback exposes cosignTagFallback for external tests.
+func (f *OCIFetcher) CosignTagFallback(
+	ctx context.Context, ref name.Digest, digest string,
+	remoteOpts []remote.Option,
+	fetchOpts *FetchOptions,
+) ([]VerifiedAttestation, error) {
+	return f.cosignTagFallback(ctx, ref, digest, remoteOpts, fetchOpts)
+}
+
+// NewTestOCIFetcherSigned creates a fetcher with a signed verifier and injectable fetch functions.
+func NewTestOCIFetcherSigned(
+	verifier SignedBundleVerifyFunc, imageFetcher ImageFetchFunc, referrersFn ReferrersFunc,
+) *OCIFetcher {
+	fetcher := NewTestOCIFetcherFull(nil, imageFetcher, referrersFn)
+	fetcher.verifyBundle = verifier
+
+	return fetcher
 }
 
 // ExtractPayloadFromImage exposes extractPayloadFromImage for external tests.
 func (f *OCIFetcher) ExtractPayloadFromImage(
 	ctx context.Context, img v1.Image, fetchOpts *FetchOptions,
 ) ([]byte, error) {
-	return f.extractPayloadFromImage(ctx, img, fetchOpts)
+	data, err := f.readFirstLayer(ctx, img)
+	if err != nil {
+		return nil, err
+	}
+
+	verified, err := f.verifyBundle(ctx, data, fetchOpts)
+	if err != nil {
+		return nil, err
+	}
+
+	return verified.Payload, nil
 }
 
 // NewTestBundle creates a bundle with a DSSE envelope for testing.
@@ -360,14 +524,18 @@ func (f *OCIFetcher) FetchNotationSignature(
 	digest string,
 	remoteOpts []remote.Option,
 ) (VerifiedAttestation, bool) {
-	return f.fetchNotationSignature(ctx, desc, ref, digest, remoteOpts)
+	att, outcome, _ := f.fetchNotationSignature(ctx, desc, ref, digest, remoteOpts)
+
+	return att, outcome == outcomeVerified
 }
 
 // ExportReadNotationEnvelope exposes readNotationEnvelope for external tests.
 func (f *OCIFetcher) ExportReadNotationEnvelope(
-	ctx context.Context, img v1.Image, descDigest string,
+	ctx context.Context, img v1.Image, _ string,
 ) ([]byte, bool) {
-	return f.readNotationEnvelope(ctx, img, descDigest)
+	data, err := f.readFirstLayer(ctx, img)
+
+	return data, err == nil
 }
 
 // CollectNotationSignatures exposes collectNotationSignatures for external tests.
@@ -378,7 +546,10 @@ func (f *OCIFetcher) CollectNotationSignatures(
 	digest string,
 	remoteOpts []remote.Option,
 ) []VerifiedAttestation {
-	return f.collectNotationSignatures(ctx, manifests, ref, digest, remoteOpts)
+	selection := selectReferrers(ctx, manifests)
+	sigs, _ := f.collectNotationSignatures(ctx, selection.notation, ref, digest, remoteOpts)
+
+	return sigs
 }
 
 // ExportMaxCircuitBreakers exposes maxCircuitBreakers for external tests.
@@ -411,6 +582,11 @@ func (cb *CircuitBreaker) ExportIsOpen() bool {
 	defer cb.mu.RUnlock()
 
 	return cb.state == circuitOpen
+}
+
+// ExportIsClosed exposes the closed state for external tests.
+func (cb *CircuitBreaker) ExportIsClosed() bool {
+	return cb.isClosed()
 }
 
 // ExportThreshold exposes threshold for external tests.
@@ -449,29 +625,8 @@ func ExportVerifyBundle(
 	bundleBytes []byte,
 	opts *FetchOptions,
 	trustedRoot *root.TrustedRoot,
-) ([]byte, error) {
+) (*VerifiedBundle, error) {
 	return VerifyBundle(ctx, bundleBytes, opts, trustedRoot)
-}
-
-// ExportBuildVerificationCfgWithRoot exposes buildVerificationConfigWithRoot for external tests.
-func ExportBuildVerificationCfgWithRoot(
-	opts *FetchOptions,
-	trustedRoot *root.TrustedRoot,
-) error {
-	_, _, _, err := buildVerificationConfigWithRoot(opts, trustedRoot)
-
-	return err
-}
-
-// ExportBuildVerificationCfgMultiRoot exposes buildVerificationConfigMultiRoot for external tests.
-func ExportBuildVerificationCfgMultiRoot(
-	ctx context.Context,
-	opts *FetchOptions,
-	caches []*trustedRootCache,
-) error {
-	_, _, _, err := buildVerificationConfigMultiRoot(ctx, opts, caches)
-
-	return err
 }
 
 // ExportVerifyBundleWithMultipleRoots exposes verifyBundleWithMultipleRoots for external tests.
@@ -480,18 +635,8 @@ func ExportVerifyBundleWithMultipleRoots(
 	bundleBytes []byte,
 	opts *FetchOptions,
 	rootCaches []*trustedRootCache,
-) ([]byte, error) {
+) (*VerifiedBundle, error) {
 	return verifyBundleWithMultipleRoots(ctx, bundleBytes, opts, rootCaches)
-}
-
-// ExportVerifyBundleCommon exposes verifyBundleCommon for external tests.
-func ExportVerifyBundleCommon(
-	ctx context.Context,
-	bundleBytes []byte,
-	opts *FetchOptions,
-	buildConfig buildConfigFunc,
-) ([]byte, error) {
-	return verifyBundleCommon(ctx, bundleBytes, opts, buildConfig)
 }
 
 // ExportFetchTrustedRootWithContext exposes fetchTrustedRootWithContext for external tests.
@@ -501,9 +646,6 @@ func ExportFetchTrustedRootWithContext(
 ) (*root.TrustedRoot, error) {
 	return fetchTrustedRootWithContext(ctx, cachedRoot)
 }
-
-// BuildConfigFunc is the type alias for buildConfigFunc.
-type BuildConfigFunc = buildConfigFunc
 
 // ExportFetchWithFallback exposes fetchWithFallback for external tests.
 func (f *OCIFetcher) ExportFetchWithFallback(
@@ -546,4 +688,99 @@ func NewTestMessageSignatureBundle() *bundle.Bundle {
 	}
 
 	return bndl
+}
+
+// ExportSetDownloadLimit overrides the per-fetch download limit for tests.
+func (f *OCIFetcher) ExportSetDownloadLimit(limit int64) {
+	f.downloadLimit.Store(limit)
+}
+
+// ExportExpireFailure moves the last recorded refresh failure out of every
+// negative cache window.
+func (c *trustedRootCache) ExportExpireFailure() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.lastFetchErr = time.Now().Add(-24 * time.Hour)
+}
+
+// TestRootSource describes a trusted root source for tests: a root that is
+// available, or an error returned when it is fetched.
+type TestRootSource struct {
+	Root    *root.TrustedRoot
+	Err     error
+	Issuers []string
+}
+
+// ExportVerifyBundleWithRootSources verifies a bundle against root sources
+// that may be unavailable. SCTs are not required.
+func ExportVerifyBundleWithRootSources(
+	ctx context.Context, data []byte, opts *FetchOptions, sources []TestRootSource,
+) (*VerifiedBundle, error) {
+	converted := make([]rootSource, 0, len(sources))
+
+	for idx := range sources {
+		src := sources[idx]
+
+		converted = append(converted, rootSource{
+			name:    fmt.Sprintf("test-%d", idx),
+			issuers: src.Issuers,
+			get: func(context.Context) (*root.TrustedRoot, error) {
+				return src.Root, src.Err
+			},
+			keylessDisabled: false,
+			skipSCTs:        true,
+		})
+	}
+
+	return verifyBundleCommon(ctx, data, opts, converted)
+}
+
+// ErrNoLegacyVerificationMaterial exposes errNoLegacyVerificationMaterial for
+// external tests.
+var ErrNoLegacyVerificationMaterial = errNoLegacyVerificationMaterial
+
+// CollectSelectionParallel runs the production referrer collection of an
+// image on manifests and returns the combined attestations in order.
+func (f *OCIFetcher) CollectSelectionParallel(
+	ctx context.Context, manifests []v1.Descriptor,
+	ref name.Digest, digest string, opts *FetchOptions,
+) ([]VerifiedAttestation, error) {
+	ctx = withDownloadBudget(ctx, f.effectiveDownloadLimit())
+	selection := selectReferrers(ctx, manifests)
+
+	atts, sigs, baselines, err := f.collectSelection(ctx, &selection, ref, digest, nil, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	return append(append(atts, sigs...), baselines...), nil
+}
+
+// CollectSelectionSerial runs the referrer collectors one after another, as
+// the reference for the concurrent collection.
+func (f *OCIFetcher) CollectSelectionSerial(
+	ctx context.Context, manifests []v1.Descriptor,
+	ref name.Digest, digest string, opts *FetchOptions,
+) ([]VerifiedAttestation, error) {
+	ctx = withDownloadBudget(ctx, f.effectiveDownloadLimit())
+	selection := selectReferrers(ctx, manifests)
+
+	atts, bundleStats := f.collectBundles(ctx, selection.bundles, ref, digest, nil, opts)
+	sigs, notationStats := f.collectNotationSignatures(ctx, selection.notation, ref, digest, nil)
+	baselines, baselineStats := f.collectBaselineSBOMs(
+		ctx,
+		selection.baselines,
+		ref,
+		digest,
+		nil,
+		opts,
+	)
+
+	err := evaluateCollection(len(atts)+len(sigs), bundleStats, notationStats, baselineStats)
+	if err != nil {
+		return nil, err
+	}
+
+	return append(append(atts, sigs...), baselines...), nil
 }

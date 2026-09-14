@@ -21,6 +21,10 @@ import (
 	"time"
 )
 
+// staleIntervals is the number of consecutive poll intervals without a
+// successful registry check after which failures are logged at error level.
+const staleIntervals = 10
+
 // ReloadFunc is called when the poller detects a policy update. Returning an
 // error signals that the update was rejected (e.g. validation failure), which
 // causes the poller to retry on the next tick instead of caching the digest.
@@ -37,6 +41,7 @@ type Poller struct {
 	cancel       context.CancelFunc
 	wg           sync.WaitGroup
 	cachedDigest string
+	lastSuccess  time.Time
 	mu           sync.Mutex
 }
 
@@ -57,8 +62,22 @@ func NewPoller(
 		cancel:       nil,
 		wg:           sync.WaitGroup{},
 		cachedDigest: "",
+		lastSuccess:  time.Now(),
 		mu:           sync.Mutex{},
 	}
+}
+
+// LastSuccess returns the last time the applied policies were known to be
+// current (or the poller creation time before that): a registry check that
+// found the applied digest unchanged, or a successfully applied update. While
+// the registry is unreachable, or a changed artifact keeps being rejected, the
+// previously applied policies stay in effect, so this indicates how stale they
+// may be.
+func (p *Poller) LastSuccess() time.Time {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return p.lastSuccess
 }
 
 // SetCachedDigest stores the initial digest so the first poll only re-fetches
@@ -131,16 +150,18 @@ func (p *Poller) run(ctx context.Context) {
 func (p *Poller) poll(ctx context.Context) {
 	digest, err := p.fetcher.CheckDigest(ctx, p.ociRef)
 	if err != nil {
-		slog.WarnContext(ctx, "OCI policy digest check failed",
-			"oci_ref", p.ociRef,
-			"error", err,
-		)
+		p.logFailure(ctx, "OCI policy digest check failed", err)
 
 		return
 	}
 
 	p.mu.Lock()
 	changed := digest != p.cachedDigest
+
+	// A changed digest only counts as current once it was applied.
+	if !changed {
+		p.lastSuccess = time.Now()
+	}
 	p.mu.Unlock()
 
 	if !changed {
@@ -158,16 +179,17 @@ func (p *Poller) poll(ctx context.Context) {
 func (p *Poller) fetchAndApply(ctx context.Context) {
 	result, err := p.fetcher.FetchFromOCI(ctx, p.ociRef)
 	if err != nil {
-		slog.WarnContext(ctx, "OCI policy fetch failed",
-			"oci_ref", p.ociRef,
-			"error", err,
-		)
+		p.logFailure(ctx, "OCI policy fetch failed", err)
 
 		return
 	}
 
 	p.mu.Lock()
 	alreadyApplied := result.Digest == p.cachedDigest
+
+	if alreadyApplied {
+		p.lastSuccess = time.Now()
+	}
 	p.mu.Unlock()
 
 	if alreadyApplied {
@@ -187,17 +209,39 @@ func (p *Poller) fetchAndApply(ctx context.Context) {
 	if p.onReload != nil {
 		reloadErr := p.onReload(result.Policies)
 		if reloadErr != nil {
-			slog.WarnContext(ctx, "OCI policy reload rejected, will retry next poll",
-				"oci_ref", p.ociRef,
-				"digest", result.Digest,
-				"error", reloadErr,
+			p.logFailure(ctx, "OCI policy reload rejected, will retry next poll",
+				reloadErr, "digest", result.Digest,
 			)
 
 			return
 		}
 	}
 
+	// Only an applied artifact raises the rollback guard, so a rejected
+	// update never blocks re-tagging the previous good artifact.
+	p.fetcher.SeedNewestCreated(result.Created)
+
 	p.mu.Lock()
 	p.cachedDigest = result.Digest
+	p.lastSuccess = time.Now()
 	p.mu.Unlock()
+}
+
+// logFailure logs a failed poll together with how long the applied policies
+// have not been refreshed. After staleIntervals poll intervals the failure is
+// logged at error level so stale policies do not go unnoticed.
+func (p *Poller) logFailure(ctx context.Context, msg string, err error, attrs ...any) {
+	staleFor := time.Since(p.LastSuccess())
+
+	level := slog.LevelWarn
+	if staleFor > staleIntervals*p.interval {
+		level = slog.LevelError
+	}
+
+	args := append([]any{
+		"oci_ref", p.ociRef,
+		"stale_for", staleFor.Round(time.Second).String(),
+	}, attrs...)
+
+	slog.Log(ctx, level, msg, append(args, "error", err)...)
 }

@@ -2298,6 +2298,27 @@ func TestConfigValidatePolicyConfig(t *testing.T) {
 			expectedErr: nil,
 		},
 		{
+			name: "unsigned oci source rejected in enforce mode",
+			modify: func(c *config.Config) {
+				c.Verification = config.ModeEnforce
+				c.Policy.Source = config.PolicySourceOCI
+				c.Policy.OCIRef = testOCIRef
+			},
+			wantErr:     true,
+			expectedErr: config.ErrPolicyOCIUnsignedInEnforce,
+		},
+		{
+			name: "signed oci source accepted in enforce mode",
+			modify: func(c *config.Config) {
+				c.Verification = config.ModeEnforce
+				c.Policy.Source = config.PolicySourceOCI
+				c.Policy.OCIRef = testOCIRef
+				c.Policy.Keys = []string{"/etc/nri-supply-chain/policy.pub"}
+			},
+			wantErr:     false,
+			expectedErr: nil,
+		},
+		{
 			name: "oci source skips policy_dir validation",
 			modify: func(c *config.Config) {
 				c.Verification = config.ModeWarn
@@ -2783,8 +2804,8 @@ func TestEffectiveRoots(t *testing.T) {
 
 		cfg := config.DefaultConfig()
 		cfg.Sigstore.Roots = []config.SigstoreRootSource{
-			{Name: "a", TUFMirror: "https://a.example.com", TUFRoot: ""},
-			{Name: "b", TUFMirror: "https://b.example.com", TUFRoot: ""},
+			{Name: "a", TUFMirror: "https://a.example.com", TUFRoot: "", Issuers: nil},
+			{Name: "b", TUFMirror: "https://b.example.com", TUFRoot: "", Issuers: nil},
 		}
 
 		roots := cfg.Sigstore.EffectiveRoots()
@@ -2842,7 +2863,7 @@ func TestSigstoreConfigChanged(t *testing.T) {
 			TUFMirror: "",
 			TUFRoot:   "",
 			Roots: []config.SigstoreRootSource{
-				{Name: "x", TUFMirror: testXExampleURL, TUFRoot: ""},
+				{Name: "x", TUFMirror: testXExampleURL, TUFRoot: "", Issuers: nil},
 			},
 			IncludePublicRoot: nil,
 		}
@@ -2850,7 +2871,7 @@ func TestSigstoreConfigChanged(t *testing.T) {
 			TUFMirror: "",
 			TUFRoot:   "",
 			Roots: []config.SigstoreRootSource{
-				{Name: "y", TUFMirror: "https://y.example.com", TUFRoot: ""},
+				{Name: "y", TUFMirror: "https://y.example.com", TUFRoot: "", Issuers: nil},
 			},
 			IncludePublicRoot: nil,
 		}
@@ -2868,7 +2889,7 @@ func TestSigstoreConfigChanged(t *testing.T) {
 			TUFMirror: "",
 			TUFRoot:   "",
 			Roots: []config.SigstoreRootSource{
-				{Name: "x", TUFMirror: testXExampleURL, TUFRoot: ""},
+				{Name: "x", TUFMirror: testXExampleURL, TUFRoot: "", Issuers: nil},
 			},
 			IncludePublicRoot: &falseVal,
 		}
@@ -2876,7 +2897,7 @@ func TestSigstoreConfigChanged(t *testing.T) {
 			TUFMirror: "",
 			TUFRoot:   "",
 			Roots: []config.SigstoreRootSource{
-				{Name: "x", TUFMirror: testXExampleURL, TUFRoot: ""},
+				{Name: "x", TUFMirror: testXExampleURL, TUFRoot: "", Issuers: nil},
 			},
 			IncludePublicRoot: nil,
 		}
@@ -2899,7 +2920,7 @@ func TestSigstoreConfigChanged(t *testing.T) {
 			TUFMirror: "",
 			TUFRoot:   "",
 			Roots: []config.SigstoreRootSource{
-				{Name: "default", TUFMirror: testTUFMirrorURL, TUFRoot: ""},
+				{Name: "default", TUFMirror: testTUFMirrorURL, TUFRoot: "", Issuers: nil},
 			},
 			IncludePublicRoot: nil,
 		}
@@ -2931,6 +2952,7 @@ func TestValidateRuntimeSigstoreRootsTUFRoot(t *testing.T) {
 				Name:      "test",
 				TUFMirror: testTUFMirrorURL,
 				TUFRoot:   rootPath,
+				Issuers:   nil,
 			},
 		}
 
@@ -2950,6 +2972,7 @@ func TestValidateRuntimeSigstoreRootsTUFRoot(t *testing.T) {
 				Name:      "test",
 				TUFMirror: testTUFMirrorURL,
 				TUFRoot:   filepath.Join(dir, "nonexistent.json"),
+				Issuers:   nil,
 			},
 		}
 

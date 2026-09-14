@@ -37,7 +37,13 @@ func FuzzCacheGetSet(f *testing.F) {
 		c := cache.New(time.Minute)
 		defer c.Stop()
 
-		result := &types.Result{Allowed: allowed, Reason: "", CheckResults: nil}
+		result := &types.Result{
+			Allowed:      allowed,
+			Verified:     allowed,
+			Mode:         "",
+			Reason:       "",
+			CheckResults: nil,
+		}
 		c.Set(digest, namespace, result)
 
 		got := c.Get(digest, namespace)

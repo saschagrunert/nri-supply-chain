@@ -39,7 +39,12 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
-const cmdBundle = "bundle"
+const (
+	cmdBundle      = "bundle"
+	flagOutputFile = "output-file"
+)
+
+var errMissingOutputFile = errors.New(`required flag "` + flagOutputFile + `" not set`)
 
 func newBundleCmd(configPath, logLevel *string) *cobra.Command {
 	cmd := &cobra.Command{
@@ -51,9 +56,9 @@ func newBundleCmd(configPath, logLevel *string) *cobra.Command {
 
 	cmd.AddCommand(
 		newBundleCreateCmd(configPath, logLevel),
-		newBundleInspectCmd(),
-		newBundleVerifyCmd(),
-		newBundleImportCmd(),
+		newBundleInspectCmd(logLevel),
+		newBundleVerifyCmd(logLevel),
+		newBundleImportCmd(logLevel),
 	)
 
 	return cmd
@@ -85,8 +90,13 @@ func newBundleCreateCmd(configPath, logLevel *string) *cobra.Command {
 
 	cmd.Flags().StringArrayVar(&images, "image", nil,
 		"image reference to include (can be specified multiple times)")
+	cmd.Flags().StringVar(&outputPath, flagOutputFile, "",
+		"output file path for the bundle tar.gz (required)")
+	// --output/-o selects the output format on every other command; keep it
+	// as a deprecated alias for scripts written against earlier releases.
 	cmd.Flags().StringVarP(&outputPath, "output", "o", "",
 		"output file path for the bundle tar.gz")
+	_ = cmd.Flags().MarkDeprecated("output", "use --"+flagOutputFile+" instead")
 	cmd.Flags().StringVar(&signKey, "sign-key", "",
 		"path to private key PEM for signing the bundle")
 	cmd.Flags().StringVar(&fromPolicy, "from-policy", "",
@@ -95,8 +105,6 @@ func newBundleCreateCmd(configPath, logLevel *string) *cobra.Command {
 		"path to trusted root JSON to embed in the bundle")
 	cmd.Flags().StringArrayVar(&revocation, "revocation", nil,
 		"path to CRL or TSA file to embed (can be specified multiple times)")
-
-	_ = cmd.MarkFlagRequired("output")
 
 	return cmd
 }
@@ -107,6 +115,10 @@ func runBundleCreateCmd(
 	trustedRootPath string, revocationPaths []string,
 ) error {
 	cmd.SilenceUsage = true
+
+	if outputPath == "" {
+		return errMissingOutputFile
+	}
 
 	cfg, err := setupConfig(*configPath)
 	if err != nil {
@@ -138,14 +150,11 @@ func runBundleCreateCmd(
 		cmd.Context(), *images, outputPath, signKey, cfg,
 		trustedRootPath, revocationPaths,
 	)
-	if code != 0 {
-		return errExitNonZero
-	}
 
-	return nil
+	return exitWith(code)
 }
 
-func newBundleInspectCmd() *cobra.Command {
+func newBundleInspectCmd(logLevel *string) *cobra.Command {
 	var outputFormat string
 
 	cmd := &cobra.Command{
@@ -155,12 +164,11 @@ func newBundleInspectCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 
-			code := runBundleInspect(os.Stdout, args[0], outputFormat)
-			if code != 0 {
-				return errExitNonZero
-			}
+			initLogging(effectiveLogLevel(*logLevel, ""), true)
 
-			return nil
+			code := runBundleInspect(os.Stdout, args[0], outputFormat)
+
+			return exitWith(code)
 		},
 	}
 
@@ -170,7 +178,7 @@ func newBundleInspectCmd() *cobra.Command {
 	return cmd
 }
 
-func newBundleVerifyCmd() *cobra.Command {
+func newBundleVerifyCmd(logLevel *string) *cobra.Command {
 	var (
 		keyPath string
 		maxAge  string
@@ -183,12 +191,11 @@ func newBundleVerifyCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 
-			code := runBundleVerify(args[0], keyPath, maxAge)
-			if code != 0 {
-				return errExitNonZero
-			}
+			initLogging(effectiveLogLevel(*logLevel, ""), true)
 
-			return nil
+			code := runBundleVerify(args[0], keyPath, maxAge)
+
+			return exitWith(code)
 		},
 	}
 
@@ -242,7 +249,7 @@ func printBundleSummary(manifest *bundle.Manifest) {
 	)
 	_, _ = fmt.Fprintf(os.Stdout, "Images: %d\n", len(manifest.Images))
 	_, _ = fmt.Fprintf(
-		os.Stdout, "Trusted root: %v\n", manifest.TrustedRoot != nil,
+		os.Stdout, "Trusted root: %v\n", manifest.HasTrustedRoot(),
 	)
 	_, _ = fmt.Fprintf(os.Stdout, "Signed: %v\n", manifest.Signature != nil)
 
@@ -319,7 +326,7 @@ func verifyExpiry(manifest *bundle.Manifest, maxAge string) int {
 	return exitSuccess
 }
 
-func newBundleImportCmd() *cobra.Command {
+func newBundleImportCmd(logLevel *string) *cobra.Command {
 	var (
 		storePath string
 		keyPath   string
@@ -331,6 +338,8 @@ func newBundleImportCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
+
+			initLogging(effectiveLogLevel(*logLevel, ""), true)
 
 			importErr := bundle.Import(args[0], storePath, keyPath)
 			if importErr != nil {
@@ -453,35 +462,7 @@ func fetchOptsFromPolicy(policyDir string) (*attestation.FetchOptions, error) {
 		return nil, fmt.Errorf("loading default policy: %w", err)
 	}
 
-	opts := &attestation.FetchOptions{}
-
-	if pol.Trust == nil {
-		return opts, nil
-	}
-
-	opts.TrustedIssuers = pol.Trust.Issuers
-	opts.SANPatterns = pol.Trust.SANPatterns
-
-	totalKeys := 0
-	for idx := range pol.Trust.Verifiers {
-		totalKeys += len(pol.Trust.Verifiers[idx].Keys)
-	}
-
-	keys := make([]attestation.TrustedKeyRef, 0, totalKeys)
-
-	for idx := range pol.Trust.Verifiers {
-		for _, keyPath := range pol.Trust.Verifiers[idx].Keys {
-			keys = append(keys, attestation.TrustedKeyRef{
-				Path:      keyPath,
-				NotBefore: pol.Trust.Verifiers[idx].NotBeforeTime,
-				NotAfter:  pol.Trust.Verifiers[idx].NotAfterTime,
-			})
-		}
-	}
-
-	opts.TrustedKeys = keys
-
-	return opts, nil
+	return verifier.FetchOptionsForPolicy(pol), nil
 }
 
 func runBundleInspect(writer io.Writer, storePath, outputFormat string) int {
@@ -571,9 +552,14 @@ func isConcreteImageRef(pattern string) bool {
 	return !strings.ContainsAny(pattern, "*?[")
 }
 
+// loadBundleTrustedRoots returns the trusted roots to embed in a bundle. A
+// root file given with --trusted-root has no source name; verifying nodes
+// scope it to the issuers every configured root allows. Roots cached by the
+// fetcher keep their source name, so verifying nodes apply the issuer
+// restriction they configure for that source.
 func loadBundleTrustedRoots(
 	trustedRootPath string, fetcher attestation.Fetcher,
-) ([]*root.TrustedRoot, error) {
+) ([]bundle.TrustedRootSource, error) {
 	if trustedRootPath != "" {
 		data, err := fileutil.ReadLimited(trustedRootPath, fileutil.MaxConfigFileSize)
 		if err != nil {
@@ -585,16 +571,26 @@ func loadBundleTrustedRoots(
 			return nil, fmt.Errorf("parsing trusted root %s: %w", trustedRootPath, err)
 		}
 
-		return []*root.TrustedRoot{tr}, nil
+		return []bundle.TrustedRootSource{{Name: "", Issuers: nil, Root: tr}}, nil
 	}
 
 	ociFetcher := extractOCIFetcher(fetcher)
 	if ociFetcher != nil {
-		tr := ociFetcher.CachedTrustedRoot()
-		if tr != nil {
-			slog.Info("Embedding cached Sigstore trusted root into bundle")
+		cached := ociFetcher.CachedTrustedRoots()
+		if len(cached) > 0 {
+			roots := make([]bundle.TrustedRootSource, 0, len(cached))
 
-			return []*root.TrustedRoot{tr}, nil
+			for idx := range cached {
+				roots = append(roots, bundle.TrustedRootSource{
+					Name:    cached[idx].Name,
+					Issuers: cached[idx].Issuers,
+					Root:    cached[idx].Root,
+				})
+			}
+
+			slog.Info("Embedding cached Sigstore trusted roots into bundle", "count", len(roots))
+
+			return roots, nil
 		}
 	}
 

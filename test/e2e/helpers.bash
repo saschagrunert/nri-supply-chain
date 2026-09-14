@@ -6,6 +6,7 @@ BINARY="${BINARY:-build/nri-supply-chain}"
 KUBERNIX="${KUBERNIX:-build/kubernix}"
 COSIGN="${COSIGN:-build/cosign}"
 CRANE="${CRANE:-build/crane}"
+HELM="${HELM:-build/helm}"
 CRI_RUNTIME="${CRI_RUNTIME:-crio}"
 PAUSE_IMAGE="${PAUSE_IMAGE:-registry.k8s.io/pause:3.10}"
 KUBERNIX_ROOT="${BATS_FILE_TMPDIR}/kubernix"
@@ -694,7 +695,9 @@ write_cyclonedx_vex_predicate() {
 DAEMONSET_MANIFEST="${BATS_FILE_TMPDIR}/daemonset.yaml"
 DAEMONSET_NS="nri-supply-chain"
 METRICS_PORTFORWARD_PID_FILE="${BATS_FILE_TMPDIR}/metrics-portforward.pid"
-DAEMONSET_METRICS_PORT=9091
+# The DaemonSet uses the host network and serves its probes on 9091, so the
+# local port-forward must use a port the plugin does not bind on the node.
+DAEMONSET_METRICS_PORT=19090
 
 build_daemonset_image() {
 	local image_ref="$1"
@@ -718,6 +721,11 @@ build_daemonset_image() {
 	rm -rf "$layer_dir" "$layer_tar"
 }
 
+# deploy_daemonset applies the shipped raw DaemonSet manifest. Only
+# test-specific settings are changed: the image reference and debug logging.
+# The security context, host networking, and default policy (which excludes
+# registry.k8s.io system images) are deployed as shipped, so e2e covers what
+# users install.
 deploy_daemonset() {
 	local image_ref="$1"
 	local src_manifest="${2:-deploy/kubernetes/daemonset.yaml}"
@@ -725,39 +733,26 @@ deploy_daemonset() {
 	cp "$src_manifest" "$DAEMONSET_MANIFEST"
 
 	sed -i "s|ghcr.io/saschagrunert/nri-supply-chain:[^ ]*|${image_ref}|g" "$DAEMONSET_MANIFEST"
-
-	# Remove security constraints so the plugin can access the
-	# NRI socket owned by root and write its sigstore TUF cache.
-	sed -i '/runAsNonRoot:/d' "$DAEMONSET_MANIFEST"
-	sed -i '/runAsUser:/d' "$DAEMONSET_MANIFEST"
-	sed -i '/runAsGroup:/d' "$DAEMONSET_MANIFEST"
-	sed -i '/readOnlyRootFilesystem:/d' "$DAEMONSET_MANIFEST"
+	grep -qF "image: ${image_ref}" "$DAEMONSET_MANIFEST"
 
 	# Enable debug logging for easier CI diagnosis.
-	sed -i '/- \/etc\/nri-supply-chain\/config.toml$/a\            - --log-level\n            - debug' "$DAEMONSET_MANIFEST"
+	sed -i '/- \/etc\/nri-supply-chain\/config\/config.toml$/a\            - --log-level\n            - debug' "$DAEMONSET_MANIFEST"
 
-	# Use host networking so the plugin can reach the local insecure
-	# registry on localhost and resolve image digests/referrers.
-	sed -i '/serviceAccountName:/a\      hostNetwork: true\n      dnsPolicy: ClusterFirstWithHostNet' "$DAEMONSET_MANIFEST"
+	kubectl apply -f "$DAEMONSET_MANIFEST" --request-timeout="${KUBECTL_TIMEOUT}s"
+}
 
-	# Exclude registry.k8s.io system images from verification so that
-	# CreateContainer callbacks for coredns/kube-proxy etc. return
-	# immediately and don't block past the ttrpc request timeout.
-	sed -i 's|"gcr.io/distroless/\*"|"gcr.io/distroless/*", "registry.k8s.io/**"|' "$DAEMONSET_MANIFEST"
+# deploy_helm_chart renders the Helm chart with its default values and
+# applies it. Only the image reference and the log level are overridden.
+deploy_helm_chart() {
+	local image_ref="$1"
 
-	# Remove the NetworkPolicy resource so the pod can reach the
-	# local insecure registry without egress restrictions.
-	awk '
-		BEGIN { doc="" }
-		/^---$/ {
-			if (doc !~ /kind: NetworkPolicy/) printf "%s", doc
-			doc = "---\n"
-			next
-		}
-		{ doc = doc $0 "\n" }
-		END { if (doc !~ /kind: NetworkPolicy/) printf "%s", doc }
-	' "$DAEMONSET_MANIFEST" >"${DAEMONSET_MANIFEST}.tmp"
-	mv "${DAEMONSET_MANIFEST}.tmp" "$DAEMONSET_MANIFEST"
+	"$HELM" template nri-supply-chain deploy/helm/nri-supply-chain \
+		--namespace "$DAEMONSET_NS" \
+		--set namespace.create=true \
+		--set image.repository="${image_ref%:*}" \
+		--set image.tag="${image_ref##*:}" \
+		--set config.logLevel=debug \
+		>"$DAEMONSET_MANIFEST"
 
 	kubectl apply -f "$DAEMONSET_MANIFEST" --request-timeout="${KUBECTL_TIMEOUT}s"
 }
@@ -1132,6 +1127,7 @@ write_plugin_config_oci() {
 		source = "oci"
 		oci_ref = "${oci_ref}"
 		poll_interval = "${poll_interval}"
+		keys = ["${COSIGN_PUB}"]
 	EOF
 }
 
@@ -1186,6 +1182,25 @@ push_policy_to_registry() {
 		return 1
 	fi
 	rm -rf "$layout_dir"
+
+	# Unsigned OCI policies are rejected in enforce mode, so sign the
+	# artifact by digest with the test key configured in policy.keys.
+	local digest
+	if ! digest=$(timeout "$CMD_TIMEOUT" "$CRANE" digest "$ref" --insecure 2>&1); then
+		echo "ERROR: crane digest failed for $ref: $digest" >&2
+		return 1
+	fi
+	local signing_config
+	signing_config=$(create_signing_config)
+	if ! output=$(timeout "$CMD_TIMEOUT" "$COSIGN" sign \
+		--key "$COSIGN_KEY" \
+		--signing-config "$signing_config" \
+		--allow-insecure-registry \
+		--yes \
+		"${ref%:*}@${digest}" 2>&1); then
+		echo "ERROR: cosign sign failed for $ref: $output" >&2
+		return 1
+	fi
 	echo "$ref"
 }
 

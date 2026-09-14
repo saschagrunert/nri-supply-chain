@@ -17,10 +17,7 @@ package policy
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
-
-	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
 func validateNotationCertFiles(
@@ -39,23 +36,9 @@ func validateNotationCertFiles(
 				prefix, idx, store.Name, cidx, certPath,
 			)
 
-			info, err := os.Lstat(certPath)
+			err := checkRegularFile(certPath)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("%s: %w", label, err))
-
-				continue
-			}
-
-			if info.Mode()&os.ModeSymlink != 0 {
-				errs = append(errs, fmt.Errorf(
-					"%s: %w (symlinks are not allowed)", label, ErrNotRegularFile,
-				))
-
-				continue
-			}
-
-			if !info.Mode().IsRegular() {
-				errs = append(errs, fmt.Errorf("%s: %w", label, ErrNotRegularFile))
 			}
 		}
 	}
@@ -63,25 +46,10 @@ func validateNotationCertFiles(
 	return errs
 }
 
-func (p *Policy) validateNotation() error {
-	if p.Notation == nil {
-		return nil
-	}
-
-	var errs []error
-
-	if p.Notation.MissingPolicy != "" {
-		err := types.ValidateAction(
-			"notation.missingPolicy", p.Notation.MissingPolicy,
-		)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("validating notation policy: %w", err))
-		}
-	}
-
-	errs = append(errs, validateNotationLevels(p.Notation)...)
-	errs = append(errs, validateNotationTrustStores(p.Notation.TrustStores)...)
-	errs = append(errs, validateNotationTrustPolicy(p.Notation.TrustPolicy)...)
+func (s *Sections) validateNotation() error {
+	errs := validateNotationLevels(s.Notation)
+	errs = append(errs, validateNotationTrustStores(s.Notation.TrustStores)...)
+	errs = append(errs, validateNotationTrustPolicy(s.Notation.TrustPolicy)...)
 
 	return errors.Join(errs...)
 }

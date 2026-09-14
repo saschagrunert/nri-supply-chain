@@ -18,17 +18,24 @@ data:
     cache_failure_ttl = {{ .Values.config.cacheFailureTTL | quote }}
     policy_dir = "/etc/nri-supply-chain/policies"
     metrics_addr = {{ .Values.config.metricsAddr | quote }}
-    circuit_breaker_threshold = {{ .Values.config.circuitBreakerThreshold }}
+    circuit_breaker_threshold = {{ .Values.config.circuitBreakerThreshold | int64 }}
     circuit_breaker_cooldown = {{ .Values.config.circuitBreakerCooldown | quote }}
     verification_timeout = {{ .Values.config.verificationTimeout | quote }}
+    {{- with .Values.config.admissionTimeout }}
+    admission_timeout = {{ . | quote }}
+    {{- end }}
     fetch_rate_limit = {{ .Values.config.fetchRateLimit }}
-    max_attestation_size = {{ .Values.config.maxAttestationSize }}
-    cache_max_entries = {{ .Values.config.cacheMaxEntries }}
+    max_attestation_size = {{ .Values.config.maxAttestationSize | int64 }}
+    cache_max_entries = {{ .Values.config.cacheMaxEntries | int64 }}
     {{- with .Values.config.allowlistDigests }}
     allowlist_digests = {{ . | toJson }}
     {{- end }}
     {{- with .Values.config.logLevel }}
     log_level = {{ . | quote }}
+    {{- end }}
+    {{- /* extraConfig must precede every table so its top-level keys stay top-level. */}}
+    {{- with .Values.config.extraConfig }}
+    {{- . | nindent 4 }}
     {{- end }}
     {{- with .Values.config.policy }}
     [policy]
@@ -73,7 +80,7 @@ data:
     {{- end }}
     timeout = {{ .timeout | default "5s" | quote }}
     fallback_policy = {{ .fallbackPolicy | default "warn" | quote }}
-    max_dependencies = {{ .maxDependencies | default 5 }}
+    max_dependencies = {{ .maxDependencies | default 5 | int64 }}
     checks = {{ .checks | default (list "certify_vuln" "certify_scorecard" "is_dependency") | toJson }}
     {{- end }}
     {{- end }}
@@ -89,9 +96,6 @@ data:
     {{- if .insecure }}
     insecure = true
     {{- end }}
-    {{- end }}
-    {{- with .Values.config.extraConfig }}
-    {{- . | nindent 4 }}
     {{- end }}
   {{- range $name, $policy := .Values.policies }}
   {{ $name }}: |

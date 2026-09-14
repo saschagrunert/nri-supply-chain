@@ -38,8 +38,7 @@ type cvTestVerifier struct {
 }
 
 func (v *cvTestVerifier) Verify(
-	_ context.Context,
-	_, _, _, _, _ string,
+	_ context.Context, _ *types.VerifyRequest,
 ) (*types.Result, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -50,7 +49,11 @@ func (v *cvTestVerifier) Verify(
 }
 
 func (v *cvTestVerifier) Ready() (ready bool, reason string) { return true, "" }
-func (v *cvTestVerifier) Enforcing() bool                    { return false }
+
+func (v *cvTestVerifier) ShouldVerify(_ context.Context, _, _ string) (verify bool, reason string) {
+	return true, ""
+}
+func (v *cvTestVerifier) Enforcing() bool { return false }
 
 //
 //nolint:exhaustruct_v5 // test stub
@@ -111,7 +114,7 @@ func TestRunContinuousVerifierWaitsForPrewarm(t *testing.T) {
 
 	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
 		result: &types.Result{
-			Allowed: true, Reason: "", CheckResults: nil,
+			Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
 		},
 	}
 	plug := newCVTestPlugin(verif)
@@ -145,7 +148,7 @@ func TestRunContinuousVerifierTimerTick(t *testing.T) {
 
 	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
 		result: &types.Result{
-			Allowed: true, Reason: "", CheckResults: nil,
+			Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
 		},
 	}
 	plug := newCVTestPlugin(verif)
@@ -185,7 +188,7 @@ func TestRunContinuousVerifierTrigger(t *testing.T) {
 
 	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
 		result: &types.Result{
-			Allowed: true, Reason: "", CheckResults: nil,
+			Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
 		},
 	}
 	plug := newCVTestPlugin(verif)
@@ -232,7 +235,7 @@ func TestStateTransitionVerifiedToDegraded(t *testing.T) {
 
 	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
 		result: &types.Result{
-			Allowed: false, Reason: testDegradedReason,
+			Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
 			CheckResults: []types.CheckResult{
 				{ //nolint:exhaustruct_v5 // zero-value fields intentional
 					Type:   types.CheckTypeSBOM,
@@ -281,7 +284,7 @@ func TestStateTransitionThrottleMode(t *testing.T) {
 
 	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
 		result: &types.Result{
-			Allowed: false, Reason: testDegradedReason,
+			Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
 			CheckResults: []types.CheckResult{
 				{ //nolint:exhaustruct_v5 // zero-value fields intentional
 					Type:   types.CheckTypeSBOM,
@@ -397,7 +400,13 @@ func TestContainerRegistrySnapshot(t *testing.T) {
 
 	//nolint:exhaustruct_v5 // zero-value fields intentional
 	plug := newCVTestPlugin(&cvTestVerifier{
-		result: &types.Result{Allowed: true, Reason: "", CheckResults: nil},
+		result: &types.Result{
+			Allowed:      true,
+			Verified:     true,
+			Mode:         "",
+			Reason:       "",
+			CheckResults: nil,
+		},
 	})
 
 	plug.ExportStoreContainerTime("a", time.Now())
@@ -416,7 +425,13 @@ func TestMatchFeedPURLs(t *testing.T) {
 
 	//nolint:exhaustruct_v5 // zero-value fields intentional
 	plug := newCVTestPlugin(&cvTestVerifier{
-		result: &types.Result{Allowed: true, Reason: "", CheckResults: nil},
+		result: &types.Result{
+			Allowed:      true,
+			Verified:     true,
+			Mode:         "",
+			Reason:       "",
+			CheckResults: nil,
+		},
 	})
 
 	plug.ExportStoreContainerWithPURLs("ctr-a", []string{testPURLGolangFoo, testPURLNpmBar})
@@ -443,7 +458,13 @@ func TestMatchFeedPURLsNoOverlap(t *testing.T) {
 
 	//nolint:exhaustruct_v5 // zero-value fields intentional
 	plug := newCVTestPlugin(&cvTestVerifier{
-		result: &types.Result{Allowed: true, Reason: "", CheckResults: nil},
+		result: &types.Result{
+			Allowed:      true,
+			Verified:     true,
+			Mode:         "",
+			Reason:       "",
+			CheckResults: nil,
+		},
 	})
 
 	plug.ExportStoreContainerWithPURLs("ctr-a", []string{testPURLGolangFoo})
@@ -460,7 +481,13 @@ func TestTriggerFeedReverifyRespectsOnNewCVE(t *testing.T) {
 
 	//nolint:exhaustruct_v5 // zero-value fields intentional
 	plug := newCVTestPlugin(&cvTestVerifier{
-		result: &types.Result{Allowed: true, Reason: "", CheckResults: nil},
+		result: &types.Result{
+			Allowed:      true,
+			Verified:     true,
+			Mode:         "",
+			Reason:       "",
+			CheckResults: nil,
+		},
 	})
 
 	plug.SetRemediationConfig(
@@ -494,7 +521,7 @@ func TestTimerTickBypassesTriggerHash(t *testing.T) {
 
 	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
 		result: &types.Result{
-			Allowed: false, Reason: testDegradedReason,
+			Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
 			CheckResults: []types.CheckResult{
 				{ //nolint:exhaustruct_v5 // zero-value fields intentional
 					Type:   types.CheckTypeSBOM,
@@ -659,8 +686,8 @@ func TestBuildRollbackUpdate(t *testing.T) {
 		t.Error("expected restored memory limit to match original")
 	}
 
-	if !update.GetIgnoreFailure() {
-		t.Error("expected IgnoreFailure to be true")
+	if update.GetIgnoreFailure() {
+		t.Error("expected IgnoreFailure to be false so failed rollbacks are reported")
 	}
 }
 
@@ -668,7 +695,7 @@ func TestThrottleAndRollbackLifecycle(t *testing.T) {
 	t.Parallel()
 
 	degradedResult := &types.Result{
-		Allowed: false, Reason: testDegradedReason,
+		Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
 		CheckResults: []types.CheckResult{
 			{ //nolint:exhaustruct_v5 // zero-value fields intentional
 				Type:   types.CheckTypeSBOM,
@@ -678,7 +705,7 @@ func TestThrottleAndRollbackLifecycle(t *testing.T) {
 		},
 	}
 	verifiedResult := &types.Result{
-		Allowed: true, Reason: "", CheckResults: nil,
+		Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
 	}
 
 	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
@@ -809,7 +836,7 @@ func TestRecoveredOnRestartSkipsRollback(t *testing.T) {
 	t.Parallel()
 
 	verifiedResult := &types.Result{
-		Allowed: true, Reason: "", CheckResults: nil,
+		Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
 	}
 
 	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
@@ -874,8 +901,10 @@ func TestRecoveredOnRestartSkipsRollback(t *testing.T) {
 		t.Errorf("expected StateVerified, got %v", state.State)
 	}
 
-	if state.RecoveredOnRestart {
-		t.Error("recoveredOnRestart should be cleared after recovery")
+	// Resources captured after a restart are never trusted as originals,
+	// so the flag stays set and later degradations are not throttled.
+	if !state.RecoveredOnRestart {
+		t.Error("recoveredOnRestart should stay set for resources captured after restart")
 	}
 
 	stubMock.mu.Lock()
@@ -891,7 +920,7 @@ func TestRollbackAfterModeDowngrade(t *testing.T) {
 	t.Parallel()
 
 	degradedResult := &types.Result{
-		Allowed: false, Reason: testDegradedReason,
+		Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
 		CheckResults: []types.CheckResult{
 			{ //nolint:exhaustruct_v5 // zero-value fields intentional
 				Type:   types.CheckTypeSBOM,
@@ -901,7 +930,7 @@ func TestRollbackAfterModeDowngrade(t *testing.T) {
 		},
 	}
 	verifiedResult := &types.Result{
-		Allowed: true, Reason: "", CheckResults: nil,
+		Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
 	}
 
 	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
@@ -1067,7 +1096,7 @@ func TestFeedTriggerPath(t *testing.T) {
 
 	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
 		result: &types.Result{
-			Allowed: false, Reason: testDegradedReason,
+			Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
 			CheckResults: []types.CheckResult{
 				{ //nolint:exhaustruct_v5 // zero-value fields intentional
 					Type:   types.CheckTypeSBOM,
@@ -1134,7 +1163,7 @@ func TestRecoverMetricInWarnMode(t *testing.T) {
 	t.Parallel()
 
 	degradedResult := &types.Result{
-		Allowed: false, Reason: testDegradedReason,
+		Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
 		CheckResults: []types.CheckResult{
 			{ //nolint:exhaustruct_v5 // zero-value fields intentional
 				Type:   types.CheckTypeSBOM,
@@ -1182,7 +1211,7 @@ func TestRecoverMetricInWarnMode(t *testing.T) {
 	// Phase 2: recover (switch to passing result)
 	verif.mu.Lock()
 	verif.result = &types.Result{
-		Allowed: true, Reason: "", CheckResults: nil,
+		Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
 	}
 	verif.mu.Unlock()
 
@@ -1216,7 +1245,7 @@ func TestApplyUpdatesStubError(t *testing.T) {
 
 	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
 		result: &types.Result{
-			Allowed: false, Reason: testDegradedReason,
+			Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
 			CheckResults: []types.CheckResult{
 				{ //nolint:exhaustruct_v5 // zero-value fields intentional
 					Type:   types.CheckTypeSBOM,
@@ -1299,7 +1328,7 @@ func TestApplyUpdatesPartialFailure(t *testing.T) {
 
 	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
 		result: &types.Result{
-			Allowed: false, Reason: testDegradedReason,
+			Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
 			CheckResults: []types.CheckResult{
 				{ //nolint:exhaustruct_v5 // zero-value fields intentional
 					Type:   types.CheckTypeSBOM,
@@ -1386,7 +1415,7 @@ func TestApplyUpdatesNoStub(t *testing.T) {
 
 	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
 		result: &types.Result{
-			Allowed: false, Reason: testDegradedReason,
+			Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
 			CheckResults: []types.CheckResult{
 				{ //nolint:exhaustruct_v5 // zero-value fields intentional
 					Type:   types.CheckTypeSBOM,
@@ -1606,7 +1635,7 @@ func TestCooldownBlocksRemediation(t *testing.T) {
 
 	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
 		result: &types.Result{
-			Allowed: false, Reason: testDegradedReason,
+			Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
 			CheckResults: []types.CheckResult{
 				{ //nolint:exhaustruct_v5 // zero-value fields intentional
 					Type:   types.CheckTypeSBOM,
@@ -1701,7 +1730,7 @@ func TestExtractPURLsFromResult(t *testing.T) {
 		t.Parallel()
 
 		result := plugin.ExportExtractPURLsFromResult(&types.Result{
-			Allowed: true, Reason: "",
+			Allowed: true, Verified: true, Mode: "", Reason: "",
 			CheckResults: []types.CheckResult{
 				{ //nolint:exhaustruct_v5 // zero-value fields intentional
 					Type:   types.CheckTypeSLSA,
@@ -1719,7 +1748,7 @@ func TestExtractPURLsFromResult(t *testing.T) {
 		t.Parallel()
 
 		result := plugin.ExportExtractPURLsFromResult(&types.Result{
-			Allowed: true, Reason: "",
+			Allowed: true, Verified: true, Mode: "", Reason: "",
 			CheckResults: []types.CheckResult{
 				{ //nolint:exhaustruct_v5 // zero-value fields intentional
 					Type:     types.CheckTypeSBOM,
@@ -1738,7 +1767,7 @@ func TestExtractPURLsFromResult(t *testing.T) {
 		t.Parallel()
 
 		result := plugin.ExportExtractPURLsFromResult(&types.Result{
-			Allowed: true, Reason: "",
+			Allowed: true, Verified: true, Mode: "", Reason: "",
 			CheckResults: []types.CheckResult{
 				{ //nolint:exhaustruct_v5 // zero-value fields intentional
 					Type:   types.CheckTypeSBOM,
@@ -1759,7 +1788,7 @@ func TestExtractPURLsFromResult(t *testing.T) {
 		t.Parallel()
 
 		result := plugin.ExportExtractPURLsFromResult(&types.Result{
-			Allowed: true, Reason: "",
+			Allowed: true, Verified: true, Mode: "", Reason: "",
 			CheckResults: []types.CheckResult{
 				{ //nolint:exhaustruct_v5 // zero-value fields intentional
 					Type:     types.CheckTypeSBOM,
@@ -1822,7 +1851,7 @@ func TestDuplicateContinuousVerifierBlocked(t *testing.T) {
 
 	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
 		result: &types.Result{
-			Allowed: true, Reason: "", CheckResults: nil,
+			Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
 		},
 	}
 	plug := newCVTestPlugin(verif)
@@ -1988,7 +2017,13 @@ func TestConsecutiveErrorsResetOnSuccess(t *testing.T) {
 
 	// Now succeed.
 	verif.mu.Lock()
-	verif.result = &types.Result{Allowed: true, Reason: "", CheckResults: nil}
+	verif.result = &types.Result{
+		Allowed:      true,
+		Verified:     true,
+		Mode:         "",
+		Reason:       "",
+		CheckResults: nil,
+	}
 	verif.err = nil
 	verif.mu.Unlock()
 
@@ -2022,7 +2057,7 @@ func TestStateTransitionSkippedToVerified(t *testing.T) {
 
 	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
 		result: &types.Result{
-			Allowed: true, Reason: "", CheckResults: nil,
+			Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
 		},
 	}
 	plug := newCVTestPlugin(verif)
@@ -2065,7 +2100,7 @@ func TestStateTransitionSkippedToDegraded(t *testing.T) {
 
 	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
 		result: &types.Result{
-			Allowed: false, Reason: testDegradedReason,
+			Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
 			CheckResults: []types.CheckResult{
 				{ //nolint:exhaustruct_v5 // zero-value fields intentional
 					Type:   types.CheckTypeSBOM,

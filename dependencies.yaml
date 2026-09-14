@@ -30,8 +30,14 @@ dependencies:
   - name: helm
     version: 3.21.4
     refPaths:
-      - path: .github/workflows/ci.yml
-        match: "version: v3\\."
+      - path: Makefile
+        match: ^HELM_VERSION
+
+  - name: kubeconform
+    version: 0.8.0
+    refPaths:
+      - path: Makefile
+        match: ^KUBECONFORM_VERSION
 
   - name: distroless
     version: debian13
@@ -74,12 +80,14 @@ dependencies:
         match: syft-version
 
   - name: goreleaser
-    version: 2
+    version: 2.18.1
     refPaths:
+      - path: Makefile
+        match: ^GORELEASER_VERSION
       - path: .github/workflows/ci.yml
-        match: 'version: "~> v2'
+        match: 'version: "v2\.'
       - path: .github/workflows/release.yml
-        match: 'version: "~> v2'
+        match: 'version: "v2\.'
 
   - name: zeitgeist
     version: 0.8.0
