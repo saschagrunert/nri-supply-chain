@@ -606,8 +606,8 @@ github.com/opencontainers/image-spec/specs-go/v1
 # github.com/opencontainers/runtime-spec v1.3.0
 ## explicit
 github.com/opencontainers/runtime-spec/specs-go
-# github.com/openvex/go-vex v0.2.8
-## explicit; go 1.25.8
+# github.com/openvex/go-vex v0.2.9
+## explicit; go 1.25.9
 github.com/openvex/go-vex/pkg/csaf
 github.com/openvex/go-vex/pkg/vex
 # github.com/package-url/packageurl-go v0.1.7
