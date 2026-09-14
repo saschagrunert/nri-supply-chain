@@ -75,11 +75,8 @@ func newEffectivePolicyCmd(configPath, logLevel *string) *cobra.Command {
 			slog.Debug("Using config", "path", *configPath)
 
 			code := runEffectivePolicy(os.Stdout, namespace, image, outputFormat, cfg)
-			if code != 0 {
-				return errExitNonZero
-			}
 
-			return nil
+			return exitWith(code)
 		},
 	}
 

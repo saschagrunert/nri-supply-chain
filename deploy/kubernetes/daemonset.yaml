@@ -2,6 +2,13 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: nri-supply-chain
+  labels:
+    # The plugin mounts the host NRI socket (hostPath) and uses the host
+    # network namespace, which the baseline and restricted Pod Security
+    # levels forbid.
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: privileged
+    pod-security.kubernetes.io/warn: privileged
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -17,40 +24,28 @@ data:
     cache_failure_ttl = "5m"
     policy_dir = "/etc/nri-supply-chain/policies"
     # Binds to all interfaces for Prometheus scraping (default is 127.0.0.1:9090).
-    # This exposes metrics (image references, namespaces, verification outcomes)
-    # on all interfaces. Consider restricting the NetworkPolicy ingress with a
-    # "from" selector to limit access to your Prometheus instances.
+    # The DaemonSet uses the host network, so this exposes metrics (image
+    # references, namespaces, verification outcomes) on every node address.
+    # Restrict access to the port with host firewall rules; NetworkPolicies do
+    # not apply to host network pods.
     metrics_addr = ":9090"
     circuit_breaker_threshold = 5
     circuit_breaker_cooldown = "30s"
   # IMPORTANT: Replace all "myorg" placeholders below with your organization's
-  # actual values before deploying.
+  # actual values before deploying. The exclude list skips Kubernetes system
+  # images so that kube-proxy, CoreDNS, and CSI sidecars can start while the
+  # plugin bootstraps. Add your CNI images (pinned by digest) as needed. See
+  # docs/deployment.md#bootstrapping-and-system-components.
   default.json: |
     {
       "trust": {
-        "builders": [
-          {
-            "id": "https://github.com/actions/runner",
-            "maxLevel": 3
-          }
-        ],
-        "issuers": [
-          "https://accounts.google.com",
-          "https://token.actions.githubusercontent.com"
-        ],
-        "sanPatterns": ["*@myorg.com", "https://github.com/myorg/*"],
+        "issuers": ["https://token.actions.githubusercontent.com"],
+        "sanPatterns": ["https://github.com/myorg/**"],
         "sources": ["https://github.com/myorg/*"]
       },
-      "exclude": ["gcr.io/distroless/*"],
-      "slsa": {
-        "missingPolicy": "warn"
-      },
-      "vex": {
-        "missingPolicy": "allow"
-      },
-      "signatures": {
-        "requireTransparencyLog": false
-      }
+      "exclude": ["registry.k8s.io/**"],
+      "slsa": { "missingPolicy": "warn" },
+      "vex": { "missingPolicy": "allow" }
     }
 ---
 apiVersion: v1
@@ -83,55 +78,92 @@ spec:
         prometheus.io/scrape: "true"
         prometheus.io/port: "9090"
         prometheus.io/path: "/metrics"
+        # Lets the plugin's own pod start while no instance of the plugin is
+        # registered, when the runtime's NRI default validator requires it and
+        # uses this annotation key for tolerations. See
+        # docs/deployment.md#failing-closed.
+        tolerate-missing-nri-plugins.noderesource.dev: "true"
     spec:
       serviceAccountName: nri-supply-chain
       automountServiceAccountToken: false
       priorityClassName: system-node-critical
+      # Longer than the plugin's 30s bound for in-flight verifications on
+      # shutdown, so SIGTERM ends with exit code 0 instead of a SIGKILL.
+      terminationGracePeriodSeconds: 45
+      # Host networking lets the plugin reach registries before the CNI plugin
+      # is running on the node, so CNI pods can be verified during bootstrap.
+      # Registry names resolve through the node's resolver. Switch to
+      # ClusterFirstWithHostNet if the plugin must resolve in-cluster services.
+      hostNetwork: true
+      dnsPolicy: Default
+      nodeSelector:
+        kubernetes.io/os: linux
       tolerations:
         - operator: Exists
       containers:
         - name: nri-supply-chain
+          # Pin the image by digest in production and verify it out of band
+          # (see the README's "Verifying Releases" section). The ConfigMap is
+          # mounted as directories (not subPath), so edits reach the pod and
+          # are picked up by the file watcher without a restart.
           image: ghcr.io/saschagrunert/nri-supply-chain:0.5.3
           args:
             - --config
-            - /etc/nri-supply-chain/config.toml
+            - /etc/nri-supply-chain/config/config.toml
+            # Serve the probes on their own port, so a metrics port conflict
+            # with a host service does not fail them and restart the pod.
+            - --health-addr
+            - ":9091"
           env:
             - name: NODE_NAME
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
+            # Writable home for the Sigstore TUF cache.
+            - name: HOME
+              value: /var/cache/nri-supply-chain
           ports:
             - name: metrics
               containerPort: 9090
               protocol: TCP
+            - name: health
+              containerPort: 9091
+              protocol: TCP
           startupProbe:
             httpGet:
               path: /healthz
-              port: metrics
+              port: health
             failureThreshold: 30
             periodSeconds: 2
           livenessProbe:
             httpGet:
               path: /healthz
-              port: metrics
+              port: health
             periodSeconds: 10
           readinessProbe:
             httpGet:
               path: /readyz
-              port: metrics
+              port: health
             periodSeconds: 10
+          # No CPU limit: CFS throttling delays CreateContainer responses past
+          # the runtime's NRI request timeout. Size memory for the number of
+          # distinct images per node and the attestation size limits.
           resources:
             requests:
-              cpu: 50m
-              memory: 64Mi
+              cpu: 100m
+              memory: 128Mi
             limits:
-              cpu: 200m
-              memory: 256Mi
+              memory: 512Mi
+          # The runtime creates the NRI socket owned by root and not accessible
+          # to other users, so the container runs as UID 0. All capabilities
+          # are dropped and the root filesystem is read-only, so root inside
+          # the container cannot bypass file permissions or modify the image.
           securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            runAsNonRoot: false
+            privileged: false
             readOnlyRootFilesystem: true
-            runAsNonRoot: true
-            runAsUser: 65534
-            runAsGroup: 65534
             allowPrivilegeEscalation: false
             seccompProfile:
               type: RuntimeDefault
@@ -142,13 +174,15 @@ spec:
             - name: nri-socket
               mountPath: /var/run/nri
             - name: config
-              mountPath: /etc/nri-supply-chain/config.toml
-              subPath: config.toml
+              mountPath: /etc/nri-supply-chain/config
               readOnly: true
-            - name: config
-              mountPath: /etc/nri-supply-chain/policies/default.json
-              subPath: default.json
+            - name: policies
+              mountPath: /etc/nri-supply-chain/policies
               readOnly: true
+            - name: cache
+              mountPath: /var/cache/nri-supply-chain
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: nri-socket
           hostPath:
@@ -157,52 +191,18 @@ spec:
         - name: config
           configMap:
             name: nri-supply-chain-config
----
-apiVersion: policy/v1
-kind: PodDisruptionBudget
-metadata:
-  name: nri-supply-chain
-  namespace: nri-supply-chain
-spec:
-  maxUnavailable: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: nri-supply-chain
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: nri-supply-chain
-  namespace: nri-supply-chain
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: nri-supply-chain
-  policyTypes:
-    - Ingress
-    - Egress
-  ingress:
-    - from:
-        # Restrict metrics scraping to pods in the monitoring namespace.
-        # Adjust the label to match your Prometheus deployment.
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: monitoring
-      ports:
-        - port: 9090
-          protocol: TCP
-  egress:
-    # DNS resolution.
-    - ports:
-        - port: 53
-          protocol: UDP
-        - port: 53
-          protocol: TCP
-    # Registry access (HTTP and HTTPS). Destination is unrestricted because
-    # container images may be pulled from any registry. In environments with
-    # known registries, restrict egress to specific CIDR ranges.
-    - ports:
-        - port: 80
-          protocol: TCP
-        - port: 443
-          protocol: TCP
+            items:
+              - key: config.toml
+                path: config.toml
+        - name: policies
+          configMap:
+            name: nri-supply-chain-config
+            items:
+              - key: default.json
+                path: default.json
+        - name: cache
+          emptyDir:
+            sizeLimit: 64Mi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

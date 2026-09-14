@@ -36,6 +36,12 @@ func FuzzParseFile(f *testing.F) {
 		`{"id":"B","affected":[` +
 		`{"package":{"purl":"pkg:npm/foo@1.0"}}]}]`))
 
+	f.Add([]byte(`{"id":"C","affected":[{"package":{"ecosystem":"npm","name":"@scope/x"},` +
+		`"ranges":[{"type":"SEMVER","events":[{"introduced":"0"},{"fixed":"1.2.3"},` +
+		`{"introduced":"2.0.0"},{"last_affected":"2.1.0"}]}],"versions":["1.0.0"]}]}`))
+	f.Add([]byte(`{"id":"D","withdrawn":"2024-01-01T00:00:00Z","affected":[` +
+		`{"package":{"purl":"pkg:npm/foo"}}]}`))
+
 	f.Fuzz(func(t *testing.T, data []byte) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "vuln.json")
@@ -45,6 +51,7 @@ func FuzzParseFile(f *testing.F) {
 			t.Fatal(err)
 		}
 
-		feed.ParseFile(path)
+		specs, _ := feed.ParseFile(path)
+		feed.NewMatcher(specs).MatchesAny([]string{"pkg:npm/foo@1.0.0", "pkg:npm/%40scope/x@2.0.1"})
 	})
 }

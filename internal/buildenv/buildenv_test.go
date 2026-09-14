@@ -16,6 +16,7 @@ package buildenv_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -297,41 +298,28 @@ func TestVerifyRequiredDetailMessage(t *testing.T) {
 func TestVerifyEmptyEnvironment(t *testing.T) {
 	t.Parallel()
 
-	doc := buildEnvDoc{
-		Environment: []envProperty{},
+	tests := []struct {
+		name      string
+		predicate json.RawMessage
+	}{
+		{name: "empty environment", predicate: json.RawMessage(`{"environment":[]}`)},
+		{name: "empty property name", predicate: json.RawMessage(`{"environment":[{"name":""}]}`)},
+		{name: "empty object", predicate: json.RawMessage(`{}`)},
+		{name: "null predicate", predicate: json.RawMessage(`null`)},
 	}
-	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-	t.Run("empty environment with no policy passes", func(t *testing.T) {
-		t.Parallel()
+	for _, tc := range tests {
+		t.Run(tc.name+" is rejected without policy", func(t *testing.T) {
+			t.Parallel()
 
-		result, err := buildenv.Verify(context.Background(), att, &policy.Policy{}, testDigest)
-		testutil.AssertNoError(t, err)
+			att := testutil.WrapInToto(t, tc.predicate, testDigest, testPredicateType)
 
-		if !result.Passed {
-			t.Errorf("expected pass for empty environment, got: %s", result.Detail)
-		}
-
-		propCount, ok := result.Metadata["propertyCount"].(int64)
-		if !ok || propCount != 0 {
-			t.Errorf("propertyCount = %v, want 0", result.Metadata["propertyCount"])
-		}
-	})
-
-	t.Run("empty environment with required property fails", func(t *testing.T) {
-		t.Parallel()
-
-		result, err := buildenv.Verify(context.Background(), att, &policy.Policy{
-			BuildEnv: &policy.BuildEnvPolicy{
-				RequiredProperties: []string{testPropOS},
-			},
-		}, testDigest)
-		testutil.AssertNoError(t, err)
-
-		if result.Passed {
-			t.Error("expected fail for empty environment with required property")
-		}
-	})
+			_, err := buildenv.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+			if !errors.Is(err, buildenv.ErrInvalidBuildEnv) {
+				t.Fatalf("expected ErrInvalidBuildEnv, got %v", err)
+			}
+		})
+	}
 }
 
 func TestVerifyMultiple(t *testing.T) {
@@ -494,7 +482,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		testutil.AssertEqual(t, types.StatusFail, result.Status)
 	})
 
-	t.Run("mix of valid and invalid with valid passing", func(t *testing.T) {
+	t.Run("mix of valid and invalid fails", func(t *testing.T) {
 		t.Parallel()
 
 		attestations := [][]byte{
@@ -510,8 +498,8 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		)
 		testutil.AssertNoError(t, err)
 
-		if !result.Passed {
-			t.Errorf("expected pass with valid doc, got: %s", result.Detail)
+		if result.Passed {
+			t.Error("expected fail when any document is invalid")
 		}
 	})
 }

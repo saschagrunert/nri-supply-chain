@@ -16,9 +16,20 @@
 package types
 
 import (
+	"errors"
 	"maps"
 	"strings"
 )
+
+// ErrDigestRequired is returned by a verifier when an image needs
+// verification but the request carries no digest. The caller should resolve
+// the digest and verify again.
+var ErrDigestRequired = errors.New("image digest required for verification")
+
+// ErrVerificationFailed is returned by a verifier in enforce mode together
+// with the failed result, so callers can tell a denial (with a result to act
+// on) from an error that prevented a decision.
+var ErrVerificationFailed = errors.New("supply chain verification failed")
 
 // CheckStatus represents the outcome status of a verification check.
 type CheckStatus string
@@ -42,8 +53,13 @@ const (
 	CheckTypeVEX CheckType = "vex"
 	// CheckTypeVSA is the VSA attestation check type.
 	CheckTypeVSA CheckType = "vsa"
-	// CheckTypeFetch is the attestation fetch result type.
+	// CheckTypeFetch reports that attestations could not be fetched (registry
+	// failure, open circuit breaker or local concurrency limit), so no check
+	// could run.
 	CheckTypeFetch CheckType = "fetch"
+	// CheckTypeAttestation reports that signed attestations were found but
+	// none of them verified (untrusted signer, invalid signature or subject).
+	CheckTypeAttestation CheckType = "attestation"
 	// CheckTypePolicy is the policy lookup result type.
 	CheckTypePolicy CheckType = "policy"
 	// CheckTypeNotation is the Notation/Notary v2 signature check type.
@@ -97,8 +113,18 @@ var AttestationCheckTypes = []CheckType{ //nolint:gochecknoglobals // registry
 
 // Result represents the outcome of a supply chain verification.
 type Result struct {
-	// Allowed indicates whether the image passed verification.
+	// Allowed indicates whether the image is admitted. In warn mode a
+	// failed verification is still admitted; use Verified for the actual
+	// verification outcome.
 	Allowed bool `json:"allowed"`
+	// Verified is true only when no check failed and verification ran to
+	// completion (or the image was deliberately skipped, e.g. excluded). A
+	// result without fetched attestations (see Incomplete) is never verified,
+	// even when fetch_failure_policy admits it. It is independent of warn
+	// mode admission.
+	Verified bool `json:"verified"`
+	// Mode is the effective verification mode that produced this result.
+	Mode string `json:"mode,omitempty"`
 	// Reason provides details about the verification decision.
 	Reason string `json:"reason,omitempty"`
 	// CheckResults contains per-check outcomes for audit logging.
@@ -129,6 +155,11 @@ type CheckResult struct {
 	// Metadata carries domain-specific data from the verifier (e.g., SLSA
 	// builderID, VEX status) for use in CEL policy expressions.
 	Metadata map[string]any `json:"metadata,omitempty"`
+	// Missing is true when the result was produced because no attestation of
+	// this type exists (the outcome then only reflects the missing policy).
+	// CEL exposes this as <type>.present=false and never treats a missing
+	// attestation as verified.
+	Missing bool `json:"missing,omitempty"`
 }
 
 // PassResult returns a passing CheckResult.
@@ -140,6 +171,7 @@ func PassResult(checkType CheckType, detail string) *CheckResult {
 		Detail:   detail,
 		Err:      nil,
 		Metadata: nil,
+		Missing:  false,
 	}
 }
 
@@ -152,6 +184,7 @@ func WarnResult(checkType CheckType, detail string) *CheckResult {
 		Detail:   detail,
 		Err:      nil,
 		Metadata: nil,
+		Missing:  false,
 	}
 }
 
@@ -164,7 +197,23 @@ func FailResult(checkType CheckType, detail string, err error) *CheckResult {
 		Detail:   detail,
 		Err:      err,
 		Metadata: nil,
+		Missing:  false,
 	}
+}
+
+// Incomplete reports whether verification did not run to completion: an
+// internal error interrupted it, or the attestations could not be fetched.
+// An incomplete result says nothing about the image itself, unlike a failed
+// check.
+func (r *Result) Incomplete() bool {
+	for idx := range r.CheckResults {
+		checkType := r.CheckResults[idx].Type
+		if checkType == CheckTypeInternal || checkType == CheckTypeFetch {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Clone returns a shallow copy of the Result with a cloned CheckResults slice.
@@ -198,6 +247,7 @@ func SoftFailResult(checkType CheckType, detail string, err error) *CheckResult 
 		Detail:   detail,
 		Err:      err,
 		Metadata: nil,
+		Missing:  false,
 	}
 }
 

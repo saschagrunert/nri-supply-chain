@@ -19,10 +19,13 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -304,50 +307,143 @@ func TestQueryDependencies(t *testing.T) {
 	})
 }
 
+const (
+	testArtifactDigest  = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+	testSourceType      = "git"
+	testSourceNamespace = "github.com/example"
+	testSourceRepo      = "repo"
+)
+
+func sourceOccurrence(typ, namespace, name string) graphQLIsOccurrence {
+	return graphQLIsOccurrence{
+		Subject: graphQLSource{
+			Typename: "Source",
+			Type:     typ,
+			Namespaces: []graphQLSourceNamespace{{
+				Namespace: namespace,
+				Names:     []graphQLSourceName{{Name: name}},
+			}},
+		},
+	}
+}
+
+func nestedScorecard(namespace, name string, aggregate float64) graphQLScorecard {
+	return graphQLScorecard{
+		Source: graphQLSource{
+			Type: testSourceType,
+			Namespaces: []graphQLSourceNamespace{{
+				Namespace: namespace,
+				Names:     []graphQLSourceName{{Name: name}},
+			}},
+		},
+		Scorecard: graphQLScorecardData{
+			AggregateScore: aggregate,
+			Checks: []graphQLScorecardCheck{
+				{Check: testCheckName, Score: 8.0},
+				{Check: "Maintained", Score: 10.0},
+			},
+		},
+	}
+}
+
+func packageOccurrence(typ, namespace, name string) graphQLIsOccurrence {
+	return graphQLIsOccurrence{
+		Subject: graphQLSource{
+			Typename: "Package",
+			Type:     typ,
+			Namespaces: []graphQLSourceNamespace{{
+				Namespace: namespace,
+				Names:     []graphQLSourceName{{Name: name}},
+			}},
+		},
+	}
+}
+
+// newGraphQLServer answers the artifact source query with occurrences and
+// scorecard queries using the scorecards map keyed by source name. It
+// records the scorecard filters it received.
+func newGraphQLServer(
+	t *testing.T, occurrences []graphQLIsOccurrence, scorecards map[string][]graphQLScorecard,
+) *httptest.Server {
+	t.Helper()
+
+	return newGraphQLServerWithSources(t, occurrences, scorecards, nil)
+}
+
+// newGraphQLServerWithSources additionally answers HasSourceAt queries using
+// the sources map keyed by package name.
+func newGraphQLServerWithSources(
+	t *testing.T, occurrences []graphQLIsOccurrence,
+	scorecards map[string][]graphQLScorecard, sources map[string][]graphQLHasSourceAt,
+) *httptest.Server {
+	t.Helper()
+
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/query" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+
+		var req graphQLRequest
+
+		err := json.NewDecoder(r.Body).Decode(&req)
+		if err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+
+		var resp graphQLResponse
+
+		switch {
+		case strings.Contains(req.Query, "IsOccurrence"):
+			resp.Data.IsOccurrence = occurrences
+		case strings.Contains(req.Query, "HasSourceAt"):
+			filter, _ := req.Variables["filter"].(map[string]any)
+			pkg, _ := filter["package"].(map[string]any)
+			name, _ := pkg["name"].(string)
+			resp.Data.HasSourceAt = sources[name]
+		default:
+			filter, _ := req.Variables["filter"].(map[string]any)
+			source, _ := filter["source"].(map[string]any)
+			name, _ := source["name"].(string)
+			resp.Data.Scorecards = scorecards[name]
+
+			// GraphQL only returns selected fields.
+			if !strings.Contains(req.Query, "timeScanned") {
+				resp.Data.Scorecards = slices.Clone(resp.Data.Scorecards)
+				for idx := range resp.Data.Scorecards {
+					resp.Data.Scorecards[idx].Scorecard.TimeScanned = ""
+				}
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+
+		err = json.NewEncoder(w).Encode(resp)
+		if err != nil {
+			t.Errorf("encode: %v", err)
+		}
+	}))
+}
+
 func TestQueryScorecard(t *testing.T) {
 	t.Parallel()
 
-	t.Run("scorecard result", func(t *testing.T) {
+	t.Run("scorecard scoped to artifact source", func(t *testing.T) {
 		t.Parallel()
 
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/query" {
-				t.Errorf("unexpected path: %s", r.URL.Path)
-			}
-
-			resp := graphQLResponse{
-				Data: graphQLData{
-					Scorecards: []graphQLScorecard{
-						{
-							Source: graphQLSource{
-								Type:      "git",
-								Namespace: "github.com/example",
-								Name:      "repo",
-							},
-							Scorecard: graphQLScorecardData{
-								AggregateScore: 7.5,
-								Checks: []graphQLScorecardCheck{
-									{Check: testCheckName, Score: 8.0},
-									{Check: "Maintained", Score: 10.0},
-								},
-							},
-						},
-					},
-				},
-			}
-
-			w.Header().Set("Content-Type", "application/json")
-
-			err := json.NewEncoder(w).Encode(resp)
-			if err != nil {
-				t.Fatalf("encode: %v", err)
-			}
-		}))
+		srv := newGraphQLServer(
+			t,
+			[]graphQLIsOccurrence{
+				sourceOccurrence(testSourceType, testSourceNamespace, testSourceRepo),
+			},
+			map[string][]graphQLScorecard{
+				testSourceRepo: {nestedScorecard(testSourceNamespace, testSourceRepo, 7.5)},
+			},
+		)
 		defer srv.Close()
 
 		client := newTestClient(t, srv.URL, "", 5*time.Second)
 
-		result, err := client.QueryScorecard(context.Background())
+		result, err := client.QueryScorecard(context.Background(), testArtifactDigest)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -365,30 +461,270 @@ func TestQueryScorecard(t *testing.T) {
 		}
 	})
 
-	t.Run("empty scorecard", func(t *testing.T) {
+	t.Run("scorecards of other repositories are ignored", func(t *testing.T) {
 		t.Parallel()
 
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			resp := graphQLResponse{Data: graphQLData{}}
-
-			w.Header().Set("Content-Type", "application/json")
-
-			err := json.NewEncoder(w).Encode(resp)
-			if err != nil {
-				t.Fatalf("encode: %v", err)
-			}
-		}))
+		srv := newGraphQLServer(
+			t,
+			[]graphQLIsOccurrence{
+				sourceOccurrence(testSourceType, testSourceNamespace, testSourceRepo),
+			},
+			map[string][]graphQLScorecard{
+				testSourceRepo: {nestedScorecard("github.com/other", "popular", 10)},
+			},
+		)
 		defer srv.Close()
 
 		client := newTestClient(t, srv.URL, "", 5*time.Second)
 
-		result, err := client.QueryScorecard(context.Background())
+		result, err := client.QueryScorecard(context.Background(), testArtifactDigest)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.Aggregate != 0 || len(result.Checks) != 0 {
+			t.Errorf("expected empty scorecard for unrelated source, got %+v", result)
+		}
+	})
+
+	t.Run("lowest score across linked sources wins", func(t *testing.T) {
+		t.Parallel()
+
+		srv := newGraphQLServer(t,
+			[]graphQLIsOccurrence{
+				sourceOccurrence(testSourceType, testSourceNamespace, "good"),
+				sourceOccurrence(testSourceType, testSourceNamespace, "weak"),
+			},
+			map[string][]graphQLScorecard{
+				"good": {nestedScorecard(testSourceNamespace, "good", 9)},
+				"weak": {nestedScorecard(testSourceNamespace, "weak", 3)},
+			},
+		)
+		defer srv.Close()
+
+		client := newTestClient(t, srv.URL, "", 5*time.Second)
+
+		result, err := client.QueryScorecard(context.Background(), testArtifactDigest)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.Aggregate != 3 || result.Source != "git/github.com/example/weak" {
+			t.Errorf("expected weakest scorecard, got %+v", result)
+		}
+	})
+
+	t.Run("artifact without source returns empty scorecard", func(t *testing.T) {
+		t.Parallel()
+
+		srv := newGraphQLServer(t, nil, nil)
+		defer srv.Close()
+
+		client := newTestClient(t, srv.URL, "", 5*time.Second)
+
+		result, err := client.QueryScorecard(context.Background(), testArtifactDigest)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.Aggregate != 0 || result.Source != "" {
+			t.Errorf("expected empty scorecard, got %+v", result)
+		}
+	})
+
+	t.Run("package occurrences are not sources", func(t *testing.T) {
+		t.Parallel()
+
+		occurrence := sourceOccurrence("npm", "", "pkg")
+		occurrence.Subject.Typename = "Package"
+
+		srv := newGraphQLServer(t, []graphQLIsOccurrence{occurrence}, nil)
+		defer srv.Close()
+
+		client := newTestClient(t, srv.URL, "", 5*time.Second)
+
+		result, err := client.QueryScorecard(context.Background(), testArtifactDigest)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.Source != "" {
+			t.Errorf("expected no source for package occurrence, got %+v", result)
+		}
+	})
+
+	t.Run("invalid digest", func(t *testing.T) {
+		t.Parallel()
+
+		client := newTestClient(t, "http://127.0.0.1:1", "", time.Second)
+
+		_, err := client.QueryScorecard(context.Background(), "not-a-digest")
+		if !errors.Is(err, ErrGUACQueryFailed) {
+			t.Fatalf("expected ErrGUACQueryFailed, got %v", err)
+		}
+	})
+}
+
+func TestQueryScorecardHistory(t *testing.T) {
+	t.Parallel()
+
+	const (
+		older = "2026-01-01T00:00:00Z"
+		newer = "2026-06-01T00:00:00.5Z"
+	)
+
+	scan := func(aggregate float64, scanned string) graphQLScorecard {
+		scorecard := nestedScorecard(testSourceNamespace, testSourceRepo, aggregate)
+		scorecard.Scorecard.TimeScanned = scanned
+
+		return scorecard
+	}
+
+	tests := []struct {
+		name  string
+		scans []graphQLScorecard
+		want  float64
+	}{
+		{
+			name:  "most recent scan wins over older higher score",
+			scans: []graphQLScorecard{scan(8, older), scan(4, newer)},
+			want:  4,
+		},
+		{
+			name:  "most recent scan wins over older lower score",
+			scans: []graphQLScorecard{scan(4, older), scan(8, newer), scan(2, older)},
+			want:  8,
+		},
+		{
+			name:  "same scan time uses lowest score",
+			scans: []graphQLScorecard{scan(8, newer), scan(4, older), scan(6, newer)},
+			want:  6,
+		},
+		{
+			name:  "missing scan time uses lowest score",
+			scans: []graphQLScorecard{scan(8, newer), scan(4, older), scan(6, "")},
+			want:  4,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			srv := newGraphQLServer(t,
+				[]graphQLIsOccurrence{
+					sourceOccurrence(testSourceType, testSourceNamespace, testSourceRepo),
+				},
+				map[string][]graphQLScorecard{testSourceRepo: tc.scans},
+			)
+			defer srv.Close()
+
+			client := newTestClient(t, srv.URL, "", 5*time.Second)
+
+			result, err := client.QueryScorecard(context.Background(), testArtifactDigest)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result.Aggregate != tc.want {
+				t.Errorf("expected aggregate %f, got %f", tc.want, result.Aggregate)
+			}
+		})
+	}
+}
+
+func TestQueryScorecardSourceResolution(t *testing.T) {
+	t.Parallel()
+
+	t.Run("sources linked through packages are resolved", func(t *testing.T) {
+		t.Parallel()
+
+		srv := newGraphQLServerWithSources(t,
+			[]graphQLIsOccurrence{packageOccurrence("npm", "", "app")},
+			map[string][]graphQLScorecard{
+				testSourceRepo: {nestedScorecard(testSourceNamespace, testSourceRepo, 6.5)},
+			},
+			map[string][]graphQLHasSourceAt{
+				"app": {{Source: graphQLSource{
+					Type: testSourceType,
+					Namespaces: []graphQLSourceNamespace{{
+						Namespace: testSourceNamespace,
+						Names:     []graphQLSourceName{{Name: testSourceRepo}},
+					}},
+				}}},
+			},
+		)
+		defer srv.Close()
+
+		client := newTestClient(t, srv.URL, "", 5*time.Second)
+
+		result, err := client.QueryScorecard(context.Background(), testArtifactDigest)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.Aggregate != 6.5 || result.Source != "git/github.com/example/repo" {
+			t.Errorf("expected scorecard of the package source, got %+v", result)
+		}
+	})
+
+	t.Run("lowest score is kept for many sources", func(t *testing.T) {
+		t.Parallel()
+
+		names := []string{"a", "b", "c", "d", "e", "f"}
+		occurrences := make([]graphQLIsOccurrence, 0, len(names))
+		scorecards := make(map[string][]graphQLScorecard, len(names))
+
+		for _, name := range names {
+			occurrences = append(occurrences,
+				sourceOccurrence(testSourceType, testSourceNamespace, name))
+			scorecards[name] = []graphQLScorecard{nestedScorecard(testSourceNamespace, name, 9)}
+		}
+
+		// The alphabetically last source has the lowest score.
+		scorecards["f"] = []graphQLScorecard{nestedScorecard(testSourceNamespace, "f", 2)}
+
+		srv := newGraphQLServer(t, occurrences, scorecards)
+		defer srv.Close()
+
+		client := newTestClient(t, srv.URL, "", 5*time.Second)
+
+		result, err := client.QueryScorecard(context.Background(), testArtifactDigest)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.Aggregate != 2 {
+			t.Errorf("expected lowest aggregate 2, got %+v", result)
+		}
+	})
+
+	t.Run("too many sources fail closed", func(t *testing.T) {
+		t.Parallel()
+
+		occurrences := make([]graphQLIsOccurrence, 0, maxScorecardSources+1)
+		scorecards := make(map[string][]graphQLScorecard, maxScorecardSources+1)
+
+		for idx := range maxScorecardSources + 1 {
+			name := fmt.Sprintf("repo-%03d", idx)
+			occurrences = append(occurrences,
+				sourceOccurrence(testSourceType, testSourceNamespace, name))
+			scorecards[name] = []graphQLScorecard{nestedScorecard(testSourceNamespace, name, 9)}
+		}
+
+		srv := newGraphQLServer(t, occurrences, scorecards)
+		defer srv.Close()
+
+		client := newTestClient(t, srv.URL, "", 5*time.Second)
+
+		result, err := client.QueryScorecard(context.Background(), testArtifactDigest)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
 		if result.Aggregate != 0 {
-			t.Errorf("expected aggregate 0, got %f", result.Aggregate)
+			t.Errorf("expected zero aggregate when not every source can be checked, got %+v",
+				result)
 		}
 	})
 }
@@ -467,7 +803,7 @@ func TestQueryScorecardGraphQLError(t *testing.T) {
 
 	client := newTestClient(t, srv.URL, "", 5*time.Second)
 
-	_, err := client.QueryScorecard(context.Background())
+	_, err := client.QueryScorecard(context.Background(), testArtifactDigest)
 	if !errors.Is(err, ErrGUACQueryFailed) {
 		t.Fatalf("expected ErrGUACQueryFailed, got: %v", err)
 	}
@@ -551,7 +887,7 @@ func TestQueryScorecardResponseTooLarge(t *testing.T) {
 
 	client := newTestClient(t, srv.URL, "", 5*time.Second)
 
-	_, err := client.QueryScorecard(context.Background())
+	_, err := client.QueryScorecard(context.Background(), testArtifactDigest)
 	if !errors.Is(err, ErrGUACQueryFailed) {
 		t.Fatalf("expected ErrGUACQueryFailed for oversized response, got: %v", err)
 	}

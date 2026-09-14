@@ -34,8 +34,34 @@ const (
 	CheckIsDependency     = "is_dependency"
 )
 
+// Metadata keys exposed to CEL as guac.<key>.
+const (
+	MetaKeyAvailable                = "available"
+	MetaKeyVulnerabilities          = "vulnerabilities"
+	MetaKeyTransitiveVulns          = "transitive_vulns"
+	MetaKeyVulnerabilitiesAvailable = "vulnerabilities_available"
+	MetaKeyScorecard                = "scorecard"
+	MetaKeyScorecardAvailable       = "scorecard_available"
+	MetaKeyDependencies             = "dependencies"
+	MetaKeyDependencyCount          = "dependency_count"
+	MetaKeyDependenciesAvailable    = "dependencies_available"
+)
+
+// Scorecard map keys exposed to CEL as guac.scorecard.<key>.
+const (
+	ScorecardKeyAggregate = "aggregate"
+	ScorecardKeyChecks    = "checks"
+	ScorecardKeySource    = "source"
+	ScorecardKeyTruncated = "truncated"
+)
+
+// fieldSource is the scorecard source key used in metadata, logs, and
+// GraphQL filters.
+const fieldSource = ScorecardKeySource
+
 // Query runs the configured GUAC checks for the given image digest and
-// returns a CheckResult with metadata populated for CEL evaluation.
+// returns a CheckResult with metadata populated for CEL evaluation. Results
+// of queries that succeeded are kept even when another query fails.
 func Query(
 	ctx context.Context,
 	client *Client,
@@ -58,7 +84,7 @@ func Query(
 	if slices.Contains(checks, CheckCertifyScorecard) {
 		waitGroup.Add(1)
 
-		go queryScorecard(ctx, client, result, &guard, &waitGroup)
+		go queryScorecard(ctx, client, digest, result, &guard, &waitGroup)
 	}
 
 	if slices.Contains(checks, CheckIsDependency) {
@@ -72,6 +98,13 @@ func Query(
 	return buildCheckResult(result)
 }
 
+func recordFailure(result *QueryResult, guard *sync.Mutex, err error) {
+	guard.Lock()
+	result.Available = false
+	result.Err = errors.Join(result.Err, err)
+	guard.Unlock()
+}
+
 func queryVulns(
 	ctx context.Context, client *Client, digest string,
 	result *QueryResult, guard *sync.Mutex, waitGroup *sync.WaitGroup,
@@ -83,10 +116,7 @@ func queryVulns(
 		slog.WarnContext(ctx, "GUAC vulnerability query failed",
 			"digest", digest, "error", err)
 
-		guard.Lock()
-		result.Available = false
-		result.Err = errors.Join(result.Err, err)
-		guard.Unlock()
+		recordFailure(result, guard, err)
 
 		return
 	}
@@ -94,35 +124,34 @@ func queryVulns(
 	guard.Lock()
 	result.Vulnerabilities = direct
 	result.TransitiveVulns = transitive
+	result.VulnerabilitiesAvailable = true
 	guard.Unlock()
 }
 
 func queryScorecard(
-	ctx context.Context, client *Client,
+	ctx context.Context, client *Client, digest string,
 	result *QueryResult, guard *sync.Mutex, waitGroup *sync.WaitGroup,
 ) {
 	defer waitGroup.Done()
 
-	scorecard, err := client.QueryScorecard(ctx)
+	scorecard, err := client.QueryScorecard(ctx, digest)
 	if err != nil {
 		slog.WarnContext(ctx, "GUAC scorecard query failed", "error", err)
 
-		guard.Lock()
-		result.Available = false
-		result.Err = errors.Join(result.Err, err)
-		guard.Unlock()
+		recordFailure(result, guard, err)
 
 		return
 	}
 
 	if scorecard.Source != "" {
 		slog.DebugContext(ctx, "GUAC scorecard resolved",
-			"source", scorecard.Source,
+			fieldSource, scorecard.Source,
 			"aggregate", scorecard.Aggregate)
 	}
 
 	guard.Lock()
 	result.Scorecard = scorecard
+	result.ScorecardAvailable = true
 	guard.Unlock()
 }
 
@@ -137,21 +166,19 @@ func queryDeps(
 		slog.WarnContext(ctx, "GUAC dependency query failed",
 			"digest", digest, "error", err)
 
-		guard.Lock()
-		result.Available = false
-		result.Err = errors.Join(result.Err, err)
-		guard.Unlock()
+		recordFailure(result, guard, err)
 
 		return
 	}
 
 	guard.Lock()
 	result.DependencyInfo = deps
+	result.DependenciesAvailable = true
 	guard.Unlock()
 }
 
 func buildCheckResult(queryResult *QueryResult) *types.CheckResult {
-	meta := buildMetadata(queryResult)
+	meta := BuildMetadata(queryResult)
 
 	if !queryResult.Available {
 		err := errGUACPartialFailure
@@ -159,12 +186,8 @@ func buildCheckResult(queryResult *QueryResult) *types.CheckResult {
 			err = fmt.Errorf("%w: %w", errGUACPartialFailure, queryResult.Err)
 		}
 
-		for k := range meta {
-			if k != "available" {
-				delete(meta, k)
-			}
-		}
-
+		// Partial results stay in the metadata; failed queries are marked
+		// unavailable and carry no data.
 		result := types.SoftFailResult(types.CheckTypeGUAC,
 			"GUAC queries partially failed", err)
 		result.Metadata = meta
@@ -181,17 +204,74 @@ func buildCheckResult(queryResult *QueryResult) *types.CheckResult {
 	return result
 }
 
-func buildMetadata(queryResult *QueryResult) map[string]any {
-	deps, depCount := dependencyData(queryResult.DependencyInfo)
+// BuildMetadata converts a query result into CEL metadata. Queries that did
+// not succeed contribute only their *_available flag and no data, so CEL
+// expressions reading that data fail evaluation instead of seeing defaults.
+func BuildMetadata(queryResult *QueryResult) map[string]any {
+	meta := UnavailableMetadata()
+	meta[MetaKeyAvailable] = queryResult.Available
 
-	return map[string]any{
-		"available":        queryResult.Available,
-		"vulnerabilities":  vulnsToSlice(queryResult.Vulnerabilities),
-		"transitive_vulns": vulnsToSlice(queryResult.TransitiveVulns),
-		"scorecard":        scorecardToMap(queryResult.Scorecard),
-		"dependencies":     deps,
-		"dependency_count": depCount,
+	if queryResult.VulnerabilitiesAvailable {
+		meta[MetaKeyVulnerabilities] = vulnsToSlice(queryResult.Vulnerabilities)
+		meta[MetaKeyTransitiveVulns] = vulnsToSlice(queryResult.TransitiveVulns)
+		meta[MetaKeyVulnerabilitiesAvailable] = true
 	}
+
+	if queryResult.ScorecardAvailable {
+		meta[MetaKeyScorecard] = scorecardToMap(queryResult.Scorecard)
+		meta[MetaKeyScorecardAvailable] = true
+	}
+
+	if queryResult.DependenciesAvailable {
+		deps, depCount := dependencyData(queryResult.DependencyInfo)
+		meta[MetaKeyDependencies] = deps
+		meta[MetaKeyDependencyCount] = depCount
+		meta[MetaKeyDependenciesAvailable] = true
+	}
+
+	return meta
+}
+
+// UnavailableMetadata returns metadata describing GUAC data that is not
+// available (GUAC not configured, query not enabled, or query failed): all
+// availability flags are false and no data keys are present.
+func UnavailableMetadata() map[string]any {
+	return map[string]any{
+		MetaKeyAvailable:                false,
+		MetaKeyVulnerabilitiesAvailable: false,
+		MetaKeyScorecardAvailable:       false,
+		MetaKeyDependenciesAvailable:    false,
+	}
+}
+
+// AvailabilityKey returns the availability flag guarding a GUAC data key
+// (for example "scorecard_available" for "scorecard"), and false for keys
+// that are not GUAC data keys.
+func AvailabilityKey(dataKey string) (string, bool) {
+	switch dataKey {
+	case MetaKeyVulnerabilities, MetaKeyTransitiveVulns:
+		return MetaKeyVulnerabilitiesAvailable, true
+	case MetaKeyScorecard:
+		return MetaKeyScorecardAvailable, true
+	case MetaKeyDependencies, MetaKeyDependencyCount:
+		return MetaKeyDependenciesAvailable, true
+	default:
+		return "", false
+	}
+}
+
+// MetadataSchema returns metadata with every key GUAC can expose, filled
+// with zero values. It describes the fields CEL expressions may select on
+// the guac variable.
+func MetadataSchema() map[string]any {
+	meta := UnavailableMetadata()
+	meta[MetaKeyVulnerabilities] = []any{}
+	meta[MetaKeyTransitiveVulns] = []any{}
+	meta[MetaKeyScorecard] = scorecardToMap(nil)
+	meta[MetaKeyDependencies] = []any{}
+	meta[MetaKeyDependencyCount] = int64(0)
+
+	return meta
 }
 
 func vulnsToSlice(vulns []Vulnerability) []any {
@@ -209,11 +289,7 @@ func vulnsToSlice(vulns []Vulnerability) []any {
 
 func scorecardToMap(scorecard *ScorecardResult) map[string]any {
 	if scorecard == nil {
-		return map[string]any{
-			"aggregate": float64(0),
-			"checks":    map[string]any{},
-			"source":    "",
-		}
+		scorecard = &ScorecardResult{Aggregate: 0, Checks: nil, Source: ""}
 	}
 
 	checksMap := make(map[string]any, len(scorecard.Checks))
@@ -222,9 +298,10 @@ func scorecardToMap(scorecard *ScorecardResult) map[string]any {
 	}
 
 	return map[string]any{
-		"aggregate": scorecard.Aggregate,
-		"checks":    checksMap,
-		"source":    scorecard.Source,
+		ScorecardKeyAggregate: scorecard.Aggregate,
+		ScorecardKeyChecks:    checksMap,
+		ScorecardKeySource:    scorecard.Source,
+		ScorecardKeyTruncated: scorecard.Truncated,
 	}
 }
 

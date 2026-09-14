@@ -5,4 +5,9 @@ metadata:
   name: {{ include "nri-supply-chain.namespace" . }}
   labels:
     {{- include "nri-supply-chain.labels" . | nindent 4 }}
+    # The plugin mounts the host NRI socket (hostPath) and may use the host
+    # network, which the baseline and restricted Pod Security levels forbid.
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: privileged
+    pod-security.kubernetes.io/warn: privileged
 {{- end }}

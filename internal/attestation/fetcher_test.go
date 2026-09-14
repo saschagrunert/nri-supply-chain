@@ -16,9 +16,12 @@ package attestation_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -46,6 +49,10 @@ const (
 	testFetchImageRef = "docker.io/library/nginx:latest"
 	testFetchDigest   = "sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abcd"
 	testIssuerExample = "https://issuer.example.com"
+	// slsaStatementJSON is a minimal signed statement payload with a predicate type.
+	slsaStatementJSON = `{"predicateType":"https://slsa.dev/provenance/v1"}`
+	// sigstoreBundleJSON is a minimal layer that is recognized as a Sigstore bundle.
+	sigstoreBundleJSON = `{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json"}`
 )
 
 var (
@@ -235,19 +242,6 @@ func TestCollectAttestations(t *testing.T) {
 
 	const testDigestVal = "sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abcd"
 
-	bundleDescriptor := func(predicateType string) ociV1.Descriptor {
-		return ociV1.Descriptor{
-			ArtifactType: attestation.ExportBundleMediaType,
-			Digest: ociV1.Hash{
-				Algorithm: testHashAlgorithm,
-				Hex:       testHashHex,
-			},
-			Annotations: map[string]string{
-				attestation.ExportAnnotationPredicateType: predicateType,
-			},
-		}
-	}
-
 	tests := []struct {
 		name              string
 		manifests         []ociV1.Descriptor
@@ -322,7 +316,7 @@ func TestCollectAttestations(t *testing.T) {
 				return fakeImageWithPayload([]byte(`{"bundle": "ok"}`)), nil
 			},
 			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
-				return []byte(`{"slsa": true}`), nil
+				return []byte(slsaStatementJSON), nil
 			},
 			cancelCtx:         false,
 			wantCount:         1,
@@ -347,7 +341,7 @@ func TestCollectAttestations(t *testing.T) {
 				return fakeImageWithPayload([]byte(`{"bundle": "ok"}`)), nil
 			},
 			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
-				return []byte(`{"slsa": true}`), nil
+				return []byte(slsaStatementJSON), nil
 			},
 			cancelCtx:         false,
 			wantCount:         1,
@@ -377,7 +371,7 @@ func TestCollectAttestations(t *testing.T) {
 			wantPredicateType: "",
 		},
 		{
-			name: "predicate type resolved from manifest annotations",
+			name: "unsigned manifest predicate annotation is not trusted",
 			manifests: []ociV1.Descriptor{
 				{
 					ArtifactType: attestation.ExportBundleMediaType,
@@ -398,7 +392,7 @@ func TestCollectAttestations(t *testing.T) {
 				return []byte(`{"slsa": true}`), nil
 			},
 			cancelCtx:         false,
-			wantCount:         1,
+			wantCount:         0,
 			wantHadBundles:    true,
 			wantPredicateType: "",
 		},
@@ -441,7 +435,7 @@ func TestCollectAttestations(t *testing.T) {
 				return fakeImageWithPayload([]byte(`{"bundle": "ok"}`)), nil
 			},
 			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
-				return []byte(`{"slsa": true}`), nil
+				return []byte(slsaStatementJSON), nil
 			},
 			cancelCtx:         false,
 			wantCount:         1,
@@ -454,11 +448,11 @@ func TestCollectAttestations(t *testing.T) {
 				bundleDescriptor(attestation.PredicateSLSAProvenanceV1),
 				bundleDescriptor(attestation.PredicateOpenVEX),
 			},
-			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
-				return fakeImageWithPayload([]byte(`{"bundle": "ok"}`)), nil
+			imageFetch: func(ref name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+				return fakeImageWithPayload([]byte(`{"bundle": "` + ref.Identifier() + `"}`)), nil
 			},
 			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
-				return []byte(`{"payload": true}`), nil
+				return []byte(slsaStatementJSON), nil
 			},
 			cancelCtx:         false,
 			wantCount:         2,
@@ -499,7 +493,7 @@ func TestCollectAttestations(t *testing.T) {
 				}
 			}(),
 			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
-				return []byte(`{"payload": true}`), nil
+				return []byte(slsaStatementJSON), nil
 			},
 			cancelCtx:         false,
 			wantCount:         1,
@@ -575,7 +569,7 @@ func TestCollectAttestationsMaxReferrers(t *testing.T) {
 
 	fetcher := attestation.NewTestOCIFetcher(
 		func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
-			return []byte(`{"ok": true}`), nil
+			return []byte(slsaStatementJSON), nil
 		},
 		func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
 			return fakeImageWithPayload([]byte(`{"bundle": "data"}`)), nil
@@ -677,7 +671,7 @@ func TestCollectAttestationsDigestPreserved(t *testing.T) {
 
 	fetcher := attestation.NewTestOCIFetcher(
 		func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
-			return []byte(`{"ok": true}`), nil
+			return []byte(slsaStatementJSON), nil
 		},
 		func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
 			return fakeImageWithPayload([]byte(`{"bundle": "data"}`)), nil
@@ -751,12 +745,17 @@ func TestBuildCertificateIdentitySANPatterns(t *testing.T) {
 	}
 }
 
+// bundleDescriptor returns a Sigstore bundle referrer whose manifest digest is
+// derived from the predicate type, so distinct predicate types are distinct
+// referrers.
 func bundleDescriptor(predicateType string) ociV1.Descriptor {
+	sum := sha256.Sum256([]byte(predicateType))
+
 	return ociV1.Descriptor{
 		ArtifactType: attestation.ExportBundleMediaType,
 		Digest: ociV1.Hash{
 			Algorithm: testHashAlgorithm,
-			Hex:       testHashHex,
+			Hex:       hex.EncodeToString(sum[:]),
 		},
 		Annotations: map[string]string{
 			attestation.ExportAnnotationPredicateType: predicateType,
@@ -791,7 +790,7 @@ func TestFetch(t *testing.T) {
 				return fakeImageWithPayload([]byte(`{"bundle": "ok"}`)), nil
 			},
 			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
-				return []byte(`{"verified": true}`), nil
+				return []byte(slsaStatementJSON), nil
 			},
 			cancelCtx:  false,
 			wantCount:  1,
@@ -804,7 +803,7 @@ func TestFetch(t *testing.T) {
 				return &fakeImageIndex{manifests: nil, err: nil}, nil
 			},
 			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
-				return nil, errImageFetch
+				return nil, &transport.Error{StatusCode: http.StatusNotFound}
 			},
 			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return nil, nil
@@ -878,15 +877,37 @@ func TestFetch(t *testing.T) {
 				}, nil
 			},
 			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
-				return nil, errImageFetch
+				return fakeImageWithPayload([]byte(`{"bundle": "ok"}`)), nil
 			},
 			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
-				return nil, nil
+				return nil, errSignatureMismatch
 			},
 			cancelCtx:  false,
 			wantCount:  0,
 			wantErr:    true,
-			wantErrMsg: "all referrer bundles failed",
+			wantErrMsg: "referrers failed verification",
+		},
+		{
+			name: "referrer transport error fails the fetch",
+			referrers: func(_ name.Digest, _ ...remote.Option) (ociV1.ImageIndex, error) {
+				return &fakeImageIndex{
+					manifests: []ociV1.Descriptor{
+						bundleDescriptor(attestation.PredicateSLSAProvenanceV1),
+					},
+					err: nil,
+				}, nil
+			},
+			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+				// A non-temporary 5xx fails the fetch without retries.
+				return nil, &transport.Error{StatusCode: http.StatusNotImplemented}
+			},
+			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
+				return []byte(slsaStatementJSON), nil
+			},
+			cancelCtx:  false,
+			wantCount:  0,
+			wantErr:    true,
+			wantErrMsg: "fetching referrer",
 		},
 	}
 
@@ -1018,7 +1039,7 @@ func TestFetchCosignTagAttestations(t *testing.T) {
 		{
 			name: "valid bundle layer",
 			imageFetch: func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
-				return fakeImageWithPayload([]byte(`{"bundle": "data"}`)), nil
+				return fakeImageWithPayload([]byte(sigstoreBundleJSON)), nil
 			},
 			verifyFunc: func(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
 				return []byte(
@@ -1121,7 +1142,7 @@ func TestFetchFallsBackToCosignTag(t *testing.T) {
 			if strings.HasSuffix(ref.String(), ".att") {
 				cosignTagFetched = true
 
-				return fakeImageWithPayload([]byte(`{"bundle": "ok"}`)), nil
+				return fakeImageWithPayload([]byte(sigstoreBundleJSON)), nil
 			}
 
 			return nil, errImageFetch
@@ -2026,12 +2047,17 @@ func TestCollectNotationSignatures(t *testing.T) {
 		t.Fatalf("creating test digest ref: %v", err)
 	}
 
+	var notationCount atomic.Int32
+
+	// Each call returns a distinct referrer manifest digest.
 	notationDescriptor := func() ociV1.Descriptor {
+		sum := sha256.Sum256([]byte(strconv.Itoa(int(notationCount.Add(1)))))
+
 		return ociV1.Descriptor{
 			ArtifactType: attestation.NotationSignatureMediaType,
 			Digest: ociV1.Hash{
 				Algorithm: testHashAlgorithm,
-				Hex:       testHashHex,
+				Hex:       hex.EncodeToString(sum[:]),
 			},
 		}
 	}
@@ -2139,7 +2165,7 @@ func TestFetchCosignTagAttestationsAggregateSizeLimit(t *testing.T) {
 	// Each verified payload is ~15 MiB, so after 3 layers we hit ~45 MiB and
 	// the 4th should push us over the 50 MiB aggregate limit.
 	payloadSize := attestation.ExportMaxTotalAttestationSize / 4
-	largePayload := make([]byte, payloadSize)
+	largePayload := []byte(slsaStatementJSON + strings.Repeat(" ", payloadSize))
 
 	const totalLayers = 8
 
@@ -2148,7 +2174,7 @@ func TestFetchCosignTagAttestationsAggregateSizeLimit(t *testing.T) {
 			return largePayload, nil
 		},
 		func(_ name.Reference, _ ...remote.Option) (ociV1.Image, error) {
-			return fakeMultiLayerImage(totalLayers, []byte(`{"bundle":"data"}`)), nil
+			return fakeMultiLayerImage(totalLayers, []byte(sigstoreBundleJSON)), nil
 		},
 	)
 
@@ -2205,8 +2231,13 @@ func TestNewOCIFetcherWithMultipleRoots(t *testing.T) {
 		t.Parallel()
 
 		sources := []attestation.RootSourceConfig{
-			{Name: "public", TUFMirror: "", TUFRootBytes: nil},
-			{Name: "github", TUFMirror: "https://tuf-repo.github.com", TUFRootBytes: nil},
+			{Name: "public", TUFMirror: "", TUFRootBytes: nil, Issuers: nil},
+			{
+				Name:         "github",
+				TUFMirror:    "https://tuf-repo.github.com",
+				TUFRootBytes: nil,
+				Issuers:      nil,
+			},
 		}
 
 		fetcher := attestation.NewOCIFetcherWithMultipleRoots(sources)
@@ -2225,8 +2256,8 @@ func TestMultiRootStaleCallback(t *testing.T) {
 	t.Parallel()
 
 	sources := []attestation.RootSourceConfig{
-		{Name: "a", TUFMirror: "", TUFRootBytes: nil},
-		{Name: "b", TUFMirror: "", TUFRootBytes: nil},
+		{Name: "a", TUFMirror: "", TUFRootBytes: nil, Issuers: nil},
+		{Name: "b", TUFMirror: "", TUFRootBytes: nil, Issuers: nil},
 	}
 
 	fetcher := attestation.NewOCIFetcherWithMultipleRoots(sources)
@@ -2301,8 +2332,18 @@ func TestIsMultiRootWithMultipleRoots(t *testing.T) {
 	t.Parallel()
 
 	sources := []attestation.RootSourceConfig{
-		{Name: "test1", TUFMirror: "https://tuf.example.com/root.json", TUFRootBytes: nil},
-		{Name: "test2", TUFMirror: "https://tuf2.example.com/root.json", TUFRootBytes: nil},
+		{
+			Name:         "test1",
+			TUFMirror:    "https://tuf.example.com/root.json",
+			TUFRootBytes: nil,
+			Issuers:      nil,
+		},
+		{
+			Name:         "test2",
+			TUFMirror:    "https://tuf2.example.com/root.json",
+			TUFRootBytes: nil,
+			Issuers:      nil,
+		},
 	}
 
 	fetcher := attestation.NewOCIFetcherWithMultipleRoots(sources)
@@ -2315,7 +2356,14 @@ func TestIsMultiRootWithMultipleRoots(t *testing.T) {
 func TestWarmNoRootCaches(t *testing.T) {
 	t.Parallel()
 
-	fetcher := attestation.NewOCIFetcher()
+	// A fetcher with a custom verifier has no trusted root caches, so warming
+	// it has nothing to fetch. NewOCIFetcher would contact the public Sigstore
+	// TUF repository.
+	fetcher := attestation.NewOCIFetcherWithSignedVerifier(
+		func(context.Context, []byte, *attestation.FetchOptions) (*attestation.VerifiedBundle, error) {
+			return nil, errNotReached
+		},
+	)
 
 	err := fetcher.Warm(context.Background())
 	if err != nil {

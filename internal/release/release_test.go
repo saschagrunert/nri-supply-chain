@@ -16,6 +16,7 @@ package release_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -373,36 +374,27 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 func TestVerifyEmptyPURL(t *testing.T) {
 	t.Parallel()
 
-	doc := relPredicate{ //nolint:exhaustruct_v5 // test omits PackageID
-		PURL: "",
+	tests := []struct {
+		name      string
+		predicate json.RawMessage
+	}{
+		{name: "empty purl", predicate: json.RawMessage(`{"purl":""}`)},
+		{name: "empty object", predicate: json.RawMessage(`{}`)},
+		{name: "null predicate", predicate: json.RawMessage(`null`)},
 	}
-	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-	t.Run("empty purl with no policy passes", func(t *testing.T) {
-		t.Parallel()
+	for _, tc := range tests {
+		t.Run(tc.name+" is rejected without policy", func(t *testing.T) {
+			t.Parallel()
 
-		result, err := release.Verify(context.Background(), att, &policy.Policy{}, testDigest)
-		testutil.AssertNoError(t, err)
+			att := testutil.WrapInToto(t, tc.predicate, testDigest, testPredicateType)
 
-		if !result.Passed {
-			t.Errorf("expected pass for empty purl with no policy, got: %s", result.Detail)
-		}
-	})
-
-	t.Run("empty purl with trusted registries fails", func(t *testing.T) {
-		t.Parallel()
-
-		result, err := release.Verify(context.Background(), att, &policy.Policy{
-			Release: &policy.ReleasePolicy{
-				TrustedRegistries: []string{testTrustedRegistry},
-			},
-		}, testDigest)
-		testutil.AssertNoError(t, err)
-
-		if result.Passed {
-			t.Error("expected fail for empty purl with trusted registries")
-		}
-	})
+			_, err := release.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+			if !errors.Is(err, release.ErrInvalidRelease) {
+				t.Fatalf("expected ErrInvalidRelease, got %v", err)
+			}
+		})
+	}
 }
 
 func TestVerifyUntrustedRegistryDetailMessage(t *testing.T) {

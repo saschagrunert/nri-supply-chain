@@ -67,7 +67,7 @@ teardown() {
 		--config "$PLUGIN_CONFIG" \
 		bundle create \
 		--image "$ref" \
-		--output "$bundle_out"
+		--output-file "$bundle_out"
 	echo "# bundle create output: $output" >&2
 	[[ "$status" -eq 0 ]]
 	[[ -f "$bundle_out" ]]
@@ -81,14 +81,14 @@ teardown() {
 		--config "$PLUGIN_CONFIG" \
 		bundle create \
 		--image "$ref" \
-		--output "$bundle_out" \
+		--output-file "$bundle_out" \
 		--sign-key "$BUNDLE_SIGN_KEY"
 	echo "# bundle create output: $output" >&2
 	[[ "$status" -eq 0 ]]
 	[[ -f "$bundle_out" ]]
 }
 
-@test "bundle create fails without --output" {
+@test "bundle create fails without --output-file" {
 	local ref="${BUNDLE_IMAGE}@${BUNDLE_DIGEST}"
 	run timeout "$CMD_TIMEOUT" "$BINARY" \
 		--config "$PLUGIN_CONFIG" \
@@ -101,7 +101,7 @@ teardown() {
 	run timeout "$CMD_TIMEOUT" "$BINARY" \
 		--config "$PLUGIN_CONFIG" \
 		bundle create \
-		--output "${BATS_TEST_TMPDIR}/empty.tar.gz"
+		--output-file "${BATS_TEST_TMPDIR}/empty.tar.gz"
 	[[ "$status" -ne 0 ]]
 }
 
@@ -117,7 +117,7 @@ teardown() {
 		--config "$PLUGIN_CONFIG" \
 		bundle create \
 		--image "$ref" \
-		--output "$bundle_out"
+		--output-file "$bundle_out"
 	echo "# create output: $output" >&2
 	[[ "$status" -eq 0 ]]
 
@@ -162,7 +162,7 @@ assert data['imageCount'] > 0, 'expected at least one image'
 		--config "$PLUGIN_CONFIG" \
 		bundle create \
 		--image "$ref" \
-		--output "$bundle_out"
+		--output-file "$bundle_out"
 
 	timeout "$CMD_TIMEOUT" "$BINARY" \
 		bundle import "$bundle_out" \
@@ -185,7 +185,7 @@ assert data['imageCount'] > 0, 'expected at least one image'
 		--config "$PLUGIN_CONFIG" \
 		bundle create \
 		--image "$ref" \
-		--output "$bundle_out" \
+		--output-file "$bundle_out" \
 		--sign-key "$BUNDLE_SIGN_KEY"
 
 	timeout "$CMD_TIMEOUT" "$BINARY" \
@@ -216,7 +216,7 @@ assert data['imageCount'] > 0, 'expected at least one image'
 		--config "$PLUGIN_CONFIG" \
 		bundle create \
 		--image "$ref" \
-		--output "$bundle_out" \
+		--output-file "$bundle_out" \
 		--sign-key "$BUNDLE_SIGN_KEY"
 
 	timeout "$CMD_TIMEOUT" "$BINARY" \
@@ -241,7 +241,7 @@ assert data['imageCount'] > 0, 'expected at least one image'
 		--config "$PLUGIN_CONFIG" \
 		bundle create \
 		--image "$ref" \
-		--output "$bundle_out" \
+		--output-file "$bundle_out" \
 		--sign-key "$BUNDLE_SIGN_KEY"
 
 	run timeout "$CMD_TIMEOUT" "$BINARY" \
@@ -267,7 +267,7 @@ assert data['imageCount'] > 0, 'expected at least one image'
 		--config "$PLUGIN_CONFIG" \
 		bundle create \
 		--image "$ref" \
-		--output "$bundle_out" \
+		--output-file "$bundle_out" \
 		--sign-key "$BUNDLE_SIGN_KEY"
 
 	run timeout "$CMD_TIMEOUT" "$BINARY" \
@@ -287,7 +287,7 @@ assert data['imageCount'] > 0, 'expected at least one image'
 		--config "$PLUGIN_CONFIG" \
 		bundle create \
 		--image "$ref" \
-		--output "$bundle_out"
+		--output-file "$bundle_out"
 
 	run timeout "$CMD_TIMEOUT" "$BINARY" \
 		bundle import "$bundle_out"
@@ -305,7 +305,7 @@ assert data['imageCount'] > 0, 'expected at least one image'
 		--config "$PLUGIN_CONFIG" \
 		bundle create \
 		--image "$ref" \
-		--output "$bundle_out"
+		--output-file "$bundle_out"
 
 	timeout "$CMD_TIMEOUT" "$BINARY" \
 		bundle import "$bundle_out" \
@@ -317,4 +317,88 @@ assert data['imageCount'] > 0, 'expected at least one image'
 		--max-age "1ns"
 	echo "# verify output: $output" >&2
 	[[ "$status" -ne 0 ]]
+}
+
+# -- offline verification tests --
+
+write_offline_config() {
+	local config="$1"
+	local store_dir="$2"
+	local policies="$3"
+	# Enforce mode, so a denied image is reported as not allowed.
+	sed -e "s|^policy_dir = .*|policy_dir = \"${policies}\"|" \
+		-e 's|^verification = .*|verification = "enforce"|' \
+		"$PLUGIN_CONFIG" >"$config"
+	cat >>"$config" <<-EOF
+		[offline]
+		mode = "offline"
+		attestation_store = "${store_dir}"
+	EOF
+}
+
+create_and_import_bundle() {
+	local bundle_out="$1"
+	local store_dir="$2"
+	local ref="${BUNDLE_IMAGE}@${BUNDLE_DIGEST}"
+
+	timeout "$CMD_TIMEOUT" "$BINARY" \
+		--config "$PLUGIN_CONFIG" \
+		bundle create \
+		--image "$ref" \
+		--output-file "$bundle_out"
+
+	timeout "$CMD_TIMEOUT" "$BINARY" \
+		bundle import "$bundle_out" \
+		--store "$store_dir"
+}
+
+@test "bundle create, import, and offline verify round-trip" {
+	local store_dir="${BATS_TEST_TMPDIR}/offline-store"
+	local offline_config="${BATS_TEST_TMPDIR}/offline-config.toml"
+	local ref="${BUNDLE_IMAGE}@${BUNDLE_DIGEST}"
+
+	create_and_import_bundle "${BATS_TEST_TMPDIR}/offline-bundle.tar.gz" "$store_dir"
+	write_offline_config "$offline_config" "$store_dir" "$POLICY_DIR"
+
+	# The bundled attestations are re-verified against the policy keys
+	# without any registry access.
+	run timeout "$CMD_TIMEOUT" "$BINARY" \
+		--config "$offline_config" \
+		verify "$ref" \
+		--output json
+	echo "# offline verify output: $output" >&2
+	[[ "$status" -eq 0 ]]
+	echo "$output" | grep -q '"allowed": true'
+}
+
+@test "offline verify rejects bundled attestations from untrusted keys" {
+	local store_dir="${BATS_TEST_TMPDIR}/untrusted-store"
+	local offline_config="${BATS_TEST_TMPDIR}/untrusted-config.toml"
+	local untrusted_policies="${BATS_TEST_TMPDIR}/untrusted-policies"
+	local ref="${BUNDLE_IMAGE}@${BUNDLE_DIGEST}"
+
+	create_and_import_bundle "${BATS_TEST_TMPDIR}/untrusted-bundle.tar.gz" "$store_dir"
+
+	# Trust only an unrelated key: the bundled attestations must not verify.
+	mkdir -p "$untrusted_policies"
+	cat >"${untrusted_policies}/default.json" <<-EOF
+		{
+		  "trust": {
+		    "builders": [{"id": "https://test-builder.example.com", "maxLevel": 3}],
+		    "verifiers": [{"id": "test-verifier", "keys": ["${BUNDLE_SIGN_PUB}"]}]
+		  },
+		  "slsa": {"missingPolicy": "deny"},
+		  "vex": {"missingPolicy": "allow"},
+		  "signatures": {"requireTransparencyLog": false}
+		}
+	EOF
+	write_offline_config "$offline_config" "$store_dir" "$untrusted_policies"
+
+	run timeout "$CMD_TIMEOUT" "$BINARY" \
+		--config "$offline_config" \
+		verify "$ref" \
+		--output json
+	echo "# offline verify output: $output" >&2
+	[[ "$status" -ne 0 ]]
+	echo "$output" | grep -q '"allowed": false'
 }

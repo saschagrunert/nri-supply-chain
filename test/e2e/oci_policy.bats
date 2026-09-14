@@ -13,6 +13,7 @@ setup_file() {
 	EOF
 
 	start_registry
+	generate_signing_key
 	configure_insecure_registry
 
 	# Push a default allow-all policy to the OCI registry.

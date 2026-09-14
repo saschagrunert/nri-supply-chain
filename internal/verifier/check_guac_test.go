@@ -216,6 +216,43 @@ func TestFetchGUACDataFailureRecordsBreakerAndFallback(t *testing.T) {
 	testutil.AssertEqual(t, false, result.Passed)
 }
 
+func TestFetchGUACDataAllowFallbackKeepsPartialResults(t *testing.T) {
+	t.Parallel()
+
+	srv := newTestGUACServer(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/query/dependencies" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"purls":["pkg:npm/dep@1.0"]}`))
+
+			return
+		}
+
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	defer srv.Close()
+
+	client, err := guac.NewClient(srv.URL, "", "", testGUACTimeout)
+	testutil.AssertNoError(t, err)
+
+	cfg := config.DefaultConfig()
+	cfg.Guac.Checks = []string{testGUACCheckVuln, guac.CheckIsDependency}
+	cfg.Guac.MaxDependencies = testGUACMaxDeps
+	cfg.Guac.FallbackPolicy = types.ActionAllow
+
+	state := verifier.ExportNewGUACSnapshot(cfg, metrics.New(), client, nil)
+	result := verifier.ExportFetchGUACData(
+		context.Background(), state, testGUACDigest, testGUACImage,
+	)
+
+	if result == nil {
+		t.Fatal("allow fallback must keep the results of queries that succeeded")
+	}
+
+	testutil.AssertEqual(t, true, result.Passed)
+	testutil.AssertEqual[any](t, true, result.Metadata[guac.MetaKeyDependenciesAvailable])
+	testutil.AssertEqual[any](t, false, result.Metadata[guac.MetaKeyVulnerabilitiesAvailable])
+}
+
 func TestTimedFetchGUACDataRecordsMetrics(t *testing.T) {
 	t.Parallel()
 

@@ -121,7 +121,11 @@ func validVSAPayload(t *testing.T, result string) []byte {
 	t.Helper()
 
 	stmt := vsa.Statement{
-		Type:          testInTotoStatementV1,
+		Type: testInTotoStatementV1,
+		Subject: []vsa.Subject{{
+			Name:   "index.docker.io/library/nginx",
+			Digest: map[string]string{"sha256": strings.TrimPrefix(testFetchDigest, "sha256:")},
+		}},
 		PredicateType: "https://slsa.dev/verification_summary/v1",
 		Predicate: vsa.Predicate{
 			Verifier: vsa.Verifier{
@@ -681,8 +685,10 @@ func TestVerifyWithFetcher(t *testing.T) {
 			dir := t.TempDir()
 
 			policyJSON := test.policyJSON
+			keyPath := ""
+
 			if strings.Contains(policyJSON, "/etc/keys/v.pub") {
-				keyPath := createTempKeyFile(t, dir)
+				keyPath = createTempKeyFile(t, dir)
 				policyJSON = strings.ReplaceAll(policyJSON, "/etc/keys/v.pub", keyPath)
 			}
 
@@ -703,6 +709,10 @@ func TestVerifyWithFetcher(t *testing.T) {
 					test.setupPayloads(t, test.fetcher)
 				}
 
+				// The mock stands in for a fetcher that verified the VSAs
+				// with the verifier key.
+				signWithKey(test.fetcher.attestations, keyPath)
+
 				fetcher = test.fetcher
 			}
 
@@ -710,7 +720,8 @@ func TestVerifyWithFetcher(t *testing.T) {
 			testutil.AssertNoError(t, err)
 
 			result, err := verif.Verify(
-				context.Background(), "nginx:latest", testFetchDigest, "", testDefaultNamespace, "",
+				context.Background(),
+				newRequest("nginx:latest", testFetchDigest, "", testDefaultNamespace, ""),
 			)
 
 			if test.wantErr != nil {
@@ -731,6 +742,164 @@ func TestVerifyWithFetcher(t *testing.T) {
 			if test.wantCheckLen > 0 && len(result.CheckResults) != test.wantCheckLen {
 				t.Errorf("expected %d check results, got %d",
 					test.wantCheckLen, len(result.CheckResults))
+			}
+		})
+	}
+}
+
+// signWithKey marks attestations as verified with the key at keyPath.
+func signWithKey(atts []attestation.VerifiedAttestation, keyPath string) {
+	if keyPath == "" {
+		return
+	}
+
+	for idx := range atts {
+		atts[idx].Signer = attestation.SignerIdentity{
+			KeyPath: keyPath, KeyPaths: []string{keyPath}, Issuer: "", SAN: "",
+		}
+	}
+}
+
+func TestVerifyVSASignerBinding(t *testing.T) {
+	t.Parallel()
+
+	const (
+		otherKeyPath   = "/other/key.pub"
+		noProvenance   = "no provenance attestation found"
+		noTrustedVSA   = "no trusted VSA passed"
+		vsaPassedShort = "VSA verification passed"
+	)
+
+	otherKeySigner := func(string) attestation.SignerIdentity {
+		return attestation.SignerIdentity{
+			KeyPath: otherKeyPath, KeyPaths: []string{otherKeyPath}, Issuer: "", SAN: "",
+		}
+	}
+
+	tests := []struct {
+		name        string
+		result      string
+		signer      func(keyPath string) attestation.SignerIdentity
+		missing     types.Action
+		wantAllowed bool
+		wantReason  string
+	}{
+		{
+			name:        "passed VSA from another trusted key does not skip checks",
+			result:      vsa.ResultPassed,
+			signer:      otherKeySigner,
+			missing:     types.ActionAllow,
+			wantAllowed: false,
+			wantReason:  noProvenance,
+		},
+		{
+			name:   "passed VSA from keyless signer does not skip checks",
+			result: vsa.ResultPassed,
+			signer: func(string) attestation.SignerIdentity {
+				return attestation.SignerIdentity{
+					KeyPath:  "",
+					KeyPaths: nil,
+					Issuer:   "https://token.actions.githubusercontent.com",
+					SAN:      "https://github.com/org/repo/.github/workflows/ci.yml@refs/heads/main",
+				}
+			},
+			missing:     types.ActionAllow,
+			wantAllowed: false,
+			wantReason:  noProvenance,
+		},
+		{
+			name:        "failed VSA from unbound signer is ignored",
+			result:      vsa.ResultFailed,
+			signer:      otherKeySigner,
+			missing:     types.ActionAllow,
+			wantAllowed: false,
+			wantReason:  noProvenance,
+		},
+		{
+			name:        "unbound passed VSA with vsa missing deny rejects",
+			result:      vsa.ResultPassed,
+			signer:      otherKeySigner,
+			missing:     types.ActionDeny,
+			wantAllowed: false,
+			wantReason:  noTrustedVSA,
+		},
+		{
+			name:   "bound passed VSA skips checks",
+			result: vsa.ResultPassed,
+			signer: func(keyPath string) attestation.SignerIdentity {
+				return attestation.SignerIdentity{
+					KeyPath: keyPath, KeyPaths: []string{keyPath}, Issuer: "", SAN: "",
+				}
+			},
+			missing:     types.ActionDeny,
+			wantAllowed: true,
+			wantReason:  vsaPassedShort,
+		},
+		{
+			// The same key is configured at another path first; the binding
+			// must still match the verifier's own path.
+			name:   "bound passed VSA attributed to several key paths skips checks",
+			result: vsa.ResultPassed,
+			signer: func(keyPath string) attestation.SignerIdentity {
+				return attestation.SignerIdentity{
+					KeyPath:  otherKeyPath,
+					KeyPaths: []string{otherKeyPath, keyPath},
+					Issuer:   "",
+					SAN:      "",
+				}
+			},
+			missing:     types.ActionDeny,
+			wantAllowed: true,
+			wantReason:  vsaPassedShort,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			keyPath := createTempKeyFile(t, dir)
+
+			testutil.WritePolicy(t, dir, "default.json", `{
+				"trust": {
+					"builders": [{"id": "https://github.com/actions/runner", "maxLevel": 2}],
+					"verifiers": [{"id": "https://example.com/verifier", "keys": ["`+keyPath+`"]}]
+				},
+				"slsa": {"missingPolicy": "deny"},
+				"vsa": {"missingPolicy": "`+string(test.missing)+`"}
+			}`)
+
+			fetcher := &mockFetcher{
+				attestations: []attestation.VerifiedAttestation{{
+					PredicateType: attestation.PredicateVSA,
+					Payload:       validVSAPayload(t, test.result),
+					Digest:        testFetchDigest,
+					Signer:        test.signer(keyPath),
+				}},
+				err: nil,
+			}
+
+			cfg := config.DefaultConfig()
+			cfg.Verification = config.ModeWarn
+			cfg.PolicyDir = dir
+
+			verif, err := verifier.New(t.Context(), cfg, metrics.New(), fetcher)
+			testutil.AssertNoError(t, err)
+
+			result, err := verif.Verify(
+				context.Background(),
+				newRequest("nginx:latest", testFetchDigest, "", testDefaultNamespace, ""),
+			)
+			testutil.AssertNoError(t, err)
+
+			if result.Verified != test.wantAllowed {
+				t.Errorf("expected verified=%v, got %v (reason: %s)",
+					test.wantAllowed, result.Verified, result.Reason)
+			}
+
+			if !strings.Contains(result.Reason, test.wantReason) {
+				t.Errorf("expected reason to contain %q, got %q", test.wantReason, result.Reason)
 			}
 		})
 	}
@@ -772,11 +941,15 @@ func TestVerifyCacheFailureTTL(t *testing.T) {
 	// so it should be cached with the short failure TTL.
 	result1, err := verif.Verify(
 		context.Background(),
-		"nginx:latest",
-		"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-		"",
-		"default", "",
+		newRequest(
+			"nginx:latest",
+			"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+			"",
+			"default",
+			"",
+		),
 	)
+
 	testutil.AssertNoError(t, err)
 
 	if !result1.Allowed {
@@ -790,11 +963,15 @@ func TestVerifyCacheFailureTTL(t *testing.T) {
 	// The result should still be computed fresh (same outcome in this case).
 	result2, err := verif.Verify(
 		context.Background(),
-		"nginx:latest",
-		"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-		"",
-		"default", "",
+		newRequest(
+			"nginx:latest",
+			"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+			"",
+			"default",
+			"",
+		),
 	)
+
 	testutil.AssertNoError(t, err)
 
 	if !result2.Allowed {
@@ -829,7 +1006,7 @@ func (f *failingFetcher) Fetch(
 ) ([]attestation.VerifiedAttestation, error) {
 	f.calls.Add(1)
 
-	return nil, errRegistryUnavail
+	return nil, connectionError()
 }
 
 func TestVerifyConcurrentSameDigest(t *testing.T) {
@@ -866,7 +1043,8 @@ func TestVerifyConcurrentSameDigest(t *testing.T) {
 			<-start
 
 			_, verifyErr := ver.Verify(
-				context.Background(), imageRef, digest, "", namespace, "",
+				context.Background(),
+				newRequest(imageRef, digest, "", namespace, ""),
 			)
 			if verifyErr != nil {
 				t.Errorf("unexpected error: %v", verifyErr)
@@ -908,8 +1086,10 @@ func TestVerifyCircuitBreakerIntegration(t *testing.T) {
 	// Trip the circuit breaker with 3 failures.
 	for call := range 3 {
 		result, verifyErr := ver.Verify(
-			context.Background(), imageRef, digest, "", namespace, "",
+			context.Background(),
+			newRequest(imageRef, digest, "", namespace, ""),
 		)
+
 		testutil.AssertNoError(t, verifyErr)
 
 		if !result.Allowed {
@@ -922,9 +1102,8 @@ func TestVerifyCircuitBreakerIntegration(t *testing.T) {
 	}
 
 	// 4th call: circuit breaker is open, fetch should be skipped.
-	result, err := ver.Verify(
-		context.Background(), imageRef, digest, "", namespace, "",
-	)
+	result, err := ver.Verify(context.Background(), newRequest(imageRef, digest, "", namespace, ""))
+
 	testutil.AssertNoError(t, err)
 
 	if !result.Allowed {
@@ -942,9 +1121,8 @@ func TestVerifyCircuitBreakerIntegration(t *testing.T) {
 	// Wait for cooldown to expire, then verify the breaker allows a probe.
 	time.Sleep(1100 * time.Millisecond)
 
-	_, err = ver.Verify(
-		context.Background(), imageRef, digest, "", namespace, "",
-	)
+	_, err = ver.Verify(context.Background(), newRequest(imageRef, digest, "", namespace, ""))
+
 	testutil.AssertNoError(t, err)
 
 	if got := fetcher.calls.Load(); got != 4 {
@@ -979,7 +1157,7 @@ func TestVerifyCircuitBreakerMetric(t *testing.T) {
 	for call := range 2 {
 		digest := "sha256:" + strings.Repeat(string("0123456789abcdef"[call%16]), 64)
 
-		_, err := ver.Verify(context.Background(), imageRef, digest, "", namespace, "")
+		_, err := ver.Verify(context.Background(), newRequest(imageRef, digest, "", namespace, ""))
 		testutil.AssertNoError(t, err)
 	}
 
@@ -992,7 +1170,7 @@ func TestVerifyCircuitBreakerMetric(t *testing.T) {
 	// 3rd call: circuit breaker is open, fetch should be skipped.
 	digest := "sha256:" + strings.Repeat("c", 64)
 
-	result, err := ver.Verify(context.Background(), imageRef, digest, "", namespace, "")
+	result, err := ver.Verify(context.Background(), newRequest(imageRef, digest, "", namespace, ""))
 	testutil.AssertNoError(t, err)
 
 	if !result.Allowed {
@@ -1012,7 +1190,7 @@ func TestVerifyCircuitBreakerMetric(t *testing.T) {
 
 	digest = "sha256:" + strings.Repeat("d", 64)
 
-	_, err = ver.Verify(context.Background(), imageRef, digest, "", namespace, "")
+	_, err = ver.Verify(context.Background(), newRequest(imageRef, digest, "", namespace, ""))
 	testutil.AssertNoError(t, err)
 
 	if got := fetcher.calls.Load(); got != 3 {
@@ -1053,8 +1231,8 @@ func TestVerifyConcurrentWithReloadModeSwitch(t *testing.T) {
 
 			for range 10 {
 				_, verifyErr := ver.Verify(
-					context.Background(), testDockerNginx,
-					digest, "", testDefaultNamespace, "",
+					context.Background(),
+					newRequest(testDockerNginx, digest, "", testDefaultNamespace, ""),
 				)
 				if verifyErr != nil && !errors.Is(verifyErr, verifier.ErrVerificationFailed) {
 					t.Errorf("unexpected verify error: %v", verifyErr)
@@ -1117,8 +1295,8 @@ func TestVerifyConcurrentWithReload(t *testing.T) {
 
 			for range 10 {
 				_, verifyErr := ver.Verify(
-					context.Background(), testDockerNginx,
-					digest, "", testDefaultNamespace, "",
+					context.Background(),
+					newRequest(testDockerNginx, digest, "", testDefaultNamespace, ""),
 				)
 				if verifyErr != nil {
 					t.Errorf("unexpected verify error: %v", verifyErr)
@@ -1235,8 +1413,10 @@ func TestVerifySBOMThroughVerifier(t *testing.T) {
 		testutil.AssertNoError(t, err)
 
 		result, err := verif.Verify(
-			context.Background(), "nginx:latest", testFetchDigest, "", testDefaultNamespace, "",
+			context.Background(),
+			newRequest("nginx:latest", testFetchDigest, "", testDefaultNamespace, ""),
 		)
+
 		testutil.AssertNoError(t, err)
 
 		if !result.Allowed {
@@ -1265,7 +1445,8 @@ func TestVerifySBOMThroughVerifier(t *testing.T) {
 		testutil.AssertNoError(t, err)
 
 		_, err = verif.Verify(
-			context.Background(), "nginx:latest", testFetchDigest, "", testDefaultNamespace, "",
+			context.Background(),
+			newRequest("nginx:latest", testFetchDigest, "", testDefaultNamespace, ""),
 		)
 
 		if !errors.Is(err, verifier.ErrVerificationFailed) {
@@ -1305,7 +1486,8 @@ func TestVerifySBOMThroughVerifier(t *testing.T) {
 		testutil.AssertNoError(t, err)
 
 		_, err = verif.Verify(
-			context.Background(), "nginx:latest", testFetchDigest, "", testDefaultNamespace, "",
+			context.Background(),
+			newRequest("nginx:latest", testFetchDigest, "", testDefaultNamespace, ""),
 		)
 
 		if !errors.Is(err, verifier.ErrVerificationFailed) {
@@ -1387,12 +1569,9 @@ func TestVerifyIndexDigestFallback(t *testing.T) {
 
 		result, err := verif.Verify(
 			context.Background(),
-			"nginx:latest",
-			platformDigest,
-			indexDigest,
-			testDefaultNamespace,
-			"",
+			newRequest("nginx:latest", platformDigest, indexDigest, testDefaultNamespace, ""),
 		)
+
 		testutil.AssertNoError(t, err)
 
 		if !result.Allowed {
@@ -1428,12 +1607,9 @@ func TestVerifyIndexDigestFallback(t *testing.T) {
 
 		result, err := verif.Verify(
 			context.Background(),
-			"nginx:latest",
-			platformDigest,
-			indexDigest,
-			testDefaultNamespace,
-			"",
+			newRequest("nginx:latest", platformDigest, indexDigest, testDefaultNamespace, ""),
 		)
+
 		testutil.AssertNoError(t, err)
 
 		if !result.Allowed {
@@ -1472,8 +1648,10 @@ func TestVerifyIndexDigestFallback(t *testing.T) {
 		testutil.AssertNoError(t, err)
 
 		result, err := verif.Verify(
-			context.Background(), "nginx:latest", platformDigest, "", testDefaultNamespace, "",
+			context.Background(),
+			newRequest("nginx:latest", platformDigest, "", testDefaultNamespace, ""),
 		)
+
 		testutil.AssertNoError(t, err)
 
 		if !result.Allowed {

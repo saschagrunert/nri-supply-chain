@@ -15,11 +15,8 @@
 package bundle
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"strings"
 )
 
 // VerifyBlobIntegrity checks that all blobs referenced by the manifest exist
@@ -42,14 +39,10 @@ func VerifyBlobIntegrity(store *Store) error {
 		}
 	}
 
-	if store.manifest.TrustedRoot != nil {
-		rootErr := verifyBlob(
-			store,
-			store.manifest.TrustedRoot.BlobDigest,
-			store.manifest.TrustedRoot.Size,
-		)
+	for _, entry := range store.manifest.allTrustedRoots() {
+		rootErr := verifyBlob(store, entry.BlobDigest, entry.Size)
 		if rootErr != nil {
-			errs = append(errs, fmt.Errorf("trusted root: %w", rootErr))
+			errs = append(errs, fmt.Errorf("trusted root %q: %w", entry.Name, rootErr))
 		}
 	}
 
@@ -67,30 +60,10 @@ func VerifyBlobIntegrity(store *Store) error {
 
 const sha256Prefix = "sha256:"
 
+// verifyBlob checks a blob's presence, size, and content digest. readBlob
+// performs the digest and size checks on every read.
 func verifyBlob(store *Store, digestStr string, expectedSize int64) error {
-	if !strings.HasPrefix(digestStr, sha256Prefix) {
-		return fmt.Errorf(
-			"%w: expected %q prefix, got %q",
-			ErrUnsupportedDigestAlgorithm,
-			sha256Prefix,
-			digestStr,
-		)
-	}
+	_, err := store.readBlob(digestStr, expectedSize)
 
-	data, err := store.readBlob(digestStr, expectedSize)
-	if err != nil {
-		return err
-	}
-
-	actualHash := sha256.Sum256(data)
-	expectedHash := digestStr[len(sha256Prefix):]
-
-	actualHex := hex.EncodeToString(actualHash[:])
-	if actualHex != expectedHash {
-		return fmt.Errorf(
-			"%w: %s", ErrBlobDigestMismatch, digestStr,
-		)
-	}
-
-	return nil
+	return err
 }

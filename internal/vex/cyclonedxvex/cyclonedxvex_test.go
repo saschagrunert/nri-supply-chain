@@ -21,13 +21,22 @@ import (
 
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/vex/cyclonedxvex"
+	"github.com/saschagrunert/nri-supply-chain/internal/vex/imagematch"
 )
 
 const (
 	testDigest   = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+	testImageRef = "docker.io/library/nginx:latest"
 	testCompRef  = "comp-nginx"
 	testCompName = "nginx"
+	testCVE      = "CVE-2024-4242"
+	otherDigest  = "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	otherName    = "other"
 )
+
+func testImage() *imagematch.Image {
+	return imagematch.New(testImageRef, testDigest, nil)
+}
 
 func bomWithVuln(state cdx.ImpactAnalysisState, affectsRef string) *cdx.BOM {
 	bom := cdx.NewBOM()
@@ -115,7 +124,7 @@ func TestVerifyImpactAnalysisStates(t *testing.T) {
 			bom := bomWithVuln(test.state, testCompRef)
 			data := testutil.MustMarshal(t, bom)
 
-			result, err := cyclonedxvex.Verify(data, testDigest, "")
+			result, err := cyclonedxvex.Verify(data, testImage())
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -142,7 +151,7 @@ func TestVerifyComponentMatchByDigest(t *testing.T) {
 	bom := bomWithVuln(cdx.IASExploitable, testCompRef)
 	data := testutil.MustMarshal(t, bom)
 
-	result, err := cyclonedxvex.Verify(data, testDigest, "")
+	result, err := cyclonedxvex.Verify(data, testImage())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -155,12 +164,10 @@ func TestVerifyComponentMatchByDigest(t *testing.T) {
 func TestVerifyComponentNoMatch(t *testing.T) {
 	t.Parallel()
 
-	bom := bomWithVuln(cdx.IASExploitable, "unknown-ref")
+	bom := bomWithVuln(cdx.IASExploitable, testCompRef)
 	data := testutil.MustMarshal(t, bom)
 
-	otherDigest := "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
-
-	result, err := cyclonedxvex.Verify(data, otherDigest, "")
+	result, err := cyclonedxvex.Verify(data, imagematch.New("", otherDigest, nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -187,7 +194,7 @@ func TestVerifyDirectRefDigestMatch(t *testing.T) {
 
 	data := testutil.MustMarshal(t, bom)
 
-	result, err := cyclonedxvex.Verify(data, testDigest, "")
+	result, err := cyclonedxvex.Verify(data, testImage())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -227,7 +234,7 @@ func TestVerifyPURLMatch(t *testing.T) {
 
 	data := testutil.MustMarshal(t, bom)
 
-	result, err := cyclonedxvex.Verify(data, testDigest, purl)
+	result, err := cyclonedxvex.Verify(data, testImage())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -243,7 +250,7 @@ func TestVerifyEmptyVulnerabilities(t *testing.T) {
 	bom := cdx.NewBOM()
 	data := testutil.MustMarshal(t, bom)
 
-	result, err := cyclonedxvex.Verify(data, testDigest, "")
+	result, err := cyclonedxvex.Verify(data, testImage())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -264,7 +271,7 @@ func TestVerifyNilVulnerabilities(t *testing.T) {
 	bom.Vulnerabilities = nil
 	data := testutil.MustMarshal(t, bom)
 
-	result, err := cyclonedxvex.Verify(data, testDigest, "")
+	result, err := cyclonedxvex.Verify(data, testImage())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -277,7 +284,7 @@ func TestVerifyNilVulnerabilities(t *testing.T) {
 func TestVerifyMalformedJSON(t *testing.T) {
 	t.Parallel()
 
-	_, err := cyclonedxvex.Verify([]byte("not json"), testDigest, "")
+	_, err := cyclonedxvex.Verify([]byte("not json"), testImage())
 	if err == nil {
 		t.Fatal("expected error for malformed JSON")
 	}
@@ -286,7 +293,7 @@ func TestVerifyMalformedJSON(t *testing.T) {
 func TestVerifyEmptyPayload(t *testing.T) {
 	t.Parallel()
 
-	_, err := cyclonedxvex.Verify([]byte{}, testDigest, "")
+	_, err := cyclonedxvex.Verify([]byte{}, testImage())
 	if err == nil {
 		t.Fatal("expected error for empty payload")
 	}
@@ -295,7 +302,8 @@ func TestVerifyEmptyPayload(t *testing.T) {
 func TestVerifyNoAnalysis(t *testing.T) {
 	t.Parallel()
 
-	// Vulnerability with nil Analysis should be treated as affected.
+	// A vulnerability without analysis is a finding, not a VEX statement, so
+	// it is ignored even when it affects the image.
 	bom := cdx.NewBOM()
 	bom.Components = &[]cdx.Component{
 		{
@@ -321,20 +329,21 @@ func TestVerifyNoAnalysis(t *testing.T) {
 
 	data := testutil.MustMarshal(t, bom)
 
-	result, err := cyclonedxvex.Verify(data, testDigest, "")
+	result, err := cyclonedxvex.Verify(data, testImage())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.AffectedNames) != 1 || result.AffectedNames[0] != "CVE-2024-0000" {
-		t.Errorf("expected CVE-2024-0000 to be affected when analysis is nil, got %v",
-			result.AffectedNames)
+	if len(result.AffectedNames) != 0 || result.MatchedVulnerabilities != 0 {
+		t.Errorf("expected vulnerability without analysis to be ignored, got %+v", result)
 	}
 }
 
-func TestVerifyEmptyAffects(t *testing.T) {
+func TestVerifyEmptyAffectsAppliesToImage(t *testing.T) {
 	t.Parallel()
 
+	// The BOM is bound to the image, so a vulnerability without affects
+	// describes the BOM subject (the image) and must not be ignored.
 	bom := cdx.NewBOM()
 	bom.Vulnerabilities = &[]cdx.Vulnerability{
 		{
@@ -345,13 +354,137 @@ func TestVerifyEmptyAffects(t *testing.T) {
 
 	data := testutil.MustMarshal(t, bom)
 
-	result, err := cyclonedxvex.Verify(data, testDigest, "")
+	result, err := cyclonedxvex.Verify(data, testImage())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.AffectedNames) > 0 {
-		t.Error("expected no match when vulnerability has no affects")
+	if len(result.AffectedNames) != 1 || result.MatchedVulnerabilities != 1 {
+		t.Errorf("expected vulnerability without affects to apply, got %+v", result)
+	}
+}
+
+func vulnBOM(vulnRef string, components []cdx.Component) *cdx.BOM {
+	bom := cdx.NewBOM()
+	bom.Components = &components
+	bom.Vulnerabilities = &[]cdx.Vulnerability{
+		{
+			ID:       testCVE,
+			Analysis: &cdx.VulnerabilityAnalysis{State: cdx.IASExploitable},
+			Affects:  &[]cdx.Affects{{Ref: vulnRef}},
+		},
+	}
+
+	return bom
+}
+
+func TestVerifyAffectsResolution(t *testing.T) {
+	t.Parallel()
+
+	hexDigest := testDigest[len("sha256:"):]
+
+	tests := []struct {
+		name      string
+		bom       *cdx.BOM
+		wantMatch bool
+	}{
+		{
+			name: "trivy style package component applies to image",
+			bom: vulnBOM("pkg-openssl", []cdx.Component{{
+				BOMRef: "pkg-openssl", Type: cdx.ComponentTypeLibrary,
+				Name: "openssl", PackageURL: "pkg:apk/alpine/openssl@3.1.0",
+			}}),
+			wantMatch: true,
+		},
+		{
+			name: "nested component is indexed",
+			bom: vulnBOM("nested-lib", []cdx.Component{{
+				BOMRef: "app", Type: cdx.ComponentTypeApplication, Name: "app",
+				Components: &[]cdx.Component{{
+					BOMRef: "nested-lib", Type: cdx.ComponentTypeLibrary,
+					Name: "lib", PackageURL: "pkg:npm/lib@1.0.0",
+				}},
+			}}),
+			wantMatch: true,
+		},
+		{
+			name: "percent encoded digest in OCI purl",
+			bom: vulnBOM("pkg:oci/nginx@sha256%3A"+hexDigest+
+				"?repository_url=docker.io/library/nginx&tag=latest", nil),
+			wantMatch: true,
+		},
+		{
+			name:      "BOM-Link reference applies",
+			bom:       vulnBOM("urn:cdx:3e671687-395b-41f5-a30f-a58921a69b79/1#pkg-x", nil),
+			wantMatch: true,
+		},
+		{
+			name: "component of a different image is ignored",
+			bom: vulnBOM(otherName, []cdx.Component{{
+				BOMRef: otherName, Type: cdx.ComponentTypeContainer, Name: otherName,
+				PackageURL: "pkg:oci/other@" + otherDigest,
+			}}),
+			wantMatch: false,
+		},
+		{
+			name: "container component with different hash is ignored",
+			bom: vulnBOM(otherName, []cdx.Component{{
+				BOMRef: otherName, Type: cdx.ComponentTypeContainer, Name: otherName,
+				Hashes: &[]cdx.Hash{{
+					Algorithm: cdx.HashAlgoSHA256,
+					Value:     otherDigest[len("sha256:"):],
+				}},
+			}}),
+			wantMatch: false,
+		},
+		{
+			name:      "raw digest of a different image is ignored",
+			bom:       vulnBOM(otherDigest, nil),
+			wantMatch: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			data := testutil.MustMarshal(t, test.bom)
+
+			result, err := cyclonedxvex.Verify(data, testImage())
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if got := len(result.AffectedNames) == 1; got != test.wantMatch {
+				t.Errorf("expected match=%v, got %+v", test.wantMatch, result)
+			}
+		})
+	}
+}
+
+func TestVerifyMetadataComponentIndexed(t *testing.T) {
+	t.Parallel()
+
+	bom := cdx.NewBOM()
+	bom.Metadata = &cdx.Metadata{
+		Component: &cdx.Component{
+			BOMRef: "image", Type: cdx.ComponentTypeContainer, Name: testCompName,
+			PackageURL: "pkg:oci/nginx@" + testDigest,
+		},
+	}
+	bom.Vulnerabilities = &[]cdx.Vulnerability{{
+		ID:       testCVE,
+		Analysis: &cdx.VulnerabilityAnalysis{State: cdx.IASNotAffected},
+		Affects:  &[]cdx.Affects{{Ref: "image"}},
+	}}
+
+	result, err := cyclonedxvex.Verify(testutil.MustMarshal(t, bom), testImage())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.MatchedVulnerabilities != 1 || len(result.AffectedNames) != 0 {
+		t.Errorf("expected metadata component match with not_affected, got %+v", result)
 	}
 }
 
@@ -371,7 +504,7 @@ func TestVerifyUnknownVulnerabilityName(t *testing.T) {
 
 	data := testutil.MustMarshal(t, bom)
 
-	result, err := cyclonedxvex.Verify(data, testDigest, "")
+	result, err := cyclonedxvex.Verify(data, testImage())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -415,7 +548,7 @@ func TestVerifyMultipleVulnerabilities(t *testing.T) {
 
 	data := testutil.MustMarshal(t, bom)
 
-	result, err := cyclonedxvex.Verify(data, testDigest, "")
+	result, err := cyclonedxvex.Verify(data, testImage())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -445,7 +578,7 @@ func TestVerifyUnrecognizedStateTreatedAsAffected(t *testing.T) {
 
 	data := testutil.MustMarshal(t, bom)
 
-	result, err := cyclonedxvex.Verify(data, testDigest, "")
+	result, err := cyclonedxvex.Verify(data, testImage())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -459,7 +592,7 @@ func TestVerifyUnrecognizedStateTreatedAsAffected(t *testing.T) {
 func TestVerifyEmptyAnalysisState(t *testing.T) {
 	t.Parallel()
 
-	// Vulnerability with Analysis set but empty State should be treated as affected.
+	// A vulnerability with an empty analysis state is not a VEX statement.
 	bom := cdx.NewBOM()
 	bom.Vulnerabilities = &[]cdx.Vulnerability{
 		{
@@ -473,13 +606,108 @@ func TestVerifyEmptyAnalysisState(t *testing.T) {
 
 	data := testutil.MustMarshal(t, bom)
 
-	result, err := cyclonedxvex.Verify(data, testDigest, "")
+	result, err := cyclonedxvex.Verify(data, testImage())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.AffectedNames) != 1 || result.AffectedNames[0] != "CVE-2024-0002" {
-		t.Errorf("expected CVE-2024-0002 to be affected when analysis state is empty, got %v",
-			result.AffectedNames)
+	if len(result.AffectedNames) != 0 || result.MatchedVulnerabilities != 0 {
+		t.Errorf("expected vulnerability with empty analysis state to be ignored, got %+v", result)
+	}
+}
+
+func TestVerifyUnresolvedReferences(t *testing.T) {
+	t.Parallel()
+
+	retagged := func(state cdx.ImpactAnalysisState) *cdx.BOM {
+		bom := cdx.NewBOM()
+		bom.Metadata = &cdx.Metadata{Component: &cdx.Component{
+			BOMRef: "subject", Type: cdx.ComponentTypeContainer, Name: "app-build",
+			PackageURL: "pkg:oci/app-build@v2",
+		}}
+		bom.Vulnerabilities = &[]cdx.Vulnerability{{
+			ID:       testCVE,
+			Analysis: &cdx.VulnerabilityAnalysis{State: state},
+			Affects:  &[]cdx.Affects{{Ref: "subject"}},
+		}}
+
+		return bom
+	}
+
+	withState := func(bom *cdx.BOM, state cdx.ImpactAnalysisState) *cdx.BOM {
+		(*bom.Vulnerabilities)[0].Analysis = &cdx.VulnerabilityAnalysis{State: state}
+
+		return bom
+	}
+
+	tests := []struct {
+		name        string
+		bom         *cdx.BOM
+		wantMatched int
+		wantAffect  bool
+	}{
+		{
+			name:        "exploitable with bom-ref missing from the BOM applies",
+			bom:         vulnBOM("ref-from-separate-sbom", nil),
+			wantMatched: 1,
+			wantAffect:  true,
+		},
+		{
+			name:        "exploitable with CPE reference applies",
+			bom:         vulnBOM("cpe:2.3:a:openssl:openssl:3.1.0:*:*:*:*:*:*:*", nil),
+			wantMatched: 1,
+			wantAffect:  true,
+		},
+		{
+			name:        "exploitable on retagged metadata component applies",
+			bom:         retagged(cdx.IASExploitable),
+			wantMatched: 1,
+			wantAffect:  true,
+		},
+		{
+			name:        "in_triage with unknown reference applies",
+			bom:         withState(vulnBOM("ref-from-separate-sbom", nil), cdx.IASInTriage),
+			wantMatched: 1,
+			wantAffect:  false,
+		},
+		{
+			name:        "not_affected with unknown reference does not apply",
+			bom:         withState(vulnBOM("ref-from-separate-sbom", nil), cdx.IASNotAffected),
+			wantMatched: 0,
+			wantAffect:  false,
+		},
+		{
+			name:        "not_affected on retagged metadata component does not apply",
+			bom:         retagged(cdx.IASNotAffected),
+			wantMatched: 0,
+			wantAffect:  false,
+		},
+		{
+			name:        "exploitable on a different image digest is still ignored",
+			bom:         vulnBOM(otherDigest, nil),
+			wantMatched: 0,
+			wantAffect:  false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			image := imagematch.New("ghcr.io/team/app:v1", testDigest, nil)
+
+			result, err := cyclonedxvex.Verify(testutil.MustMarshal(t, test.bom), image)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result.MatchedVulnerabilities != test.wantMatched {
+				t.Errorf("matched = %d, want %d", result.MatchedVulnerabilities, test.wantMatched)
+			}
+
+			if got := len(result.AffectedNames) > 0; got != test.wantAffect {
+				t.Errorf("affected = %v, want %v (%+v)", got, test.wantAffect, result)
+			}
+		})
 	}
 }

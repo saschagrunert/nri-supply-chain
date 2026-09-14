@@ -16,6 +16,7 @@ package source_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -66,6 +67,14 @@ func validPredicate() srcPredicate {
 	}
 }
 
+func gitURIPredicate() srcPredicate {
+	pred := validPredicate()
+	pred.SourceLocations[0].URI = "git+" + testSourceURI + "@refs/heads/main"
+	pred.SourceLocations[0].Branch = ""
+
+	return pred
+}
+
 func TestVerify(t *testing.T) {
 	t.Parallel()
 
@@ -106,6 +115,50 @@ func TestVerify(t *testing.T) {
 			wantStatus: types.StatusFail,
 		},
 		{
+			name: "git+ pattern matches",
+			doc:  validPredicate(),
+			pol: &policy.Policy{
+				Trust: &policy.TrustPolicy{
+					Sources: []string{"git+" + testTrustedPattern},
+				},
+			},
+			wantPassed: true,
+			wantStatus: types.StatusPass,
+		},
+		{
+			name: "branch-pinned pattern matches short branch",
+			doc:  validPredicate(),
+			pol: &policy.Policy{
+				Trust: &policy.TrustPolicy{
+					Sources: []string{"git+https://github.com/example/repo@refs/heads/main"},
+				},
+			},
+			wantPassed: true,
+			wantStatus: types.StatusPass,
+		},
+		{
+			name: "branch-pinned pattern rejects other branch",
+			doc:  validPredicate(),
+			pol: &policy.Policy{
+				Trust: &policy.TrustPolicy{
+					Sources: []string{"https://github.com/example/repo@refs/heads/release"},
+				},
+			},
+			wantPassed: false,
+			wantStatus: types.StatusFail,
+		},
+		{
+			name: "git URI with embedded ref matches repository pattern",
+			doc:  gitURIPredicate(),
+			pol: &policy.Policy{
+				Trust: &policy.TrustPolicy{
+					Sources: []string{testTrustedPattern},
+				},
+			},
+			wantPassed: true,
+			wantStatus: types.StatusPass,
+		},
+		{
 			name: "source level meets minimum passes",
 			doc:  validPredicate(),
 			pol: &policy.Policy{
@@ -140,19 +193,6 @@ func TestVerify(t *testing.T) {
 			pol: &policy.Policy{
 				Source: &policy.SourcePolicy{
 					MinimumLevel: 1,
-				},
-			},
-			wantPassed: false,
-			wantStatus: types.StatusFail,
-		},
-		{
-			name: "empty source locations with trust policy and no URI fails",
-			doc: srcPredicate{ //nolint:exhaustruct_v5 // test omits SourceMetadata
-				SourceLocations: []srcLocation{},
-			},
-			pol: &policy.Policy{
-				Trust: &policy.TrustPolicy{
-					Sources: []string{testTrustedPattern},
 				},
 			},
 			wantPassed: false,
@@ -481,41 +521,42 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 func TestVerifyEmptySourceLocations(t *testing.T) {
 	t.Parallel()
 
-	doc := srcPredicate{ //nolint:exhaustruct_v5 // test omits SourceMetadata
-		SourceLocations: []srcLocation{},
+	tests := []struct {
+		name      string
+		predicate any
+	}{
+		{name: "empty locations", predicate: json.RawMessage(`{"sourceLocations":[]}`)},
+		{name: "empty uri", predicate: json.RawMessage(`{"sourceLocations":[{"uri":""}]}`)},
+		{name: "empty object", predicate: json.RawMessage(`{}`)},
+		{name: "null predicate", predicate: json.RawMessage(`null`)},
 	}
+
+	for _, tc := range tests {
+		t.Run(tc.name+" is rejected without policy", func(t *testing.T) {
+			t.Parallel()
+
+			att := testutil.WrapInToto(t, tc.predicate, testDigest, testPredicateType)
+
+			_, err := source.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+			if !errors.Is(err, source.ErrInvalidSource) {
+				t.Fatalf("expected ErrInvalidSource, got %v", err)
+			}
+		})
+	}
+}
+
+func TestVerifyFutureTimestampWithoutMaxAge(t *testing.T) {
+	t.Parallel()
+
+	future := time.Now().Add(24 * time.Hour).UTC()
+	doc := validPredicate()
+	doc.SourceMetadata.VerifiedOn = &future
 	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-	t.Run("empty locations with no policy passes", func(t *testing.T) {
-		t.Parallel()
-
-		result, err := source.Verify(context.Background(), att, &policy.Policy{}, testDigest)
-		testutil.AssertNoError(t, err)
-
-		if !result.Passed {
-			t.Errorf("expected pass for empty locations, got: %s", result.Detail)
-		}
-
-		srcURI, ok := result.Metadata["source"].(string)
-		if !ok || srcURI != "" {
-			t.Errorf("source = %v, want empty string", result.Metadata["source"])
-		}
-	})
-
-	t.Run("empty locations with level requirement fails", func(t *testing.T) {
-		t.Parallel()
-
-		result, err := source.Verify(context.Background(), att, &policy.Policy{
-			Source: &policy.SourcePolicy{
-				MinimumLevel: 1,
-			},
-		}, testDigest)
-		testutil.AssertNoError(t, err)
-
-		if result.Passed {
-			t.Error("expected fail for empty locations with level requirement")
-		}
-	})
+	result, err := source.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqual(t, false, result.Passed)
+	testutil.AssertContains(t, result.Detail, "future")
 }
 
 func TestVerifyFreshness(t *testing.T) {

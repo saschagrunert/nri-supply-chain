@@ -27,6 +27,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	ociV1 "github.com/google/go-containerregistry/pkg/v1"
@@ -51,13 +52,25 @@ type RevocationData struct {
 	Data []byte
 }
 
+// TrustedRootSource is a trusted root to embed in or loaded from a bundle,
+// labeled with the Sigstore root source it belongs to.
+type TrustedRootSource struct {
+	// Name is the Sigstore root source name. Empty when unknown.
+	Name string
+	// Issuers is the issuer restriction applied to the root when the bundle
+	// was created (informational).
+	Issuers []string
+	// Root is the trusted root material.
+	Root *root.TrustedRoot
+}
+
 // CreateOptions configures bundle creation.
 type CreateOptions struct {
 	Images         []string
 	OutputPath     string
 	Fetcher        attestation.Fetcher
 	FetchOptions   *attestation.FetchOptions
-	TrustedRoots   []*root.TrustedRoot
+	TrustedRoots   []TrustedRootSource
 	SigningKeyPath string
 	ResolveDigest  DigestResolver
 	RevocationData []RevocationData
@@ -110,12 +123,13 @@ func buildManifest(
 ) (*Manifest, error) {
 	now := time.Now().UTC()
 	manifest := &Manifest{
-		Version:     currentManifestVersion,
-		CreatedAt:   now,
-		Images:      make(map[string]*ImageEntry),
-		TrustedRoot: nil,
-		Revocation:  nil,
-		Signature:   nil,
+		Version:      currentManifestVersion,
+		CreatedAt:    now,
+		Images:       make(map[string]*ImageEntry),
+		TrustedRoot:  nil,
+		TrustedRoots: nil,
+		Revocation:   nil,
+		Signature:    nil,
 	}
 
 	err := bundleAllImages(ctx, ociLayout, opts, manifest, now)
@@ -198,18 +212,18 @@ func resolveImageDigest(
 func bundleTrustMaterial(
 	ociLayout layout.Path, opts *CreateOptions, manifest *Manifest,
 ) error {
-	if len(opts.TrustedRoots) > 1 {
-		slog.Warn("Multiple trusted roots provided, only the first will be embedded",
-			"count", len(opts.TrustedRoots))
-	}
-
-	if len(opts.TrustedRoots) > 0 {
-		rootEntry, err := writeTrustedRoot(ociLayout, opts.TrustedRoots[0])
-		if err != nil {
-			return fmt.Errorf("writing trusted root: %w", err)
+	for idx := range opts.TrustedRoots {
+		source := &opts.TrustedRoots[idx]
+		if source.Root == nil {
+			continue
 		}
 
-		manifest.TrustedRoot = rootEntry
+		rootEntry, err := writeTrustedRoot(ociLayout, source)
+		if err != nil {
+			return fmt.Errorf("writing trusted root %q: %w", source.Name, err)
+		}
+
+		manifest.TrustedRoots = append(manifest.TrustedRoots, *rootEntry)
 	}
 
 	for _, rev := range opts.RevocationData {
@@ -253,7 +267,19 @@ func bundleImageAttestations(
 	}
 
 	for idx := range atts {
-		blobDigest, writeErr := writeBlob(ociLayout, atts[idx].Payload)
+		// Offline verification re-verifies the raw Sigstore bundle, so only
+		// attestations that came from a Sigstore bundle can be packaged.
+		if len(atts[idx].Bundle) == 0 {
+			slog.WarnContext(ctx, "Skipping attestation without a Sigstore bundle",
+				"image", imageRef,
+				"predicateType", atts[idx].PredicateType,
+				"signatureType", atts[idx].SignatureType,
+			)
+
+			continue
+		}
+
+		blobDigest, writeErr := writeBlob(ociLayout, atts[idx].Bundle)
 		if writeErr != nil {
 			return nil, fmt.Errorf("writing attestation blob: %w", writeErr)
 		}
@@ -261,14 +287,14 @@ func bundleImageAttestations(
 		entry.Attestations = append(entry.Attestations, AttestationEntry{
 			PredicateType: atts[idx].PredicateType,
 			BlobDigest:    blobDigest,
-			Size:          int64(len(atts[idx].Payload)),
-			SignatureType: string(atts[idx].SignatureType),
+			Size:          int64(len(atts[idx].Bundle)),
+			SignatureType: string(attestation.SignatureTypeSigstore),
 		})
 	}
 
 	slog.InfoContext(ctx, "Bundled attestations",
 		"image", imageRef,
-		"count", len(atts),
+		"count", len(entry.Attestations),
 	)
 
 	return entry, nil
@@ -328,9 +354,9 @@ func writeBlob(ociLayout layout.Path, data []byte) (string, error) {
 }
 
 func writeTrustedRoot(
-	ociLayout layout.Path, trustedRoot *root.TrustedRoot,
+	ociLayout layout.Path, source *TrustedRootSource,
 ) (*TrustedRootEntry, error) {
-	data, err := trustedRoot.MarshalJSON()
+	data, err := source.Root.MarshalJSON()
 	if err != nil {
 		return nil, fmt.Errorf("marshaling trusted root: %w", err)
 	}
@@ -341,8 +367,10 @@ func writeTrustedRoot(
 	}
 
 	return &TrustedRootEntry{
+		Name:       source.Name,
 		BlobDigest: digest,
 		Size:       int64(len(data)),
+		Issuers:    slices.Clone(source.Issuers),
 	}, nil
 }
 

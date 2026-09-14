@@ -16,1420 +16,131 @@ package policy_test
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	celengine "github.com/saschagrunert/nri-supply-chain/internal/cel"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
+	"github.com/saschagrunert/nri-supply-chain/internal/fileutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
 const (
-	testBuilderID              = "test"
-	testInvalidValue           = "invalid"
-	testVerifierID             = "https://example.com/v"
-	testIssuerURL              = "https://accounts.google.com"
-	testIncludePattern         = "docker.io/myorg/**"
-	testKeyPath                = "/etc/keys/verifier.pub"
-	testValidKeyPath           = "/valid/key.pub"
-	testEmptyMissingPolicyName = "empty missing policy defaults to allow"
-	testExplicitDenyName       = "explicit deny"
-	testNonexistentKeyPath     = "/nonexistent/key.pub"
-	testRuleImagesGlob         = "ghcr.io/**"
-	testGitHubIssuer           = "https://token.actions.githubusercontent.com"
-	testGitHubSANPattern       = "https://github.com/saschagrunert/*"
-	testNotBefore2024          = "2024-01-01T00:00:00Z"
-	testNotAfter2025           = "2025-01-01T00:00:00Z"
-	testMidpoint2024           = "2024-06-01T00:00:00Z"
-	testBaseBuilderID          = "base-builder"
-	testRuleBuilderID          = "rule-builder"
-	testMutatedValue           = "mutated"
-	testNotationLevelStrict    = "strict"
-	testNotationLevelSkip      = "skip"
-	testNotationStoreName      = "myca"
-	testNotationStoreRef       = "ca:myca"
-	testNotationCertPath       = "/etc/certs/ca.pem"
-	testNotationRuleName       = "rule1"
-	testDockerGlob             = "docker.io/**"
-	testCELExprTrue            = "true"
-	testCELExprFalse           = "false"
-	testCELExprSLSAVerified    = "slsa.verified == true"
-	testCELMsgBase             = "base"
-	testCVEID                  = "CVE-2024-0001"
-	testFormatCycloneDX        = "cyclonedx"
-	testFormatSPDX             = "spdx"
-	testLicenseAGPL            = "AGPL-3.0"
-	testLicenseMIT             = "MIT"
-	testDefaultBuilderID       = "default-builder"
-	testDefaultIssuer          = "default-issuer"
-	testNSBuilderID            = "ns-builder"
-	testDefaultLabel           = "default"
-	testAttrCodeReview         = "PASSED_CODE_REVIEW"
-	testAttrKnownVulnerable    = "KNOWN_VULNERABLE"
-	testAttrFuzzTested         = "FUZZ_TESTED"
-	testDefaultIncludeGlob     = "default-include/**"
-	testDefaultExcludeGlob     = "default-exclude/**"
-	testMaxAge                 = "24h"
+	testBuilderID           = "test"
+	testInvalidValue        = "invalid"
+	testInvalidDuration     = "not-a-duration"
+	testNegativeDuration    = "-1h"
+	testVerifierID          = "https://example.com/v"
+	testIssuerURL           = "https://accounts.google.com"
+	testIncludePattern      = "docker.io/myorg/**"
+	testKeyPath             = "/etc/keys/verifier.pub"
+	testValidKeyPath        = "/valid/key.pub"
+	testNonexistentKeyPath  = "/nonexistent/key.pub"
+	testRuleImagesGlob      = "ghcr.io/**"
+	testGitHubIssuer        = "https://token.actions.githubusercontent.com"
+	testGitHubSANPattern    = "https://github.com/saschagrunert/*"
+	testNotBefore2024       = "2024-01-01T00:00:00Z"
+	testNotAfter2025        = "2025-01-01T00:00:00Z"
+	testMidpoint2024        = "2024-06-01T00:00:00Z"
+	testBaseBuilderID       = "base-builder"
+	testRuleBuilderID       = "rule-builder"
+	testMutatedValue        = "mutated"
+	testNotationLevelStrict = "strict"
+	testNotationLevelSkip   = "skip"
+	testNotationPermissive  = "permissive"
+	testNotationStoreName   = "myca"
+	testNotationStoreRef    = "ca:myca"
+	testNotationCertPath    = "/etc/certs/ca.pem"
+	testNotationRuleName    = "rule1"
+	testDockerGlob          = "docker.io/**"
+	testCELExprTrue         = "true"
+	testCELExprFalse        = "false"
+	testCELExprSLSAVerified = "slsa.verified == true"
+	testCELInvalidExpr      = "invalid +++"
+	testCELMsgBase          = "base"
+	testCVEID               = "CVE-2024-0001"
+	testFormatCycloneDX     = "cyclonedx"
+	testFormatSPDX          = "spdx"
+	testLicenseAGPL         = "AGPL-3.0"
+	testLicenseMIT          = "MIT"
+	testDefaultBuilderID    = "default-builder"
+	testDefaultIssuer       = "default-issuer"
+	testNSBuilderID         = "ns-builder"
+	testDefaultLabel        = "default"
+	testAttrCodeReview      = "PASSED_CODE_REVIEW"
+	testAttrKnownVulnerable = "KNOWN_VULNERABLE"
+	testAttrFuzzTested      = "FUZZ_TESTED"
+	testDefaultIncludeGlob  = "default-include/**"
+	testDefaultExcludeGlob  = "default-exclude/**"
+	testMaxAge              = "24h"
+	testRunnerBuilderID     = "https://github.com/actions/runner"
+	testReleaseSAN          = "https://github.com/myorg/app/.github/workflows/release.yml@refs/tags/v1"
+	testReleaseSANPattern   = "https://github.com/myorg/app/.github/workflows/release.yml@**"
+	testScorecardCodeReview = "Code-Review"
 )
 
+// errAnyError marks a table case that expects an error without asserting a
+// specific sentinel.
+var errAnyError = errors.New("any error")
+
+// assertErr checks err against a table expectation: nil expects success,
+// errAnyError expects any error and everything else must match errors.Is.
+func assertErr(t *testing.T, err, want error) {
+	t.Helper()
+
+	switch {
+	case want == nil:
+		testutil.AssertNoError(t, err)
+	case errors.Is(want, errAnyError):
+		testutil.AssertError(t, err)
+	default:
+		testutil.AssertErrorIs(t, err, want)
+	}
+}
+
+// assertErrContains checks that err mentions every substring.
+func assertErrContains(t *testing.T, err error, substrings []string) {
+	t.Helper()
+
+	if len(substrings) == 0 {
+		return
+	}
+
+	testutil.AssertError(t, err)
+
+	for _, substr := range substrings {
+		testutil.AssertContains(t, err.Error(), substr)
+	}
+}
+
 type validateTest struct {
-	name        string
-	policy      policy.Policy
-	wantErr     bool
-	expectedErr error
+	name    string
+	policy  policy.Policy
+	wantErr error
+	// check runs additional assertions when validation succeeds.
+	check func(t *testing.T, pol *policy.Policy)
 }
 
 func runValidateTests(t *testing.T, tests []validateTest) {
 	t.Helper()
 
 	for idx := range tests {
-		t.Run(tests[idx].name, func(t *testing.T) {
-			t.Parallel()
+		test := &tests[idx]
 
-			err := tests[idx].policy.Validate()
-			if tests[idx].wantErr && err == nil {
-				t.Error("expected error, got nil")
-			}
-
-			if !tests[idx].wantErr && err != nil {
-				t.Errorf("unexpected error: %v", err)
-			}
-
-			if tests[idx].expectedErr != nil && !errors.Is(err, tests[idx].expectedErr) {
-				t.Errorf("expected error %v, got %v", tests[idx].expectedErr, err)
-			}
-		})
-	}
-}
-
-func emptyPolicy() policy.Policy {
-	return policy.Policy{
-		Exclude: nil,
-		Trust:   nil, SLSA: nil,
-		VEX: nil, VSA: nil, Signatures: nil,
-	}
-}
-
-func TestPolicyValidateEmpty(t *testing.T) {
-	t.Parallel()
-
-	runValidateTests(t, []validateTest{
-		{
-			name:        "empty policy is valid",
-			policy:      emptyPolicy(),
-			wantErr:     false,
-			expectedErr: nil,
-		},
-	})
-}
-
-func TestPolicyValidateVersion(t *testing.T) {
-	t.Parallel()
-
-	runValidateTests(t, []validateTest{
-		{
-			name:        "version 0 (omitted) is valid",
-			policy:      policy.Policy{},
-			wantErr:     false,
-			expectedErr: nil,
-		},
-		{
-			name:        "version 1 is valid",
-			policy:      policy.Policy{Version: policy.LatestPolicyVersion},
-			wantErr:     false,
-			expectedErr: nil,
-		},
-		{
-			name:        "version too new",
-			policy:      policy.Policy{Version: policy.LatestPolicyVersion + 1},
-			wantErr:     true,
-			expectedErr: policy.ErrPolicyVersionTooNew,
-		},
-		{
-			name:        "negative version",
-			policy:      policy.Policy{Version: -1},
-			wantErr:     true,
-			expectedErr: policy.ErrPolicyVersionTooNew,
-		},
-	})
-}
-
-func TestPolicyValidateBuilders(t *testing.T) {
-	t.Parallel()
-
-	runValidateTests(t, []validateTest{
-		{
-			name: "valid trust with builders",
-			policy: policy.Policy{
-				Exclude: nil,
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: []policy.TrustedBuilder{
-							{ID: "https://github.com/actions/runner", MaxLevel: 3},
-						},
-						Verifiers: nil, Issuers: nil, Sources: nil, BuildTypes: nil,
-					},
-					SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
-				},
-			},
-			wantErr:     false,
-			expectedErr: nil,
-		},
-		{
-			name: "builder without ID",
-			policy: policy.Policy{
-				Exclude: nil,
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders:  []policy.TrustedBuilder{{ID: "", MaxLevel: 2}},
-						Verifiers: nil, Issuers: nil, Sources: nil, BuildTypes: nil,
-					},
-					SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrBuilderIDRequired,
-		},
-		{
-			name: "builder with invalid max level",
-			policy: policy.Policy{
-				Exclude: nil,
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: []policy.TrustedBuilder{
-							{ID: testBuilderID, MaxLevel: 5},
-						},
-						Verifiers: nil, Issuers: nil, Sources: nil, BuildTypes: nil,
-					},
-					SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrBuilderMaxLevel,
-		},
-	})
-}
-
-func TestPolicyValidateVerifiers(t *testing.T) {
-	t.Parallel()
-
-	runValidateTests(t, []validateTest{
-		{
-			name: "keyless verifier without issuers",
-			policy: policy.Policy{
-				Exclude: nil,
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: nil,
-						Verifiers: []policy.TrustedVerifier{
-							{ID: testBuilderID},
-						},
-						Issuers: nil, Sources: nil, BuildTypes: nil,
-					},
-					SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrKeylessVerifierRequiresIssuers,
-		},
-		{
-			name: "keyless verifier with issuers",
-			policy: policy.Policy{
-				Exclude: nil,
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: nil,
-						Verifiers: []policy.TrustedVerifier{
-							{ID: testBuilderID},
-						},
-						Issuers: []string{testGitHubIssuer},
-						Sources: nil, BuildTypes: nil,
-					},
-					SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
-				},
-			},
-			wantErr:     false,
-			expectedErr: nil,
-		},
-		{
-			name: "verifier with relative key path in keys",
-			policy: policy.Policy{
-				Exclude: nil,
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: nil,
-						Verifiers: []policy.TrustedVerifier{
-							{ID: testBuilderID, Keys: []string{"relative/path.pub"}},
-						},
-						Issuers: nil, Sources: nil, BuildTypes: nil,
-					},
-					SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrVerifierKeyNotAbsolute,
-		},
-		{
-			name: "valid verifier with single key",
-			policy: policy.Policy{
-				Exclude: nil,
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: nil,
-						Verifiers: []policy.TrustedVerifier{
-							{ID: testBuilderID, Keys: []string{testKeyPath}},
-						},
-						Issuers: nil, Sources: nil, BuildTypes: nil,
-					},
-					SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
-				},
-			},
-			wantErr:     false,
-			expectedErr: nil,
-		},
-		{
-			name: "valid verifier with multiple keys",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Verifiers: []policy.TrustedVerifier{
-							{
-								ID:   testBuilderID,
-								Keys: []string{"/path/a.pub", "/path/b.pub"},
-							},
-						},
-					},
-				},
-			},
-			wantErr:     false,
-			expectedErr: nil,
-		},
-		{
-			name: "verifier with keys containing relative path",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Verifiers: []policy.TrustedVerifier{
-							{
-								ID:   testBuilderID,
-								Keys: []string{"/abs/good.pub", "relative/bad.pub"},
-							},
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrVerifierKeyNotAbsolute,
-		},
-		{
-			name: "verifier with keys only is not keyless",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Verifiers: []policy.TrustedVerifier{
-							{
-								ID:   testBuilderID,
-								Keys: []string{testKeyPath},
-							},
-						},
-					},
-				},
-			},
-			wantErr:     false,
-			expectedErr: nil,
-		},
-		{
-			name: "verifier with no keys and no issuers",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Verifiers: []policy.TrustedVerifier{
-							{ID: testBuilderID},
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrKeylessVerifierRequiresIssuers,
-		},
-		{
-			name: "verifier with empty string in keys",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Verifiers: []policy.TrustedVerifier{
-							{
-								ID:   testBuilderID,
-								Keys: []string{testValidKeyPath, ""},
-							},
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrEmptyValue,
-		},
-		{
-			name: "verifier with duplicate keys",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Verifiers: []policy.TrustedVerifier{
-							{
-								ID:   testBuilderID,
-								Keys: []string{testValidKeyPath, testValidKeyPath},
-							},
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrDuplicateVerifierKey,
-		},
-	})
-}
-
-func TestPolicyValidateInclude(t *testing.T) {
-	t.Parallel()
-
-	runValidateTests(t, []validateTest{
-		{
-			name: "valid include pattern single star",
-			policy: policy.Policy{
-				Include: []string{"gcr.io/org/*"}, Exclude: nil,
-				Sections: policy.Sections{
-					Trust: nil, SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
-				},
-			},
-			wantErr:     false,
-			expectedErr: nil,
-		},
-		{
-			name: "valid include pattern double star",
-			policy: policy.Policy{
-				Include: []string{"registry.k8s.io/**"}, Exclude: nil,
-				Sections: policy.Sections{
-					Trust: nil, SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
-				},
-			},
-			wantErr:     false,
-			expectedErr: nil,
-		},
-	})
-}
-
-func TestPolicyValidateExclude(t *testing.T) {
-	t.Parallel()
-
-	runValidateTests(t, []validateTest{
-		{
-			name: "valid exclude pattern single star",
-			policy: policy.Policy{
-				Exclude: []string{"gcr.io/org/*"},
-				Sections: policy.Sections{
-					Trust: nil, SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
-				},
-			},
-			wantErr:     false,
-			expectedErr: nil,
-		},
-		{
-			name: "valid exclude pattern double star",
-			policy: policy.Policy{
-				Exclude: []string{"registry.k8s.io/**"},
-				Sections: policy.Sections{
-					Trust: nil, SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
-				},
-			},
-			wantErr:     false,
-			expectedErr: nil,
-		},
-	})
-}
-
-func TestPolicyValidateSLSA(t *testing.T) {
-	t.Parallel()
-
-	runValidateTests(t, []validateTest{
-		{
-			name: "invalid slsa missing policy",
-			policy: policy.Policy{
-				Exclude: nil,
-				Sections: policy.Sections{
-					Trust: nil,
-					SLSA: &policy.SLSAPolicy{
-						MissingPolicy: testInvalidValue, RejectUnknownParameters: false,
-					},
-					VEX: nil, VSA: nil, Signatures: nil,
-				},
-			},
-			wantErr:     true,
-			expectedErr: types.ErrInvalidAction,
-		},
-	})
-}
-
-func TestPolicyValidateVEX(t *testing.T) {
-	t.Parallel()
-
-	runValidateTests(t, []validateTest{
-		{
-			name: "valid VEX config",
-			policy: policy.Policy{
-				Exclude: nil,
-				Sections: policy.Sections{
-					Trust: nil, SLSA: nil,
-					VEX: &policy.VEXPolicy{
-						MissingPolicy:            types.ActionWarn,
-						UnderInvestigationPolicy: types.ActionAllow,
-					},
-					VSA: nil, Signatures: nil,
-				},
-			},
-			wantErr:     false,
-			expectedErr: nil,
-		},
-	})
-}
-
-func TestPolicyValidateVSA(t *testing.T) {
-	t.Parallel()
-
-	runValidateTests(t, []validateTest{
-		{
-			name: "invalid VSA minimum level",
-			policy: policy.Policy{
-				Exclude: nil,
-				Sections: policy.Sections{
-					Trust: nil, SLSA: nil, VEX: nil,
-					VSA:        &policy.VSAPolicy{MinimumLevel: 5, MaxAge: "", Policy: ""},
-					Signatures: nil,
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrVSAMinimumLevel,
-		},
-		{
-			name: "invalid VSA max age",
-			policy: policy.Policy{
-				Exclude: nil,
-				Sections: policy.Sections{
-					Trust: nil, SLSA: nil, VEX: nil,
-					VSA: &policy.VSAPolicy{
-						MinimumLevel: 0, MaxAge: "not-a-duration", Policy: "",
-					},
-					Signatures: nil,
-				},
-			},
-			wantErr:     true,
-			expectedErr: nil,
-		},
-	})
-}
-
-func TestSLSAMissingPolicy(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		policy   policy.Policy
-		expected types.Action
-	}{
-		{
-			name:     "nil slsa defaults to allow",
-			policy:   emptyPolicy(),
-			expected: types.ActionAllow,
-		},
-		{
-			name: testEmptyMissingPolicyName,
-			policy: policy.Policy{
-				Exclude: nil,
-				Sections: policy.Sections{
-					Trust: nil,
-					SLSA: &policy.SLSAPolicy{
-						MissingPolicy: "", RejectUnknownParameters: false,
-					},
-					VEX: nil, VSA: nil, Signatures: nil,
-				},
-			},
-			expected: types.ActionAllow,
-		},
-		{
-			name: testExplicitDenyName,
-			policy: policy.Policy{
-				Exclude: nil,
-				Sections: policy.Sections{
-					Trust: nil,
-					SLSA: &policy.SLSAPolicy{
-						MissingPolicy: types.ActionDeny, RejectUnknownParameters: false,
-					},
-					VEX: nil, VSA: nil, Signatures: nil,
-				},
-			},
-			expected: types.ActionDeny,
-		},
-	}
-
-	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := test.policy.SLSAMissingPolicy(); got != test.expected {
-				t.Errorf("expected %q, got %q", test.expected, got)
+			err := test.policy.Validate()
+			assertErr(t, err, test.wantErr)
+
+			if err == nil && test.check != nil {
+				test.check(t, &test.policy)
 			}
 		})
-	}
-}
-
-func TestVEXMissingPolicy(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		policy   policy.Policy
-		expected types.Action
-	}{
-		{
-			name:     "nil vex defaults to allow",
-			policy:   emptyPolicy(),
-			expected: types.ActionAllow,
-		},
-		{
-			name: testEmptyMissingPolicyName,
-			policy: policy.Policy{
-				Exclude: nil,
-				Sections: policy.Sections{
-					Trust: nil, SLSA: nil,
-					VEX: &policy.VEXPolicy{
-						MissingPolicy:            "",
-						UnderInvestigationPolicy: "",
-					},
-					VSA: nil, Signatures: nil,
-				},
-			},
-			expected: types.ActionAllow,
-		},
-		{
-			name: testExplicitDenyName,
-			policy: policy.Policy{
-				Exclude: nil,
-				Sections: policy.Sections{
-					Trust: nil, SLSA: nil,
-					VEX: &policy.VEXPolicy{
-						MissingPolicy:            types.ActionDeny,
-						UnderInvestigationPolicy: "",
-					},
-					VSA: nil, Signatures: nil,
-				},
-			},
-			expected: types.ActionDeny,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			if got := test.policy.VEXMissingPolicy(); got != test.expected {
-				t.Errorf("expected %q, got %q", test.expected, got)
-			}
-		})
-	}
-}
-
-func TestVSAMissingPolicy(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		policy   policy.Policy
-		expected types.Action
-	}{
-		{
-			name:     "nil vsa defaults to allow",
-			policy:   emptyPolicy(),
-			expected: types.ActionAllow,
-		},
-		{
-			name: testEmptyMissingPolicyName,
-			policy: policy.Policy{
-				Exclude: nil,
-				Sections: policy.Sections{
-					Trust: nil, SLSA: nil, VEX: nil,
-					VSA:        &policy.VSAPolicy{MissingPolicy: ""},
-					Signatures: nil,
-				},
-			},
-			expected: types.ActionAllow,
-		},
-		{
-			name: testExplicitDenyName,
-			policy: policy.Policy{
-				Exclude: nil,
-				Sections: policy.Sections{
-					Trust: nil, SLSA: nil, VEX: nil,
-					VSA:        &policy.VSAPolicy{MissingPolicy: types.ActionDeny},
-					Signatures: nil,
-				},
-			},
-			expected: types.ActionDeny,
-		},
-		{
-			name: "explicit warn",
-			policy: policy.Policy{
-				Exclude: nil,
-				Sections: policy.Sections{
-					Trust: nil, SLSA: nil, VEX: nil,
-					VSA:        &policy.VSAPolicy{MissingPolicy: types.ActionWarn},
-					Signatures: nil,
-				},
-			},
-			expected: types.ActionWarn,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			if got := test.policy.VSAMissingPolicy(); got != test.expected {
-				t.Errorf("expected %q, got %q", test.expected, got)
-			}
-		})
-	}
-}
-
-func TestLoadPolicyValid(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	policyPath := filepath.Join(dir, "test.json")
-
-	content := `{
-		"trust": {
-			"builders": [{"id": "https://example.com/builder", "maxLevel": 2}]
-		},
-		"slsa": {"missingPolicy": "warn"}
-	}`
-	writeFile(t, policyPath, content)
-
-	pol, err := policy.Load(policyPath)
-	testutil.AssertNoError(t, err)
-
-	if len(pol.Builders()) != 1 {
-		t.Fatalf("expected 1 builder, got %d", len(pol.Builders()))
-	}
-
-	if pol.Builders()[0].ID != "https://example.com/builder" {
-		t.Errorf("unexpected builder ID: %s", pol.Builders()[0].ID)
-	}
-
-	if pol.SLSAMissingPolicy() != types.ActionWarn {
-		t.Errorf("expected warn, got %s", pol.SLSAMissingPolicy())
-	}
-}
-
-func TestLoadPolicyErrors(t *testing.T) {
-	t.Parallel()
-
-	t.Run("unknown fields rejected", func(t *testing.T) {
-		t.Parallel()
-
-		dir := t.TempDir()
-		policyPath := filepath.Join(dir, "test.json")
-
-		writeFile(t, policyPath, `{"unknownField": true}`)
-
-		_, err := policy.Load(policyPath)
-		testutil.AssertError(t, err)
-	})
-
-	t.Run("trailing content rejected", func(t *testing.T) {
-		t.Parallel()
-
-		dir := t.TempDir()
-		policyPath := filepath.Join(dir, "test.json")
-
-		writeFile(t, policyPath, `{}{}`)
-
-		_, err := policy.Load(policyPath)
-		testutil.AssertError(t, err)
-
-		if !errors.Is(err, policy.ErrTrailingContent) {
-			t.Errorf("expected error %v, got %v", policy.ErrTrailingContent, err)
-		}
-	})
-
-	t.Run("missing file", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := policy.Load("/nonexistent/policy.json")
-		testutil.AssertError(t, err)
-	})
-}
-
-func TestLoadAllNamespaces(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-
-	writeFile(t, filepath.Join(dir, "default.json"),
-		`{"slsa":{"missingPolicy":"allow"}}`)
-	writeFile(t, filepath.Join(dir, "production.json"),
-		`{"slsa":{"missingPolicy":"deny"}}`)
-
-	policies, err := policy.LoadAll(dir)
-	testutil.AssertNoError(t, err)
-
-	if len(policies) != 2 {
-		t.Fatalf("expected 2 policies, got %d", len(policies))
-	}
-
-	defaultPolicy, found := policies[""]
-	if !found {
-		t.Fatal("expected default policy")
-	}
-
-	if defaultPolicy.SLSAMissingPolicy() != types.ActionAllow {
-		t.Errorf(
-			"expected allow, got %s", defaultPolicy.SLSAMissingPolicy(),
-		)
-	}
-
-	prodPolicy, found := policies["production"]
-	if !found {
-		t.Fatal("expected production policy")
-	}
-
-	if prodPolicy.SLSAMissingPolicy() != types.ActionDeny {
-		t.Errorf(
-			"expected deny, got %s", prodPolicy.SLSAMissingPolicy(),
-		)
-	}
-}
-
-func TestBuildersNilTrust(t *testing.T) {
-	t.Parallel()
-
-	pol := emptyPolicy()
-
-	if builders := pol.Builders(); builders != nil {
-		t.Errorf("expected nil builders, got %v", builders)
-	}
-}
-
-func TestPolicyValidateVerifierWithoutID(t *testing.T) {
-	t.Parallel()
-
-	runValidateTests(t, []validateTest{
-		{
-			name: "verifier without ID",
-			policy: policy.Policy{
-				Exclude: nil,
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Builders: nil,
-						Verifiers: []policy.TrustedVerifier{
-							{ID: "", Keys: []string{testKeyPath}},
-						},
-						Issuers: nil, Sources: nil, BuildTypes: nil,
-					},
-					SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrVerifierIDRequired,
-		},
-	})
-}
-
-func TestPolicyValidateVEXPolicies(t *testing.T) {
-	t.Parallel()
-
-	runValidateTests(t, []validateTest{
-		{
-			name: "invalid VEX missing policy",
-			policy: policy.Policy{
-				Exclude: nil,
-				Sections: policy.Sections{
-					Trust: nil, SLSA: nil,
-					VEX: &policy.VEXPolicy{
-						MissingPolicy:            testInvalidValue,
-						UnderInvestigationPolicy: "",
-					},
-					VSA: nil, Signatures: nil,
-				},
-			},
-			wantErr:     true,
-			expectedErr: types.ErrInvalidAction,
-		},
-		{
-			name: "invalid VEX under investigation policy",
-			policy: policy.Policy{
-				Exclude: nil,
-				Sections: policy.Sections{
-					Trust: nil, SLSA: nil,
-					VEX: &policy.VEXPolicy{
-						MissingPolicy:            "",
-						UnderInvestigationPolicy: testInvalidValue,
-					},
-					VSA: nil, Signatures: nil,
-				},
-			},
-			wantErr:     true,
-			expectedErr: types.ErrInvalidAction,
-		},
-	})
-}
-
-func TestPolicyValidateVSAMissingPolicy(t *testing.T) {
-	t.Parallel()
-
-	runValidateTests(t, []validateTest{
-		{
-			name: "valid VSA missing policy deny",
-			policy: policy.Policy{
-				Exclude: nil,
-				Sections: policy.Sections{
-					Trust: nil, SLSA: nil, VEX: nil,
-					VSA:        &policy.VSAPolicy{MissingPolicy: types.ActionDeny},
-					Signatures: nil,
-				},
-			},
-			wantErr:     false,
-			expectedErr: nil,
-		},
-		{
-			name: "valid VSA missing policy warn",
-			policy: policy.Policy{
-				Exclude: nil,
-				Sections: policy.Sections{
-					Trust: nil, SLSA: nil, VEX: nil,
-					VSA:        &policy.VSAPolicy{MissingPolicy: types.ActionWarn},
-					Signatures: nil,
-				},
-			},
-			wantErr:     false,
-			expectedErr: nil,
-		},
-		{
-			name: "valid VSA missing policy allow",
-			policy: policy.Policy{
-				Exclude: nil,
-				Sections: policy.Sections{
-					Trust: nil, SLSA: nil, VEX: nil,
-					VSA:        &policy.VSAPolicy{MissingPolicy: types.ActionAllow},
-					Signatures: nil,
-				},
-			},
-			wantErr:     false,
-			expectedErr: nil,
-		},
-		{
-			name: "invalid VSA missing policy",
-			policy: policy.Policy{
-				Exclude: nil,
-				Sections: policy.Sections{
-					Trust: nil, SLSA: nil, VEX: nil,
-					VSA:        &policy.VSAPolicy{MissingPolicy: testInvalidValue},
-					Signatures: nil,
-				},
-			},
-			wantErr:     true,
-			expectedErr: types.ErrInvalidAction,
-		},
-	})
-}
-
-func TestPolicyValidateVSAValid(t *testing.T) {
-	t.Parallel()
-
-	runValidateTests(t, []validateTest{
-		{
-			name: "valid VSA",
-			policy: policy.Policy{
-				Exclude: nil,
-				Sections: policy.Sections{
-					Trust: nil, SLSA: nil, VEX: nil,
-					VSA: &policy.VSAPolicy{
-						MinimumLevel: 2, MaxAge: "168h", Policy: "https://example.com/policy",
-					},
-					Signatures: nil,
-				},
-			},
-			wantErr:     false,
-			expectedErr: nil,
-		},
-	})
-}
-
-func TestLoadAllSkipsNonJSON(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-
-	writeFile(t, filepath.Join(dir, "default.json"), `{}`)
-	writeFile(t, filepath.Join(dir, "readme.txt"), `not a policy`)
-
-	subDir := filepath.Join(dir, "subdir")
-	testutil.AssertNoError(t, os.MkdirAll(subDir, 0o750))
-
-	policies, err := policy.LoadAll(dir)
-	testutil.AssertNoError(t, err)
-
-	if len(policies) != 1 {
-		t.Errorf("expected 1 policy, got %d", len(policies))
-	}
-}
-
-func TestLoadAllInvalidPolicy(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "bad.json"), `{invalid json}`)
-
-	_, err := policy.LoadAll(dir)
-	testutil.AssertError(t, err)
-}
-
-func TestLoadPolicyValidationError(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	policyPath := filepath.Join(dir, "test.json")
-
-	writeFile(t, policyPath, `{"trust":{"builders":[{"id":"","maxLevel":0}]}}`)
-
-	_, err := policy.Load(policyPath)
-	testutil.AssertError(t, err)
-
-	if !errors.Is(err, policy.ErrBuilderIDRequired) {
-		t.Errorf("expected error %v, got %v", policy.ErrBuilderIDRequired, err)
-	}
-}
-
-func TestLoadAllEmpty(t *testing.T) {
-	t.Parallel()
-
-	t.Run("empty directory", func(t *testing.T) {
-		t.Parallel()
-
-		dir := t.TempDir()
-
-		policies, err := policy.LoadAll(dir)
-		testutil.AssertNoError(t, err)
-
-		if len(policies) != 0 {
-			t.Errorf("expected 0 policies, got %d", len(policies))
-		}
-	})
-
-	t.Run("nonexistent directory returns empty", func(t *testing.T) {
-		t.Parallel()
-
-		policies, err := policy.LoadAll("/nonexistent/dir")
-		testutil.AssertNoError(t, err)
-
-		if len(policies) != 0 {
-			t.Errorf("expected 0 policies, got %d", len(policies))
-		}
-	})
-
-	t.Run("empty string returns empty", func(t *testing.T) {
-		t.Parallel()
-
-		policies, err := policy.LoadAll("")
-		testutil.AssertNoError(t, err)
-
-		if len(policies) != 0 {
-			t.Errorf("expected 0 policies, got %d", len(policies))
-		}
-	})
-}
-
-func defaultTestPolicy() *policy.Policy {
-	return &policy.Policy{
-		Inherits: nil,
-		Include:  []string{testIncludePattern},
-		Exclude:  []string{"gcr.io/default/*"},
-		Trust: &policy.TrustPolicy{
-			Builders: []policy.TrustedBuilder{
-				{ID: testDefaultBuilderID, MaxLevel: 3},
-			},
-			Verifiers:   nil,
-			Issuers:     []string{testDefaultIssuer},
-			SANPatterns: nil,
-			Sources:     nil,
-			BuildTypes:  nil,
-		},
-		SLSA: &policy.SLSAPolicy{
-			MissingPolicy:           types.ActionDeny,
-			RejectUnknownParameters: false,
-			KnownParameters:         nil,
-		},
-		VEX: &policy.VEXPolicy{
-			MissingPolicy:            types.ActionWarn,
-			UnderInvestigationPolicy: "",
-		},
-		VSA: &policy.VSAPolicy{
-			MissingPolicy:  "",
-			MinimumLevel:   2,
-			MaxAge:         "",
-			MaxAgeDuration: 0,
-			Policy:         "",
-		},
-		Signatures: &policy.SignaturesPolicy{
-			RequireTransparencyLog: true,
-		},
-	}
-}
-
-func mergedEmptyNamespace() *policy.Policy {
-	nsPol := &policy.Policy{
-		Inherits: nil, Include: nil, Exclude: nil,
-		Trust: nil, SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
-	}
-
-	return policy.MergeWithDefault(nsPol, defaultTestPolicy())
-}
-
-func TestMergeWithDefaultInheritsCleared(t *testing.T) {
-	t.Parallel()
-
-	if mergedEmptyNamespace().Inherits != nil {
-		t.Error("expected Inherits to be nil")
-	}
-}
-
-func TestMergeWithDefaultInheritsTrust(t *testing.T) {
-	t.Parallel()
-
-	merged := mergedEmptyNamespace()
-	if merged.Trust == nil ||
-		merged.Trust.Builders[0].ID != testDefaultBuilderID {
-		t.Error("expected default Trust to be inherited")
-	}
-}
-
-func TestMergeWithDefaultInheritsInclude(t *testing.T) {
-	t.Parallel()
-
-	merged := mergedEmptyNamespace()
-	if len(merged.Include) != 1 ||
-		merged.Include[0] != testIncludePattern {
-		t.Error("expected default Include to be inherited")
-	}
-}
-
-func TestMergeWithDefaultInheritsExclude(t *testing.T) {
-	t.Parallel()
-
-	merged := mergedEmptyNamespace()
-	if len(merged.Exclude) != 1 ||
-		merged.Exclude[0] != "gcr.io/default/*" {
-		t.Error("expected default Exclude to be inherited")
-	}
-}
-
-func TestMergeWithDefaultInheritsSLSA(t *testing.T) {
-	t.Parallel()
-
-	merged := mergedEmptyNamespace()
-	if merged.SLSA == nil ||
-		merged.SLSA.MissingPolicy != types.ActionDeny {
-		t.Error("expected default SLSA to be inherited")
-	}
-}
-
-func TestMergeWithDefaultInheritsVEX(t *testing.T) {
-	t.Parallel()
-
-	merged := mergedEmptyNamespace()
-	if merged.VEX == nil ||
-		merged.VEX.MissingPolicy != types.ActionWarn {
-		t.Error("expected default VEX to be inherited")
-	}
-}
-
-func TestMergeWithDefaultInheritsVSA(t *testing.T) {
-	t.Parallel()
-
-	merged := mergedEmptyNamespace()
-	if merged.VSA == nil || merged.VSA.MinimumLevel != 2 {
-		t.Error("expected default VSA to be inherited")
-	}
-}
-
-func TestMergeWithDefaultInheritsSignatures(t *testing.T) {
-	t.Parallel()
-
-	merged := mergedEmptyNamespace()
-	if merged.Signatures == nil ||
-		!merged.Signatures.RequireTransparencyLog {
-		t.Error("expected default Signatures to be inherited")
-	}
-}
-
-func TestMergeWithDefaultTrustOverride(t *testing.T) {
-	t.Parallel()
-
-	nsTrust := &policy.TrustPolicy{
-		Builders: []policy.TrustedBuilder{
-			{ID: testNSBuilderID, MaxLevel: 1},
-		},
-		Verifiers:   nil,
-		Issuers:     nil,
-		SANPatterns: nil,
-		Sources:     nil,
-		BuildTypes:  nil,
-	}
-	nsPol := &policy.Policy{
-		Inherits: nil, Exclude: nil,
-		Trust: nsTrust, SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
-	}
-
-	merged := policy.MergeWithDefault(nsPol, defaultTestPolicy())
-
-	if merged.Trust.Builders[0].ID != testNSBuilderID {
-		t.Errorf("expected ns-builder, got %s",
-			merged.Trust.Builders[0].ID)
-	}
-
-	if merged.SLSA.MissingPolicy != types.ActionDeny {
-		t.Error("expected default SLSA to be preserved")
-	}
-}
-
-func TestMergeWithDefaultIncludeOverride(t *testing.T) {
-	t.Parallel()
-
-	nsPol := &policy.Policy{
-		Inherits: nil,
-		Include:  []string{"ns-include/*"},
-		Exclude:  nil,
-		Trust:    nil, SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
-	}
-
-	merged := policy.MergeWithDefault(nsPol, defaultTestPolicy())
-
-	if len(merged.Include) != 1 ||
-		merged.Include[0] != "ns-include/*" {
-		t.Error("expected namespace Include to override default")
-	}
-}
-
-func TestMergeWithDefaultExcludeOverride(t *testing.T) {
-	t.Parallel()
-
-	nsPol := &policy.Policy{
-		Inherits: nil,
-		Exclude:  []string{"ns-exclude/*"},
-		Trust:    nil, SLSA: nil, VEX: nil, VSA: nil, Signatures: nil,
-	}
-
-	merged := policy.MergeWithDefault(nsPol, defaultTestPolicy())
-
-	if len(merged.Exclude) != 1 ||
-		merged.Exclude[0] != "ns-exclude/*" {
-		t.Error("expected namespace Exclude to override default")
-	}
-}
-
-func TestMergeWithDefaultSLSAOverride(t *testing.T) {
-	t.Parallel()
-
-	nsPol := &policy.Policy{
-		Inherits: nil, Exclude: nil,
-		Trust: nil,
-		SLSA: &policy.SLSAPolicy{
-			MissingPolicy:           types.ActionAllow,
-			RejectUnknownParameters: false,
-			KnownParameters:         nil,
-		},
-		VEX: nil, VSA: nil, Signatures: nil,
-	}
-
-	merged := policy.MergeWithDefault(nsPol, defaultTestPolicy())
-
-	if merged.SLSA.MissingPolicy != types.ActionAllow {
-		t.Error("expected namespace SLSA to override default")
-	}
-}
-
-func TestMergeWithDefaultVEXOverride(t *testing.T) {
-	t.Parallel()
-
-	nsPol := &policy.Policy{
-		Inherits: nil, Exclude: nil,
-		Trust: nil, SLSA: nil,
-		VEX: &policy.VEXPolicy{
-			MissingPolicy:            types.ActionDeny,
-			UnderInvestigationPolicy: "",
-		},
-		VSA: nil, Signatures: nil,
-	}
-
-	merged := policy.MergeWithDefault(nsPol, defaultTestPolicy())
-
-	if merged.VEX.MissingPolicy != types.ActionDeny {
-		t.Error("expected namespace VEX to override default")
-	}
-}
-
-func TestMergeWithDefaultVSAOverride(t *testing.T) {
-	t.Parallel()
-
-	nsPol := &policy.Policy{
-		Inherits: nil, Exclude: nil,
-		Trust: nil, SLSA: nil, VEX: nil,
-		VSA: &policy.VSAPolicy{
-			MinimumLevel:   1,
-			MaxAge:         "",
-			MaxAgeDuration: 0,
-			Policy:         "",
-		},
-		Signatures: nil,
-	}
-
-	merged := policy.MergeWithDefault(nsPol, defaultTestPolicy())
-
-	if merged.VSA.MinimumLevel != 1 {
-		t.Errorf("expected MinimumLevel 1, got %d",
-			merged.VSA.MinimumLevel)
-	}
-}
-
-func TestMergeWithDefaultSignaturesOverride(t *testing.T) {
-	t.Parallel()
-
-	nsPol := &policy.Policy{
-		Inherits: nil, Exclude: nil,
-		Trust: nil, SLSA: nil, VEX: nil, VSA: nil,
-		Signatures: &policy.SignaturesPolicy{RequireTransparencyLog: false},
-	}
-
-	merged := policy.MergeWithDefault(nsPol, defaultTestPolicy())
-
-	if merged.Signatures.RequireTransparencyLog {
-		t.Error("expected namespace Signatures to override default")
-	}
-}
-
-func TestLoadAllInheritsMergesWithDefault(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-
-	writeFile(t, filepath.Join(dir, "default.json"), `{
-		"slsa": {"missingPolicy": "deny"},
-		"exclude": ["default-exclude/*"]
-	}`)
-	writeFile(t, filepath.Join(dir, "staging.json"), `{
-		"inherits": true,
-		"slsa": {"missingPolicy": "allow"}
-	}`)
-
-	policies, err := policy.LoadAll(dir)
-	testutil.AssertNoError(t, err)
-
-	staging := policies["staging"]
-	if staging.SLSAMissingPolicy() != types.ActionAllow {
-		t.Errorf("expected allow (overridden), got %s",
-			staging.SLSAMissingPolicy())
-	}
-
-	if len(staging.Exclude) != 1 ||
-		staging.Exclude[0] != "default-exclude/*" {
-		t.Error("expected Exclude to be inherited from default")
-	}
-}
-
-func TestLoadAllInheritsInclude(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-
-	writeFile(t, filepath.Join(dir, "default.json"), `{
-		"include": ["docker.io/myorg/**"],
-		"slsa": {"missingPolicy": "deny"}
-	}`)
-	writeFile(t, filepath.Join(dir, "staging.json"), `{
-		"inherits": true,
-		"slsa": {"missingPolicy": "allow"}
-	}`)
-
-	policies, err := policy.LoadAll(dir)
-	testutil.AssertNoError(t, err)
-
-	staging := policies["staging"]
-	if len(staging.Include) != 1 ||
-		staging.Include[0] != testIncludePattern {
-		t.Error("expected Include to be inherited from default")
-	}
-}
-
-func TestLoadAllInheritsFalseNoMerge(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-
-	writeFile(t, filepath.Join(dir, "default.json"), `{
-		"exclude": ["default-exclude/*"]
-	}`)
-	writeFile(t, filepath.Join(dir, "staging.json"), `{
-		"inherits": false
-	}`)
-
-	policies, err := policy.LoadAll(dir)
-	testutil.AssertNoError(t, err)
-
-	staging := policies["staging"]
-	if staging.Exclude != nil {
-		t.Error("expected nil Exclude when inherits=false")
-	}
-}
-
-func TestLoadAllInheritsNilNoMerge(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-
-	writeFile(t, filepath.Join(dir, "default.json"), `{
-		"exclude": ["default-exclude/*"]
-	}`)
-	writeFile(t, filepath.Join(dir, "staging.json"), `{}`)
-
-	policies, err := policy.LoadAll(dir)
-	testutil.AssertNoError(t, err)
-
-	staging := policies["staging"]
-	if staging.Exclude != nil {
-		t.Error("expected nil Exclude when inherits not set")
-	}
-}
-
-func TestLoadAllDefaultCannotInherit(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-
-	writeFile(t, filepath.Join(dir, "default.json"), `{
-		"inherits": true
-	}`)
-
-	_, err := policy.LoadAll(dir)
-	if err == nil {
-		t.Fatal("expected error when default has inherits=true")
-	}
-
-	if !errors.Is(err, policy.ErrDefaultCannotInherit) {
-		t.Errorf("expected ErrDefaultCannotInherit, got %v", err)
 	}
 }
 
@@ -1442,662 +153,1718 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
-func TestValidateEnforceRequiresSANPatterns(t *testing.T) {
+func trustPolicy(trust *policy.TrustPolicy) policy.Policy {
+	return policy.Policy{Trust: trust}
+}
+
+func verifierPolicy(issuers []string, verifiers ...policy.TrustedVerifier) policy.Policy {
+	return trustPolicy(&policy.TrustPolicy{Issuers: issuers, Verifiers: verifiers})
+}
+
+func keyVerifier(id string, keys ...string) policy.TrustedVerifier {
+	return policy.TrustedVerifier{ID: id, Keys: keys}
+}
+
+func boundedVerifier(notBefore, notAfter string, keys ...string) policy.TrustedVerifier {
+	return policy.TrustedVerifier{
+		ID: testVerifierID, Keys: keys, NotBefore: notBefore, NotAfter: notAfter,
+	}
+}
+
+func caTrustStore(name string, certs ...string) policy.NotationTrustStore {
+	return policy.NotationTrustStore{Name: name, Type: "ca", Certificates: certs}
+}
+
+func notationTrustRule(
+	name string,
+	scopes, stores, identities []string,
+) policy.NotationTrustPolicyRule {
+	return policy.NotationTrustPolicyRule{
+		Name: name, RegistryScopes: scopes, TrustStores: stores, TrustedIdentities: identities,
+	}
+}
+
+func notationPolicy(notation *policy.NotationPolicy) policy.Policy {
+	return policy.Policy{Notation: notation}
+}
+
+func sbomPolicy(sbom *policy.SBOMPolicy) policy.Policy {
+	return policy.Policy{SBOM: sbom}
+}
+
+func rulesPolicy(rules ...policy.ImageRule) policy.Policy {
+	return policy.Policy{Rules: rules}
+}
+
+func assertTimeEqual(t *testing.T, want, got time.Time) {
+	t.Helper()
+
+	if !got.Equal(want) {
+		t.Errorf("expected time %v, got %v", want, got)
+	}
+}
+
+func TestPolicyValidateTopLevel(t *testing.T) {
 	t.Parallel()
 
-	pol := &policy.Policy{
-		Trust: &policy.TrustPolicy{
-			Issuers: []string{testIssuerURL},
+	//nolint:exhaustruct_v5 // table cases only set the fields they assert
+	runValidateTests(t, []validateTest{
+		{
+			name: "empty policy is valid",
+			check: func(t *testing.T, pol *policy.Policy) {
+				t.Helper()
+
+				if pol.CompiledCEL != nil {
+					t.Error("expected CompiledCEL to be nil when no CEL section")
+				}
+			},
+		},
+		{name: "latest version", policy: policy.Policy{Version: policy.LatestPolicyVersion}},
+		{
+			name:    "version too new",
+			policy:  policy.Policy{Version: policy.LatestPolicyVersion + 1},
+			wantErr: policy.ErrPolicyVersionTooNew,
+		},
+		{
+			name:    "negative version",
+			policy:  policy.Policy{Version: -1},
+			wantErr: policy.ErrPolicyVersionTooNew,
+		},
+		{name: "warn mode", policy: policy.Policy{Mode: config.ModeWarn}},
+		{name: "enforce mode", policy: policy.Policy{Mode: config.ModeEnforce}},
+		{name: "disabled mode", policy: policy.Policy{Mode: config.ModeDisabled}},
+		{
+			name:    "invalid mode",
+			policy:  policy.Policy{Mode: testInvalidValue},
+			wantErr: policy.ErrInvalidPolicyMode,
+		},
+		{name: "include single star", policy: policy.Policy{Include: []string{"gcr.io/org/*"}}},
+		{
+			name:   "include double star",
+			policy: policy.Policy{Include: []string{"registry.k8s.io/**"}},
+		},
+		{name: "exclude single star", policy: policy.Policy{Exclude: []string{"gcr.io/org/*"}}},
+		{
+			name:   "exclude double star",
+			policy: policy.Policy{Exclude: []string{"registry.k8s.io/**"}},
+		},
+		{
+			name: "valid CEL rules are compiled",
+			policy: policy.Policy{CEL: &celengine.Policy{Rules: []celengine.Rule{{
+				Match:   "image.registry == 'ghcr.io'",
+				Require: testCELExprSLSAVerified,
+				Message: "GHCR images must have SLSA",
+			}}}},
+			check: func(t *testing.T, pol *policy.Policy) {
+				t.Helper()
+
+				if pol.CompiledCEL == nil {
+					t.Error("expected CompiledCEL to be populated after validation")
+				}
+			},
+		},
+		{
+			name: "CEL syntax error",
+			policy: policy.Policy{CEL: &celengine.Policy{
+				Rules: []celengine.Rule{{Require: testCELInvalidExpr}},
+			}},
+			wantErr: policy.ErrCELCompileFailed,
+		},
+		{
+			name:   "CEL section without rules",
+			policy: policy.Policy{CEL: &celengine.Policy{Rules: nil}},
+			check: func(t *testing.T, pol *policy.Policy) {
+				t.Helper()
+
+				if pol.CompiledCEL != nil {
+					t.Error("expected CompiledCEL to be nil with empty rules")
+				}
+			},
+		},
+	})
+}
+
+func TestPolicyValidateTrust(t *testing.T) {
+	t.Parallel()
+
+	//nolint:exhaustruct_v5 // table cases only set the fields they assert
+	runValidateTests(t, []validateTest{
+		{
+			name: "valid builder",
+			policy: trustPolicy(&policy.TrustPolicy{
+				Builders: []policy.TrustedBuilder{{ID: testRunnerBuilderID, MaxLevel: 3}},
+			}),
+		},
+		{
+			name: "builder without ID",
+			policy: trustPolicy(&policy.TrustPolicy{
+				Builders: []policy.TrustedBuilder{{ID: "", MaxLevel: 2}},
+			}),
+			wantErr: policy.ErrBuilderIDRequired,
+		},
+		{
+			name: "builder with invalid max level",
+			policy: trustPolicy(&policy.TrustPolicy{
+				Builders: []policy.TrustedBuilder{{ID: testBuilderID, MaxLevel: 5}},
+			}),
+			wantErr: policy.ErrBuilderMaxLevel,
+		},
+		{
+			name: "duplicate builder ID",
+			policy: trustPolicy(&policy.TrustPolicy{
+				Builders: []policy.TrustedBuilder{
+					{ID: "https://builder.example.com", MaxLevel: 2},
+					{ID: "https://builder.example.com", MaxLevel: 3},
+				},
+			}),
+			wantErr: policy.ErrDuplicateBuilderID,
+		},
+		{
+			name: "builder identity without SAN pattern",
+			policy: trustPolicy(&policy.TrustPolicy{
+				Issuers: []string{testGitHubIssuer},
+				Builders: []policy.TrustedBuilder{{
+					ID:         testBuilderID,
+					Identities: []policy.TrustedIdentity{{Issuer: testGitHubIssuer}},
+				}},
+			}),
+			wantErr: policy.ErrIdentitySANPatternRequired,
+		},
+		{
+			name: "relative builder key",
+			policy: trustPolicy(&policy.TrustPolicy{
+				Builders: []policy.TrustedBuilder{
+					{ID: testBuilderID, Keys: []string{"keys/builder.pub"}},
+				},
+			}),
+			wantErr: policy.ErrBuilderKeyNotAbsolute,
+		},
+		{
+			name: "duplicate builder key",
+			policy: trustPolicy(&policy.TrustPolicy{
+				Builders: []policy.TrustedBuilder{
+					{ID: testBuilderID, Keys: []string{testKeyPath, testKeyPath}},
+				},
+			}),
+			wantErr: policy.ErrDuplicateBuilderKey,
+		},
+		{
+			name: "key shared by builder and verifier",
+			policy: trustPolicy(&policy.TrustPolicy{
+				Builders: []policy.TrustedBuilder{
+					{ID: testBuilderID, Keys: []string{testKeyPath}},
+				},
+				Verifiers: []policy.TrustedVerifier{keyVerifier(testVerifierID, testKeyPath)},
+			}),
+			wantErr: policy.ErrDuplicateKeyAcrossVerifiers,
+		},
+		{
+			name: "key shared by two builders",
+			policy: trustPolicy(&policy.TrustPolicy{
+				Builders: []policy.TrustedBuilder{
+					{ID: testBuilderID, Keys: []string{testKeyPath}},
+					{ID: "https://example.com/other-builder", Keys: []string{testKeyPath}},
+				},
+			}),
+		},
+		{
+			name:    "keyless verifier without issuers",
+			policy:  verifierPolicy(nil, keyVerifier(testBuilderID)),
+			wantErr: policy.ErrKeylessVerifierRequiresIssuers,
+		},
+		{
+			name:   "keyless verifier with issuers",
+			policy: verifierPolicy([]string{testGitHubIssuer}, keyVerifier(testBuilderID)),
+		},
+		{
+			name:    "verifier without ID",
+			policy:  verifierPolicy(nil, keyVerifier("", testKeyPath)),
+			wantErr: policy.ErrVerifierIDRequired,
+		},
+		{
+			name:   "verifier with single key",
+			policy: verifierPolicy(nil, keyVerifier(testBuilderID, testKeyPath)),
+		},
+		{
+			name:   "verifier with multiple keys",
+			policy: verifierPolicy(nil, keyVerifier(testBuilderID, "/path/a.pub", "/path/b.pub")),
+		},
+		{
+			name:    "verifier with relative key path",
+			policy:  verifierPolicy(nil, keyVerifier(testBuilderID, "relative/path.pub")),
+			wantErr: policy.ErrVerifierKeyNotAbsolute,
+		},
+		{
+			name: "verifier with keys containing relative path",
+			policy: verifierPolicy(nil,
+				keyVerifier(testBuilderID, "/abs/good.pub", "relative/bad.pub"),
+			),
+			wantErr: policy.ErrVerifierKeyNotAbsolute,
+		},
+		{
+			name:    "verifier with empty string in keys",
+			policy:  verifierPolicy(nil, keyVerifier(testBuilderID, testValidKeyPath, "")),
+			wantErr: policy.ErrEmptyValue,
+		},
+		{
+			name: "verifier with duplicate keys",
+			policy: verifierPolicy(nil,
+				keyVerifier(testBuilderID, testValidKeyPath, testValidKeyPath),
+			),
+			wantErr: policy.ErrDuplicateVerifierKey,
+		},
+		{
+			name: "duplicate verifier ID",
+			policy: verifierPolicy([]string{testIssuerURL},
+				keyVerifier("https://verifier.example.com"),
+				keyVerifier("https://verifier.example.com"),
+			),
+			wantErr: policy.ErrDuplicateVerifierID,
+		},
+		{
+			name: "same key in two verifiers",
+			policy: verifierPolicy(nil,
+				policy.TrustedVerifier{
+					ID:        "verifier-a",
+					Keys:      []string{testKeyPath},
+					NotBefore: testNotBefore2024,
+					NotAfter:  testNotAfter2025,
+				},
+				keyVerifier("verifier-b", testKeyPath),
+			),
+			wantErr: policy.ErrDuplicateKeyAcrossVerifiers,
+		},
+		{
+			name: "different keys in two verifiers",
+			policy: verifierPolicy(nil,
+				keyVerifier("verifier-a", "/key/a.pub"),
+				keyVerifier("verifier-b", "/key/b.pub"),
+			),
+		},
+		{
+			name: "valid verifier identity",
+			policy: verifierPolicy([]string{testGitHubIssuer}, policy.TrustedVerifier{
+				ID: testVerifierID,
+				Identities: []policy.TrustedIdentity{
+					{Issuer: testGitHubIssuer, SANPattern: testReleaseSANPattern},
+				},
+			}),
+		},
+		{
+			name: "verifier identity without issuer",
+			policy: verifierPolicy([]string{testGitHubIssuer}, policy.TrustedVerifier{
+				ID:         testVerifierID,
+				Identities: []policy.TrustedIdentity{{SANPattern: testReleaseSANPattern}},
+			}),
+			wantErr: policy.ErrIdentityIssuerRequired,
+		},
+		{
+			name: "notBefore and notAfter are resolved",
+			policy: verifierPolicy(nil,
+				boundedVerifier(testNotBefore2024, testNotAfter2025, testKeyPath),
+			),
+			check: func(t *testing.T, pol *policy.Policy) {
+				t.Helper()
+
+				verif := pol.Trust.Verifiers[0]
+				assertTimeEqual(t, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), verif.NotBeforeTime)
+				assertTimeEqual(t, time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), verif.NotAfterTime)
+			},
+		},
+		{
+			name:   "notBefore only",
+			policy: verifierPolicy(nil, boundedVerifier("2024-06-15T12:00:00Z", "", testKeyPath)),
+			check: func(t *testing.T, pol *policy.Policy) {
+				t.Helper()
+
+				testutil.AssertEqual(t, false, pol.Trust.Verifiers[0].NotBeforeTime.IsZero())
+				testutil.AssertEqual(t, true, pol.Trust.Verifiers[0].NotAfterTime.IsZero())
+			},
+		},
+		{
+			name:   "notAfter only",
+			policy: verifierPolicy(nil, boundedVerifier("", "2025-12-31T23:59:59Z", testKeyPath)),
+			check: func(t *testing.T, pol *policy.Policy) {
+				t.Helper()
+
+				testutil.AssertEqual(t, true, pol.Trust.Verifiers[0].NotBeforeTime.IsZero())
+				testutil.AssertEqual(t, false, pol.Trust.Verifiers[0].NotAfterTime.IsZero())
+			},
+		},
+		{
+			name:    "invalid notBefore format",
+			policy:  verifierPolicy(nil, boundedVerifier("not-a-date", "", testKeyPath)),
+			wantErr: policy.ErrInvalidNotBefore,
+		},
+		{
+			name:    "invalid notAfter format",
+			policy:  verifierPolicy(nil, boundedVerifier("", "2024/01/01", testKeyPath)),
+			wantErr: policy.ErrInvalidNotAfter,
+		},
+		{
+			name: "notAfter before notBefore",
+			policy: verifierPolicy(nil,
+				boundedVerifier(testNotAfter2025, testNotBefore2024, testKeyPath),
+			),
+			wantErr: policy.ErrNotAfterBeforeNotBefore,
+		},
+		{
+			name: "notAfter equals notBefore",
+			policy: verifierPolicy(nil,
+				boundedVerifier(testMidpoint2024, testMidpoint2024, testKeyPath),
+			),
+			wantErr: policy.ErrNotAfterBeforeNotBefore,
+		},
+		{
+			name: "notBefore without keys",
+			policy: verifierPolicy(
+				[]string{testIssuerURL},
+				boundedVerifier(testNotBefore2024, ""),
+			),
+			wantErr: policy.ErrTimeBoundsWithoutKeys,
+		},
+		{
+			name:    "notAfter without keys",
+			policy:  verifierPolicy([]string{testIssuerURL}, boundedVerifier("", testNotAfter2025)),
+			wantErr: policy.ErrTimeBoundsWithoutKeys,
+		},
+		{
+			name: "notBefore and notAfter without keys",
+			policy: verifierPolicy([]string{testIssuerURL},
+				boundedVerifier(testNotBefore2024, testNotAfter2025),
+			),
+			wantErr: policy.ErrTimeBoundsWithoutKeys,
+		},
+	})
+}
+
+// maxAgeTests generates the shared maxAge validation cases for a section.
+func maxAgeTests(
+	section string, notPositive error,
+	withMaxAge func(maxAge string) policy.Policy,
+	duration func(pol *policy.Policy) time.Duration,
+) []validateTest {
+	expectDuration := func(want time.Duration) func(*testing.T, *policy.Policy) {
+		return func(t *testing.T, pol *policy.Policy) {
+			t.Helper()
+
+			testutil.AssertEqual(t, want, duration(pol))
+		}
+	}
+
+	//nolint:exhaustruct_v5 // table cases only set the fields they assert
+	return []validateTest{
+		{
+			name:   section + " maxAge is resolved",
+			policy: withMaxAge(testMaxAge),
+			check:  expectDuration(24 * time.Hour),
+		},
+		{
+			name:   section + " without maxAge skips resolve",
+			policy: withMaxAge(""),
+			check:  expectDuration(0),
+		},
+		{
+			name:    section + " negative maxAge",
+			policy:  withMaxAge(testNegativeDuration),
+			wantErr: notPositive,
+		},
+		{name: section + " zero maxAge", policy: withMaxAge("0s"), wantErr: notPositive},
+		{
+			name:    section + " invalid maxAge format",
+			policy:  withMaxAge(testInvalidDuration),
+			wantErr: errAnyError,
+		},
+	}
+}
+
+func TestPolicyValidateSectionMaxAge(t *testing.T) {
+	t.Parallel()
+
+	var tests []validateTest
+
+	tests = append(tests, maxAgeTests("slsa", policy.ErrSLSAMaxAgeNotPositive,
+		func(maxAge string) policy.Policy {
+			return policy.Policy{SLSA: &policy.SLSAPolicy{MaxAge: maxAge}}
+		},
+		func(pol *policy.Policy) time.Duration { return pol.SLSA.MaxAgeDuration },
+	)...)
+	tests = append(tests, maxAgeTests("vsa", policy.ErrVSAMaxAgeNotPositive,
+		func(maxAge string) policy.Policy {
+			return policy.Policy{VSA: &policy.VSAPolicy{MaxAge: maxAge}}
+		},
+		func(pol *policy.Policy) time.Duration { return pol.VSA.MaxAgeDuration },
+	)...)
+	tests = append(tests, maxAgeTests("source", policy.ErrSourceMaxAgeNotPositive,
+		func(maxAge string) policy.Policy {
+			return policy.Policy{Source: &policy.SourcePolicy{MaxAge: maxAge}}
+		},
+		func(pol *policy.Policy) time.Duration { return pol.Source.MaxAgeDuration },
+	)...)
+	tests = append(tests, maxAgeTests("vulnScan", policy.ErrVulnScanMaxAgeNotPositive,
+		func(maxAge string) policy.Policy {
+			return policy.Policy{VulnScan: &policy.VulnScanPolicy{MaxAge: maxAge}}
+		},
+		func(pol *policy.Policy) time.Duration { return pol.VulnScan.MaxAgeDuration },
+	)...)
+	tests = append(tests, maxAgeTests("testResult", policy.ErrTestResultMaxAgeNotPositive,
+		func(maxAge string) policy.Policy {
+			return policy.Policy{TestResult: &policy.TestResultPolicy{MaxAge: maxAge}}
+		},
+		func(pol *policy.Policy) time.Duration { return pol.TestResult.MaxAgeDuration },
+	)...)
+	tests = append(tests, maxAgeTests("runtimeTrace", policy.ErrRuntimeTraceMaxAgeNotPositive,
+		func(maxAge string) policy.Policy {
+			return policy.Policy{RuntimeTrace: &policy.RuntimeTracePolicy{MaxAge: maxAge}}
+		},
+		func(pol *policy.Policy) time.Duration { return pol.RuntimeTrace.MaxAgeDuration },
+	)...)
+
+	runValidateTests(t, tests)
+}
+
+func TestPolicyValidateSections(t *testing.T) {
+	t.Parallel()
+
+	//nolint:exhaustruct_v5 // table cases only set the fields they assert
+	runValidateTests(t, []validateTest{
+		{
+			name:    "slsa invalid missing policy",
+			policy:  policy.Policy{SLSA: &policy.SLSAPolicy{MissingPolicy: testInvalidValue}},
+			wantErr: types.ErrInvalidAction,
+		},
+		{
+			name: "vex valid",
+			policy: policy.Policy{VEX: &policy.VEXPolicy{
+				MissingPolicy:            types.ActionWarn,
+				UnderInvestigationPolicy: types.ActionAllow,
+			}},
+		},
+		{
+			name:    "vex invalid missing policy",
+			policy:  policy.Policy{VEX: &policy.VEXPolicy{MissingPolicy: testInvalidValue}},
+			wantErr: types.ErrInvalidAction,
+		},
+		{
+			name: "vex invalid under investigation policy",
+			policy: policy.Policy{VEX: &policy.VEXPolicy{
+				UnderInvestigationPolicy: testInvalidValue,
+			}},
+			wantErr: types.ErrInvalidAction,
+		},
+		{
+			name: "vsa valid",
+			policy: policy.Policy{VSA: &policy.VSAPolicy{
+				MinimumLevel: 2, MaxAge: "168h", Policy: "https://example.com/policy",
+			}},
+		},
+		{
+			name:    "vsa invalid minimum level",
+			policy:  policy.Policy{VSA: &policy.VSAPolicy{MinimumLevel: 5}},
+			wantErr: policy.ErrVSAMinimumLevel,
+		},
+		{
+			name:    "vsa invalid missing policy",
+			policy:  policy.Policy{VSA: &policy.VSAPolicy{MissingPolicy: testInvalidValue}},
+			wantErr: types.ErrInvalidAction,
+		},
+		{
+			name:    "vulnScan maxScore out of range",
+			policy:  policy.Policy{VulnScan: &policy.VulnScanPolicy{MaxScore: new(11.0)}},
+			wantErr: policy.ErrVulnScanMaxScoreRange,
+		},
+		{
+			name:    "vulnScan invalid minSeverity",
+			policy:  policy.Policy{VulnScan: &policy.VulnScanPolicy{MinSeverity: "moderate"}},
+			wantErr: policy.ErrVulnScanMinSeverityInvalid,
+		},
+		{
+			name: "vulnScan valid",
+			policy: policy.Policy{VulnScan: &policy.VulnScanPolicy{
+				MaxScore: new(7.0), MinSeverity: "high", MaxAge: testMaxAge,
+			}},
+		},
+		{
+			name:    "scorecard minScore below range",
+			policy:  policy.Policy{Scorecard: &policy.ScorecardPolicy{MinScore: new(-0.1)}},
+			wantErr: policy.ErrScorecardMinScoreRange,
+		},
+		{
+			name:    "scorecard minScore above range",
+			policy:  policy.Policy{Scorecard: &policy.ScorecardPolicy{MinScore: new(10.1)}},
+			wantErr: policy.ErrScorecardMinScoreRange,
+		},
+		{
+			name: "scorecard check score below range",
+			policy: policy.Policy{Scorecard: &policy.ScorecardPolicy{
+				Checks: map[string]int{testScorecardCodeReview: -1},
+			}},
+			wantErr: policy.ErrScorecardCheckScoreRange,
+		},
+		{
+			name: "scorecard check score above range",
+			policy: policy.Policy{Scorecard: &policy.ScorecardPolicy{
+				Checks: map[string]int{testScorecardCodeReview: 11},
+			}},
+			wantErr: policy.ErrScorecardCheckScoreRange,
+		},
+		{
+			name: "scorecard empty check name",
+			policy: policy.Policy{
+				Scorecard: &policy.ScorecardPolicy{Checks: map[string]int{"": 7}},
+			},
+			wantErr: policy.ErrEmptyValue,
+		},
+		{
+			name: "scorecard valid",
+			policy: policy.Policy{Scorecard: &policy.ScorecardPolicy{
+				MinScore: new(7.0),
+				Checks:   map[string]int{testScorecardCodeReview: 8, "Branch-Protection": 9},
+			}},
+		},
+		{
+			name:    "source invalid level",
+			policy:  policy.Policy{Source: &policy.SourcePolicy{MinimumLevel: 4}},
+			wantErr: policy.ErrInvalidSourceLevel,
+		},
+		{
+			name:   "source valid",
+			policy: policy.Policy{Source: &policy.SourcePolicy{MinimumLevel: 2, MaxAge: "12h"}},
+		},
+		{
+			name: "buildEnv overlapping required and forbidden properties",
+			policy: policy.Policy{BuildEnv: &policy.BuildEnvPolicy{
+				RequiredProperties:  []string{"OS"},
+				ForbiddenProperties: []string{"os"},
+			}},
+			wantErr: policy.ErrBuildEnvOverlappingProperties,
+		},
+		{
+			name: "buildEnv valid",
+			policy: policy.Policy{BuildEnv: &policy.BuildEnvPolicy{
+				RequiredProperties:  []string{"OS", "ARCH"},
+				ForbiddenProperties: []string{"DEBUG_MODE"},
+			}},
+		},
+		{
+			name: "testResult valid",
+			policy: policy.Policy{TestResult: &policy.TestResultPolicy{
+				RequiredSuites: []string{"unit", "integration"}, MaxAge: "6h",
+			}},
+		},
+		{
+			name: "scai overlapping required and forbidden attributes",
+			policy: policy.Policy{SCAI: &policy.SCAIPolicy{
+				RequiredAttributes:  []string{testAttrCodeReview, testAttrFuzzTested},
+				ForbiddenAttributes: []string{testAttrCodeReview},
+			}},
+			wantErr: policy.ErrSCAIOverlappingAttributes,
+		},
+		{
+			name: "scai overlapping attributes is case-insensitive",
+			policy: policy.Policy{SCAI: &policy.SCAIPolicy{
+				RequiredAttributes:  []string{"Passed_Code_Review"},
+				ForbiddenAttributes: []string{"passed_code_review"},
+			}},
+			wantErr: policy.ErrSCAIOverlappingAttributes,
+		},
+		{
+			name: "scai without overlap",
+			policy: policy.Policy{SCAI: &policy.SCAIPolicy{
+				RequiredAttributes:  []string{testAttrCodeReview},
+				ForbiddenAttributes: []string{testAttrKnownVulnerable},
+			}},
+		},
+		{
+			name:   "vsa missing policy deny",
+			policy: policy.Policy{VSA: &policy.VSAPolicy{MissingPolicy: types.ActionDeny}},
+		},
+		{
+			name:   "vsa missing policy warn",
+			policy: policy.Policy{VSA: &policy.VSAPolicy{MissingPolicy: types.ActionWarn}},
+		},
+		{
+			name:   "vsa missing policy allow",
+			policy: policy.Policy{VSA: &policy.VSAPolicy{MissingPolicy: types.ActionAllow}},
+		},
+	})
+}
+
+func TestPolicyValidateSBOM(t *testing.T) {
+	t.Parallel()
+
+	//nolint:exhaustruct_v5 // table cases only set the fields they assert
+	runValidateTests(t, []validateTest{
+		{
+			name: "valid SBOM config",
+			policy: sbomPolicy(&policy.SBOMPolicy{
+				MissingPolicy: types.ActionWarn,
+				Formats:       []string{testFormatSPDX, testFormatCycloneDX},
+				License:       &policy.SBOMLicensePolicy{Deny: []string{testLicenseAGPL}},
+				Component: &policy.SBOMComponentPolicy{
+					Deny: []string{"pkg:npm/bad-package@1.0.0"},
+				},
+			}),
+		},
+		{
+			name:    "invalid SBOM missing policy",
+			policy:  sbomPolicy(&policy.SBOMPolicy{MissingPolicy: testInvalidValue}),
+			wantErr: types.ErrInvalidAction,
+		},
+		{
+			name:    "invalid SBOM format",
+			policy:  sbomPolicy(&policy.SBOMPolicy{Formats: []string{"unknown"}}),
+			wantErr: policy.ErrInvalidSBOMFormat,
+		},
+		{
+			name: "empty license in deny list",
+			policy: sbomPolicy(&policy.SBOMPolicy{
+				License: &policy.SBOMLicensePolicy{Deny: []string{testLicenseMIT, ""}},
+			}),
+			wantErr: policy.ErrEmptyValue,
+		},
+		{
+			name: "empty license in allow list",
+			policy: sbomPolicy(&policy.SBOMPolicy{
+				License: &policy.SBOMLicensePolicy{Allow: []string{testLicenseMIT, ""}},
+			}),
+			wantErr: policy.ErrEmptyValue,
+		},
+		{
+			name: "invalid component deny list entry",
+			policy: sbomPolicy(&policy.SBOMPolicy{
+				Component: &policy.SBOMComponentPolicy{Deny: []string{"not-a-purl"}},
+			}),
+			wantErr: policy.ErrInvalidComponentPURL,
+		},
+		{
+			name: "empty component deny list entry",
+			policy: sbomPolicy(&policy.SBOMPolicy{
+				Component: &policy.SBOMComponentPolicy{Deny: []string{""}},
+			}),
+			wantErr: policy.ErrEmptyValue,
+		},
+		{
+			name: "invalid component allow list entry",
+			policy: sbomPolicy(&policy.SBOMPolicy{
+				Component: &policy.SBOMComponentPolicy{Allow: []string{"not-a-purl"}},
+			}),
+			wantErr: policy.ErrInvalidComponentPURL,
+		},
+		{
+			name: "bare pkg: scheme without type/name rejected",
+			policy: sbomPolicy(&policy.SBOMPolicy{
+				Component: &policy.SBOMComponentPolicy{Deny: []string{"pkg:"}},
+			}),
+			wantErr: policy.ErrInvalidComponentPURL,
+		},
+		{
+			name: "pkg:type without name rejected",
+			policy: sbomPolicy(&policy.SBOMPolicy{
+				Component: &policy.SBOMComponentPolicy{Deny: []string{"pkg:npm"}},
+			}),
+			wantErr: policy.ErrInvalidComponentPURL,
+		},
+		{
+			name: "valid allow lists",
+			policy: sbomPolicy(&policy.SBOMPolicy{
+				License:   &policy.SBOMLicensePolicy{Allow: []string{testLicenseMIT, "Apache-2.0"}},
+				Component: &policy.SBOMComponentPolicy{Allow: []string{"pkg:npm/trusted@1.0.0"}},
+			}),
+		},
+		{
+			name: "valid CVSS policy",
+			policy: sbomPolicy(&policy.SBOMPolicy{CVSS: &policy.SBOMCVSSPolicy{
+				MaxScore: new(7.0), MinSeverity: "high", IgnoreCVEs: []string{testCVEID},
+			}}),
+		},
+		{
+			name: "CVSS maxScore too high",
+			policy: sbomPolicy(
+				&policy.SBOMPolicy{CVSS: &policy.SBOMCVSSPolicy{MaxScore: new(11.0)}},
+			),
+			wantErr: policy.ErrCVSSMaxScoreRange,
+		},
+		{
+			name: "CVSS maxScore negative",
+			policy: sbomPolicy(
+				&policy.SBOMPolicy{CVSS: &policy.SBOMCVSSPolicy{MaxScore: new(-1.0)}},
+			),
+			wantErr: policy.ErrCVSSMaxScoreRange,
+		},
+		{
+			name: "CVSS invalid minSeverity",
+			policy: sbomPolicy(&policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{MinSeverity: "extreme"},
+			}),
+			wantErr: policy.ErrCVSSMinSeverityInvalid,
+		},
+		{
+			name: "CVSS empty ignoreCVEs entry",
+			policy: sbomPolicy(&policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{IgnoreCVEs: []string{testCVEID, ""}},
+			}),
+			wantErr: policy.ErrEmptyValue,
+		},
+		{
+			name: "valid drift policy",
+			policy: sbomPolicy(&policy.SBOMPolicy{Drift: &policy.SBOMDriftPolicy{
+				MaxAdded: new(5), MaxRemoved: new(3), MaxModified: new(2), MaxScore: new(1.5),
+			}}),
+		},
+		{
+			name: "drift maxAdded negative",
+			policy: sbomPolicy(
+				&policy.SBOMPolicy{Drift: &policy.SBOMDriftPolicy{MaxAdded: new(-1)}},
+			),
+			wantErr: policy.ErrDriftThresholdNegative,
+		},
+		{
+			name: "drift maxScore negative",
+			policy: sbomPolicy(
+				&policy.SBOMPolicy{Drift: &policy.SBOMDriftPolicy{MaxScore: new(-0.5)}},
+			),
+			wantErr: policy.ErrDriftThresholdNegative,
+		},
+	})
+}
+
+func TestPolicyValidateNotation(t *testing.T) {
+	t.Parallel()
+
+	store := caTrustStore(testNotationStoreName, testNotationCertPath)
+	wildcard := []string{"*"}
+	storeRefs := []string{testNotationStoreRef}
+
+	//nolint:exhaustruct_v5 // table cases only set the fields they assert
+	tests := []validateTest{
+		{
+			name: "valid notation config",
+			policy: notationPolicy(&policy.NotationPolicy{
+				MissingPolicy:     types.ActionDeny,
+				VerificationLevel: testNotationLevelStrict,
+				TrustStores:       []policy.NotationTrustStore{store},
+				TrustPolicy: []policy.NotationTrustPolicyRule{
+					notationTrustRule(testDefaultLabel, wildcard, storeRefs, wildcard),
+				},
+			}),
+		},
+		{
+			name: "valid permissive verification level",
+			policy: notationPolicy(&policy.NotationPolicy{
+				VerificationLevel: testNotationPermissive,
+				TrustStores:       []policy.NotationTrustStore{store},
+			}),
+		},
+		{
+			name:    "invalid missing policy",
+			policy:  notationPolicy(&policy.NotationPolicy{MissingPolicy: testInvalidValue}),
+			wantErr: types.ErrInvalidAction,
+		},
+		{
+			name: "invalid verification level",
+			policy: notationPolicy(&policy.NotationPolicy{
+				MissingPolicy:     types.ActionDeny,
+				VerificationLevel: testInvalidValue,
+				TrustStores:       []policy.NotationTrustStore{store},
+			}),
+			wantErr: policy.ErrNotationVerificationLevelInvalid,
+		},
+		{
+			name: "trust store missing name",
+			policy: notationPolicy(&policy.NotationPolicy{
+				TrustStores: []policy.NotationTrustStore{caTrustStore("", testNotationCertPath)},
+			}),
+			wantErr: policy.ErrNotationTrustStoreNameRequired,
+		},
+		{
+			name: "trust store invalid type",
+			policy: notationPolicy(&policy.NotationPolicy{
+				TrustStores: []policy.NotationTrustStore{{
+					Name: testNotationStoreName, Type: testInvalidValue,
+					Certificates: []string{testNotationCertPath},
+				}},
+			}),
+			wantErr: policy.ErrNotationTrustStoreTypeInvalid,
+		},
+		{
+			name: "trust store without certificates",
+			policy: notationPolicy(&policy.NotationPolicy{
+				TrustStores: []policy.NotationTrustStore{caTrustStore(testNotationStoreName)},
+			}),
+			wantErr: policy.ErrNotationTrustStoreCertsRequired,
+		},
+		{
+			name: "trust store relative certificate path",
+			policy: notationPolicy(&policy.NotationPolicy{
+				TrustStores: []policy.NotationTrustStore{
+					caTrustStore(testNotationStoreName, "relative/path.pem"),
+				},
+			}),
+			wantErr: policy.ErrNotationCertNotAbsolute,
+		},
+		{
+			name: "duplicate trust store name",
+			policy: notationPolicy(&policy.NotationPolicy{
+				TrustStores: []policy.NotationTrustStore{
+					store, caTrustStore(testNotationStoreName, "/etc/certs/ca2.pem"),
+				},
+			}),
+			wantErr: policy.ErrDuplicateNotationTrustStoreName,
+		},
+		{
+			name: "trust policy missing name",
+			policy: notationPolicy(&policy.NotationPolicy{
+				TrustPolicy: []policy.NotationTrustPolicyRule{
+					notationTrustRule("", wildcard, storeRefs, wildcard),
+				},
+			}),
+			wantErr: policy.ErrNotationTrustPolicyNameRequired,
+		},
+		{
+			name: "trust policy missing registry scopes",
+			policy: notationPolicy(&policy.NotationPolicy{
+				TrustPolicy: []policy.NotationTrustPolicyRule{
+					notationTrustRule(testNotationRuleName, nil, storeRefs, wildcard),
+				},
+			}),
+			wantErr: policy.ErrNotationTrustPolicyScopesRequired,
+		},
+		{
+			name: "trust policy missing trust stores",
+			policy: notationPolicy(&policy.NotationPolicy{
+				TrustPolicy: []policy.NotationTrustPolicyRule{
+					notationTrustRule(testNotationRuleName, wildcard, nil, wildcard),
+				},
+			}),
+			wantErr: policy.ErrNotationTrustPolicyStoresRequired,
+		},
+		{
+			name: "trust policy missing trusted identities",
+			policy: notationPolicy(&policy.NotationPolicy{
+				TrustPolicy: []policy.NotationTrustPolicyRule{
+					notationTrustRule(testNotationRuleName, wildcard, storeRefs, nil),
+				},
+			}),
+			wantErr: policy.ErrNotationTrustPolicyIdentitiesRequired,
+		},
+		{
+			name: "duplicate trust policy name",
+			policy: notationPolicy(&policy.NotationPolicy{
+				TrustPolicy: []policy.NotationTrustPolicyRule{
+					notationTrustRule(testNotationRuleName, wildcard, storeRefs, wildcard),
+					notationTrustRule(
+						testNotationRuleName,
+						[]string{testDockerGlob},
+						storeRefs,
+						wildcard,
+					),
+				},
+			}),
+			wantErr: policy.ErrDuplicateNotationTrustPolicyName,
+		},
+		{
+			name:    "invalid revocation mode",
+			policy:  notationPolicy(&policy.NotationPolicy{RevocationMode: testInvalidValue}),
+			wantErr: policy.ErrNotationRevocationModeInvalid,
 		},
 	}
 
-	err := pol.ValidateEnforce()
-	if !errors.Is(err, policy.ErrSANPatternsRequired) {
-		t.Errorf("expected ErrSANPatternsRequired, got %v", err)
+	for _, mode := range []string{testNotationLevelStrict, "soft", testNotationLevelSkip, ""} {
+		//nolint:exhaustruct_v5 // table cases only set the fields they assert
+		tests = append(tests, validateTest{
+			name: "revocation mode " + mode + " is valid",
+			policy: notationPolicy(&policy.NotationPolicy{
+				RevocationMode: mode,
+				TrustStores:    []policy.NotationTrustStore{store},
+			}),
+		})
+
+		if mode == "" {
+			continue
+		}
+
+		//nolint:exhaustruct_v5 // table cases only set the fields they assert
+		tests = append(tests, validateTest{
+			name: "revocation mode " + mode + " rejected with verification level skip",
+			policy: notationPolicy(&policy.NotationPolicy{
+				VerificationLevel: testNotationLevelSkip,
+				RevocationMode:    mode,
+			}),
+			wantErr: policy.ErrNotationRevocationWithSkipLevel,
+		})
 	}
+
+	runValidateTests(t, tests)
 }
 
-func TestValidateEnforcePassesWithSANPatterns(t *testing.T) {
+func TestPolicyValidateRules(t *testing.T) {
 	t.Parallel()
 
-	pol := &policy.Policy{
-		Trust: &policy.TrustPolicy{
-			Issuers:     []string{testIssuerURL},
-			SANPatterns: []string{"build@example.com"},
+	//nolint:exhaustruct_v5 // table cases only set the fields they assert
+	runValidateTests(t, []validateTest{
+		{
+			name: "valid rule",
+			policy: rulesPolicy(policy.ImageRule{
+				Images: []string{"ghcr.io/myorg/**"},
+				SLSA:   &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
+			}),
+		},
+		{
+			name: "valid glob patterns",
+			policy: rulesPolicy(policy.ImageRule{
+				Images: []string{"ghcr.io/myorg/**", "docker.io/library/*"},
+			}),
+		},
+		{
+			name:    "empty images",
+			policy:  rulesPolicy(policy.ImageRule{Images: nil}),
+			wantErr: policy.ErrRuleImagesRequired,
+		},
+		{
+			name:    "empty string in images",
+			policy:  rulesPolicy(policy.ImageRule{Images: []string{""}}),
+			wantErr: policy.ErrEmptyValue,
+		},
+		{
+			name: "invalid trust",
+			policy: rulesPolicy(policy.ImageRule{
+				Images: []string{testRuleImagesGlob},
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{{ID: "", MaxLevel: 0}},
+				},
+			}),
+			wantErr: policy.ErrBuilderIDRequired,
+		},
+		{
+			name: "keyless verifier uses base issuers",
+			policy: policy.Policy{
+				Trust: &policy.TrustPolicy{Issuers: []string{testGitHubIssuer}},
+				Rules: []policy.ImageRule{{
+					Images: []string{testRuleImagesGlob},
+					Trust: &policy.TrustPolicy{
+						Verifiers: []policy.TrustedVerifier{keyVerifier(testVerifierID)},
+					},
+				}},
+			},
+		},
+		{
+			name: "keyless verifier without effective issuers",
+			policy: policy.Policy{
+				Trust: &policy.TrustPolicy{
+					Issuers:   []string{testGitHubIssuer},
+					Verifiers: []policy.TrustedVerifier{keyVerifier(testVerifierID)},
+				},
+				Rules: []policy.ImageRule{{
+					Images: []string{testRuleImagesGlob},
+					Trust:  &policy.TrustPolicy{Issuers: []string{}},
+				}},
+			},
+			wantErr: policy.ErrKeylessVerifierRequiresIssuers,
+		},
+		{
+			name: "CEL syntax error",
+			policy: rulesPolicy(policy.ImageRule{
+				Images: []string{testRuleImagesGlob},
+				CEL: &celengine.Policy{
+					Rules: []celengine.Rule{{Require: testCELInvalidExpr}},
+				},
+			}),
+			wantErr: policy.ErrCELCompileFailed,
+		},
+		{
+			name: "overlapping SCAI attributes",
+			policy: rulesPolicy(policy.ImageRule{
+				Images: []string{testRuleImagesGlob},
+				SCAI: &policy.SCAIPolicy{
+					RequiredAttributes:  []string{testAttrFuzzTested},
+					ForbiddenAttributes: []string{testAttrFuzzTested},
+				},
+			}),
+			wantErr: policy.ErrSCAIOverlappingAttributes,
+		},
+		{
+			name: "VSA maxAge is resolved",
+			policy: rulesPolicy(policy.ImageRule{
+				Images: []string{testRuleImagesGlob},
+				VSA:    &policy.VSAPolicy{MissingPolicy: types.ActionDeny, MaxAge: testMaxAge},
+			}),
+			check: func(t *testing.T, pol *policy.Policy) {
+				t.Helper()
+
+				testutil.AssertEqual(t, 24*time.Hour, pol.Rules[0].VSA.MaxAgeDuration)
+			},
+		},
+		{
+			name: "SLSA maxAge is resolved",
+			policy: rulesPolicy(policy.ImageRule{
+				Images: []string{testRuleImagesGlob},
+				SLSA:   &policy.SLSAPolicy{MaxAge: testMaxAge},
+			}),
+			check: func(t *testing.T, pol *policy.Policy) {
+				t.Helper()
+
+				testutil.AssertEqual(t, 24*time.Hour, pol.Rules[0].SLSA.MaxAgeDuration)
+			},
+		},
+	})
+}
+
+func TestPolicyValidateCollectsMultipleErrors(t *testing.T) {
+	t.Parallel()
+
+	//nolint:exhaustruct_v5 // table cases only set the fields they assert
+	tests := []struct {
+		name         string
+		policy       *policy.Policy
+		wantErrs     []error
+		wantContains []string
+	}{
+		{
+			name: "builders and VSA",
+			policy: &policy.Policy{
+				Trust: &policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{{ID: ""}, {ID: "b1", MaxLevel: 99}},
+				},
+				VSA: &policy.VSAPolicy{MinimumLevel: -1},
+			},
+			wantErrs: []error{
+				policy.ErrBuilderIDRequired, policy.ErrBuilderMaxLevel, policy.ErrVSAMinimumLevel,
+			},
+		},
+		{
+			name: "verifiers",
+			policy: &policy.Policy{
+				Trust: &policy.TrustPolicy{
+					Verifiers: []policy.TrustedVerifier{
+						{ID: ""}, keyVerifier("v1", "relative/path"),
+					},
+				},
+			},
+			wantErrs: []error{policy.ErrVerifierIDRequired, policy.ErrVerifierKeyNotAbsolute},
+		},
+		{
+			name: "trust string fields",
+			policy: &policy.Policy{
+				Trust: &policy.TrustPolicy{
+					Issuers:     []string{"valid", ""},
+					Sources:     []string{"", "["},
+					BuildTypes:  []string{""},
+					SANPatterns: []string{"", "["},
+				},
+			},
+			wantErrs: []error{policy.ErrEmptyValue},
+			wantContains: []string{
+				"trust.issuers", "trust.sources", "trust.buildTypes", "trust.sanPatterns",
+			},
+		},
+		{
+			name: "rule sub-policy references the rule index",
+			policy: &policy.Policy{Rules: []policy.ImageRule{{
+				Images: []string{testRuleImagesGlob},
+				SLSA:   &policy.SLSAPolicy{MissingPolicy: testInvalidValue},
+			}}},
+			wantContains: []string{"rules[0]"},
+		},
+		{
+			name: "multiple rules",
+			policy: &policy.Policy{Rules: []policy.ImageRule{
+				{Images: nil},
+				{
+					Images: []string{testRuleImagesGlob},
+					VEX:    &policy.VEXPolicy{MissingPolicy: testInvalidValue},
+				},
+			}},
+			wantErrs:     []error{policy.ErrRuleImagesRequired},
+			wantContains: []string{"rules[1]"},
 		},
 	}
 
-	err := pol.ValidateEnforce()
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
+	for idx := range tests {
+		test := &tests[idx]
+
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := test.policy.Validate()
+			testutil.AssertError(t, err)
+
+			for _, want := range test.wantErrs {
+				testutil.AssertErrorIs(t, err, want)
+			}
+
+			assertErrContains(t, err, test.wantContains)
+		})
 	}
 }
 
-func TestValidateEnforcePassesWithoutIssuers(t *testing.T) {
+func TestValidateEnforce(t *testing.T) {
 	t.Parallel()
 
-	pol := &policy.Policy{
-		Trust: &policy.TrustPolicy{},
+	auditNotation := &policy.NotationPolicy{VerificationLevel: "audit"}
+
+	//nolint:exhaustruct_v5 // table cases only set the fields they assert
+	tests := []struct {
+		name    string
+		policy  *policy.Policy
+		wantErr error
+	}{
+		{
+			name: "issuers require SAN patterns",
+			policy: &policy.Policy{
+				Trust: &policy.TrustPolicy{Issuers: []string{testIssuerURL}},
+			},
+			wantErr: policy.ErrSANPatternsRequired,
+		},
+		{
+			name: "issuers with SAN patterns",
+			policy: &policy.Policy{Trust: &policy.TrustPolicy{
+				Issuers:     []string{testIssuerURL},
+				SANPatterns: []string{"build@example.com"},
+			}},
+		},
+		{name: "trust without issuers", policy: &policy.Policy{Trust: &policy.TrustPolicy{}}},
+		{name: "nil trust", policy: &policy.Policy{}},
+		{
+			name: "rule issuers require SAN patterns",
+			policy: &policy.Policy{Rules: []policy.ImageRule{{
+				Images: []string{testRuleImagesGlob},
+				Trust:  &policy.TrustPolicy{Issuers: []string{testIssuerURL}},
+			}}},
+			wantErr: policy.ErrSANPatternsRequired,
+		},
+		{
+			name: "rule issuers with SAN patterns",
+			policy: &policy.Policy{Rules: []policy.ImageRule{{
+				Images: []string{testRuleImagesGlob},
+				Trust: &policy.TrustPolicy{
+					Issuers:     []string{testIssuerURL},
+					SANPatterns: []string{"https://github.com/**"},
+				},
+			}}},
+		},
+		{
+			name: "rule clearing SAN patterns under base issuers is rejected",
+			policy: &policy.Policy{
+				Trust: &policy.TrustPolicy{
+					Issuers:     []string{testIssuerURL},
+					SANPatterns: []string{testReleaseSANPattern},
+				},
+				Rules: []policy.ImageRule{{
+					Images: []string{testRuleImagesGlob},
+					Trust:  &policy.TrustPolicy{SANPatterns: []string{}},
+				}},
+			},
+			wantErr: policy.ErrSANPatternsRequired,
+		},
+		{
+			name: "rule issuers inherit base SAN patterns",
+			policy: &policy.Policy{
+				Trust: &policy.TrustPolicy{SANPatterns: []string{testReleaseSANPattern}},
+				Rules: []policy.ImageRule{{
+					Images: []string{testRuleImagesGlob},
+					Trust:  &policy.TrustPolicy{Issuers: []string{testIssuerURL}},
+				}},
+			},
+		},
+		{
+			name: "notation skip is rejected",
+			policy: &policy.Policy{
+				Notation: &policy.NotationPolicy{VerificationLevel: testNotationLevelSkip},
+			},
+			wantErr: policy.ErrNotationSkipInEnforceMode,
+		},
+		{
+			name: "notation strict is allowed",
+			policy: &policy.Policy{
+				Notation: &policy.NotationPolicy{VerificationLevel: testNotationLevelStrict},
+			},
+		},
+		{
+			name: "notation permissive is allowed",
+			policy: &policy.Policy{
+				Notation: &policy.NotationPolicy{VerificationLevel: testNotationPermissive},
+			},
+		},
+		{
+			name:    "notation audit is rejected",
+			policy:  &policy.Policy{Notation: auditNotation},
+			wantErr: policy.ErrNotationAuditInEnforceMode,
+		},
+		{
+			name: "rule notation audit is rejected",
+			policy: &policy.Policy{Rules: []policy.ImageRule{{
+				Images:   []string{testRuleImagesGlob},
+				Notation: auditNotation,
+			}}},
+			wantErr: policy.ErrNotationAuditInEnforceMode,
+		},
 	}
 
-	err := pol.ValidateEnforce()
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
+	for idx := range tests {
+		test := &tests[idx]
 
-func TestValidateEnforcePassesNilTrust(t *testing.T) {
-	t.Parallel()
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 
-	pol := &policy.Policy{}
-
-	err := pol.ValidateEnforce()
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
+			assertErr(t, test.policy.ValidateEnforce(), test.wantErr)
+		})
 	}
 }
 
 func TestValidateRuntime(t *testing.T) {
 	t.Parallel()
 
-	t.Run("empty policy passes", func(t *testing.T) {
-		t.Parallel()
-
-		pol := emptyPolicy()
-		err := pol.ValidateRuntime()
-		testutil.AssertNoError(t, err)
-	})
-
-	t.Run("nil trust passes", func(t *testing.T) {
-		t.Parallel()
-
-		pol := &policy.Policy{}
-		err := pol.ValidateRuntime()
-		testutil.AssertNoError(t, err)
-	})
-
-	t.Run("valid key file exists", func(t *testing.T) {
-		t.Parallel()
-
-		dir := t.TempDir()
-		keyPath := filepath.Join(dir, "verifier.pub")
-		writeFile(t, keyPath, "public-key-data")
-
-		pol := &policy.Policy{
-			Trust: &policy.TrustPolicy{
-				Verifiers: []policy.TrustedVerifier{
-					{ID: testVerifierID, Keys: []string{keyPath}},
-				},
+	//nolint:exhaustruct_v5 // table cases only set the fields they assert
+	tests := []struct {
+		name string
+		// policy builds the policy under test; dir is a fresh temporary directory.
+		policy       func(t *testing.T, dir string) *policy.Policy
+		wantErr      error
+		wantContains []string
+	}{
+		{
+			name: "empty policy passes",
+			policy: func(*testing.T, string) *policy.Policy {
+				return &policy.Policy{}
 			},
-		}
+		},
+		{
+			name: "valid key file exists",
+			policy: func(t *testing.T, dir string) *policy.Policy {
+				t.Helper()
 
-		err := pol.ValidateRuntime()
-		testutil.AssertNoError(t, err)
-	})
+				keyPath := filepath.Join(dir, "verifier.pub")
+				writeFile(t, keyPath, "public-key-data")
 
-	t.Run("nonexistent key path fails", func(t *testing.T) {
-		t.Parallel()
+				pol := verifierPolicy(nil, keyVerifier(testVerifierID, keyPath))
 
-		pol := &policy.Policy{
-			Trust: &policy.TrustPolicy{
-				Verifiers: []policy.TrustedVerifier{
-					{ID: testVerifierID, Keys: []string{testNonexistentKeyPath}},
-				},
+				return &pol
 			},
-		}
+		},
+		{
+			name: "valid key files exist",
+			policy: func(t *testing.T, dir string) *policy.Policy {
+				t.Helper()
 
-		err := pol.ValidateRuntime()
-		testutil.AssertError(t, err)
-	})
+				key1 := filepath.Join(dir, "old.pub")
+				key2 := filepath.Join(dir, "new.pub")
 
-	t.Run("key path is directory fails", func(t *testing.T) {
-		t.Parallel()
+				writeFile(t, key1, "old-key-data")
+				writeFile(t, key2, "new-key-data")
 
-		dir := t.TempDir()
+				pol := verifierPolicy(nil, keyVerifier(testVerifierID, key1, key2))
 
-		pol := &policy.Policy{
-			Trust: &policy.TrustPolicy{
-				Verifiers: []policy.TrustedVerifier{
-					{ID: testVerifierID, Keys: []string{dir}},
-				},
+				return &pol
 			},
-		}
+		},
+		{
+			name: "key file projected by a Secret volume symlink passes",
+			// Mimic a Kubernetes Secret volume: key.pub -> ..data/key.pub.
+			policy: func(t *testing.T, dir string) *policy.Policy {
+				t.Helper()
 
-		err := pol.ValidateRuntime()
-		testutil.AssertError(t, err)
+				dataDir := filepath.Join(dir, "..2026_01_01")
+				testutil.AssertNoError(t, os.Mkdir(dataDir, 0o700))
+				writeFile(t, filepath.Join(dataDir, "key.pub"), "public-key-data")
+				testutil.AssertNoError(t, os.Symlink("..2026_01_01", filepath.Join(dir, "..data")))
 
-		if !errors.Is(err, policy.ErrNotRegularFile) {
-			t.Errorf("expected ErrNotRegularFile, got %v", err)
-		}
-	})
+				keyPath := filepath.Join(dir, "key.pub")
+				testutil.AssertNoError(t, os.Symlink(filepath.Join("..data", "key.pub"), keyPath))
 
-	t.Run("valid keys files exist", func(t *testing.T) {
-		t.Parallel()
+				pol := verifierPolicy(nil, keyVerifier(testVerifierID, keyPath))
 
-		dir := t.TempDir()
-
-		key1 := filepath.Join(dir, "old.pub")
-		key2 := filepath.Join(dir, "new.pub")
-
-		writeFile(t, key1, "old-key-data")
-		writeFile(t, key2, "new-key-data")
-
-		pol := &policy.Policy{
-			Trust: &policy.TrustPolicy{
-				Verifiers: []policy.TrustedVerifier{
-					{ID: testVerifierID, Keys: []string{key1, key2}},
-				},
+				return &pol
 			},
-		}
+		},
+		{
+			name: "key file symlink escaping its directory fails",
+			policy: func(t *testing.T, dir string) *policy.Policy {
+				t.Helper()
 
-		err := pol.ValidateRuntime()
-		testutil.AssertNoError(t, err)
-	})
+				outside := filepath.Join(t.TempDir(), "evil.pub")
+				writeFile(t, outside, "public-key-data")
 
-	t.Run("nonexistent keys path fails", func(t *testing.T) {
-		t.Parallel()
+				keyPath := filepath.Join(dir, "key.pub")
+				testutil.AssertNoError(t, os.Symlink(outside, keyPath))
 
-		pol := &policy.Policy{
-			Trust: &policy.TrustPolicy{
-				Verifiers: []policy.TrustedVerifier{
-					{ID: testVerifierID, Keys: []string{testNonexistentKeyPath}},
-				},
+				pol := verifierPolicy(nil, keyVerifier(testVerifierID, keyPath))
+
+				return &pol
 			},
-		}
+			wantErr: fileutil.ErrSymlink,
+		},
+		{
+			name: "nonexistent key path fails",
+			policy: func(*testing.T, string) *policy.Policy {
+				pol := verifierPolicy(nil, keyVerifier(testVerifierID, testNonexistentKeyPath))
 
-		err := pol.ValidateRuntime()
-		testutil.AssertError(t, err)
-	})
+				return &pol
+			},
+			wantErr: errAnyError,
+		},
+		{
+			name: "key path is directory fails",
+			policy: func(_ *testing.T, dir string) *policy.Policy {
+				pol := verifierPolicy(nil, keyVerifier(testVerifierID, dir))
 
-	t.Run("keys with mix of valid and invalid paths", func(t *testing.T) {
-		t.Parallel()
+				return &pol
+			},
+			wantErr: policy.ErrNotRegularFile,
+		},
+		{
+			name: "keys with mix of valid and invalid paths",
+			policy: func(t *testing.T, dir string) *policy.Policy {
+				t.Helper()
 
-		dir := t.TempDir()
-		existingKey := filepath.Join(dir, "existing.pub")
-		writeFile(t, existingKey, "key-data")
+				existingKey := filepath.Join(dir, "existing.pub")
+				writeFile(t, existingKey, "key-data")
 
-		pol := &policy.Policy{
-			Trust: &policy.TrustPolicy{
-				Verifiers: []policy.TrustedVerifier{
-					{
-						ID:   testVerifierID,
-						Keys: []string{existingKey, "/nonexistent/rotation.pub"},
+				pol := verifierPolicy(nil,
+					keyVerifier(testVerifierID, existingKey, "/nonexistent/rotation.pub"),
+				)
+
+				return &pol
+			},
+			wantErr: errAnyError,
+		},
+		{
+			name: "collects errors for every verifier",
+			policy: func(*testing.T, string) *policy.Policy {
+				pol := verifierPolicy(nil,
+					keyVerifier("v1", "/nonexistent/key1.pub"),
+					keyVerifier("v2", "/nonexistent/key2.pub"),
+				)
+
+				return &pol
+			},
+			wantErr:      errAnyError,
+			wantContains: []string{"key1.pub", "key2.pub"},
+		},
+		{
+			name: "rule keys are checked",
+			policy: func(*testing.T, string) *policy.Policy {
+				pol := rulesPolicy(policy.ImageRule{
+					Images: []string{testRuleImagesGlob},
+					Trust: &policy.TrustPolicy{
+						Verifiers: []policy.TrustedVerifier{
+							keyVerifier(testVerifierID, testNonexistentKeyPath),
+						},
+						Issuers: []string{testIssuerURL},
 					},
+				})
+
+				return &pol
+			},
+			wantErr:      errAnyError,
+			wantContains: []string{"rules[0]"},
+		},
+		{
+			name: "missing builder key file",
+			policy: func(_ *testing.T, dir string) *policy.Policy {
+				pol := trustPolicy(&policy.TrustPolicy{
+					Builders: []policy.TrustedBuilder{{
+						ID: testBuilderID, Keys: []string{filepath.Join(dir, "missing.pub")},
+					}},
+				})
+
+				return &pol
+			},
+			wantErr: os.ErrNotExist,
+		},
+		{
+			name: "valid notation certificate file",
+			policy: func(t *testing.T, dir string) *policy.Policy {
+				t.Helper()
+
+				certPath := filepath.Join(dir, "ca.pem")
+				writeFile(t, certPath, "PEM DATA")
+
+				pol := notationPolicy(&policy.NotationPolicy{
+					TrustStores: []policy.NotationTrustStore{
+						caTrustStore(testNotationStoreName, certPath),
+					},
+				})
+
+				return &pol
+			},
+		},
+		{
+			name: "missing notation certificate file",
+			policy: func(*testing.T, string) *policy.Policy {
+				pol := notationPolicy(&policy.NotationPolicy{
+					TrustStores: []policy.NotationTrustStore{
+						caTrustStore(testNotationStoreName, "/nonexistent/cert.pem"),
+					},
+				})
+
+				return &pol
+			},
+			wantErr: os.ErrNotExist,
+		},
+	}
+
+	for idx := range tests {
+		test := &tests[idx]
+
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := test.policy(t, t.TempDir()).ValidateRuntime()
+			assertErr(t, err, test.wantErr)
+			assertErrContains(t, err, test.wantContains)
+		})
+	}
+}
+
+func TestMissingPolicyAccessors(t *testing.T) {
+	t.Parallel()
+
+	accessors := []struct {
+		section string
+		get     func(*policy.Policy) types.Action
+		with    func(missing types.Action) *policy.Policy
+	}{
+		{
+			section: "slsa",
+			get:     (*policy.Policy).SLSAMissingPolicy,
+			with: func(missing types.Action) *policy.Policy {
+				return &policy.Policy{SLSA: &policy.SLSAPolicy{MissingPolicy: missing}}
+			},
+		},
+		{
+			section: "vex",
+			get:     (*policy.Policy).VEXMissingPolicy,
+			with: func(missing types.Action) *policy.Policy {
+				return &policy.Policy{VEX: &policy.VEXPolicy{MissingPolicy: missing}}
+			},
+		},
+		{
+			section: "vsa",
+			get:     (*policy.Policy).VSAMissingPolicy,
+			with: func(missing types.Action) *policy.Policy {
+				return &policy.Policy{VSA: &policy.VSAPolicy{MissingPolicy: missing}}
+			},
+		},
+		{
+			section: "notation",
+			get:     (*policy.Policy).NotationMissingPolicy,
+			with: func(missing types.Action) *policy.Policy {
+				return &policy.Policy{Notation: &policy.NotationPolicy{MissingPolicy: missing}}
+			},
+		},
+		{
+			section: "sbom",
+			get:     (*policy.Policy).SBOMMissingPolicy,
+			with: func(missing types.Action) *policy.Policy {
+				return &policy.Policy{SBOM: &policy.SBOMPolicy{MissingPolicy: missing}}
+			},
+		},
+		{
+			section: "scai",
+			get:     (*policy.Policy).SCAIMissingPolicy,
+			with: func(missing types.Action) *policy.Policy {
+				return &policy.Policy{SCAI: &policy.SCAIPolicy{MissingPolicy: missing}}
+			},
+		},
+		{
+			section: "source",
+			get:     (*policy.Policy).SourceMissingPolicy,
+			with: func(missing types.Action) *policy.Policy {
+				return &policy.Policy{Source: &policy.SourcePolicy{MissingPolicy: missing}}
+			},
+		},
+		{
+			section: "buildEnv",
+			get:     (*policy.Policy).BuildEnvMissingPolicy,
+			with: func(missing types.Action) *policy.Policy {
+				return &policy.Policy{BuildEnv: &policy.BuildEnvPolicy{MissingPolicy: missing}}
+			},
+		},
+		{
+			section: "vulnScan",
+			get:     (*policy.Policy).VulnScanMissingPolicy,
+			with: func(missing types.Action) *policy.Policy {
+				return &policy.Policy{VulnScan: &policy.VulnScanPolicy{MissingPolicy: missing}}
+			},
+		},
+		{
+			section: "testResult",
+			get:     (*policy.Policy).TestResultMissingPolicy,
+			with: func(missing types.Action) *policy.Policy {
+				return &policy.Policy{TestResult: &policy.TestResultPolicy{MissingPolicy: missing}}
+			},
+		},
+		{
+			section: "release",
+			get:     (*policy.Policy).ReleaseMissingPolicy,
+			with: func(missing types.Action) *policy.Policy {
+				return &policy.Policy{Release: &policy.ReleasePolicy{MissingPolicy: missing}}
+			},
+		},
+		{
+			section: "runtimeTrace",
+			get:     (*policy.Policy).RuntimeTraceMissingPolicy,
+			with: func(missing types.Action) *policy.Policy {
+				return &policy.Policy{
+					RuntimeTrace: &policy.RuntimeTracePolicy{MissingPolicy: missing},
+				}
+			},
+		},
+		{
+			section: "scorecard",
+			get:     (*policy.Policy).ScorecardMissingPolicy,
+			with: func(missing types.Action) *policy.Policy {
+				return &policy.Policy{Scorecard: &policy.ScorecardPolicy{MissingPolicy: missing}}
+			},
+		},
+	}
+
+	for idx := range accessors {
+		accessor := &accessors[idx]
+
+		t.Run(accessor.section, func(t *testing.T) {
+			t.Parallel()
+
+			tests := []struct {
+				name   string
+				policy *policy.Policy
+				want   types.Action
+			}{
+				{
+					name:   "nil section defaults to allow",
+					policy: &policy.Policy{},
+					want:   types.ActionAllow,
 				},
-			},
-		}
-
-		err := pol.ValidateRuntime()
-		testutil.AssertError(t, err)
-	})
-}
-
-func TestHash(t *testing.T) {
-	t.Parallel()
-
-	t.Run("identical policies produce same hash", func(t *testing.T) {
-		t.Parallel()
-
-		pol1 := &policy.Policy{
-			SLSA: &policy.SLSAPolicy{
-				MissingPolicy: types.ActionDeny,
-			},
-		}
-		pol2 := &policy.Policy{
-			SLSA: &policy.SLSAPolicy{
-				MissingPolicy: types.ActionDeny,
-			},
-		}
-
-		hash1, err := pol1.Hash()
-		testutil.AssertNoError(t, err)
-
-		hash2, err := pol2.Hash()
-		testutil.AssertNoError(t, err)
-
-		if hash1 != hash2 {
-			t.Errorf("identical policies should produce same hash: %q vs %q",
-				hash1, hash2)
-		}
-	})
-
-	t.Run("different policies produce different hashes", func(t *testing.T) {
-		t.Parallel()
-
-		pol1 := &policy.Policy{
-			SLSA: &policy.SLSAPolicy{
-				MissingPolicy: types.ActionDeny,
-			},
-		}
-		pol2 := &policy.Policy{
-			SLSA: &policy.SLSAPolicy{
-				MissingPolicy: types.ActionAllow,
-			},
-		}
-
-		hash1, err := pol1.Hash()
-		testutil.AssertNoError(t, err)
-
-		hash2, err := pol2.Hash()
-		testutil.AssertNoError(t, err)
-
-		if hash1 == hash2 {
-			t.Error("different policies should produce different hashes")
-		}
-	})
-
-	t.Run("hash is deterministic", func(t *testing.T) {
-		t.Parallel()
-
-		pol := &policy.Policy{
-			Trust: &policy.TrustPolicy{
-				Builders: []policy.TrustedBuilder{
-					{ID: "https://example.com/builder", MaxLevel: 3},
+				{
+					name:   "empty missing policy defaults to allow",
+					policy: accessor.with(""),
+					want:   types.ActionAllow,
 				},
-			},
-			SLSA: &policy.SLSAPolicy{
-				MissingPolicy: types.ActionWarn,
-			},
-		}
+				{
+					name:   "explicit deny",
+					policy: accessor.with(types.ActionDeny),
+					want:   types.ActionDeny,
+				},
+				{
+					name:   "explicit warn",
+					policy: accessor.with(types.ActionWarn),
+					want:   types.ActionWarn,
+				},
+				{
+					name:   "explicit allow",
+					policy: accessor.with(types.ActionAllow),
+					want:   types.ActionAllow,
+				},
+			}
 
-		hash1, err := pol.Hash()
-		testutil.AssertNoError(t, err)
+			for _, test := range tests {
+				t.Run(test.name, func(t *testing.T) {
+					t.Parallel()
 
-		hash2, err := pol.Hash()
-		testutil.AssertNoError(t, err)
-
-		if hash1 != hash2 {
-			t.Errorf("hash should be deterministic: %q vs %q",
-				hash1, hash2)
-		}
-	})
-
-	t.Run("empty policy hashes without error", func(t *testing.T) {
-		t.Parallel()
-
-		pol := emptyPolicy()
-		hash, err := pol.Hash()
-		testutil.AssertNoError(t, err)
-
-		if hash == "" {
-			t.Error("expected non-empty hash for empty policy")
-		}
-	})
+					testutil.AssertEqual(t, test.want, accessor.get(test.policy))
+				})
+			}
+		})
+	}
 }
 
-func TestValidateDuplicateBuilderID(t *testing.T) {
+func TestBuildersNilTrust(t *testing.T) {
 	t.Parallel()
 
-	pol := policy.Policy{
-		Trust: &policy.TrustPolicy{
-			Builders: []policy.TrustedBuilder{
-				{ID: "https://builder.example.com", MaxLevel: 2},
-				{ID: "https://builder.example.com", MaxLevel: 3},
-			},
+	pol := policy.Policy{}
+
+	if builders := pol.Builders(); builders != nil {
+		t.Errorf("expected nil builders, got %v", builders)
+	}
+}
+
+func TestTrustedVerifierMatchesSigner(t *testing.T) {
+	t.Parallel()
+
+	verifier := &policy.TrustedVerifier{
+		ID:   testVerifierID,
+		Keys: []string{"/etc/keys/vsa.pub"},
+		Identities: []policy.TrustedIdentity{
+			{Issuer: testGitHubIssuer, SANPattern: testReleaseSANPattern},
 		},
 	}
 
-	err := pol.Validate()
-	if !errors.Is(err, policy.ErrDuplicateBuilderID) {
-		t.Errorf("expected ErrDuplicateBuilderID, got %v", err)
-	}
-}
-
-func TestValidateDuplicateVerifierID(t *testing.T) {
-	t.Parallel()
-
-	pol := policy.Policy{
-		Trust: &policy.TrustPolicy{
-			Issuers: []string{testIssuerURL},
-			Verifiers: []policy.TrustedVerifier{
-				{ID: "https://verifier.example.com"},
-				{ID: "https://verifier.example.com"},
-			},
-		},
+	type signer struct {
+		keyPath, issuer, san string
 	}
 
-	err := pol.Validate()
-	if !errors.Is(err, policy.ErrDuplicateVerifierID) {
-		t.Errorf("expected ErrDuplicateVerifierID, got %v", err)
-	}
-}
-
-func TestValidateVSAMaxAgeNegative(t *testing.T) {
-	t.Parallel()
-
-	pol := policy.Policy{
-		Sections: policy.Sections{
-			VSA: &policy.VSAPolicy{MaxAge: "-1h"}, //nolint:goconst // test input
-		},
-	}
-
-	err := pol.Validate()
-	if !errors.Is(err, policy.ErrVSAMaxAgeNotPositive) {
-		t.Errorf("expected ErrVSAMaxAgeNotPositive, got %v", err)
-	}
-}
-
-func TestValidateVSAMaxAgeZero(t *testing.T) {
-	t.Parallel()
-
-	pol := policy.Policy{
-		VSA: &policy.VSAPolicy{MaxAge: "0s"},
-	}
-
-	err := pol.Validate()
-	if !errors.Is(err, policy.ErrVSAMaxAgeNotPositive) {
-		t.Errorf("expected ErrVSAMaxAgeNotPositive, got %v", err)
-	}
-}
-
-func TestValidateVSAMaxAgeResolved(t *testing.T) {
-	t.Parallel()
-
-	pol := policy.Policy{
-		VSA: &policy.VSAPolicy{MaxAge: testMaxAge},
-	}
-
-	testutil.AssertNoError(t, pol.Validate())
-	testutil.AssertEqual(t, 24*time.Hour, pol.VSA.MaxAgeDuration)
-}
-
-func TestValidateVSANoMaxAgeSkipsResolve(t *testing.T) {
-	t.Parallel()
-
-	pol := policy.Policy{
-		VSA: &policy.VSAPolicy{},
-	}
-
-	testutil.AssertNoError(t, pol.Validate())
-	testutil.AssertEqual(t, time.Duration(0), pol.VSA.MaxAgeDuration)
-}
-
-func TestValidateSLSAMaxAgeNegative(t *testing.T) {
-	t.Parallel()
-
-	pol := policy.Policy{
-		SLSA: &policy.SLSAPolicy{MaxAge: "-1h"},
-	}
-
-	err := pol.Validate()
-	if !errors.Is(err, policy.ErrSLSAMaxAgeNotPositive) {
-		t.Errorf("expected ErrSLSAMaxAgeNotPositive, got %v", err)
-	}
-}
-
-func TestValidateSLSAMaxAgeZero(t *testing.T) {
-	t.Parallel()
-
-	pol := policy.Policy{
-		SLSA: &policy.SLSAPolicy{MaxAge: "0s"},
-	}
-
-	err := pol.Validate()
-	if !errors.Is(err, policy.ErrSLSAMaxAgeNotPositive) {
-		t.Errorf("expected ErrSLSAMaxAgeNotPositive, got %v", err)
-	}
-}
-
-func TestValidateSLSAMaxAgeResolved(t *testing.T) {
-	t.Parallel()
-
-	pol := policy.Policy{
-		SLSA: &policy.SLSAPolicy{MaxAge: testMaxAge},
-	}
-
-	testutil.AssertNoError(t, pol.Validate())
-	testutil.AssertEqual(t, 24*time.Hour, pol.SLSA.MaxAgeDuration)
-}
-
-func TestValidateSLSANoMaxAgeSkipsResolve(t *testing.T) {
-	t.Parallel()
-
-	pol := policy.Policy{
-		SLSA: &policy.SLSAPolicy{},
-	}
-
-	testutil.AssertNoError(t, pol.Validate())
-	testutil.AssertEqual(t, time.Duration(0), pol.SLSA.MaxAgeDuration)
-}
-
-func TestValidateSLSAMaxAgeInvalidFormat(t *testing.T) {
-	t.Parallel()
-
-	pol := policy.Policy{
-		SLSA: &policy.SLSAPolicy{MaxAge: "not-a-duration"},
-	}
-
-	err := pol.Validate()
-	if err == nil {
-		t.Error("expected error for invalid maxAge format, got nil")
-	}
-}
-
-func TestTooManyPolicyFiles(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-
-	for i := range 1001 {
-		testutil.WritePolicy(t, dir, fmt.Sprintf("policy-%04d.json", i), "{}")
-	}
-
-	_, err := policy.LoadAll(dir)
-	if !errors.Is(err, policy.ErrTooManyPolicyFiles) {
-		t.Errorf("expected ErrTooManyPolicyFiles, got %v", err)
-	}
-}
-
-func TestPolicyValidateCollectsMultipleErrors(t *testing.T) {
-	t.Parallel()
-
-	pol := &policy.Policy{
-		Trust: &policy.TrustPolicy{
-			Builders: []policy.TrustedBuilder{
-				{ID: ""},
-				{ID: "b1", MaxLevel: 99},
-			},
-		},
-		VSA: &policy.VSAPolicy{
-			MinimumLevel: -1,
-		},
-	}
-
-	err := pol.Validate()
-	testutil.AssertError(t, err)
-
-	if !errors.Is(err, policy.ErrBuilderIDRequired) {
-		t.Errorf("expected ErrBuilderIDRequired, got %v", err)
-	}
-
-	if !errors.Is(err, policy.ErrBuilderMaxLevel) {
-		t.Errorf("expected ErrBuilderMaxLevel, got %v", err)
-	}
-
-	if !errors.Is(err, policy.ErrVSAMinimumLevel) {
-		t.Errorf("expected ErrVSAMinimumLevel, got %v", err)
-	}
-}
-
-func TestPolicyValidateVerifiersCollectsMultipleErrors(t *testing.T) {
-	t.Parallel()
-
-	pol := &policy.Policy{
-		Trust: &policy.TrustPolicy{
-			Verifiers: []policy.TrustedVerifier{
-				{ID: ""},
-				{ID: "v1", Keys: []string{"relative/path"}},
-			},
-		},
-	}
-
-	err := pol.Validate()
-	testutil.AssertError(t, err)
-
-	if !errors.Is(err, policy.ErrVerifierIDRequired) {
-		t.Errorf("expected ErrVerifierIDRequired, got %v", err)
-	}
-
-	if !errors.Is(err, policy.ErrVerifierKeyNotAbsolute) {
-		t.Errorf("expected ErrVerifierKeyNotAbsolute, got %v", err)
-	}
-}
-
-func TestLoadAllCollectsMultiplePolicyErrors(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-
-	testutil.WritePolicy(t, dir, "a.json", `{"trust":{"builders":[{"id":""}]}}`)
-	testutil.WritePolicy(t, dir, "b.json", `{"trust":{"builders":[{"id":""}]}}`)
-
-	_, err := policy.LoadAll(dir)
-	testutil.AssertError(t, err)
-
-	errMsg := err.Error()
-	if !strings.Contains(errMsg, "a.json") {
-		t.Errorf("expected error to mention a.json, got %v", err)
-	}
-
-	if !strings.Contains(errMsg, "b.json") {
-		t.Errorf("expected error to mention b.json, got %v", err)
-	}
-}
-
-func TestPolicyValidateTrustStringFieldsCollectsMultipleErrors(t *testing.T) {
-	t.Parallel()
-
-	pol := &policy.Policy{
-		Trust: &policy.TrustPolicy{
-			Issuers:     []string{"valid", ""},
-			Sources:     []string{"", "["},
-			BuildTypes:  []string{""},
-			SANPatterns: []string{"", "["},
-		},
-	}
-
-	err := pol.Validate()
-	testutil.AssertError(t, err)
-
-	if !errors.Is(err, policy.ErrEmptyValue) {
-		t.Errorf("expected ErrEmptyValue, got %v", err)
-	}
-
-	errMsg := err.Error()
-	if !strings.Contains(errMsg, "trust.issuers") {
-		t.Errorf("expected error to mention trust.issuers, got %v", err)
-	}
-
-	if !strings.Contains(errMsg, "trust.sources") {
-		t.Errorf("expected error to mention trust.sources, got %v", err)
-	}
-
-	if !strings.Contains(errMsg, "trust.buildTypes") {
-		t.Errorf("expected error to mention trust.buildTypes, got %v", err)
-	}
-
-	if !strings.Contains(errMsg, "trust.sanPatterns") {
-		t.Errorf("expected error to mention trust.sanPatterns, got %v", err)
-	}
-}
-
-func TestPolicyValidateRuntimeCollectsMultipleErrors(t *testing.T) {
-	t.Parallel()
-
-	pol := &policy.Policy{
-		Trust: &policy.TrustPolicy{
-			Verifiers: []policy.TrustedVerifier{
-				{ID: "v1", Keys: []string{"/nonexistent/key1.pub"}},
-				{ID: "v2", Keys: []string{"/nonexistent/key2.pub"}},
-			},
-		},
-	}
-
-	err := pol.ValidateRuntime()
-	testutil.AssertError(t, err)
-
-	errMsg := err.Error()
-	if !strings.Contains(errMsg, "key1.pub") {
-		t.Errorf("expected error to mention key1.pub, got %v", err)
-	}
-
-	if !strings.Contains(errMsg, "key2.pub") {
-		t.Errorf("expected error to mention key2.pub, got %v", err)
-	}
-}
-
-func TestCloneIsolatesVerifierKeys(t *testing.T) {
-	t.Parallel()
-
-	original := &policy.Policy{
-		Trust: &policy.TrustPolicy{
-			Verifiers: []policy.TrustedVerifier{
-				{ID: "v1", Keys: []string{"/a.pub", "/b.pub"}},
-			},
-		},
-	}
-
-	clone := policy.MergeWithDefault(&policy.Policy{}, original)
-
-	clone.Trust.Verifiers[0].Keys[0] = "/mutated.pub"
-	clone.Trust.Verifiers[0].Keys = append(clone.Trust.Verifiers[0].Keys, "/c.pub")
-
-	if original.Trust.Verifiers[0].Keys[0] != "/a.pub" {
-		t.Errorf("expected original keys[0] to be /a.pub, got %s",
-			original.Trust.Verifiers[0].Keys[0])
-	}
-
-	if len(original.Trust.Verifiers[0].Keys) != 2 {
-		t.Errorf("expected original to have 2 keys, got %d",
-			len(original.Trust.Verifiers[0].Keys))
-	}
-}
-
-func TestPolicyValidateMode(t *testing.T) {
-	t.Parallel()
-
-	runValidateTests(t, []validateTest{
+	tests := []struct {
+		name   string
+		signer signer
+		want   bool
+	}{
+		{name: "matching key", signer: signer{"/etc/keys/vsa.pub", "", ""}, want: true},
 		{
-			name: "empty mode is valid",
-			policy: policy.Policy{
-				Mode: "",
-			},
-			wantErr:     false,
-			expectedErr: nil,
+			name:   "matching key unclean path",
+			signer: signer{"/etc/keys/../keys/vsa.pub", "", ""},
+			want:   true,
+		},
+		{name: "other key", signer: signer{"/etc/keys/other.pub", "", ""}, want: false},
+		{
+			name:   "matching identity",
+			signer: signer{"", testGitHubIssuer, testReleaseSAN},
+			want:   true,
 		},
 		{
-			name: "warn mode is valid",
-			policy: policy.Policy{
-				Mode: config.ModeWarn,
+			name: "other workflow",
+			signer: signer{
+				"", testGitHubIssuer,
+				"https://github.com/myorg/app/.github/workflows/ci.yml@refs/heads/main",
 			},
-			wantErr:     false,
-			expectedErr: nil,
+			want: false,
 		},
 		{
-			name: "enforce mode is valid",
-			policy: policy.Policy{
-				Mode: config.ModeEnforce,
-			},
-			wantErr:     false,
-			expectedErr: nil,
+			name:   "other issuer",
+			signer: signer{"", testIssuerURL, testReleaseSAN},
+			want:   false,
 		},
-		{
-			name: "disabled mode is valid",
-			policy: policy.Policy{
-				Mode: config.ModeDisabled,
-			},
-			wantErr:     false,
-			expectedErr: nil,
+		{name: "no signer", signer: signer{"", "", ""}, want: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			testutil.AssertEqual(t, test.want, verifier.MatchesSigner(
+				test.signer.keyPath, test.signer.issuer, test.signer.san,
+			))
+		})
+	}
+
+	unbound := &policy.TrustedVerifier{ID: testVerifierID}
+	testutil.AssertEqual(t, false, unbound.Bound())
+	testutil.AssertEqual(t, false, unbound.MatchesSigner("", testGitHubIssuer, testReleaseSAN))
+}
+
+func TestTrustedBuilderMatchesSigner(t *testing.T) {
+	t.Parallel()
+
+	builder := &policy.TrustedBuilder{
+		ID: testRunnerBuilderID,
+		Identities: []policy.TrustedIdentity{
+			{Issuer: testGitHubIssuer, SANPattern: testReleaseSANPattern},
 		},
-		{
-			name: "invalid mode is rejected",
-			policy: policy.Policy{
-				Mode: testInvalidValue,
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrInvalidPolicyMode,
-		},
-	})
+	}
+
+	testutil.AssertEqual(t, true, builder.Bound())
+	testutil.AssertEqual(t, true, builder.MatchesSigner("", testGitHubIssuer, testReleaseSAN))
+	testutil.AssertEqual(t, false, builder.MatchesSigner("/etc/keys/a.pub", "", ""))
+
+	unbound := &policy.TrustedBuilder{ID: testRunnerBuilderID}
+	testutil.AssertEqual(t, false, unbound.Bound())
+	testutil.AssertEqual(t, false, unbound.MatchesSigner("", testGitHubIssuer, testReleaseSAN))
+}
+
+func TestSectionRegistryComplete(t *testing.T) {
+	t.Parallel()
+
+	testutil.AssertNoError(t, policy.CheckSectionRegistryForTest())
 }
 
 func TestEffectiveMode(t *testing.T) {
@@ -2146,11 +1913,7 @@ func TestEffectiveMode(t *testing.T) {
 			t.Parallel()
 
 			pol := &policy.Policy{Mode: test.policyMode}
-			got := pol.EffectiveMode(test.globalMode)
-
-			if got != test.expected {
-				t.Errorf("expected %q, got %q", test.expected, got)
-			}
+			testutil.AssertEqual(t, test.expected, pol.EffectiveMode(test.globalMode))
 		})
 	}
 }
@@ -2158,47 +1921,34 @@ func TestEffectiveMode(t *testing.T) {
 func TestValidateModeStrictness(t *testing.T) {
 	t.Parallel()
 
+	//nolint:exhaustruct_v5 // table cases only set the fields they assert
 	tests := []struct {
 		name       string
 		policyMode config.VerificationMode
 		globalMode config.VerificationMode
 		wantErr    bool
 	}{
-		{
-			name:       "empty mode always valid",
-			policyMode: "",
-			globalMode: config.ModeEnforce,
-			wantErr:    false,
-		},
+		{name: "empty mode always valid", policyMode: "", globalMode: config.ModeEnforce},
 		{
 			name:       "enforce >= enforce is valid",
 			policyMode: config.ModeEnforce,
 			globalMode: config.ModeEnforce,
-			wantErr:    false,
 		},
 		{
 			name:       "enforce > warn is valid",
 			policyMode: config.ModeEnforce,
 			globalMode: config.ModeWarn,
-			wantErr:    false,
 		},
 		{
 			name:       "enforce > disabled is valid",
 			policyMode: config.ModeEnforce,
 			globalMode: config.ModeDisabled,
-			wantErr:    false,
 		},
-		{
-			name:       "warn >= warn is valid",
-			policyMode: config.ModeWarn,
-			globalMode: config.ModeWarn,
-			wantErr:    false,
-		},
+		{name: "warn >= warn is valid", policyMode: config.ModeWarn, globalMode: config.ModeWarn},
 		{
 			name:       "warn > disabled is valid",
 			policyMode: config.ModeWarn,
 			globalMode: config.ModeDisabled,
-			wantErr:    false,
 		},
 		{
 			name:       "warn < enforce is rejected",
@@ -2222,7 +1972,6 @@ func TestValidateModeStrictness(t *testing.T) {
 			name:       "disabled >= disabled is valid",
 			policyMode: config.ModeDisabled,
 			globalMode: config.ModeDisabled,
-			wantErr:    false,
 		},
 	}
 
@@ -2231,3344 +1980,100 @@ func TestValidateModeStrictness(t *testing.T) {
 			t.Parallel()
 
 			pol := &policy.Policy{Mode: test.policyMode}
-			err := pol.ValidateModeStrictness(test.globalMode)
 
-			if test.wantErr && err == nil {
-				t.Error("expected error, got nil")
+			var wantErr error
+			if test.wantErr {
+				wantErr = policy.ErrModeNotStricter
 			}
 
-			if !test.wantErr && err != nil {
-				t.Errorf("unexpected error: %v", err)
-			}
-
-			if test.wantErr && !errors.Is(err, policy.ErrModeNotStricter) {
-				t.Errorf("expected ErrModeNotStricter, got %v", err)
-			}
+			assertErr(t, pol.ValidateModeStrictness(test.globalMode), wantErr)
 		})
 	}
 }
 
-func TestMergeWithDefaultModeOverride(t *testing.T) {
+func TestHash(t *testing.T) {
 	t.Parallel()
 
-	t.Run("namespace mode overrides default", func(t *testing.T) {
+	hash := func(t *testing.T, pol *policy.Policy) string {
+		t.Helper()
+
+		sum, err := pol.Hash()
+		testutil.AssertNoError(t, err)
+
+		return sum
+	}
+
+	denySLSA := func() *policy.Policy {
+		return &policy.Policy{SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionDeny}}
+	}
+
+	t.Run("identical policies produce same hash", func(t *testing.T) {
 		t.Parallel()
 
-		defaultPol := &policy.Policy{
-			Mode: config.ModeWarn,
-			SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
-		}
-		nsPol := &policy.Policy{
-			Mode: config.ModeEnforce,
-		}
-
-		merged := policy.MergeWithDefault(nsPol, defaultPol)
-
-		if merged.Mode != config.ModeEnforce {
-			t.Errorf("expected mode %q, got %q", config.ModeEnforce, merged.Mode)
-		}
-
-		if merged.SLSA == nil || merged.SLSA.MissingPolicy != types.ActionDeny {
-			t.Error("expected SLSA to be inherited from default")
-		}
+		testutil.AssertEqual(t, hash(t, denySLSA()), hash(t, denySLSA()))
 	})
 
-	t.Run("empty namespace mode inherits default", func(t *testing.T) {
+	t.Run("different policies produce different hashes", func(t *testing.T) {
 		t.Parallel()
 
-		defaultPol := &policy.Policy{
-			Mode: config.ModeEnforce,
-		}
-		nsPol := &policy.Policy{}
+		allowSLSA := &policy.Policy{SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionAllow}}
 
-		merged := policy.MergeWithDefault(nsPol, defaultPol)
-
-		if merged.Mode != config.ModeEnforce {
-			t.Errorf("expected mode %q, got %q", config.ModeEnforce, merged.Mode)
-		}
-	})
-}
-
-func TestLoadPolicyWithMode(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	policyPath := filepath.Join(dir, "test.json")
-
-	writeFile(t, policyPath, `{
-		"mode": "enforce",
-		"slsa": {"missingPolicy": "deny"}
-	}`)
-
-	pol, err := policy.Load(policyPath)
-	testutil.AssertNoError(t, err)
-
-	if pol.Mode != config.ModeEnforce {
-		t.Errorf("expected mode %q, got %q", config.ModeEnforce, pol.Mode)
-	}
-}
-
-func TestLoadPolicyInvalidMode(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	policyPath := filepath.Join(dir, "test.json")
-
-	writeFile(t, policyPath, `{
-		"mode": "invalid"
-	}`)
-
-	_, err := policy.Load(policyPath)
-	testutil.AssertError(t, err)
-
-	if !errors.Is(err, policy.ErrInvalidPolicyMode) {
-		t.Errorf("expected ErrInvalidPolicyMode, got %v", err)
-	}
-}
-
-func TestLoadAllModeStrictnessValidation(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-
-	writeFile(t, filepath.Join(dir, "default.json"), `{
-		"slsa": {"missingPolicy": "allow"}
-	}`)
-	writeFile(t, filepath.Join(dir, "production.json"), `{
-		"mode": "enforce",
-		"slsa": {"missingPolicy": "deny"}
-	}`)
-
-	policies, err := policy.LoadAll(dir)
-	testutil.AssertNoError(t, err)
-
-	if len(policies) != 2 {
-		t.Fatalf("expected 2 policies, got %d", len(policies))
-	}
-
-	prod := policies["production"]
-	if prod.Mode != config.ModeEnforce {
-		t.Errorf("expected mode %q, got %q", config.ModeEnforce, prod.Mode)
-	}
-}
-
-func TestLoadAllInheritsMergesModeFromNamespace(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-
-	writeFile(t, filepath.Join(dir, "default.json"), `{
-		"slsa": {"missingPolicy": "allow"}
-	}`)
-	writeFile(t, filepath.Join(dir, "staging.json"), `{
-		"inherits": true,
-		"mode": "enforce"
-	}`)
-
-	policies, err := policy.LoadAll(dir)
-	testutil.AssertNoError(t, err)
-
-	staging := policies["staging"]
-
-	if staging.Mode != config.ModeEnforce {
-		t.Errorf("expected mode %q, got %q", config.ModeEnforce, staging.Mode)
-	}
-
-	if staging.SLSAMissingPolicy() != types.ActionAllow {
-		t.Errorf("expected inherited SLSA missing policy %q, got %q",
-			types.ActionAllow, staging.SLSAMissingPolicy())
-	}
-}
-
-func TestPolicyValidateRulesValid(t *testing.T) {
-	t.Parallel()
-
-	pol := &policy.Policy{
-		Rules: []policy.ImageRule{
-			{
-				Images: []string{"ghcr.io/myorg/**"},
-				SLSA:   &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
-			},
-		},
-	}
-
-	testutil.AssertNoError(t, pol.Validate())
-}
-
-func TestPolicyValidateRulesEmptySlice(t *testing.T) {
-	t.Parallel()
-
-	pol := &policy.Policy{}
-	testutil.AssertNoError(t, pol.Validate())
-}
-
-func TestPolicyValidateRulesEmptyImages(t *testing.T) {
-	t.Parallel()
-
-	pol := &policy.Policy{
-		Rules: []policy.ImageRule{
-			{Images: nil},
-		},
-	}
-
-	err := pol.Validate()
-	if !errors.Is(err, policy.ErrRuleImagesRequired) {
-		t.Errorf("expected ErrRuleImagesRequired, got %v", err)
-	}
-}
-
-func TestPolicyValidateRulesEmptyStringInImages(t *testing.T) {
-	t.Parallel()
-
-	pol := &policy.Policy{
-		Rules: []policy.ImageRule{
-			{Images: []string{""}},
-		},
-	}
-
-	err := pol.Validate()
-	if !errors.Is(err, policy.ErrEmptyValue) {
-		t.Errorf("expected ErrEmptyValue, got %v", err)
-	}
-}
-
-func TestPolicyValidateRulesValidGlob(t *testing.T) {
-	t.Parallel()
-
-	pol := &policy.Policy{
-		Rules: []policy.ImageRule{
-			{Images: []string{"ghcr.io/myorg/**", "docker.io/library/*"}},
-		},
-	}
-
-	testutil.AssertNoError(t, pol.Validate())
-}
-
-func TestPolicyValidateRulesInvalidSubPolicy(t *testing.T) {
-	t.Parallel()
-
-	pol := &policy.Policy{
-		Rules: []policy.ImageRule{
-			{
-				Images: []string{testRuleImagesGlob},
-				SLSA:   &policy.SLSAPolicy{MissingPolicy: testInvalidValue},
-			},
-		},
-	}
-
-	err := pol.Validate()
-	testutil.AssertError(t, err)
-
-	if !strings.Contains(err.Error(), "rules[0]") {
-		t.Errorf("expected error to reference rules[0], got %v", err)
-	}
-}
-
-func TestPolicyValidateRulesMultipleErrors(t *testing.T) {
-	t.Parallel()
-
-	pol := &policy.Policy{
-		Rules: []policy.ImageRule{
-			{Images: nil},
-			{
-				Images: []string{testRuleImagesGlob},
-				VEX:    &policy.VEXPolicy{MissingPolicy: testInvalidValue},
-			},
-		},
-	}
-
-	err := pol.Validate()
-	testutil.AssertError(t, err)
-
-	if !errors.Is(err, policy.ErrRuleImagesRequired) {
-		t.Errorf("expected ErrRuleImagesRequired, got %v", err)
-	}
-
-	if !strings.Contains(err.Error(), "rules[1]") {
-		t.Errorf("expected error to reference rules[1], got %v", err)
-	}
-}
-
-func TestPolicyValidateRulesInvalidTrust(t *testing.T) {
-	t.Parallel()
-
-	pol := &policy.Policy{
-		Rules: []policy.ImageRule{
-			{
-				Images: []string{testRuleImagesGlob},
-				Trust: &policy.TrustPolicy{
-					Builders: []policy.TrustedBuilder{
-						{ID: "", MaxLevel: 0},
-					},
-				},
-			},
-		},
-	}
-
-	err := pol.Validate()
-	if !errors.Is(err, policy.ErrBuilderIDRequired) {
-		t.Errorf("expected ErrBuilderIDRequired, got %v", err)
-	}
-}
-
-func TestPolicyValidateRulesVSADurationResolved(t *testing.T) {
-	t.Parallel()
-
-	pol := &policy.Policy{
-		Rules: []policy.ImageRule{
-			{
-				Images: []string{testRuleImagesGlob},
-				VSA: &policy.VSAPolicy{
-					MissingPolicy: types.ActionDeny,
-					MaxAge:        testMaxAge,
-				},
-			},
-		},
-	}
-
-	testutil.AssertNoError(t, pol.Validate())
-
-	if pol.Rules[0].VSA.MaxAgeDuration != 24*time.Hour {
-		t.Errorf("expected MaxAgeDuration 24h, got %v",
-			pol.Rules[0].VSA.MaxAgeDuration)
-	}
-}
-
-func TestPolicyValidateRulesSLSADurationResolved(t *testing.T) {
-	t.Parallel()
-
-	pol := &policy.Policy{
-		Rules: []policy.ImageRule{
-			{
-				Images: []string{testRuleImagesGlob},
-				SLSA: &policy.SLSAPolicy{
-					MaxAge: testMaxAge,
-				},
-			},
-		},
-	}
-
-	testutil.AssertNoError(t, pol.Validate())
-
-	if pol.Rules[0].SLSA.MaxAgeDuration != 24*time.Hour {
-		t.Errorf("expected MaxAgeDuration 24h, got %v",
-			pol.Rules[0].SLSA.MaxAgeDuration)
-	}
-}
-
-func TestValidateEnforceWithRules(t *testing.T) {
-	t.Parallel()
-
-	pol := &policy.Policy{
-		Rules: []policy.ImageRule{
-			{
-				Images: []string{testRuleImagesGlob},
-				Trust: &policy.TrustPolicy{
-					Issuers: []string{testIssuerURL},
-				},
-			},
-		},
-	}
-
-	err := pol.ValidateEnforce()
-	if !errors.Is(err, policy.ErrSANPatternsRequired) {
-		t.Errorf("expected ErrSANPatternsRequired, got %v", err)
-	}
-}
-
-func TestValidateEnforceWithRulesValid(t *testing.T) {
-	t.Parallel()
-
-	pol := &policy.Policy{
-		Rules: []policy.ImageRule{
-			{
-				Images: []string{testRuleImagesGlob},
-				Trust: &policy.TrustPolicy{
-					Issuers:     []string{testIssuerURL},
-					SANPatterns: []string{"https://github.com/**"},
-				},
-			},
-		},
-	}
-
-	testutil.AssertNoError(t, pol.ValidateEnforce())
-}
-
-func TestValidateEnforceRejectsNotationSkip(t *testing.T) {
-	t.Parallel()
-
-	pol := &policy.Policy{
-		Notation: &policy.NotationPolicy{
-			VerificationLevel: testNotationLevelSkip,
-		},
-	}
-
-	err := pol.ValidateEnforce()
-	if !errors.Is(err, policy.ErrNotationSkipInEnforceMode) {
-		t.Errorf("expected ErrNotationSkipInEnforceMode, got %v", err)
-	}
-}
-
-func TestValidateEnforceAllowsNotationStrict(t *testing.T) {
-	t.Parallel()
-
-	pol := &policy.Policy{
-		Notation: &policy.NotationPolicy{
-			VerificationLevel: testNotationLevelStrict,
-		},
-	}
-
-	testutil.AssertNoError(t, pol.ValidateEnforce())
-}
-
-func TestValidateRuntimeWithRules(t *testing.T) {
-	t.Parallel()
-
-	pol := &policy.Policy{
-		Rules: []policy.ImageRule{
-			{
-				Images: []string{testRuleImagesGlob},
-				Trust: &policy.TrustPolicy{
-					Verifiers: []policy.TrustedVerifier{
-						{
-							ID:   testVerifierID,
-							Keys: []string{testNonexistentKeyPath},
-						},
-					},
-					Issuers: []string{testIssuerURL},
-				},
-			},
-		},
-	}
-
-	err := pol.ValidateRuntime()
-	testutil.AssertError(t, err)
-
-	if !strings.Contains(err.Error(), "rules[0]") {
-		t.Errorf("expected error to reference rules[0], got %v", err)
-	}
-}
-
-func TestApplyRuleOverrides(t *testing.T) {
-	t.Parallel()
-
-	base := &policy.Policy{
-		Trust: &policy.TrustPolicy{
-			Builders: []policy.TrustedBuilder{{ID: testBaseBuilderID, MaxLevel: 2}},
-		},
-		SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionAllow},
-		VEX:  &policy.VEXPolicy{MissingPolicy: types.ActionAllow},
-		Rules: []policy.ImageRule{
-			{Images: []string{testRuleImagesGlob}},
-		},
-	}
-
-	rule := &policy.ImageRule{
-		Images: []string{"ghcr.io/critical/**"},
-		SLSA:   &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
-	}
-
-	resolved := policy.ApplyRule(base, rule)
-
-	if resolved.SLSAMissingPolicy() != types.ActionDeny {
-		t.Errorf("expected SLSA deny from rule, got %v", resolved.SLSAMissingPolicy())
-	}
-
-	if resolved.VEXMissingPolicy() != types.ActionAllow {
-		t.Errorf("expected VEX allow from base, got %v", resolved.VEXMissingPolicy())
-	}
-
-	if len(resolved.Builders()) != 1 || resolved.Builders()[0].ID != testBaseBuilderID {
-		t.Errorf("expected trust inherited from base, got %v", resolved.Builders())
-	}
-
-	if resolved.Rules != nil {
-		t.Error("expected resolved policy to have nil Rules")
-	}
-}
-
-func TestApplyRuleDeepCopyIsolation(t *testing.T) {
-	t.Parallel()
-
-	base := &policy.Policy{
-		SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionAllow},
-	}
-
-	rule := &policy.ImageRule{
-		Images: []string{testRuleImagesGlob},
-		SLSA:   &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
-	}
-
-	resolved := policy.ApplyRule(base, rule)
-
-	if base.SLSAMissingPolicy() != types.ActionAllow {
-		t.Error("base policy was mutated by ApplyRule")
-	}
-
-	if resolved.SLSAMissingPolicy() != types.ActionDeny {
-		t.Error("resolved policy should have rule's SLSA setting")
-	}
-}
-
-func TestMergeWithDefaultIncludesRules(t *testing.T) {
-	t.Parallel()
-
-	t.Run("nil rules inherits default", func(t *testing.T) {
-		t.Parallel()
-
-		defaultPol := &policy.Policy{
-			Rules: []policy.ImageRule{
-				{
-					Images: []string{testRuleImagesGlob},
-					SLSA:   &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
-				},
-			},
-		}
-
-		nsPol := &policy.Policy{}
-		merged := policy.MergeWithDefault(nsPol, defaultPol)
-
-		if len(merged.Rules) != 1 {
-			t.Fatalf("expected 1 inherited rule, got %d", len(merged.Rules))
-		}
-
-		if merged.Rules[0].Images[0] != testRuleImagesGlob {
-			t.Errorf("expected inherited rule images, got %v", merged.Rules[0].Images)
+		if hash(t, denySLSA()) == hash(t, allowSLSA) {
+			t.Error("different policies should produce different hashes")
 		}
 	})
 
-	t.Run("non-nil rules overrides default", func(t *testing.T) {
-		t.Parallel()
-
-		defaultPol := &policy.Policy{
-			Rules: []policy.ImageRule{
-				{
-					Images: []string{testRuleImagesGlob},
-					SLSA:   &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
-				},
-			},
-		}
-
-		nsPol := &policy.Policy{
-			Rules: []policy.ImageRule{
-				{
-					Images: []string{testDockerGlob},
-					VEX:    &policy.VEXPolicy{MissingPolicy: types.ActionWarn},
-				},
-			},
-		}
-
-		merged := policy.MergeWithDefault(nsPol, defaultPol)
-
-		if len(merged.Rules) != 1 {
-			t.Fatalf("expected 1 overridden rule, got %d", len(merged.Rules))
-		}
-
-		if merged.Rules[0].Images[0] != testDockerGlob {
-			t.Errorf("expected namespace rule images, got %v", merged.Rules[0].Images)
-		}
-	})
-}
-
-func TestCloneIsolatesRules(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "default.json"), `{
-		"rules": [
-			{
-				"images": ["ghcr.io/**"],
-				"slsa": {"missingPolicy": "deny"}
-			}
-		]
-	}`)
-
-	policies, err := policy.LoadAll(dir)
-	testutil.AssertNoError(t, err)
-
-	original := policies[""]
-	if len(original.Rules) != 1 {
-		t.Fatalf("expected 1 rule, got %d", len(original.Rules))
-	}
-
-	original.Rules[0].Images[0] = testMutatedValue
-
-	reloaded, err := policy.LoadAll(dir)
-	testutil.AssertNoError(t, err)
-
-	if reloaded[""].Rules[0].Images[0] == testMutatedValue {
-		t.Error("clone did not isolate rules")
-	}
-}
-
-func TestLoadPolicyWithRules(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "default.json"), `{
-		"slsa": {"missingPolicy": "warn"},
-		"rules": [
-			{
-				"images": ["ghcr.io/myorg/critical-*"],
-				"slsa": {"missingPolicy": "deny"},
-				"vex": {"missingPolicy": "deny"}
-			},
-			{
-				"images": ["ghcr.io/myorg/experimental-*"],
-				"slsa": {"missingPolicy": "allow"}
-			}
-		]
-	}`)
-
-	policies, err := policy.LoadAll(dir)
-	testutil.AssertNoError(t, err)
-
-	pol := policies[""]
-	if len(pol.Rules) != 2 {
-		t.Fatalf("expected 2 rules, got %d", len(pol.Rules))
-	}
-
-	if pol.Rules[0].Images[0] != "ghcr.io/myorg/critical-*" {
-		t.Errorf("expected first rule images, got %v", pol.Rules[0].Images)
-	}
-
-	if pol.Rules[0].SLSA.MissingPolicy != types.ActionDeny {
-		t.Errorf("expected first rule SLSA deny, got %v", pol.Rules[0].SLSA.MissingPolicy)
-	}
-
-	if pol.Rules[1].SLSA.MissingPolicy != types.ActionAllow {
-		t.Errorf("expected second rule SLSA allow, got %v", pol.Rules[1].SLSA.MissingPolicy)
-	}
-}
-
-func TestLoadPolicyWithRulesUnknownField(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "default.json"), `{
-		"rules": [
-			{
-				"images": ["ghcr.io/**"],
-				"mode": "enforce"
-			}
-		]
-	}`)
-
-	_, err := policy.LoadAll(dir)
-	testutil.AssertError(t, err)
-}
-
-func TestLoadAllInheritsRules(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "default.json"), `{
-		"slsa": {"missingPolicy": "warn"},
-		"rules": [
-			{
-				"images": ["ghcr.io/myorg/**"],
-				"slsa": {"missingPolicy": "deny"}
-			}
-		]
-	}`)
-	writeFile(t, filepath.Join(dir, "staging.json"), `{
-		"inherits": true
-	}`)
-
-	policies, err := policy.LoadAll(dir)
-	testutil.AssertNoError(t, err)
-
-	staging := policies["staging"]
-	if len(staging.Rules) != 1 {
-		t.Fatalf("expected 1 inherited rule, got %d", len(staging.Rules))
-	}
-
-	if staging.Rules[0].SLSA.MissingPolicy != types.ActionDeny {
-		t.Errorf("expected inherited rule SLSA deny, got %v",
-			staging.Rules[0].SLSA.MissingPolicy)
-	}
-}
-
-func TestMergeWithDefaultEmptyRulesClearsInherited(t *testing.T) {
-	t.Parallel()
-
-	defaultPol := &policy.Policy{
-		Rules: []policy.ImageRule{
-			{
-				Images: []string{testRuleImagesGlob},
-				SLSA:   &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
-			},
-		},
-	}
-
-	nsPol := &policy.Policy{
-		Rules: []policy.ImageRule{},
-	}
-
-	merged := policy.MergeWithDefault(nsPol, defaultPol)
-
-	if len(merged.Rules) != 0 {
-		t.Errorf("expected empty rules to clear inherited rules, got %d", len(merged.Rules))
-	}
-}
-
-func TestApplyRuleTrustOverride(t *testing.T) {
-	t.Parallel()
-
-	base := &policy.Policy{
-		Trust: &policy.TrustPolicy{
-			Builders: []policy.TrustedBuilder{{ID: testBaseBuilderID, MaxLevel: 2}},
-			Issuers:  []string{"https://base-issuer.example.com"},
-		},
-		SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionAllow},
-	}
-
-	rule := &policy.ImageRule{
-		Images: []string{testRuleImagesGlob},
-		Trust: &policy.TrustPolicy{
-			Builders: []policy.TrustedBuilder{{ID: testRuleBuilderID, MaxLevel: 3}},
-			Issuers:  []string{"https://rule-issuer.example.com"},
-		},
-	}
-
-	resolved := policy.ApplyRule(base, rule)
-
-	if len(resolved.Builders()) != 1 || resolved.Builders()[0].ID != testRuleBuilderID {
-		t.Errorf("expected rule builder, got %v", resolved.Builders())
-	}
-
-	if resolved.SLSAMissingPolicy() != types.ActionAllow {
-		t.Errorf("expected base SLSA allow, got %v", resolved.SLSAMissingPolicy())
-	}
-
-	// Verify deep-copy isolation.
-	resolved.Trust.Builders[0].ID = testMutatedValue
-
-	if base.Trust.Builders[0].ID != testBaseBuilderID {
-		t.Error("base trust was mutated by ApplyRule")
-	}
-
-	if rule.Trust.Builders[0].ID != testRuleBuilderID {
-		t.Error("rule trust was mutated by ApplyRule")
-	}
-}
-
-func TestApplyRuleSignaturesOverride(t *testing.T) {
-	t.Parallel()
-
-	base := &policy.Policy{
-		Signatures: &policy.SignaturesPolicy{RequireTransparencyLog: false},
-		SLSA:       &policy.SLSAPolicy{MissingPolicy: types.ActionAllow},
-	}
-
-	rule := &policy.ImageRule{
-		Images:     []string{testRuleImagesGlob},
-		Signatures: &policy.SignaturesPolicy{RequireTransparencyLog: true},
-	}
-
-	resolved := policy.ApplyRule(base, rule)
-
-	if !resolved.Signatures.RequireTransparencyLog {
-		t.Error("expected rule to override signatures RequireTransparencyLog to true")
-	}
-
-	if resolved.SLSAMissingPolicy() != types.ActionAllow {
-		t.Errorf("expected base SLSA allow, got %v", resolved.SLSAMissingPolicy())
-	}
-}
-
-func TestSBOMMissingPolicy(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		policy   policy.Policy
-		expected types.Action
-	}{
-		{
-			name:     "nil sbom defaults to allow",
-			policy:   emptyPolicy(),
-			expected: types.ActionAllow,
-		},
-		{
-			name: testEmptyMissingPolicyName,
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						MissingPolicy: "",
-					},
-				},
-			},
-			expected: types.ActionAllow,
-		},
-		{
-			name: testExplicitDenyName,
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						MissingPolicy: types.ActionDeny,
-					},
-				},
-			},
-			expected: types.ActionDeny,
-		},
-		{
-			name: "explicit warn",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						MissingPolicy: types.ActionWarn,
-					},
-				},
-			},
-			expected: types.ActionWarn,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			if got := test.policy.SBOMMissingPolicy(); got != test.expected {
-				t.Errorf("expected %q, got %q", test.expected, got)
-			}
-		})
-	}
-}
-
-func TestPolicyValidateSBOM(t *testing.T) {
-	t.Parallel()
-
-	runValidateTests(t, []validateTest{
-		{
-			name: "valid SBOM config",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						MissingPolicy: types.ActionWarn,
-						Formats:       []string{testFormatSPDX, testFormatCycloneDX},
-						License: &policy.SBOMLicensePolicy{
-							Deny: []string{testLicenseAGPL},
-						},
-						Component: &policy.SBOMComponentPolicy{
-							Deny: []string{
-								"pkg:npm/bad-package@1.0.0",
-							},
-						},
-					},
-				},
-			},
-			wantErr:     false,
-			expectedErr: nil,
-		},
-		{
-			name: "invalid SBOM missing policy",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						MissingPolicy: testInvalidValue,
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: types.ErrInvalidAction,
-		},
-		{
-			name: "invalid SBOM format",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						Formats: []string{"unknown"},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrInvalidSBOMFormat,
-		},
-		{
-			name: "empty license in deny list",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						License: &policy.SBOMLicensePolicy{
-							Deny: []string{testLicenseMIT, ""},
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrEmptyValue,
-		},
-		{
-			name: "invalid component deny list entry",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						Component: &policy.SBOMComponentPolicy{
-							Deny: []string{"not-a-purl"},
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrInvalidComponentPURL,
-		},
-		{
-			name: "empty component deny list entry",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						Component: &policy.SBOMComponentPolicy{
-							Deny: []string{""},
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrEmptyValue,
-		},
-		{
-			name: "empty license in allow list",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						License: &policy.SBOMLicensePolicy{
-							Allow: []string{testLicenseMIT, ""},
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrEmptyValue,
-		},
-		{
-			name: "invalid component allow list entry",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						Component: &policy.SBOMComponentPolicy{
-							Allow: []string{"not-a-purl"},
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrInvalidComponentPURL,
-		},
-		{
-			name: "bare pkg: scheme without type/name rejected",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						Component: &policy.SBOMComponentPolicy{
-							Deny: []string{"pkg:"},
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrInvalidComponentPURL,
-		},
-		{
-			name: "pkg:type without name rejected",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						Component: &policy.SBOMComponentPolicy{
-							Deny: []string{"pkg:npm"},
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrInvalidComponentPURL,
-		},
-		{
-			name: "valid allow lists",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						License: &policy.SBOMLicensePolicy{
-							Allow: []string{testLicenseMIT, "Apache-2.0"},
-						},
-						Component: &policy.SBOMComponentPolicy{
-							Allow: []string{"pkg:npm/trusted@1.0.0"},
-						},
-					},
-				},
-			},
-			wantErr:     false,
-			expectedErr: nil,
-		},
-		{
-			name: "nil SBOM is valid",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					SBOM: nil,
-				},
-			},
-			wantErr:     false,
-			expectedErr: nil,
-		},
-		{
-			name: "valid CVSS policy",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						CVSS: &policy.SBOMCVSSPolicy{
-							MaxScore:    new(7.0),
-							MinSeverity: "high",
-							IgnoreCVEs:  []string{testCVEID},
-						},
-					},
-				},
-			},
-			wantErr:     false,
-			expectedErr: nil,
-		},
-		{
-			name: "CVSS maxScore too high",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						CVSS: &policy.SBOMCVSSPolicy{
-							MaxScore: new(11.0),
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrCVSSMaxScoreRange,
-		},
-		{
-			name: "CVSS maxScore negative",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						CVSS: &policy.SBOMCVSSPolicy{
-							MaxScore: new(-1.0),
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrCVSSMaxScoreRange,
-		},
-		{
-			name: "CVSS invalid minSeverity",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						CVSS: &policy.SBOMCVSSPolicy{
-							MinSeverity: "extreme",
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrCVSSMinSeverityInvalid,
-		},
-		{
-			name: "CVSS empty ignoreCVEs entry",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						CVSS: &policy.SBOMCVSSPolicy{
-							IgnoreCVEs: []string{testCVEID, ""},
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrEmptyValue,
-		},
-		{
-			name: "valid drift policy",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						Drift: &policy.SBOMDriftPolicy{
-							MaxAdded:    new(5),
-							MaxRemoved:  new(3),
-							MaxModified: new(2),
-							MaxScore:    new(1.5),
-						},
-					},
-				},
-			},
-			wantErr:     false,
-			expectedErr: nil,
-		},
-		{
-			name: "drift maxAdded negative",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						Drift: &policy.SBOMDriftPolicy{
-							MaxAdded: new(-1),
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrDriftThresholdNegative,
-		},
-		{
-			name: "drift maxScore negative",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					SBOM: &policy.SBOMPolicy{
-						Drift: &policy.SBOMDriftPolicy{
-							MaxScore: new(-0.5),
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrDriftThresholdNegative,
-		},
-	})
-}
-
-func TestApplyRuleSBOMOverride(t *testing.T) {
-	t.Parallel()
-
-	base := &policy.Policy{
-		SBOM: &policy.SBOMPolicy{
-			MissingPolicy: types.ActionAllow,
-		},
-		SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionAllow},
-	}
-
-	rule := &policy.ImageRule{
-		Images: []string{testRuleImagesGlob},
-		SBOM: &policy.SBOMPolicy{
-			MissingPolicy: types.ActionDeny,
-			Formats:       []string{testFormatSPDX},
-			License: &policy.SBOMLicensePolicy{
-				Deny: []string{testLicenseAGPL},
-			},
-		},
-	}
-
-	resolved := policy.ApplyRule(base, rule)
-
-	if resolved.SBOMMissingPolicy() != types.ActionDeny {
-		t.Errorf(
-			"expected rule SBOM deny, got %v",
-			resolved.SBOMMissingPolicy(),
-		)
-	}
-
-	if resolved.SLSAMissingPolicy() != types.ActionAllow {
-		t.Errorf("expected base SLSA allow, got %v", resolved.SLSAMissingPolicy())
-	}
-
-	if len(resolved.SBOM.Formats) != 1 || resolved.SBOM.Formats[0] != testFormatSPDX {
-		t.Errorf("expected rule SBOM formats, got %v", resolved.SBOM.Formats)
-	}
-}
-
-func TestMergeWithDefaultInheritsSBOM(t *testing.T) {
-	t.Parallel()
-
-	defaultPol := &policy.Policy{
-		SBOM: &policy.SBOMPolicy{
-			MissingPolicy: types.ActionDeny,
-			Formats:       []string{testFormatSPDX},
-			License: &policy.SBOMLicensePolicy{
-				Deny: []string{testLicenseAGPL},
-			},
-		},
-	}
-
-	nsPol := &policy.Policy{}
-	merged := policy.MergeWithDefault(nsPol, defaultPol)
-
-	if merged.SBOM == nil {
-		t.Fatal("expected SBOM to be inherited")
-	}
-
-	if merged.SBOMMissingPolicy() != types.ActionDeny {
-		t.Errorf("expected inherited SBOM deny, got %v", merged.SBOMMissingPolicy())
-	}
-
-	if len(merged.SBOM.Formats) != 1 || merged.SBOM.Formats[0] != testFormatSPDX {
-		t.Errorf("expected inherited SBOM formats, got %v", merged.SBOM.Formats)
-	}
-}
-
-func TestMergeWithDefaultSBOMOverride(t *testing.T) {
-	t.Parallel()
-
-	defaultPol := &policy.Policy{
-		SBOM: &policy.SBOMPolicy{
-			MissingPolicy: types.ActionAllow,
-			Formats:       []string{testFormatSPDX, testFormatCycloneDX},
-		},
-	}
-
-	nsPol := &policy.Policy{
-		SBOM: &policy.SBOMPolicy{
-			MissingPolicy: types.ActionDeny,
-			Formats:       []string{testFormatCycloneDX},
-		},
-	}
-
-	merged := policy.MergeWithDefault(nsPol, defaultPol)
-
-	if merged.SBOMMissingPolicy() != types.ActionDeny {
-		t.Errorf("expected overridden SBOM deny, got %v", merged.SBOMMissingPolicy())
-	}
-
-	if len(merged.SBOM.Formats) != 1 || merged.SBOM.Formats[0] != testFormatCycloneDX {
-		t.Errorf("expected overridden SBOM formats, got %v", merged.SBOM.Formats)
-	}
-}
-
-func TestCloneIsolatesSBOM(t *testing.T) {
-	t.Parallel()
-
-	original := &policy.Policy{
-		SBOM: &policy.SBOMPolicy{
-			MissingPolicy: types.ActionDeny,
-			Formats:       []string{testFormatSPDX},
-			License: &policy.SBOMLicensePolicy{
-				Deny: []string{testLicenseMIT},
-			},
-			Component: &policy.SBOMComponentPolicy{
-				Deny:  []string{"pkg:npm/bad@1.0.0"},
-				Allow: []string{"pkg:npm/good@1.0.0"},
-			},
-		},
-	}
-
-	clone := policy.MergeWithDefault(&policy.Policy{}, original)
-
-	clone.SBOM.Formats = append(clone.SBOM.Formats, testFormatCycloneDX)
-	clone.SBOM.License.Deny[0] = testLicenseAGPL
-	clone.SBOM.Component.Allow[0] = "pkg:npm/mutated@1.0.0"
-
-	if len(original.SBOM.Formats) != 1 {
-		t.Errorf("expected original to have 1 format, got %d",
-			len(original.SBOM.Formats))
-	}
-
-	if original.SBOM.License.Deny[0] != "MIT" {
-		t.Errorf("expected original license deny list unchanged, got %s",
-			original.SBOM.License.Deny[0])
-	}
-
-	if original.SBOM.Component.Allow[0] != "pkg:npm/good@1.0.0" {
-		t.Errorf("expected original component allow list unchanged, got %s",
-			original.SBOM.Component.Allow[0])
-	}
-}
-
-func TestCloneIsolatesCVSS(t *testing.T) {
-	t.Parallel()
-
-	original := &policy.Policy{
-		SBOM: &policy.SBOMPolicy{
-			CVSS: &policy.SBOMCVSSPolicy{
-				MaxScore:   new(7.0),
-				IgnoreCVEs: []string{testCVEID},
-			},
-		},
-	}
-
-	clone := policy.MergeWithDefault(&policy.Policy{}, original)
-
-	clone.SBOM.CVSS.IgnoreCVEs[0] = "CVE-MUTATED"
-	clone.SBOM.CVSS.IgnoreCVEs = append(clone.SBOM.CVSS.IgnoreCVEs, "CVE-EXTRA")
-
-	if original.SBOM.CVSS.IgnoreCVEs[0] != testCVEID {
-		t.Errorf("expected original ignoreCVEs unchanged, got %s",
-			original.SBOM.CVSS.IgnoreCVEs[0])
-	}
-
-	if len(original.SBOM.CVSS.IgnoreCVEs) != 1 {
-		t.Errorf("expected original to have 1 ignoreCVE, got %d",
-			len(original.SBOM.CVSS.IgnoreCVEs))
-	}
-
-	*clone.SBOM.CVSS.MaxScore = 9.9
-
-	if *original.SBOM.CVSS.MaxScore != 7.0 {
-		t.Errorf("expected original maxScore unchanged, got %f",
-			*original.SBOM.CVSS.MaxScore)
-	}
-}
-
-func TestNotationMissingPolicy(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		policy   policy.Policy
-		expected types.Action
-	}{
-		{
-			name:     "nil notation defaults to allow",
-			policy:   emptyPolicy(),
-			expected: types.ActionAllow,
-		},
-		{
-			name: testEmptyMissingPolicyName,
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Notation: &policy.NotationPolicy{
-						MissingPolicy: "",
-					},
-				},
-			},
-			expected: types.ActionAllow,
-		},
-		{
-			name: testExplicitDenyName,
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Notation: &policy.NotationPolicy{
-						MissingPolicy: types.ActionDeny,
-					},
-				},
-			},
-			expected: types.ActionDeny,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			if got := test.policy.NotationMissingPolicy(); got != test.expected {
-				t.Errorf("expected %q, got %q", test.expected, got)
-			}
-		})
-	}
-}
-
-func validNotationPolicy() *policy.NotationPolicy {
-	return &policy.NotationPolicy{
-		MissingPolicy:     types.ActionDeny,
-		VerificationLevel: testNotationLevelStrict,
-		TrustStores: []policy.NotationTrustStore{
-			{
-				Name:         testNotationStoreName,
-				Type:         "ca",
-				Certificates: []string{testNotationCertPath},
-			},
-		},
-		TrustPolicy: []policy.NotationTrustPolicyRule{
-			{
-				Name:              testDefaultLabel,
-				RegistryScopes:    []string{"*"},
-				TrustStores:       []string{testNotationStoreRef},
-				TrustedIdentities: []string{"*"},
-			},
-		},
-	}
-}
-
-func TestPolicyValidateNotation(t *testing.T) {
-	t.Parallel()
-
-	runValidateTests(t, []validateTest{
-		{
-			name: "valid notation config",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Notation: validNotationPolicy(),
-				},
-			},
-			wantErr:     false,
-			expectedErr: nil,
-		},
-		{
-			name: "invalid verification level",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Notation: &policy.NotationPolicy{
-						MissingPolicy:     types.ActionDeny,
-						VerificationLevel: testInvalidValue,
-						TrustStores: []policy.NotationTrustStore{
-							{
-								Name:         testNotationStoreName,
-								Type:         "ca",
-								Certificates: []string{testNotationCertPath},
-							},
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrNotationVerificationLevelInvalid,
-		},
-		{
-			name: "trust store missing name",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Notation: &policy.NotationPolicy{
-						TrustStores: []policy.NotationTrustStore{
-							{
-								Name:         "",
-								Type:         "ca",
-								Certificates: []string{testNotationCertPath},
-							},
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrNotationTrustStoreNameRequired,
-		},
-		{
-			name: "trust store invalid type",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Notation: &policy.NotationPolicy{
-						TrustStores: []policy.NotationTrustStore{
-							{
-								Name:         testNotationStoreName,
-								Type:         testInvalidValue,
-								Certificates: []string{testNotationCertPath},
-							},
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrNotationTrustStoreTypeInvalid,
-		},
-		{
-			name: "trust store no certificates",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Notation: &policy.NotationPolicy{
-						TrustStores: []policy.NotationTrustStore{
-							{
-								Name:         testNotationStoreName,
-								Type:         "ca",
-								Certificates: nil,
-							},
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrNotationTrustStoreCertsRequired,
-		},
-		{
-			name: "trust store relative certificate path",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Notation: &policy.NotationPolicy{
-						TrustStores: []policy.NotationTrustStore{
-							{
-								Name:         testNotationStoreName,
-								Type:         "ca",
-								Certificates: []string{"relative/path.pem"},
-							},
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrNotationCertNotAbsolute,
-		},
-		{
-			name: "duplicate trust store name",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Notation: &policy.NotationPolicy{
-						TrustStores: []policy.NotationTrustStore{
-							{
-								Name:         testNotationStoreName,
-								Type:         "ca",
-								Certificates: []string{testNotationCertPath},
-							},
-							{
-								Name:         testNotationStoreName,
-								Type:         "ca",
-								Certificates: []string{"/etc/certs/ca2.pem"},
-							},
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrDuplicateNotationTrustStoreName,
-		},
-		{
-			name: "trust policy missing name",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Notation: &policy.NotationPolicy{
-						TrustPolicy: []policy.NotationTrustPolicyRule{
-							{
-								Name:              "",
-								RegistryScopes:    []string{"*"},
-								TrustStores:       []string{testNotationStoreRef},
-								TrustedIdentities: []string{"*"},
-							},
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrNotationTrustPolicyNameRequired,
-		},
-		{
-			name: "trust policy missing registry scopes",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Notation: &policy.NotationPolicy{
-						TrustPolicy: []policy.NotationTrustPolicyRule{
-							{
-								Name:              testNotationRuleName,
-								RegistryScopes:    nil,
-								TrustStores:       []string{testNotationStoreRef},
-								TrustedIdentities: []string{"*"},
-							},
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrNotationTrustPolicyScopesRequired,
-		},
-		{
-			name: "trust policy missing trust stores",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Notation: &policy.NotationPolicy{
-						TrustPolicy: []policy.NotationTrustPolicyRule{
-							{
-								Name:              testNotationRuleName,
-								RegistryScopes:    []string{"*"},
-								TrustStores:       nil,
-								TrustedIdentities: []string{"*"},
-							},
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrNotationTrustPolicyStoresRequired,
-		},
-		{
-			name: "trust policy missing trusted identities",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Notation: &policy.NotationPolicy{
-						TrustPolicy: []policy.NotationTrustPolicyRule{
-							{
-								Name:              testNotationRuleName,
-								RegistryScopes:    []string{"*"},
-								TrustStores:       []string{testNotationStoreRef},
-								TrustedIdentities: nil,
-							},
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrNotationTrustPolicyIdentitiesRequired,
-		},
-		{
-			name: "duplicate trust policy name",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Notation: &policy.NotationPolicy{
-						TrustPolicy: []policy.NotationTrustPolicyRule{
-							{
-								Name:              testNotationRuleName,
-								RegistryScopes:    []string{"*"},
-								TrustStores:       []string{testNotationStoreRef},
-								TrustedIdentities: []string{"*"},
-							},
-							{
-								Name:              testNotationRuleName,
-								RegistryScopes:    []string{testDockerGlob},
-								TrustStores:       []string{testNotationStoreRef},
-								TrustedIdentities: []string{"*"},
-							},
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrDuplicateNotationTrustPolicyName,
-		},
-		{
-			name: "valid permissive verification level",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Notation: &policy.NotationPolicy{
-						VerificationLevel: "permissive",
-						TrustStores: []policy.NotationTrustStore{
-							{
-								Name:         testNotationStoreName,
-								Type:         "ca",
-								Certificates: []string{testNotationCertPath},
-							},
-						},
-					},
-				},
-			},
-			wantErr:     false,
-			expectedErr: nil,
-		},
-	})
-}
-
-func TestPolicyValidateNotationMissingPolicy(t *testing.T) {
-	t.Parallel()
-
-	runValidateTests(t, []validateTest{
-		{
-			name: "notation invalid missing policy",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Notation: &policy.NotationPolicy{
-						MissingPolicy: testInvalidValue,
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: types.ErrInvalidAction,
-		},
-	})
-}
-
-func TestPolicyValidateNotationRevocationMode(t *testing.T) {
-	t.Parallel()
-
-	runValidateTests(t, []validateTest{
-		{
-			name: "valid revocation mode strict",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Notation: &policy.NotationPolicy{
-						RevocationMode: "strict",
-						TrustStores: []policy.NotationTrustStore{
-							{
-								Name:         testNotationStoreName,
-								Type:         "ca",
-								Certificates: []string{testNotationCertPath},
-							},
-						},
-					},
-				},
-			},
-			wantErr:     false,
-			expectedErr: nil,
-		},
-		{
-			name: "valid revocation mode soft",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Notation: &policy.NotationPolicy{
-						RevocationMode: "soft",
-						TrustStores: []policy.NotationTrustStore{
-							{
-								Name:         testNotationStoreName,
-								Type:         "ca",
-								Certificates: []string{testNotationCertPath},
-							},
-						},
-					},
-				},
-			},
-			wantErr:     false,
-			expectedErr: nil,
-		},
-		{
-			name: "valid revocation mode skip",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Notation: &policy.NotationPolicy{
-						RevocationMode: "skip",
-						TrustStores: []policy.NotationTrustStore{
-							{
-								Name:         testNotationStoreName,
-								Type:         "ca",
-								Certificates: []string{testNotationCertPath},
-							},
-						},
-					},
-				},
-			},
-			wantErr:     false,
-			expectedErr: nil,
-		},
-		{
-			name: "empty revocation mode is valid (no override)",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Notation: &policy.NotationPolicy{
-						RevocationMode: "",
-						TrustStores: []policy.NotationTrustStore{
-							{
-								Name:         testNotationStoreName,
-								Type:         "ca",
-								Certificates: []string{testNotationCertPath},
-							},
-						},
-					},
-				},
-			},
-			wantErr:     false,
-			expectedErr: nil,
-		},
-		{
-			name: "invalid revocation mode",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Notation: &policy.NotationPolicy{
-						RevocationMode: testInvalidValue,
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrNotationRevocationModeInvalid,
-		},
-		{
-			name: "revocation mode strict rejected with verification level skip",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Notation: &policy.NotationPolicy{
-						VerificationLevel: testNotationLevelSkip,
-						RevocationMode:    "strict",
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrNotationRevocationWithSkipLevel,
-		},
-		{
-			name: "revocation mode soft rejected with verification level skip",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Notation: &policy.NotationPolicy{
-						VerificationLevel: testNotationLevelSkip,
-						RevocationMode:    "soft",
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrNotationRevocationWithSkipLevel,
-		},
-		{
-			name: "revocation mode skip rejected with verification level skip",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Notation: &policy.NotationPolicy{
-						VerificationLevel: testNotationLevelSkip,
-						RevocationMode:    "skip",
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrNotationRevocationWithSkipLevel,
-		},
-	})
-}
-
-func TestPolicyValidateNotationRuntime(t *testing.T) {
-	t.Parallel()
-
-	t.Run("valid cert file", func(t *testing.T) {
-		t.Parallel()
-
-		dir := t.TempDir()
-		certPath := filepath.Join(dir, "ca.pem")
-
-		err := os.WriteFile(certPath, []byte("PEM DATA"), 0o600)
-		if err != nil {
-			t.Fatalf("writing cert: %v", err)
-		}
-
-		pol := &policy.Policy{
-			Notation: &policy.NotationPolicy{
-				TrustStores: []policy.NotationTrustStore{
-					{
-						Name:         testNotationStoreName,
-						Type:         "ca",
-						Certificates: []string{certPath},
-					},
-				},
-			},
-		}
-
-		err = pol.ValidateRuntime()
-		if err != nil {
-			t.Errorf("unexpected error: %v", err)
-		}
-	})
-
-	t.Run("missing cert file", func(t *testing.T) {
+	t.Run("hash is deterministic", func(t *testing.T) {
 		t.Parallel()
 
 		pol := &policy.Policy{
-			Notation: &policy.NotationPolicy{
-				TrustStores: []policy.NotationTrustStore{
-					{
-						Name:         testNotationStoreName,
-						Type:         "ca",
-						Certificates: []string{"/nonexistent/cert.pem"},
-					},
-				},
+			Trust: &policy.TrustPolicy{
+				Builders: []policy.TrustedBuilder{{ID: "https://example.com/builder", MaxLevel: 3}},
 			},
+			SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionWarn},
 		}
 
-		err := pol.ValidateRuntime()
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-
-		if !errors.Is(err, os.ErrNotExist) {
-			t.Errorf("expected os.ErrNotExist, got: %v", err)
-		}
+		testutil.AssertEqual(t, hash(t, pol), hash(t, pol))
 	})
-}
 
-func TestApplyRuleNotation(t *testing.T) {
-	t.Parallel()
-
-	base := &policy.Policy{
-		Notation: &policy.NotationPolicy{
-			MissingPolicy: types.ActionAllow,
-		},
-	}
-
-	rule := &policy.ImageRule{
-		Images: []string{testRuleImagesGlob},
-		Notation: &policy.NotationPolicy{
-			MissingPolicy:     types.ActionDeny,
-			VerificationLevel: testNotationLevelStrict,
-			TrustStores: []policy.NotationTrustStore{
-				{
-					Name:         testNotationStoreName,
-					Type:         "ca",
-					Certificates: []string{testNotationCertPath},
-				},
-			},
-		},
-	}
-
-	resolved := policy.ApplyRule(base, rule)
-
-	if resolved.NotationMissingPolicy() != types.ActionDeny {
-		t.Errorf(
-			"expected rule Notation deny, got %v",
-			resolved.NotationMissingPolicy(),
-		)
-	}
-}
-
-func TestPolicyValidateCELValid(t *testing.T) {
-	t.Parallel()
-
-	pol := &policy.Policy{
-		CEL: &celengine.Policy{
-			Rules: []celengine.Rule{
-				{
-					Match:   "image.registry == 'ghcr.io'",
-					Require: testCELExprSLSAVerified,
-					Message: "GHCR images must have SLSA",
-				},
-			},
-		},
-	}
-
-	testutil.AssertNoError(t, pol.Validate())
-
-	if pol.CompiledCEL == nil {
-		t.Error("expected CompiledCEL to be populated after validation")
-	}
-}
-
-func TestPolicyValidateCELSyntaxError(t *testing.T) {
-	t.Parallel()
-
-	pol := &policy.Policy{
-		CEL: &celengine.Policy{
-			Rules: []celengine.Rule{
-				{Require: "invalid +++"},
-			},
-		},
-	}
-
-	err := pol.Validate()
-	if !errors.Is(err, policy.ErrCELCompileFailed) {
-		t.Errorf("expected ErrCELCompileFailed, got %v", err)
-	}
-}
-
-func TestPolicyValidateCELNilSection(t *testing.T) {
-	t.Parallel()
-
-	pol := &policy.Policy{}
-
-	testutil.AssertNoError(t, pol.Validate())
-
-	if pol.CompiledCEL != nil {
-		t.Error("expected CompiledCEL to be nil when no CEL section")
-	}
-}
-
-func TestPolicyValidateCELEmptyRules(t *testing.T) {
-	t.Parallel()
-
-	pol := &policy.Policy{
-		CEL: &celengine.Policy{
-			Rules: nil,
-		},
-	}
-
-	testutil.AssertNoError(t, pol.Validate())
-
-	if pol.CompiledCEL != nil {
-		t.Error("expected CompiledCEL to be nil with empty rules")
-	}
-}
-
-func TestCloneSectionsCEL(t *testing.T) {
-	t.Parallel()
-
-	original := &policy.Policy{
-		CEL: &celengine.Policy{
-			Rules: []celengine.Rule{
-				{Require: testCELExprTrue, Message: "original"},
-			},
-		},
-	}
-
-	clone := policy.MergeWithDefault(&policy.Policy{}, original)
-
-	if clone.CEL == nil {
-		t.Fatal("expected CEL to be cloned")
-	}
-
-	if len(clone.CEL.Rules) != 1 {
-		t.Fatalf("expected 1 cloned rule, got %d", len(clone.CEL.Rules))
-	}
-
-	// Mutate clone and verify original is unaffected.
-	clone.CEL.Rules[0].Message = "mutated"
-
-	if original.CEL.Rules[0].Message != "original" {
-		t.Error("clone mutation affected original CEL rules")
-	}
-}
-
-func TestApplySectionsCELOverride(t *testing.T) {
-	t.Parallel()
-
-	base := &policy.Policy{
-		CEL: &celengine.Policy{
-			Rules: []celengine.Rule{
-				{Require: testCELExprTrue, Message: testCELMsgBase},
-			},
-		},
-		SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionAllow},
-	}
-
-	rule := &policy.ImageRule{
-		Images: []string{testRuleImagesGlob},
-		CEL: &celengine.Policy{
-			Rules: []celengine.Rule{
-				{Require: testCELExprFalse, Message: "override"},
-			},
-		},
-	}
-
-	resolved := policy.ApplyRule(base, rule)
-
-	if resolved.CEL == nil {
-		t.Fatal("expected CEL section on resolved policy")
-	}
-
-	if resolved.CEL.Rules[0].Message != "override" {
-		t.Errorf("expected override CEL rule, got %s", resolved.CEL.Rules[0].Message)
-	}
-
-	if resolved.SLSAMissingPolicy() != types.ActionAllow {
-		t.Errorf("expected base SLSA to be preserved, got %v", resolved.SLSAMissingPolicy())
-	}
-}
-
-func TestLoadPolicyWithCEL(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "default.json"), `{
-		"cel": {
-			"rules": [
-				{
-					"match": "image.registry == 'ghcr.io'",
-					"require": "slsa.verified == true",
-					"message": "GHCR images must have SLSA provenance"
-				}
-			]
-		}
-	}`)
-
-	policies, err := policy.LoadAll(dir)
-	testutil.AssertNoError(t, err)
-
-	pol := policies[""]
-	if pol.CEL == nil {
-		t.Fatal("expected CEL section to be loaded")
-	}
-
-	if len(pol.CEL.Rules) != 1 {
-		t.Fatalf("expected 1 CEL rule, got %d", len(pol.CEL.Rules))
-	}
-
-	if pol.CompiledCEL == nil {
-		t.Error("expected CEL rules to be compiled during validation")
-	}
-}
-
-func TestLoadPolicyWithCELInheritance(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "default.json"), `{
-		"cel": {
-			"rules": [
-				{
-					"require": "slsa.verified == true",
-					"message": "default CEL rule"
-				}
-			]
-		}
-	}`)
-	writeFile(t, filepath.Join(dir, "staging.json"), `{
-		"inherits": true
-	}`)
-
-	policies, err := policy.LoadAll(dir)
-	testutil.AssertNoError(t, err)
-
-	staging := policies["staging"]
-	if staging.CEL == nil {
-		t.Fatal("expected CEL to be inherited")
-	}
-
-	if staging.CEL.Rules[0].Message != "default CEL rule" {
-		t.Errorf("expected inherited CEL rule message, got %s", staging.CEL.Rules[0].Message)
-	}
-
-	if staging.CompiledCEL == nil {
-		t.Error("expected CompiledCEL to be inherited from default")
-	}
-}
-
-func TestApplyRulePreservesCompiledCEL(t *testing.T) {
-	t.Parallel()
-
-	base := &policy.Policy{
-		CEL: &celengine.Policy{
-			Rules: []celengine.Rule{
-				{Require: testCELExprSLSAVerified, Message: "base CEL"},
-			},
-		},
-		SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionAllow},
-	}
-
-	testutil.AssertNoError(t, base.Validate())
-
-	if base.CompiledCEL == nil {
-		t.Fatal("expected base CompiledCEL after validation")
-	}
-
-	// Rule without CEL should inherit base's CompiledCEL.
-	rule := &policy.ImageRule{
-		Images: []string{testRuleImagesGlob},
-		SLSA:   &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
-	}
-
-	resolved := policy.ApplyRule(base, rule)
-
-	if resolved.CompiledCEL == nil {
-		t.Error("expected CompiledCEL to be preserved from base when rule has no CEL")
-	}
-
-	if resolved.SLSAMissingPolicy() != types.ActionDeny {
-		t.Errorf("expected SLSA deny from rule, got %v", resolved.SLSAMissingPolicy())
-	}
-}
-
-func TestApplyRuleCELOverrideCompiledCEL(t *testing.T) {
-	t.Parallel()
-
-	base := &policy.Policy{
-		CEL: &celengine.Policy{
-			Rules: []celengine.Rule{
-				{Require: testCELExprTrue, Message: testCELMsgBase},
-			},
-		},
-	}
-
-	testutil.AssertNoError(t, base.Validate())
-
-	// Rule with its own CEL should use its CompiledCEL.
-	rulePol := &policy.Policy{
-		Rules: []policy.ImageRule{
-			{
-				Images: []string{testRuleImagesGlob},
-				CEL: &celengine.Policy{
-					Rules: []celengine.Rule{
-						{Require: testCELExprFalse, Message: "rule override"},
-					},
-				},
-			},
-		},
-	}
-
-	testutil.AssertNoError(t, rulePol.Validate())
-
-	if rulePol.Rules[0].CompiledCEL == nil {
-		t.Fatal("expected rule CompiledCEL after validation")
-	}
-
-	resolved := policy.ApplyRule(base, &rulePol.Rules[0])
-
-	if resolved.CompiledCEL == nil {
-		t.Fatal("expected CompiledCEL on resolved policy")
-	}
-
-	if resolved.CEL.Rules[0].Message != "rule override" {
-		t.Errorf("expected rule CEL, got %s", resolved.CEL.Rules[0].Message)
-	}
-}
-
-func TestPolicyValidateRuleCELSyntaxError(t *testing.T) {
-	t.Parallel()
-
-	pol := &policy.Policy{
-		Rules: []policy.ImageRule{
-			{
-				Images: []string{testRuleImagesGlob},
-				CEL: &celengine.Policy{
-					Rules: []celengine.Rule{
-						{Require: "invalid +++"},
-					},
-				},
-			},
-		},
-	}
-
-	err := pol.Validate()
-	if !errors.Is(err, policy.ErrCELCompileFailed) {
-		t.Errorf("expected ErrCELCompileFailed for rule CEL, got %v", err)
-	}
-}
-
-func TestLoadPolicyWithCELOverride(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "default.json"), `{
-		"cel": {
-			"rules": [
-				{
-					"require": "true",
-					"message": "default"
-				}
-			]
-		}
-	}`)
-	writeFile(t, filepath.Join(dir, "production.json"), `{
-		"inherits": true,
-		"cel": {
-			"rules": [
-				{
-					"require": "slsa.verified == true && vex.verified == true",
-					"message": "production requires all checks"
-				}
-			]
-		}
-	}`)
-
-	policies, err := policy.LoadAll(dir)
-	testutil.AssertNoError(t, err)
-
-	prod := policies["production"]
-	if prod.CEL == nil {
-		t.Fatal("expected CEL section on production policy")
-	}
-
-	if len(prod.CEL.Rules) != 1 {
-		t.Fatalf("expected 1 CEL rule, got %d", len(prod.CEL.Rules))
-	}
-
-	if prod.CEL.Rules[0].Message != "production requires all checks" {
-		t.Errorf("expected production CEL rule, got %s", prod.CEL.Rules[0].Message)
-	}
-
-	if prod.CompiledCEL == nil {
-		t.Error("expected CompiledCEL to be set after CEL override")
-	}
-}
-
-func TestCloneRulesPreservesCompiledCEL(t *testing.T) {
-	t.Parallel()
-
-	pol := &policy.Policy{
-		Rules: []policy.ImageRule{
-			{
-				Images: []string{testRuleImagesGlob},
-				CEL: &celengine.Policy{
-					Rules: []celengine.Rule{
-						{Require: testCELExprSLSAVerified, Message: "rule CEL"},
-					},
-				},
-			},
-		},
-	}
-
-	testutil.AssertNoError(t, pol.Validate())
-
-	if pol.Rules[0].CompiledCEL == nil {
-		t.Fatal("expected CompiledCEL on rule after validation")
-	}
-
-	// MergeWithDefault clones rules via cloneRules. The cloned rules
-	// must preserve CompiledCEL so that per-rule CEL is not silently lost.
-	defaultPol := &policy.Policy{
-		SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionAllow},
-	}
-
-	nsPol := &policy.Policy{
-		Rules: pol.Rules,
-	}
-
-	merged := policy.MergeWithDefault(nsPol, defaultPol)
-
-	if len(merged.Rules) != 1 {
-		t.Fatalf("expected 1 merged rule, got %d", len(merged.Rules))
-	}
-
-	if merged.Rules[0].CompiledCEL == nil {
-		t.Error("expected CompiledCEL to be preserved after cloneRules")
-	}
-}
-
-func TestInheritedRulesPreserveCompiledCEL(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "default.json"), `{
-		"rules": [
-			{
-				"images": ["ghcr.io/**"],
-				"cel": {
-					"rules": [
-						{
-							"require": "slsa.verified == true",
-							"message": "inherited rule CEL"
-						}
-					]
-				}
-			}
-		]
-	}`)
-	writeFile(t, filepath.Join(dir, "staging.json"), `{
-		"inherits": true
-	}`)
-
-	policies, err := policy.LoadAll(dir)
-	testutil.AssertNoError(t, err)
-
-	staging := policies["staging"]
-	if len(staging.Rules) != 1 {
-		t.Fatalf("expected 1 inherited rule, got %d", len(staging.Rules))
-	}
-
-	if staging.Rules[0].CompiledCEL == nil {
-		t.Error("expected CompiledCEL to be preserved on inherited rule")
-	}
-}
-
-func TestMergeWithDefaultNamespaceOverridesAllSections(t *testing.T) {
-	t.Parallel()
-
-	defaultPol := &policy.Policy{
-		Include: []string{testDefaultIncludeGlob},
-		Exclude: []string{testDefaultExcludeGlob},
-		Trust: &policy.TrustPolicy{
-			Builders: []policy.TrustedBuilder{{ID: testDefaultBuilderID, MaxLevel: 2}},
-			Issuers:  []string{testDefaultIssuer},
-		},
-		SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionAllow},
-		VEX: &policy.VEXPolicy{
-			MissingPolicy:            types.ActionAllow,
-			UnderInvestigationPolicy: types.ActionAllow,
-		},
-		VSA: &policy.VSAPolicy{
-			MissingPolicy: types.ActionAllow,
-			MinimumLevel:  1,
-		},
-		Signatures: &policy.SignaturesPolicy{RequireTransparencyLog: false},
-		Notation: &policy.NotationPolicy{
-			MissingPolicy:     types.ActionAllow,
-			VerificationLevel: "permissive",
-		},
-		CEL: &celengine.Policy{
-			Rules: []celengine.Rule{{Require: testCELExprTrue, Message: testDefaultLabel}},
-		},
-		SBOM: &policy.SBOMPolicy{
-			MissingPolicy: types.ActionAllow,
-			Formats:       []string{testFormatSPDX},
-		},
-	}
-
-	nsPol := &policy.Policy{
-		Include: []string{"ns-include/**"},
-		Exclude: []string{"ns-exclude/**"},
-		Trust: &policy.TrustPolicy{
-			Builders: []policy.TrustedBuilder{{ID: testNSBuilderID, MaxLevel: 3}},
-			Issuers:  []string{"ns-issuer"},
-		},
-		SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
-		VEX: &policy.VEXPolicy{
-			MissingPolicy:            types.ActionDeny,
-			UnderInvestigationPolicy: types.ActionDeny,
-		},
-		VSA: &policy.VSAPolicy{
-			MissingPolicy: types.ActionDeny,
-			MinimumLevel:  3,
-		},
-		Signatures: &policy.SignaturesPolicy{RequireTransparencyLog: true},
-		Notation: &policy.NotationPolicy{
-			MissingPolicy:     types.ActionDeny,
-			VerificationLevel: testNotationLevelStrict,
-		},
-		CEL: &celengine.Policy{
-			Rules: []celengine.Rule{{Require: testCELExprFalse, Message: "namespace"}},
-		},
-		SBOM: &policy.SBOMPolicy{
-			MissingPolicy: types.ActionDeny,
-			Formats:       []string{testFormatCycloneDX},
-		},
-	}
-
-	merged := policy.MergeWithDefault(nsPol, defaultPol)
-
-	if len(merged.Include) != 1 || merged.Include[0] != "ns-include/**" {
-		t.Errorf("expected namespace Include, got %v", merged.Include)
-	}
-
-	if len(merged.Exclude) != 1 || merged.Exclude[0] != "ns-exclude/**" {
-		t.Errorf("expected namespace Exclude, got %v", merged.Exclude)
-	}
-
-	if merged.Trust.Builders[0].ID != testNSBuilderID {
-		t.Errorf("expected ns-builder, got %s", merged.Trust.Builders[0].ID)
-	}
-
-	if merged.Trust.Issuers[0] != "ns-issuer" {
-		t.Errorf("expected ns-issuer, got %s", merged.Trust.Issuers[0])
-	}
-
-	if merged.SLSA.MissingPolicy != types.ActionDeny {
-		t.Errorf("expected SLSA deny, got %s", merged.SLSA.MissingPolicy)
-	}
-
-	if merged.VEX.MissingPolicy != types.ActionDeny {
-		t.Errorf("expected VEX deny, got %s", merged.VEX.MissingPolicy)
-	}
-
-	if merged.VEX.UnderInvestigationPolicy != types.ActionDeny {
-		t.Errorf("expected VEX under-investigation deny, got %s",
-			merged.VEX.UnderInvestigationPolicy)
-	}
-
-	if merged.VSA.MissingPolicy != types.ActionDeny {
-		t.Errorf("expected VSA deny, got %s", merged.VSA.MissingPolicy)
-	}
-
-	if merged.VSA.MinimumLevel != 3 {
-		t.Errorf("expected VSA MinimumLevel 3, got %d", merged.VSA.MinimumLevel)
-	}
-
-	if !merged.Signatures.RequireTransparencyLog {
-		t.Error("expected Signatures RequireTransparencyLog true")
-	}
-
-	if merged.Notation.MissingPolicy != types.ActionDeny {
-		t.Errorf("expected Notation deny, got %s", merged.Notation.MissingPolicy)
-	}
-
-	if merged.Notation.VerificationLevel != testNotationLevelStrict {
-		t.Errorf("expected Notation strict, got %s", merged.Notation.VerificationLevel)
-	}
-
-	if merged.CEL.Rules[0].Message != "namespace" {
-		t.Errorf("expected namespace CEL rule, got %s", merged.CEL.Rules[0].Message)
-	}
-
-	if merged.SBOM.MissingPolicy != types.ActionDeny {
-		t.Errorf("expected SBOM deny, got %s", merged.SBOM.MissingPolicy)
-	}
-
-	if len(merged.SBOM.Formats) != 1 || merged.SBOM.Formats[0] != testFormatCycloneDX {
-		t.Errorf("expected SBOM cyclonedx format, got %v", merged.SBOM.Formats)
-	}
-}
-
-func TestApplyRuleTrustOverridePreservesOtherSections(t *testing.T) {
-	t.Parallel()
-
-	base := &policy.Policy{
-		Trust: &policy.TrustPolicy{
-			Builders: []policy.TrustedBuilder{{ID: testBaseBuilderID, MaxLevel: 2}},
-			Issuers:  []string{"base-issuer"},
-			Sources:  []string{"https://github.com/base/**"},
-		},
-		SLSA:       &policy.SLSAPolicy{MissingPolicy: types.ActionDeny},
-		VEX:        &policy.VEXPolicy{MissingPolicy: types.ActionWarn},
-		VSA:        &policy.VSAPolicy{MinimumLevel: 2},
-		Signatures: &policy.SignaturesPolicy{RequireTransparencyLog: true},
-		Notation: &policy.NotationPolicy{
-			MissingPolicy:     types.ActionDeny,
-			VerificationLevel: testNotationLevelStrict,
-		},
-		CEL: &celengine.Policy{
-			Rules: []celengine.Rule{{Require: testCELExprTrue, Message: testCELMsgBase}},
-		},
-		SBOM: &policy.SBOMPolicy{
-			MissingPolicy: types.ActionDeny,
-			Formats:       []string{testFormatSPDX},
-		},
-	}
-
-	rule := &policy.ImageRule{
-		Images: []string{testRuleImagesGlob},
-		Trust: &policy.TrustPolicy{
-			Builders: []policy.TrustedBuilder{{ID: testRuleBuilderID, MaxLevel: 3}},
-			Issuers:  []string{"rule-issuer"},
-			Sources:  []string{"https://github.com/rule/**"},
-		},
-	}
-
-	resolved := policy.ApplyRule(base, rule)
-
-	// Trust should come from the rule.
-	if resolved.Builders()[0].ID != testRuleBuilderID {
-		t.Errorf("expected rule builder, got %s", resolved.Builders()[0].ID)
-	}
-
-	if resolved.Trust.Issuers[0] != "rule-issuer" {
-		t.Errorf("expected rule issuer, got %s", resolved.Trust.Issuers[0])
-	}
-
-	if resolved.Trust.Sources[0] != "https://github.com/rule/**" {
-		t.Errorf("expected rule source, got %s", resolved.Trust.Sources[0])
-	}
-
-	// All other sections should come from the base.
-	if resolved.SLSA.MissingPolicy != types.ActionDeny {
-		t.Errorf("expected base SLSA deny, got %s", resolved.SLSA.MissingPolicy)
-	}
-
-	if resolved.VEX.MissingPolicy != types.ActionWarn {
-		t.Errorf("expected base VEX warn, got %s", resolved.VEX.MissingPolicy)
-	}
-
-	if resolved.VSA.MinimumLevel != 2 {
-		t.Errorf("expected base VSA level 2, got %d", resolved.VSA.MinimumLevel)
-	}
-
-	if !resolved.Signatures.RequireTransparencyLog {
-		t.Error("expected base Signatures RequireTransparencyLog true")
-	}
-
-	if resolved.Notation.VerificationLevel != testNotationLevelStrict {
-		t.Errorf("expected base Notation strict, got %s", resolved.Notation.VerificationLevel)
-	}
-
-	if resolved.CEL.Rules[0].Message != "base" {
-		t.Errorf("expected base CEL rule, got %s", resolved.CEL.Rules[0].Message)
-	}
-
-	if resolved.SBOM.MissingPolicy != types.ActionDeny {
-		t.Errorf("expected base SBOM deny, got %s", resolved.SBOM.MissingPolicy)
-	}
-}
-
-func TestMergeWithDefaultEmptyNamespacePreservesAll(t *testing.T) {
-	t.Parallel()
-
-	defaultPol := &policy.Policy{
-		Mode:    config.ModeEnforce,
-		Include: []string{testDefaultIncludeGlob},
-		Exclude: []string{testDefaultExcludeGlob},
-		Trust: &policy.TrustPolicy{
-			Builders: []policy.TrustedBuilder{{ID: testDefaultBuilderID, MaxLevel: 2}},
-			Verifiers: []policy.TrustedVerifier{
-				{ID: "default-verifier", Keys: []string{testKeyPath}},
-			},
-			Issuers: []string{testDefaultIssuer},
-			Sources: []string{"https://github.com/**"},
-		},
-		SLSA: &policy.SLSAPolicy{
-			MissingPolicy:           types.ActionDeny,
-			RejectUnknownParameters: true,
-		},
-		VEX: &policy.VEXPolicy{
-			MissingPolicy:            types.ActionDeny,
-			UnderInvestigationPolicy: types.ActionWarn,
-		},
-		VSA: &policy.VSAPolicy{
-			MissingPolicy: types.ActionDeny,
-			MinimumLevel:  3,
-			Policy:        "https://example.com/policy",
-		},
-		Signatures: &policy.SignaturesPolicy{RequireTransparencyLog: true},
-		Notation: &policy.NotationPolicy{
-			MissingPolicy:     types.ActionDeny,
-			VerificationLevel: testNotationLevelStrict,
-			TrustStores: []policy.NotationTrustStore{
-				{
-					Name:         testNotationStoreName,
-					Type:         "ca",
-					Certificates: []string{testNotationCertPath},
-				},
-			},
-		},
-		CEL: &celengine.Policy{
-			Rules: []celengine.Rule{{Require: testCELExprTrue, Message: testDefaultLabel}},
-		},
-		SBOM: &policy.SBOMPolicy{
-			MissingPolicy: types.ActionDeny,
-			Formats:       []string{testFormatSPDX, testFormatCycloneDX},
-			License: &policy.SBOMLicensePolicy{
-				Deny: []string{testLicenseAGPL},
-			},
-		},
-	}
-
-	emptyNs := &policy.Policy{}
-	merged := policy.MergeWithDefault(emptyNs, defaultPol)
-
-	if merged.Mode != config.ModeEnforce {
-		t.Errorf("expected mode enforce, got %s", merged.Mode)
-	}
-
-	if len(merged.Include) != 1 || merged.Include[0] != testDefaultIncludeGlob {
-		t.Errorf("expected default Include, got %v", merged.Include)
-	}
-
-	if len(merged.Exclude) != 1 || merged.Exclude[0] != testDefaultExcludeGlob {
-		t.Errorf("expected default Exclude, got %v", merged.Exclude)
-	}
-
-	if merged.Trust == nil || merged.Trust.Builders[0].ID != testDefaultBuilderID {
-		t.Error("expected default Trust to be preserved")
-	}
-
-	if merged.Trust.Verifiers[0].ID != "default-verifier" {
-		t.Errorf("expected default verifier, got %s", merged.Trust.Verifiers[0].ID)
-	}
-
-	if merged.SLSA.MissingPolicy != types.ActionDeny {
-		t.Errorf("expected default SLSA deny, got %s", merged.SLSA.MissingPolicy)
-	}
-
-	if !merged.SLSA.RejectUnknownParameters {
-		t.Error("expected default SLSA RejectUnknownParameters true")
-	}
-
-	if merged.VEX.MissingPolicy != types.ActionDeny {
-		t.Errorf("expected default VEX deny, got %s", merged.VEX.MissingPolicy)
-	}
-
-	if merged.VEX.UnderInvestigationPolicy != types.ActionWarn {
-		t.Errorf("expected default VEX under-investigation warn, got %s",
-			merged.VEX.UnderInvestigationPolicy)
-	}
-
-	if merged.VSA.MinimumLevel != 3 {
-		t.Errorf("expected default VSA level 3, got %d", merged.VSA.MinimumLevel)
-	}
-
-	if !merged.Signatures.RequireTransparencyLog {
-		t.Error("expected default Signatures RequireTransparencyLog true")
-	}
-
-	if merged.Notation == nil || merged.Notation.VerificationLevel != testNotationLevelStrict {
-		t.Error("expected default Notation strict to be preserved")
-	}
-
-	if len(merged.Notation.TrustStores) != 1 ||
-		merged.Notation.TrustStores[0].Name != testNotationStoreName {
-		t.Error("expected default Notation trust stores to be preserved")
-	}
-
-	if merged.CEL == nil || merged.CEL.Rules[0].Message != testDefaultLabel {
-		t.Error("expected default CEL to be preserved")
-	}
-
-	if merged.SBOM == nil || merged.SBOM.MissingPolicy != types.ActionDeny {
-		t.Error("expected default SBOM to be preserved")
-	}
-
-	if len(merged.SBOM.Formats) != 2 {
-		t.Errorf("expected 2 default SBOM formats, got %d", len(merged.SBOM.Formats))
-	}
-
-	if merged.SBOM.License == nil || len(merged.SBOM.License.Deny) != 1 {
-		t.Error("expected default SBOM license deny list to be preserved")
-	}
-}
-
-func TestMergeWithDefaultNilNotationAndSBOMPreservesDefaults(t *testing.T) {
-	t.Parallel()
-
-	defaultPol := &policy.Policy{
-		Notation: &policy.NotationPolicy{
-			MissingPolicy:     types.ActionDeny,
-			VerificationLevel: testNotationLevelStrict,
-			TrustStores: []policy.NotationTrustStore{
-				{
-					Name:         testNotationStoreName,
-					Type:         "ca",
-					Certificates: []string{testNotationCertPath},
-				},
-			},
-			TrustPolicy: []policy.NotationTrustPolicyRule{
-				{
-					Name:              "default-rule",
-					RegistryScopes:    []string{"*"},
-					TrustStores:       []string{testNotationStoreRef},
-					TrustedIdentities: []string{"*"},
-				},
-			},
-		},
-		SBOM: &policy.SBOMPolicy{
-			MissingPolicy: types.ActionDeny,
-			Formats:       []string{testFormatSPDX},
-			License: &policy.SBOMLicensePolicy{
-				Deny:  []string{testLicenseAGPL},
-				Allow: []string{testLicenseMIT},
-			},
-			Component: &policy.SBOMComponentPolicy{
-				Deny: []string{"pkg:npm/bad@1.0.0"},
-			},
-		},
-	}
-
-	// Namespace policy has nil Notation and nil SBOM.
-	nsPol := &policy.Policy{
-		SLSA: &policy.SLSAPolicy{MissingPolicy: types.ActionWarn},
-	}
-
-	merged := policy.MergeWithDefault(nsPol, defaultPol)
-
-	// Notation should be preserved from default.
-	if merged.Notation == nil {
-		t.Fatal("expected Notation to be preserved from default")
-	}
-
-	if merged.Notation.MissingPolicy != types.ActionDeny {
-		t.Errorf("expected Notation deny, got %s", merged.Notation.MissingPolicy)
-	}
-
-	if merged.Notation.VerificationLevel != testNotationLevelStrict {
-		t.Errorf("expected Notation strict, got %s", merged.Notation.VerificationLevel)
-	}
-
-	if len(merged.Notation.TrustStores) != 1 {
-		t.Fatalf("expected 1 trust store, got %d", len(merged.Notation.TrustStores))
-	}
-
-	if merged.Notation.TrustStores[0].Name != testNotationStoreName {
-		t.Errorf("expected trust store name %s, got %s",
-			testNotationStoreName, merged.Notation.TrustStores[0].Name)
-	}
-
-	if len(merged.Notation.TrustPolicy) != 1 ||
-		merged.Notation.TrustPolicy[0].Name != "default-rule" {
-		t.Error("expected Notation trust policy to be preserved from default")
-	}
-
-	// SBOM should be preserved from default.
-	if merged.SBOM == nil {
-		t.Fatal("expected SBOM to be preserved from default")
-	}
-
-	if merged.SBOM.MissingPolicy != types.ActionDeny {
-		t.Errorf("expected SBOM deny, got %s", merged.SBOM.MissingPolicy)
-	}
-
-	if len(merged.SBOM.Formats) != 1 || merged.SBOM.Formats[0] != testFormatSPDX {
-		t.Errorf("expected SBOM spdx format, got %v", merged.SBOM.Formats)
-	}
-
-	if merged.SBOM.License == nil {
-		t.Fatal("expected SBOM license to be preserved from default")
-	}
-
-	if len(merged.SBOM.License.Deny) != 1 || merged.SBOM.License.Deny[0] != testLicenseAGPL {
-		t.Errorf("expected SBOM license deny [AGPL-3.0], got %v", merged.SBOM.License.Deny)
-	}
-
-	if len(merged.SBOM.License.Allow) != 1 || merged.SBOM.License.Allow[0] != testLicenseMIT {
-		t.Errorf("expected SBOM license allow [MIT], got %v", merged.SBOM.License.Allow)
-	}
-
-	if merged.SBOM.Component == nil || len(merged.SBOM.Component.Deny) != 1 {
-		t.Error("expected SBOM component deny list to be preserved from default")
-	}
-
-	// The namespace SLSA override should take effect.
-	if merged.SLSA.MissingPolicy != types.ActionWarn {
-		t.Errorf("expected namespace SLSA warn, got %s", merged.SLSA.MissingPolicy)
-	}
-}
-
-func TestPolicyValidateVerifierNotBeforeNotAfterValid(t *testing.T) {
-	t.Parallel()
-
-	pol := &policy.Policy{
-		Trust: &policy.TrustPolicy{
-			Verifiers: []policy.TrustedVerifier{
-				{
-					ID:        testVerifierID,
-					Keys:      []string{testKeyPath},
-					NotBefore: testNotBefore2024,
-					NotAfter:  testNotAfter2025,
-				},
-			},
-		},
-	}
-
-	err := pol.Validate()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	verif := pol.Trust.Verifiers[0]
-
-	expectedNB := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	if !verif.NotBeforeTime.Equal(expectedNB) {
-		t.Errorf("expected NotBeforeTime %v, got %v", expectedNB, verif.NotBeforeTime)
-	}
-
-	expectedNA := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
-	if !verif.NotAfterTime.Equal(expectedNA) {
-		t.Errorf("expected NotAfterTime %v, got %v", expectedNA, verif.NotAfterTime)
-	}
-}
-
-func TestPolicyValidateVerifierNotBeforeOnly(t *testing.T) {
-	t.Parallel()
-
-	pol := &policy.Policy{
-		Trust: &policy.TrustPolicy{
-			Verifiers: []policy.TrustedVerifier{
-				{
-					ID:        testVerifierID,
-					Keys:      []string{testKeyPath},
-					NotBefore: "2024-06-15T12:00:00Z",
-				},
-			},
-		},
-	}
-
-	err := pol.Validate()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	verif := pol.Trust.Verifiers[0]
-	if verif.NotBeforeTime.IsZero() {
-		t.Error("expected NotBeforeTime to be set")
-	}
-
-	if !verif.NotAfterTime.IsZero() {
-		t.Error("expected NotAfterTime to be zero")
-	}
-}
-
-func TestPolicyValidateVerifierNotAfterOnly(t *testing.T) {
-	t.Parallel()
-
-	pol := &policy.Policy{
-		Trust: &policy.TrustPolicy{
-			Verifiers: []policy.TrustedVerifier{
-				{
-					ID:       testVerifierID,
-					Keys:     []string{testKeyPath},
-					NotAfter: "2025-12-31T23:59:59Z",
-				},
-			},
-		},
-	}
-
-	err := pol.Validate()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	verif := pol.Trust.Verifiers[0]
-	if !verif.NotBeforeTime.IsZero() {
-		t.Error("expected NotBeforeTime to be zero")
-	}
-
-	if verif.NotAfterTime.IsZero() {
-		t.Error("expected NotAfterTime to be set")
-	}
-}
-
-func TestPolicyValidateVerifierInvalidNotBefore(t *testing.T) {
-	t.Parallel()
-
-	runValidateTests(t, []validateTest{
-		{
-			name: "invalid notBefore format",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Verifiers: []policy.TrustedVerifier{
-							{
-								ID:        testVerifierID,
-								Keys:      []string{testKeyPath},
-								NotBefore: "not-a-date",
-							},
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrInvalidNotBefore,
-		},
-	})
-}
-
-func TestPolicyValidateVerifierInvalidNotAfter(t *testing.T) {
-	t.Parallel()
-
-	runValidateTests(t, []validateTest{
-		{
-			name: "invalid notAfter format",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Verifiers: []policy.TrustedVerifier{
-							{
-								ID:       testVerifierID,
-								Keys:     []string{testKeyPath},
-								NotAfter: "2024/01/01",
-							},
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrInvalidNotAfter,
-		},
-	})
-}
-
-func TestPolicyValidateVerifierNotAfterBeforeNotBefore(t *testing.T) {
-	t.Parallel()
-
-	runValidateTests(t, []validateTest{
-		{
-			name: "notAfter before notBefore",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Verifiers: []policy.TrustedVerifier{
-							{
-								ID:        testVerifierID,
-								Keys:      []string{testKeyPath},
-								NotBefore: testNotAfter2025,
-								NotAfter:  testNotBefore2024,
-							},
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrNotAfterBeforeNotBefore,
-		},
-		{
-			name: "notAfter equals notBefore",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Verifiers: []policy.TrustedVerifier{
-							{
-								ID:        testVerifierID,
-								Keys:      []string{testKeyPath},
-								NotBefore: testMidpoint2024,
-								NotAfter:  testMidpoint2024,
-							},
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrNotAfterBeforeNotBefore,
-		},
-	})
-}
-
-func TestPolicyValidateVerifierTimeBoundsWithoutKeys(t *testing.T) {
-	t.Parallel()
-
-	runValidateTests(t, []validateTest{
-		{
-			name: "notBefore without keys",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Verifiers: []policy.TrustedVerifier{
-							{
-								ID:        testVerifierID,
-								NotBefore: testNotBefore2024,
-							},
-						},
-						Issuers: []string{testIssuerURL},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrTimeBoundsWithoutKeys,
-		},
-		{
-			name: "notAfter without keys",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Verifiers: []policy.TrustedVerifier{
-							{
-								ID:       testVerifierID,
-								NotAfter: testNotAfter2025,
-							},
-						},
-						Issuers: []string{testIssuerURL},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrTimeBoundsWithoutKeys,
-		},
-		{
-			name: "both notBefore and notAfter without keys",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Verifiers: []policy.TrustedVerifier{
-							{
-								ID:        testVerifierID,
-								NotBefore: testNotBefore2024,
-								NotAfter:  testNotAfter2025,
-							},
-						},
-						Issuers: []string{testIssuerURL},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrTimeBoundsWithoutKeys,
-		},
-	})
-}
-
-func TestPolicyValidateDuplicateKeyAcrossVerifiers(t *testing.T) {
-	t.Parallel()
-
-	runValidateTests(t, []validateTest{
-		{
-			name: "same key in two verifiers is rejected",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Verifiers: []policy.TrustedVerifier{
-							{
-								ID:        "verifier-a",
-								Keys:      []string{testKeyPath},
-								NotBefore: testNotBefore2024,
-								NotAfter:  testNotAfter2025,
-							},
-							{
-								ID:   "verifier-b",
-								Keys: []string{testKeyPath},
-							},
-						},
-					},
-				},
-			},
-			wantErr:     true,
-			expectedErr: policy.ErrDuplicateKeyAcrossVerifiers,
-		},
-		{
-			name: "different keys in two verifiers is valid",
-			policy: policy.Policy{
-				Sections: policy.Sections{
-					Trust: &policy.TrustPolicy{
-						Verifiers: []policy.TrustedVerifier{
-							{
-								ID:   "verifier-a",
-								Keys: []string{"/key/a.pub"},
-							},
-							{
-								ID:   "verifier-b",
-								Keys: []string{"/key/b.pub"},
-							},
-						},
-					},
-				},
-			},
-			wantErr:     false,
-			expectedErr: nil,
-		},
-	})
-}
-
-func TestMergeWithDefaultInheritsSCAI(t *testing.T) {
-	t.Parallel()
-
-	defaultPol := &policy.Policy{
-		SCAI: &policy.SCAIPolicy{
-			MissingPolicy:      types.ActionDeny,
-			RequiredAttributes: []string{testAttrCodeReview},
-			RequireEvidence:    true,
-		},
-	}
-
-	nsPol := &policy.Policy{}
-	merged := policy.MergeWithDefault(nsPol, defaultPol)
-
-	if merged.SCAI == nil {
-		t.Fatal("expected SCAI to be inherited")
-	}
-
-	if merged.SCAIMissingPolicy() != types.ActionDeny {
-		t.Errorf("expected inherited SCAI deny, got %v", merged.SCAIMissingPolicy())
-	}
-
-	if len(merged.SCAI.RequiredAttributes) != 1 ||
-		merged.SCAI.RequiredAttributes[0] != testAttrCodeReview {
-		t.Errorf("expected inherited SCAI required attributes, got %v",
-			merged.SCAI.RequiredAttributes)
-	}
-
-	if !merged.SCAI.RequireEvidence {
-		t.Error("expected inherited SCAI RequireEvidence true")
-	}
-}
-
-func TestMergeWithDefaultSCAIOverride(t *testing.T) {
-	t.Parallel()
-
-	defaultPol := &policy.Policy{
-		SCAI: &policy.SCAIPolicy{
-			MissingPolicy:      types.ActionAllow,
-			RequiredAttributes: []string{testAttrCodeReview},
-		},
-	}
-
-	nsPol := &policy.Policy{
-		SCAI: &policy.SCAIPolicy{
-			MissingPolicy:       types.ActionDeny,
-			ForbiddenAttributes: []string{testAttrKnownVulnerable},
-		},
-	}
-
-	merged := policy.MergeWithDefault(nsPol, defaultPol)
-
-	if merged.SCAIMissingPolicy() != types.ActionDeny {
-		t.Errorf("expected overridden SCAI deny, got %v", merged.SCAIMissingPolicy())
-	}
-
-	if len(merged.SCAI.ForbiddenAttributes) != 1 ||
-		merged.SCAI.ForbiddenAttributes[0] != testAttrKnownVulnerable {
-		t.Errorf("expected overridden SCAI forbidden attributes, got %v",
-			merged.SCAI.ForbiddenAttributes)
-	}
-
-	// RequiredAttributes from default should be replaced (not merged).
-	if merged.SCAI.RequiredAttributes != nil {
-		t.Errorf("expected nil required attributes after override, got %v",
-			merged.SCAI.RequiredAttributes)
-	}
-}
-
-func TestPolicyValidateSCAIOverlappingAttributes(t *testing.T) {
-	t.Parallel()
-
-	t.Run("overlapping required and forbidden rejects", func(t *testing.T) {
+	t.Run("empty policy hashes without error", func(t *testing.T) {
 		t.Parallel()
 
-		pol := &policy.Policy{
-			SCAI: &policy.SCAIPolicy{
-				RequiredAttributes:  []string{testAttrCodeReview, testAttrFuzzTested},
-				ForbiddenAttributes: []string{testAttrCodeReview},
-			},
-		}
-
-		err := pol.Validate()
-		if !errors.Is(err, policy.ErrSCAIOverlappingAttributes) {
-			t.Errorf("expected ErrSCAIOverlappingAttributes, got %v", err)
+		if hash(t, &policy.Policy{}) == "" {
+			t.Error("expected non-empty hash for empty policy")
 		}
 	})
 
-	t.Run("overlapping is case-insensitive", func(t *testing.T) {
+	t.Run("explicit zero value in a rule changes the hash", func(t *testing.T) {
 		t.Parallel()
 
-		pol := &policy.Policy{
-			SCAI: &policy.SCAIPolicy{
-				RequiredAttributes:  []string{"Passed_Code_Review"},
-				ForbiddenAttributes: []string{"passed_code_review"},
-			},
+		load := func(t *testing.T, ruleSignatures string) *policy.Policy {
+			t.Helper()
+
+			dir := t.TempDir()
+			testutil.WritePolicy(t, dir, testDefaultJSON, `{
+				"signatures": {"requireTransparencyLog": true},
+				"rules": [{"images": ["ghcr.io/**"], "signatures": `+ruleSignatures+`}]
+			}`)
+
+			pol, err := policy.Load(filepath.Join(dir, testDefaultJSON))
+			testutil.AssertNoError(t, err)
+
+			return pol
 		}
 
-		err := pol.Validate()
-		if !errors.Is(err, policy.ErrSCAIOverlappingAttributes) {
-			t.Errorf("expected ErrSCAIOverlappingAttributes, got %v", err)
-		}
-	})
+		// Both policies marshal identically, but only the explicit false
+		// disables the base transparency log requirement for the rule.
+		explicit := load(t, `{"requireTransparencyLog": false}`)
+		omitted := load(t, `{}`)
 
-	t.Run("no overlap passes", func(t *testing.T) {
-		t.Parallel()
+		testutil.AssertEqual(t, false,
+			policy.ApplyRule(explicit, &explicit.Rules[0]).Signatures.RequireTransparencyLog)
+		testutil.AssertEqual(t, true,
+			policy.ApplyRule(omitted, &omitted.Rules[0]).Signatures.RequireTransparencyLog)
 
-		pol := &policy.Policy{
-			SCAI: &policy.SCAIPolicy{
-				RequiredAttributes:  []string{testAttrCodeReview},
-				ForbiddenAttributes: []string{testAttrKnownVulnerable},
-			},
-		}
-
-		testutil.AssertNoError(t, pol.Validate())
-	})
-
-	t.Run("overlapping in rules rejects", func(t *testing.T) {
-		t.Parallel()
-
-		pol := &policy.Policy{
-			Rules: []policy.ImageRule{
-				{
-					Images: []string{testRuleImagesGlob},
-					SCAI: &policy.SCAIPolicy{
-						RequiredAttributes:  []string{testAttrFuzzTested},
-						ForbiddenAttributes: []string{testAttrFuzzTested},
-					},
-				},
-			},
-		}
-
-		err := pol.Validate()
-		if !errors.Is(err, policy.ErrSCAIOverlappingAttributes) {
-			t.Errorf("expected ErrSCAIOverlappingAttributes, got %v", err)
+		if hash(t, explicit) == hash(t, omitted) {
+			t.Error("removing an explicit field should change the hash")
 		}
 	})
-}
-
-func TestMergeWithDefaultInheritsBuildEnv(t *testing.T) {
-	t.Parallel()
-
-	defaultPol := &policy.Policy{
-		BuildEnv: &policy.BuildEnvPolicy{
-			MissingPolicy:       types.ActionDeny,
-			RequiredProperties:  []string{"os"},
-			ForbiddenProperties: []string{"debug"},
-		},
-	}
-	nsPol := &policy.Policy{}
-
-	merged := policy.MergeWithDefault(nsPol, defaultPol)
-	if merged.BuildEnv == nil {
-		t.Fatal("expected BuildEnv to be inherited")
-	}
-
-	testutil.AssertEqual(t, types.ActionDeny, merged.BuildEnv.MissingPolicy)
-	testutil.AssertEqual(t, 1, len(merged.BuildEnv.RequiredProperties))
-	testutil.AssertEqual(t, 1, len(merged.BuildEnv.ForbiddenProperties))
-
-	merged.BuildEnv.RequiredProperties = append(
-		merged.BuildEnv.RequiredProperties, "arch",
-	)
-
-	if len(defaultPol.BuildEnv.RequiredProperties) != 1 {
-		t.Error("clone should not share slice backing array with default")
-	}
-}
-
-func TestMergeWithDefaultInheritsVulnScan(t *testing.T) {
-	t.Parallel()
-
-	maxScore := 7.5
-	defaultPol := &policy.Policy{
-		VulnScan: &policy.VulnScanPolicy{
-			MissingPolicy: types.ActionWarn,
-			MaxScore:      &maxScore,
-			IgnoreCVEs:    []string{"CVE-2024-0001"},
-		},
-	}
-	nsPol := &policy.Policy{}
-
-	merged := policy.MergeWithDefault(nsPol, defaultPol)
-	if merged.VulnScan == nil {
-		t.Fatal("expected VulnScan to be inherited")
-	}
-
-	testutil.AssertEqual(t, types.ActionWarn, merged.VulnScan.MissingPolicy)
-
-	if merged.VulnScan.MaxScore == nil || *merged.VulnScan.MaxScore != maxScore {
-		t.Error("expected MaxScore to be cloned")
-	}
-
-	*merged.VulnScan.MaxScore = 9.0
-
-	if *defaultPol.VulnScan.MaxScore != maxScore {
-		t.Error("clone should not share MaxScore pointer with default")
-	}
-}
-
-func TestMergeWithDefaultInheritsTestResult(t *testing.T) {
-	t.Parallel()
-
-	defaultPol := &policy.Policy{
-		TestResult: &policy.TestResultPolicy{
-			MissingPolicy:  types.ActionDeny,
-			RequiredSuites: []string{"unit", "integration"},
-		},
-	}
-	nsPol := &policy.Policy{}
-
-	merged := policy.MergeWithDefault(nsPol, defaultPol)
-	if merged.TestResult == nil {
-		t.Fatal("expected TestResult to be inherited")
-	}
-
-	testutil.AssertEqual(t, types.ActionDeny, merged.TestResult.MissingPolicy)
-	testutil.AssertEqual(t, 2, len(merged.TestResult.RequiredSuites))
-}
-
-func TestMergeWithDefaultInheritsRelease(t *testing.T) {
-	t.Parallel()
-
-	defaultPol := &policy.Policy{
-		Release: &policy.ReleasePolicy{
-			MissingPolicy:     types.ActionWarn,
-			TrustedRegistries: []string{"ghcr.io/myorg/*"},
-			RequirePackageID:  true,
-		},
-	}
-	nsPol := &policy.Policy{}
-
-	merged := policy.MergeWithDefault(nsPol, defaultPol)
-	if merged.Release == nil {
-		t.Fatal("expected Release to be inherited")
-	}
-
-	testutil.AssertEqual(t, types.ActionWarn, merged.Release.MissingPolicy)
-	testutil.AssertEqual(t, true, merged.Release.RequirePackageID)
-	testutil.AssertEqual(t, 1, len(merged.Release.TrustedRegistries))
-}
-
-func TestMergeWithDefaultInheritsRuntimeTrace(t *testing.T) {
-	t.Parallel()
-
-	defaultPol := &policy.Policy{
-		RuntimeTrace: &policy.RuntimeTracePolicy{
-			MissingPolicy:         types.ActionDeny,
-			TrustedMonitors:       []string{"falco"},
-			ForbiddenFilePatterns: []string{"/etc/shadow"},
-		},
-	}
-	nsPol := &policy.Policy{}
-
-	merged := policy.MergeWithDefault(nsPol, defaultPol)
-	if merged.RuntimeTrace == nil {
-		t.Fatal("expected RuntimeTrace to be inherited")
-	}
-
-	testutil.AssertEqual(t, types.ActionDeny, merged.RuntimeTrace.MissingPolicy)
-	testutil.AssertEqual(t, 1, len(merged.RuntimeTrace.TrustedMonitors))
-	testutil.AssertEqual(t, 1, len(merged.RuntimeTrace.ForbiddenFilePatterns))
-}
-
-func TestMissingPolicyAccessors(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name   string
-		policy *policy.Policy
-		check  func(*policy.Policy) types.Action
-		want   types.Action
-	}{
-		{
-			name: "SourceMissingPolicy deny",
-			policy: &policy.Policy{
-				Source: &policy.SourcePolicy{MissingPolicy: types.ActionDeny},
-			},
-			check: (*policy.Policy).SourceMissingPolicy,
-			want:  types.ActionDeny,
-		},
-		{
-			name: "BuildEnvMissingPolicy warn",
-			policy: &policy.Policy{
-				BuildEnv: &policy.BuildEnvPolicy{MissingPolicy: types.ActionWarn},
-			},
-			check: (*policy.Policy).BuildEnvMissingPolicy,
-			want:  types.ActionWarn,
-		},
-		{
-			name: "VulnScanMissingPolicy deny",
-			policy: &policy.Policy{
-				VulnScan: &policy.VulnScanPolicy{MissingPolicy: types.ActionDeny},
-			},
-			check: (*policy.Policy).VulnScanMissingPolicy,
-			want:  types.ActionDeny,
-		},
-		{
-			name: "TestResultMissingPolicy allow",
-			policy: &policy.Policy{
-				TestResult: &policy.TestResultPolicy{MissingPolicy: types.ActionAllow},
-			},
-			check: (*policy.Policy).TestResultMissingPolicy,
-			want:  types.ActionAllow,
-		},
-		{
-			name: "ReleaseMissingPolicy warn",
-			policy: &policy.Policy{
-				Release: &policy.ReleasePolicy{MissingPolicy: types.ActionWarn},
-			},
-			check: (*policy.Policy).ReleaseMissingPolicy,
-			want:  types.ActionWarn,
-		},
-		{
-			name: "RuntimeTraceMissingPolicy deny",
-			policy: &policy.Policy{
-				RuntimeTrace: &policy.RuntimeTracePolicy{MissingPolicy: types.ActionDeny},
-			},
-			check: (*policy.Policy).RuntimeTraceMissingPolicy,
-			want:  types.ActionDeny,
-		},
-		{
-			name:   "unset section defaults to allow",
-			policy: &policy.Policy{},
-			check:  (*policy.Policy).SourceMissingPolicy,
-			want:   types.ActionAllow,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			got := test.check(test.policy)
-			testutil.AssertEqual(t, test.want, got)
-		})
-	}
 }

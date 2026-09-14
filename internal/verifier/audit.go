@@ -165,6 +165,8 @@ func allowResult(
 
 	return &types.Result{
 		Allowed:      true,
+		Verified:     true,
+		Mode:         "",
 		Reason:       reason,
 		CheckResults: nil,
 	}

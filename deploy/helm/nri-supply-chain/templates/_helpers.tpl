@@ -44,6 +44,22 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 {{- end }}
 
+{{- define "nri-supply-chain.image" -}}
+{{- if .Values.image.digest }}
+{{- printf "%s@%s" .Values.image.repository .Values.image.digest }}
+{{- else }}
+{{- printf "%s:%s" .Values.image.repository (default .Chart.AppVersion .Values.image.tag) }}
+{{- end }}
+{{- end }}
+
+{{- define "nri-supply-chain.healthPort" -}}
+{{- $port := .Values.probes.port | int -}}
+{{- if eq $port (include "nri-supply-chain.metricsPort" . | int) -}}
+{{- fail "probes.port must differ from the config.metricsAddr port" -}}
+{{- end -}}
+{{- $port -}}
+{{- end }}
+
 {{- define "nri-supply-chain.metricsPort" -}}
 {{- $match := regexFind ":[0-9]+$" .Values.config.metricsAddr -}}
 {{- if not $match -}}

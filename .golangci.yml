@@ -143,6 +143,7 @@ linters:
             - github.com/Azure/azure-sdk-for-go/sdk
             - github.com/CycloneDX/cyclonedx-go
             - github.com/containerd/nri
+            - github.com/containerd/ttrpc
             - github.com/fatih/color
             - github.com/fsnotify/fsnotify
             - github.com/google/cel-go
@@ -155,6 +156,7 @@ linters:
             - github.com/olekukonko/tablewriter
             - github.com/olekukonko/tablewriter/tw
             - github.com/openvex/go-vex
+            - github.com/package-url/packageurl-go
             - github.com/prometheus/client_golang
             - github.com/saschagrunert/nri-supply-chain
             - github.com/sigstore/protobuf-specs

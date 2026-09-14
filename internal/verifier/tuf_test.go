@@ -105,6 +105,7 @@ func TestFetchTrustedRootSyncSingleRootWithMirror(t *testing.T) {
 			Name:      "test",
 			TUFMirror: "https://mirror.example.com",
 			TUFRoot:   "/nonexistent/tuf-root.json",
+			Issuers:   nil,
 		},
 	}
 
@@ -130,11 +131,13 @@ func TestFetchTrustedRootSyncMultipleRoots(t *testing.T) {
 			Name:      "first",
 			TUFMirror: "https://first.example.com",
 			TUFRoot:   "/nonexistent/first-root.json",
+			Issuers:   nil,
 		},
 		{
 			Name:      "second",
 			TUFMirror: "https://second.example.com",
 			TUFRoot:   "/nonexistent/second-root.json",
+			Issuers:   nil,
 		},
 	}
 
@@ -164,16 +167,19 @@ func TestFetchTrustedRootFromFirstRootSelectsFirstMirror(t *testing.T) {
 					Name:      "no-mirror",
 					TUFMirror: "",
 					TUFRoot:   "",
+					Issuers:   nil,
 				},
 				{
 					Name:      "has-mirror",
 					TUFMirror: "https://mirror.example.com",
 					TUFRoot:   "/nonexistent/root.json",
+					Issuers:   nil,
 				},
 				{
 					Name:      "other-mirror",
 					TUFMirror: "https://other.example.com",
 					TUFRoot:   "/nonexistent/other.json",
+					Issuers:   nil,
 				},
 			},
 			wantErrPath: "/nonexistent/root.json",
@@ -185,11 +191,13 @@ func TestFetchTrustedRootFromFirstRootSelectsFirstMirror(t *testing.T) {
 					Name:      "first",
 					TUFMirror: "https://first.example.com",
 					TUFRoot:   "/nonexistent/first.json",
+					Issuers:   nil,
 				},
 				{
 					Name:      "second",
 					TUFMirror: "https://second.example.com",
 					TUFRoot:   "/nonexistent/second.json",
+					Issuers:   nil,
 				},
 			},
 			wantErrPath: "/nonexistent/first.json",

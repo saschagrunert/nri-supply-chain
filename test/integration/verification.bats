@@ -8,7 +8,7 @@ verification = "enforce"
 policy_dir = "/nonexistent/policy/dir"
 EOF
 	run_binary --config "$TEST_DIR/config.toml"
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 }
 
 @test "enforce mode with empty policy dir succeeds" {
@@ -51,7 +51,7 @@ policy_dir = "$TEST_DIR/policies"
 fetch_timeout = "0s"
 EOF
 	run_binary --config "$TEST_DIR/config.toml"
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 }
 
 @test "invalid fetch failure policy rejected" {
@@ -63,7 +63,7 @@ policy_dir = "$TEST_DIR/policies"
 fetch_failure_policy = "invalid"
 EOF
 	run_binary --config "$TEST_DIR/config.toml"
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 }
 
 @test "fetch failure policy allow rejected in enforce mode" {
@@ -75,7 +75,7 @@ policy_dir = "$TEST_DIR/policies"
 fetch_failure_policy = "allow"
 EOF
 	run_binary --config "$TEST_DIR/config.toml" validate
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 }
 
 @test "fetch failure policy deny accepted" {
@@ -99,7 +99,7 @@ policy_dir = "$TEST_DIR/policies"
 cache_ttl = "-1s"
 EOF
 	run_binary --config "$TEST_DIR/config.toml"
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 }
 
 @test "relative policy_dir rejected in enforce mode" {
@@ -110,7 +110,7 @@ verification = "enforce"
 policy_dir = "relative/path"
 EOF
 	run_binary --config "$TEST_DIR/config.toml"
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 }
 
 @test "cache_ttl zero accepted (caching disabled)" {

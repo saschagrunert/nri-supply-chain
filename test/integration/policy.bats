@@ -128,7 +128,7 @@ verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 EOF
 	run_binary --config "$TEST_DIR/config.toml"
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 }
 
 @test "policy with unknown JSON fields rejected" {
@@ -144,7 +144,7 @@ verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 EOF
 	run_binary --config "$TEST_DIR/config.toml"
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 }
 
 @test "policy with trusted issuers for keyless verification" {
@@ -183,7 +183,7 @@ verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 EOF
 	run_binary --config "$TEST_DIR/config.toml" validate
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 	[[ "$output" == *"sanPatterns is required"* ]]
 }
 
@@ -218,7 +218,7 @@ verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 EOF
 	run_binary --config "$TEST_DIR/config.toml"
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 	[[ "$output" == *"builder id is required"* ]]
 }
 
@@ -236,7 +236,7 @@ verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 EOF
 	run_binary --config "$TEST_DIR/config.toml"
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 	[[ "$output" == *"maxLevel"* ]]
 }
 
@@ -254,7 +254,7 @@ verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 EOF
 	run_binary --config "$TEST_DIR/config.toml"
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 	[[ "$output" == *"keyless verifier requires trust.issuers"* ]]
 }
 
@@ -272,7 +272,7 @@ verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 EOF
 	run_binary --config "$TEST_DIR/config.toml"
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 	[[ "$output" == *"absolute path"* ]]
 }
 
@@ -290,7 +290,7 @@ verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 EOF
 	run_binary --config "$TEST_DIR/config.toml"
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 	[[ "$output" == *"minimum level"* ]]
 }
 
@@ -302,7 +302,7 @@ verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 EOF
 	run_binary --config "$TEST_DIR/config.toml"
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 	[[ "$output" == *"trailing"* ]]
 }
 
@@ -393,7 +393,7 @@ verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 EOF
 	run_binary --config "$TEST_DIR/config.toml" validate
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 	[[ "$output" == *"CEL"* ]]
 }
 
@@ -454,7 +454,7 @@ verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 EOF
 	run_binary --config "$TEST_DIR/config.toml"
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 	[[ "$output" == *"invalid sbom format"* ]]
 }
 
@@ -472,6 +472,55 @@ verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 EOF
 	run_binary --config "$TEST_DIR/config.toml"
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 	[[ "$output" == *"valid PURL"* ]]
+}
+
+@test "policy with unknown CEL field rejected" {
+	mkdir -p "$TEST_DIR/policies"
+	cat >"$TEST_DIR/policies/default.json" <<EOF
+{
+    "cel": {
+        "rules": [
+            {"require": "image.registryx == 'ghcr.io'"}
+        ]
+    }
+}
+EOF
+	cat >"$TEST_DIR/config.toml" <<EOF
+verification = "enforce"
+policy_dir = "$TEST_DIR/policies"
+EOF
+	run_binary --config "$TEST_DIR/config.toml" validate
+	[[ "$status" -eq 2 ]]
+	[[ "$output" == *"unknown field"* ]]
+}
+
+@test "policy file with invalid namespace name rejected" {
+	mkdir -p "$TEST_DIR/policies"
+	echo '{}' >"$TEST_DIR/policies/default.json"
+	echo '{"mode": "enforce"}' >"$TEST_DIR/policies/Production.json"
+	cat >"$TEST_DIR/config.toml" <<EOF
+verification = "warn"
+policy_dir = "$TEST_DIR/policies"
+EOF
+	run_binary --config "$TEST_DIR/config.toml" validate
+	[[ "$status" -eq 2 ]]
+	[[ "$output" == *"DNS-1123"* ]]
+}
+
+@test "notation audit level rejected in enforce mode" {
+	mkdir -p "$TEST_DIR/policies"
+	cat >"$TEST_DIR/policies/default.json" <<EOF
+{
+    "notation": {"verificationLevel": "audit"}
+}
+EOF
+	cat >"$TEST_DIR/config.toml" <<EOF
+verification = "enforce"
+policy_dir = "$TEST_DIR/policies"
+EOF
+	run_binary --config "$TEST_DIR/config.toml" validate
+	[[ "$status" -eq 2 ]]
+	[[ "$output" == *"audit"* ]]
 }

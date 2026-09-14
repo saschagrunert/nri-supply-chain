@@ -22,7 +22,9 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
       annotations:
+        {{- if .Values.daemonSet.restartOnConfigChange }}
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- end }}
         {{- if not (hasKey .Values.podAnnotations "prometheus.io/port") }}
         prometheus.io/port: {{ include "nri-supply-chain.metricsPort" . | quote }}
         {{- end }}
@@ -39,6 +41,13 @@ spec:
       {{- with .Values.daemonSet.priorityClassName }}
       priorityClassName: {{ . }}
       {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.daemonSet.terminationGracePeriodSeconds | int64 }}
+      {{- if .Values.daemonSet.hostNetwork }}
+      hostNetwork: true
+      {{- end }}
+      {{- with .Values.daemonSet.dnsPolicy }}
+      dnsPolicy: {{ . }}
+      {{- end }}
       {{- with .Values.daemonSet.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
@@ -53,14 +62,21 @@ spec:
       {{- end }}
       containers:
         - name: nri-supply-chain
-          image: "{{ .Values.image.repository }}:{{ default .Chart.AppVersion .Values.image.tag }}"
+          image: {{ include "nri-supply-chain.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          args: ["--config", "/etc/nri-supply-chain/config.toml"]
+          args:
+            - --config
+            - /etc/nri-supply-chain/config/config.toml
+            - --health-addr
+            - {{ printf ":%d" (include "nri-supply-chain.healthPort" . | int) | quote }}
           env:
             - name: NODE_NAME
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
+            # Writable home for the Sigstore TUF cache.
+            - name: HOME
+              value: /var/cache/nri-supply-chain
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -68,16 +84,19 @@ spec:
             - name: metrics
               containerPort: {{ include "nri-supply-chain.metricsPort" . }}
               protocol: TCP
+            - name: health
+              containerPort: {{ include "nri-supply-chain.healthPort" . }}
+              protocol: TCP
           startupProbe:
-            httpGet: {path: /healthz, port: metrics}
+            httpGet: {path: /healthz, port: health}
             failureThreshold: {{ .Values.probes.startup.failureThreshold }}
             periodSeconds: {{ .Values.probes.startup.periodSeconds }}
           livenessProbe:
-            httpGet: {path: /healthz, port: metrics}
+            httpGet: {path: /healthz, port: health}
             failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
             periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
           readinessProbe:
-            httpGet: {path: /readyz, port: metrics}
+            httpGet: {path: /readyz, port: health}
             failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
             periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
           resources:
@@ -87,16 +106,18 @@ spec:
           volumeMounts:
             - name: nri-socket
               mountPath: /var/run/nri
+            # Directory mounts (not subPath) receive ConfigMap updates, which
+            # the plugin reloads without a restart.
             - name: config
-              mountPath: /etc/nri-supply-chain/config.toml
-              subPath: config.toml
+              mountPath: /etc/nri-supply-chain/config
               readOnly: true
-            {{- range $name, $_ := .Values.policies }}
-            - name: config
-              mountPath: /etc/nri-supply-chain/policies/{{ $name }}
-              subPath: {{ $name }}
+            - name: policies
+              mountPath: /etc/nri-supply-chain/policies
               readOnly: true
-            {{- end }}
+            - name: cache
+              mountPath: /var/cache/nri-supply-chain
+            - name: tmp
+              mountPath: /tmp
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -108,6 +129,37 @@ spec:
         - name: config
           configMap:
             name: {{ include "nri-supply-chain.fullname" . }}
+            items:
+              - key: config.toml
+                path: config.toml
+        - name: policies
+          {{- if .Values.policies }}
+          configMap:
+            name: {{ include "nri-supply-chain.fullname" . }}
+            items:
+              {{- range $name, $_ := .Values.policies }}
+              - key: {{ $name }}
+                path: {{ $name }}
+              {{- end }}
+          {{- else }}
+          # A ConfigMap volume without items projects every key, including
+          # config.toml, so an empty policy set mounts an empty directory.
+          emptyDir: {}
+          {{- end }}
+        - name: cache
+          {{- if .Values.cacheVolume.sizeLimit }}
+          emptyDir:
+            sizeLimit: {{ .Values.cacheVolume.sizeLimit }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: tmp
+          {{- if .Values.tmpVolume.sizeLimit }}
+          emptyDir:
+            sizeLimit: {{ .Values.tmpVolume.sizeLimit }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

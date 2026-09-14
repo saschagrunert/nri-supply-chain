@@ -115,6 +115,83 @@ func TestCircuitBreakerSuccessResetsToClosed(t *testing.T) {
 	}
 }
 
+func TestCircuitBreakerReleaseAllowsNewProbe(t *testing.T) {
+	t.Parallel()
+
+	breaker := attestation.NewCircuitBreaker(1, 10*time.Millisecond)
+
+	breaker.RecordFailure()
+
+	time.Sleep(100 * time.Millisecond)
+
+	probe, allowed := breaker.Acquire()
+	if !allowed {
+		t.Fatal("expected half-open probe to be allowed")
+	}
+
+	if breaker.Allow() {
+		t.Fatal("expected second request in half-open to be rejected")
+	}
+
+	breaker.Release(probe)
+
+	if !breaker.Allow() {
+		t.Error("expected a new probe after releasing the probe")
+	}
+
+	closed := attestation.NewCircuitBreaker(1, time.Minute)
+
+	permit, _ := closed.Acquire()
+	closed.Release(permit)
+
+	if !closed.Allow() {
+		t.Error("expected Release to leave a closed breaker closed")
+	}
+}
+
+func TestCircuitBreakerStalePermitCannotReleaseProbe(t *testing.T) {
+	t.Parallel()
+
+	breaker := attestation.NewCircuitBreaker(1, 10*time.Millisecond)
+
+	// Admitted while closed, still running when the breaker trips.
+	stale, allowed := breaker.Acquire()
+	if !allowed {
+		t.Fatal("expected a closed breaker to admit the request")
+	}
+
+	breaker.RecordFailure()
+
+	time.Sleep(100 * time.Millisecond)
+
+	probe, allowed := breaker.Acquire()
+	if !allowed {
+		t.Fatal("expected half-open probe to be allowed")
+	}
+
+	breaker.Release(stale)
+
+	if breaker.Allow() {
+		t.Fatal("expected a stale permit not to release the probe of another request")
+	}
+
+	breaker.Succeeded(stale)
+
+	if breaker.ExportIsClosed() {
+		t.Fatal("expected a stale permit not to decide the probe outcome")
+	}
+
+	if tripped := breaker.Failed(stale); tripped || breaker.Allow() {
+		t.Fatal("expected a stale failure to leave the probe in charge")
+	}
+
+	breaker.Succeeded(probe)
+
+	if !breaker.ExportIsClosed() {
+		t.Error("expected the probe success to close the breaker")
+	}
+}
+
 func TestCircuitBreakerFailureInHalfOpenReopens(t *testing.T) {
 	t.Parallel()
 

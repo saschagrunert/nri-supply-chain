@@ -70,7 +70,16 @@ const (
 	// above this cause containerd to abort the callback before resolution
 	// completes. The 5s ceiling allows headroom for runtimes with higher
 	// limits while preventing obviously broken configs.
-	maxDigestResolveTimeout        = 5 * time.Second
+	maxDigestResolveTimeout = 5 * time.Second
+	// defaultAdmissionTimeout bounds the whole NRI CreateContainer admission
+	// (digest resolution plus waiting for the verification result). It must
+	// stay below the runtime's NRI plugin request timeout (2s by default in
+	// containerd and CRI-O): a plugin that misses that deadline is closed by
+	// the runtime and the container is created without a verdict.
+	defaultAdmissionTimeout = 1500 * time.Millisecond
+	// maxAdmissionTimeout caps admission_timeout. Runtimes may raise their
+	// NRI request timeout, so values above the 2s default are accepted.
+	maxAdmissionTimeout            = 1 * time.Minute
 	defaultCacheTTL                = 24 * time.Hour
 	defaultCacheFailureTTL         = 5 * time.Minute
 	defaultCircuitBreakerThreshold = 5
@@ -129,7 +138,7 @@ const (
 	DefaultRemediationBatchSize    = 10
 	maxRemediationBatchSize        = 100
 	defaultThrottleCPUQuotaPercent = 10
-	defaultThrottleMemoryPercent   = 50
+	defaultThrottleMemoryPercent   = 100
 	minThrottlePercent             = 1
 	maxThrottlePercent             = 100
 
@@ -178,6 +187,12 @@ type SigstoreRootSource struct {
 	// TUFRoot is the path to a custom root.json file for TUF trust anchor
 	// initialization. When set, requires TUFMirror and must be absolute.
 	TUFRoot string `toml:"tuf_root"`
+
+	// Issuers restricts the OIDC issuers whose Fulcio certificates this root
+	// may vouch for. A certificate chaining to this root is only accepted
+	// when its issuer is listed here and trusted by the policy. When empty,
+	// every issuer trusted by the policy is accepted from this root.
+	Issuers []string `toml:"issuers"`
 }
 
 // SigstoreConfig configures private Sigstore instance endpoints for keyless
@@ -240,6 +255,7 @@ func (s *SigstoreConfig) EffectiveRoots() []SigstoreRootSource {
 			Name:      "default",
 			TUFMirror: s.TUFMirror,
 			TUFRoot:   s.TUFRoot,
+			Issuers:   nil,
 		}}
 	}
 
@@ -248,6 +264,7 @@ func (s *SigstoreConfig) EffectiveRoots() []SigstoreRootSource {
 			Name:      "default",
 			TUFMirror: "",
 			TUFRoot:   s.TUFRoot,
+			Issuers:   nil,
 		}}
 	}
 
@@ -284,6 +301,12 @@ type PolicyConfig struct {
 	// PollInterval is how often the plugin checks for policy updates in the
 	// remote registry. Minimum 30s, default 5m.
 	PollInterval Duration `toml:"poll_interval"`
+	// OCIMaxStaleness is the maximum time the applied OCI policies may go
+	// without a successful registry check. When exceeded, the plugin reports
+	// not ready and logs an error; the previously applied policies stay in
+	// effect. 0 (default) disables the limit. Must be at least PollInterval
+	// when set.
+	OCIMaxStaleness Duration `toml:"oci_max_staleness"`
 	// Issuers is a list of trusted OIDC issuers for keyless signature
 	// verification of OCI policy artifacts.
 	Issuers []string `toml:"issuers"`
@@ -317,10 +340,22 @@ type Config struct {
 	// deadline for NRI callbacks; higher values risk containerd aborting the
 	// callback before resolution completes.
 	DigestResolveTimeout Duration `toml:"digest_resolve_timeout"`
+	// AdmissionTimeout bounds the NRI CreateContainer admission (digest
+	// resolution plus waiting for the verification result). When it expires,
+	// enforce mode denies the container while verification continues in the
+	// background to fill the cache; warn mode admits the container and marks
+	// verification as incomplete. Default 1.5s. Keep it below the runtime's
+	// NRI plugin request timeout (2s by default).
+	AdmissionTimeout Duration `toml:"admission_timeout"`
 	// FetchFailurePolicy controls behavior when attestation fetch fails due to
 	// network errors. Valid values: "allow", "warn" (default), "deny".
-	// In enforce mode the effective default changes to "deny".
+	// In enforce mode the effective default changes to "deny". Namespaces
+	// whose policy enforces under a non-enforce global mode never use "allow"
+	// and only use "warn" when it was set explicitly.
 	FetchFailurePolicy types.Action `toml:"fetch_failure_policy"`
+	// FetchFailurePolicyExplicit records whether fetch_failure_policy was set
+	// in the config file (as opposed to the default).
+	FetchFailurePolicyExplicit bool `toml:"-"`
 	// CacheTTL is how long verification results are cached per image digest + namespace.
 	CacheTTL Duration `toml:"cache_ttl"`
 	// CacheFailureTTL is how long failed verification results are cached.
@@ -504,7 +539,9 @@ type ThrottleConfig struct {
 	// to allow after throttling. Range: 1-100.
 	CPUQuotaPercent int `toml:"cpu_quota_percent"`
 	// MemoryLimitPercent is the percentage of the container's original memory
-	// limit to allow after throttling. Range: 1-100.
+	// limit to allow after throttling. Range: 1-100. The default of 100 leaves
+	// memory untouched: a limit below the container's working set makes the
+	// kernel OOM-kill it.
 	MemoryLimitPercent int `toml:"memory_limit_percent"`
 }
 
@@ -524,21 +561,23 @@ type TriggerConfig struct {
 // DefaultConfig returns the default configuration.
 func DefaultConfig() *Config { //nolint:funlen // single struct literal with all defaults
 	return &Config{
-		ConfigVersion:           LatestConfigVersion,
-		Verification:            ModeDisabled,
-		FetchTimeout:            Duration{Duration: defaultFetchTimeout},
-		DigestResolveTimeout:    Duration{Duration: defaultDigestResolveTimeout},
-		FetchFailurePolicy:      types.ActionWarn,
-		CacheTTL:                Duration{Duration: defaultCacheTTL},
-		CacheFailureTTL:         Duration{Duration: defaultCacheFailureTTL},
-		PolicyDir:               "/etc/nri-supply-chain/policies",
-		MetricsAddr:             "127.0.0.1:9090",
-		CircuitBreakerThreshold: defaultCircuitBreakerThreshold,
-		CircuitBreakerCooldown:  Duration{Duration: defaultCircuitBreakerCooldown},
-		VerificationTimeout:     Duration{Duration: defaultVerificationTimeout},
-		CheckTimeout:            Duration{Duration: defaultCheckTimeout},
-		FetchRateLimit:          0,
-		LogLevel:                "",
+		ConfigVersion:              LatestConfigVersion,
+		Verification:               ModeDisabled,
+		FetchTimeout:               Duration{Duration: defaultFetchTimeout},
+		DigestResolveTimeout:       Duration{Duration: defaultDigestResolveTimeout},
+		AdmissionTimeout:           Duration{Duration: defaultAdmissionTimeout},
+		FetchFailurePolicy:         types.ActionWarn,
+		FetchFailurePolicyExplicit: false,
+		CacheTTL:                   Duration{Duration: defaultCacheTTL},
+		CacheFailureTTL:            Duration{Duration: defaultCacheFailureTTL},
+		PolicyDir:                  "/etc/nri-supply-chain/policies",
+		MetricsAddr:                "127.0.0.1:9090",
+		CircuitBreakerThreshold:    defaultCircuitBreakerThreshold,
+		CircuitBreakerCooldown:     Duration{Duration: defaultCircuitBreakerCooldown},
+		VerificationTimeout:        Duration{Duration: defaultVerificationTimeout},
+		CheckTimeout:               Duration{Duration: defaultCheckTimeout},
+		FetchRateLimit:             0,
+		LogLevel:                   "",
 		Sigstore: SigstoreConfig{
 			TUFMirror:         "",
 			TUFRoot:           "",
@@ -547,12 +586,13 @@ func DefaultConfig() *Config { //nolint:funlen // single struct literal with all
 		},
 		Registries: nil,
 		Policy: PolicyConfig{
-			Source:       PolicySourceLocal,
-			OCIRef:       "",
-			PollInterval: Duration{Duration: defaultPollInterval},
-			Issuers:      nil,
-			SANPatterns:  nil,
-			Keys:         nil,
+			Source:          PolicySourceLocal,
+			OCIRef:          "",
+			PollInterval:    Duration{Duration: defaultPollInterval},
+			OCIMaxStaleness: Duration{Duration: 0},
+			Issuers:         nil,
+			SANPatterns:     nil,
+			Keys:            nil,
 		},
 		MaxAttestationSize: DefaultMaxAttestationSize,
 		CacheMaxEntries:    defaultCacheMaxEntries,
@@ -665,6 +705,34 @@ func (c *Config) ApplyModeDefaults(fetchFailurePolicyExplicit bool) {
 	}
 }
 
+// EffectiveFetchFailurePolicy returns the fetch_failure_policy that applies
+// to a namespace with the given effective verification mode. Under a global
+// enforce mode the configured value applies unchanged (ApplyModeDefaults and
+// validation already handled it). A namespace that enforces through its
+// policy while the global mode does not never uses "allow", and only uses
+// "warn" when fetch_failure_policy was set explicitly, so a fetch failure
+// cannot admit an unverified container in that namespace.
+func (c *Config) EffectiveFetchFailurePolicy(mode VerificationMode) types.Action {
+	if mode != ModeEnforce || c.Verification == ModeEnforce {
+		return c.FetchFailurePolicy
+	}
+
+	switch c.FetchFailurePolicy {
+	case types.ActionDeny:
+		return types.ActionDeny
+	case types.ActionWarn:
+		if c.FetchFailurePolicyExplicit {
+			return types.ActionWarn
+		}
+
+		return types.ActionDeny
+	case types.ActionAllow:
+		return types.ActionDeny
+	default:
+		return types.ActionDeny
+	}
+}
+
 // WarnInsecureRegistries logs a warning for each registry configured with
 // insecure TLS. Call at startup or reload time, not during validation.
 func (c *Config) WarnInsecureRegistries() {
@@ -694,7 +762,10 @@ func SigstoreConfigChanged(prev, next *SigstoreConfig) bool {
 	prevRoots := prev.EffectiveRoots()
 	nextRoots := next.EffectiveRoots()
 
-	if !slices.Equal(prevRoots, nextRoots) {
+	if !slices.EqualFunc(prevRoots, nextRoots, func(a, b SigstoreRootSource) bool {
+		return a.Name == b.Name && a.TUFMirror == b.TUFMirror &&
+			a.TUFRoot == b.TUFRoot && slices.Equal(a.Issuers, b.Issuers)
+	}) {
 		return true
 	}
 
@@ -757,7 +828,8 @@ func load(decode func(*Config) (toml.MetaData, error)) (*Config, error) {
 		return nil, fmt.Errorf("%w: %s", ErrUnknownConfigKeys, strings.Join(keys, ", "))
 	}
 
-	cfg.ApplyModeDefaults(meta.IsDefined("fetch_failure_policy"))
+	cfg.FetchFailurePolicyExplicit = meta.IsDefined("fetch_failure_policy")
+	cfg.ApplyModeDefaults(cfg.FetchFailurePolicyExplicit)
 
 	err = Migrate(cfg)
 	if err != nil {

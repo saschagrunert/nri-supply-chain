@@ -32,6 +32,9 @@ spec:
     - port: metrics
       path: /metrics
       interval: 30s
+      # Keep the plugin's own "namespace" metric label instead of renaming it
+      # to "exported_namespace". The dashboard and alerts rely on it.
+      honorLabels: true
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
@@ -44,6 +47,18 @@ spec:
   groups:
     - name: nri-supply-chain
       rules:
+        - alert: NRISupplyChainPluginDown
+          expr: up{job="nri-supply-chain-metrics"} == 0 or absent(up{job="nri-supply-chain-metrics"})
+          for: 2m
+          labels: { severity: critical }
+          annotations:
+            summary: Supply-chain plugin is not running or not scraped; containers on affected nodes are not verified unless the runtime requires the plugin.
+        - alert: NRISupplyChainNRIDisconnected
+          expr: nri_supply_chain_nri_connected == 0
+          for: 1m
+          labels: { severity: critical }
+          annotations:
+            summary: Supply-chain plugin is not connected to the NRI runtime; new containers on this node are not verified unless the runtime requires the plugin.
         - alert: NRISupplyChainVerificationFailures
           expr: sum(rate(nri_supply_chain_verification_total{result="fail"}[5m])) > 0
           for: 5m
@@ -68,12 +83,14 @@ spec:
           labels: { severity: warning }
           annotations:
             summary: Verifications are being interrupted by context cancellation.
-        - alert: NRISupplyChainHighVerificationLatency
-          expr: histogram_quantile(0.99, sum(rate(nri_supply_chain_verification_duration_seconds_bucket[5m])) by (le)) > 5
+        # Keep the threshold below admission_timeout and the runtime's NRI
+        # request timeout (2s by default).
+        - alert: NRISupplyChainHighAdmissionLatency
+          expr: histogram_quantile(0.99, sum by (le, instance) (rate(nri_supply_chain_create_container_duration_seconds_bucket[5m]))) > 1
           for: 5m
           labels: { severity: warning }
           annotations:
-            summary: Verification p99 latency exceeds 5 seconds.
+            summary: CreateContainer p99 latency is approaching the runtime's NRI request timeout.
         - alert: NRISupplyChainConfigReloadFailure
           expr: increase(nri_supply_chain_config_reload_errors_total[15m]) > 0
           for: 15m
@@ -102,9 +119,12 @@ spec:
           labels: { severity: critical }
           annotations:
             summary: Remediation UpdateContainers calls are failing.
+        # Set the threshold to at least three times remediation.interval. The
+        # alert only fires after a cycle has completed, so it stays silent while
+        # remediation is disabled.
         - alert: NRISupplyChainContinuousVerifierStale
-          expr: time() - nri_supply_chain_continuous_verifier_last_run > 900
+          expr: (time() - nri_supply_chain_continuous_verifier_last_run) > 900 and nri_supply_chain_continuous_verifier_last_run > 0
           for: 5m
           labels: { severity: critical }
           annotations:
-            summary: Continuous verifier has not run in the last 15 minutes.
+            summary: Continuous verifier has not completed a cycle in the last 15 minutes.

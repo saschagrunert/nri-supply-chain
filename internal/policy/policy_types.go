@@ -77,6 +77,10 @@ var (
 		"unexpected trailing content in policy file",
 	)
 
+	// ErrNonCanonicalField indicates a policy field name that only matches a
+	// known field when compared case-insensitively (e.g. "MissingPolicy").
+	ErrNonCanonicalField = errors.New("policy field name does not use the documented spelling")
+
 	// ErrEmptyValue indicates a list contains an empty string.
 	ErrEmptyValue = errors.New("empty value")
 
@@ -97,10 +101,11 @@ var (
 	// ErrDuplicateVerifierKey indicates a duplicate key path in a verifier's keys array.
 	ErrDuplicateVerifierKey = errors.New("duplicate verifier key")
 
-	// ErrDuplicateKeyAcrossVerifiers indicates the same key path appears in
-	// multiple verifiers, which would cause conflicting time bounds.
+	// ErrDuplicateKeyAcrossVerifiers indicates a verifier key path also appears
+	// in another verifier or in a builder, which would cause conflicting time
+	// bounds and an ambiguous signer binding.
 	ErrDuplicateKeyAcrossVerifiers = errors.New(
-		"same key path used in multiple verifiers",
+		"verifier key path is also used by another verifier or a builder",
 	)
 
 	// ErrInvalidNotBefore indicates the notBefore field is not valid RFC 3339.
@@ -296,6 +301,41 @@ var (
 	ErrScorecardCheckScoreRange = errors.New(
 		"scorecard.checks scores must be between 0 and 10",
 	)
+
+	// ErrIdentityIssuerRequired indicates a trusted identity has no issuer.
+	ErrIdentityIssuerRequired = errors.New("identity issuer is required")
+
+	// ErrIdentitySANPatternRequired indicates a trusted identity has no SAN pattern.
+	ErrIdentitySANPatternRequired = errors.New("identity sanPattern is required")
+
+	// ErrBuilderKeyNotAbsolute indicates a builder key path is not absolute.
+	ErrBuilderKeyNotAbsolute = errors.New("builder key must be an absolute path")
+
+	// ErrDuplicateBuilderKey indicates a duplicate key path in a builder's keys array.
+	ErrDuplicateBuilderKey = errors.New("duplicate builder key")
+
+	// ErrNotationAuditInEnforceMode indicates that the "audit" verification
+	// level is used in enforce mode. At that level authenticity failures are
+	// only logged, so untrusted signers would pass.
+	ErrNotationAuditInEnforceMode = errors.New(
+		"notation verification level \"audit\" is not allowed in enforce mode",
+	)
+
+	// ErrInvalidPolicyFilename indicates a policy file name does not map to a
+	// valid namespace ("<namespace>.json" with a lowercase DNS-1123 label, or
+	// "default.json").
+	ErrInvalidPolicyFilename = errors.New(
+		"policy file name must be default.json or <namespace>.json with a lowercase DNS-1123 label",
+	)
+
+	// ErrDuplicatePolicyNamespace indicates two policy files map to the same namespace.
+	ErrDuplicatePolicyNamespace = errors.New("duplicate policy for namespace")
+
+	// ErrPolicySymlinkOutsideDir indicates a symlinked policy file resolves
+	// outside of the policy directory.
+	ErrPolicySymlinkOutsideDir = errors.New(
+		"policy file symlink resolves outside the policy directory",
+	)
 )
 
 // Sections groups the verification settings that can be overridden
@@ -333,6 +373,11 @@ type Sections struct {
 	RuntimeTrace *RuntimeTracePolicy `json:"runtimeTrace,omitempty"`
 	// Scorecard contains OpenSSF Scorecard verification settings.
 	Scorecard *ScorecardPolicy `json:"scorecard,omitempty"`
+
+	// explicit records the JSON field paths (e.g. "slsa.maxAge") present in
+	// the policy document this value was decoded from. Merges use it to tell
+	// explicit zero values apart from omitted fields.
+	explicit map[string]bool
 }
 
 // Policy defines the trust roots and per-namespace verification settings.
@@ -384,6 +429,18 @@ type TrustPolicy struct {
 	BuildTypes []string `json:"buildTypes,omitempty"`
 }
 
+// TrustedIdentity binds a trusted builder or verifier to a keyless signing
+// identity from a Fulcio certificate.
+type TrustedIdentity struct {
+	// Issuer is the OIDC issuer URL that must be recorded in the signing
+	// certificate (exact match). It should also be listed in trust.issuers,
+	// otherwise the certificate is never accepted.
+	Issuer string `json:"issuer"`
+	// SANPattern is a glob pattern the certificate Subject Alternative Name
+	// must match. '*' does not match '/', '**' matches across '/'.
+	SANPattern string `json:"sanPattern"`
+}
+
 // TrustedBuilder represents a trusted SLSA provenance builder.
 type TrustedBuilder struct {
 	// ID is the builder identity URI.
@@ -393,6 +450,15 @@ type TrustedBuilder struct {
 	// not during SLSA provenance checks, because provenance attestations
 	// do not declare a build level.
 	MaxLevel int `json:"maxLevel"`
+	// Keys is a list of absolute paths to PEM-encoded public keys allowed to
+	// sign provenance that claims this builder ID. Together with Identities
+	// this binds the builder ID to its signer. When both are empty the
+	// builder is unbound and provenance claiming it is accepted from any
+	// trusted signer.
+	Keys []string `json:"keys,omitempty"`
+	// Identities is a list of keyless signing identities allowed to sign
+	// provenance that claims this builder ID.
+	Identities []TrustedIdentity `json:"identities,omitempty"`
 }
 
 // TrustedVerifier represents a trusted VSA verifier.
@@ -407,14 +473,22 @@ type TrustedVerifier struct {
 	// so bundles can be verified via Fulcio/OIDC.
 	Keys []string `json:"keys,omitempty"`
 	// NotBefore is the earliest time (RFC 3339) at which this verifier's
-	// key signatures are considered valid. Signatures made before this
-	// time are rejected. Optional; when empty, no lower bound is enforced.
+	// keys are valid. With a transparency log the signing time is checked
+	// against it; without one the current time is, since the signing time
+	// claimed by a bundle cannot be trusted. Optional; when empty, no lower
+	// bound is enforced.
 	NotBefore string `json:"notBefore,omitempty" jsonschema:"format=date-time"`
-	// NotAfter is the latest time (RFC 3339) at which this verifier's
-	// key signatures are considered valid. Signatures made after this
-	// time are rejected. Use this to time-bound a compromised key.
-	// Optional; when empty, no upper bound is enforced.
+	// NotAfter is the latest time (RFC 3339) at which this verifier's keys
+	// are valid. With a transparency log, signatures logged after it are
+	// rejected; without one, every signature of the key is rejected once
+	// it has passed. Use this to time-bound a compromised key. Optional;
+	// when empty, no upper bound is enforced.
 	NotAfter string `json:"notAfter,omitempty" jsonschema:"format=date-time"`
+	// Identities is a list of keyless signing identities allowed to sign VSAs
+	// for this verifier. A VSA is only trusted when it was signed by one of
+	// Keys or Identities; a verifier with neither never short-circuits
+	// verification.
+	Identities []TrustedIdentity `json:"identities,omitempty"`
 	// NotBeforeTime is the parsed form of NotBefore, resolved after validation.
 	NotBeforeTime time.Time `json:"-"`
 	// NotAfterTime is the parsed form of NotAfter, resolved after validation.

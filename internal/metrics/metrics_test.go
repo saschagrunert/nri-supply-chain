@@ -105,6 +105,10 @@ func TestNewMetrics(t *testing.T) {
 	if met.CreateContainerDuration == nil {
 		t.Error("expected CreateContainerDuration to be set")
 	}
+
+	if met.NRIConnected == nil {
+		t.Error("expected NRIConnected to be set")
+	}
 }
 
 func TestMetricsHandler(t *testing.T) {

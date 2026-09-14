@@ -54,14 +54,37 @@ start_guac_mock() {
 		        self.send_error(404)
 
 		    def do_POST(self):
-		        if self.path == "/query":
+		        if self.path != "/query":
+		            self.send_error(404)
+		            return
+
+		        length = int(self.headers.get("Content-Length", 0))
+		        query = json.loads(self.rfile.read(length) or b"{}").get("query", "")
+		        source = {
+		            "type": "git",
+		            "namespaces": [{"namespace": "github.com/test", "names": [{"name": "repo"}]}]
+		        }
+
+		        # The artifact is linked to its source repository, whose
+		        # scorecard is then queried.
+		        if "IsOccurrence" in query:
+		            subject = dict(source, __typename="Source")
+		            self._json_response({"data": {"IsOccurrence": [{"subject": subject}]}})
+		            return
+
+		        if "HasSourceAt" in query:
+		            self._json_response({"data": {"HasSourceAt": []}})
+		            return
+
+		        if "scorecards" in query:
 		            resp = {
 		                "data": {
 		                    "scorecards": [
 		                        {
-		                            "source": {"type": "git", "namespace": "github.com/test", "name": "repo"},
+		                            "source": source,
 		                            "scorecard": {
 		                                "aggregateScore": 7.5,
+		                                "timeScanned": "2026-01-01T00:00:00Z",
 		                                "checks": [
 		                                    {"check": "Code-Review", "score": 8},
 		                                    {"check": "Maintained", "score": 9}
@@ -73,7 +96,8 @@ start_guac_mock() {
 		            }
 		            self._json_response(resp)
 		            return
-		        self.send_error(404)
+
+		        self.send_error(400)
 
 		    def _param(self, key):
 		        from urllib.parse import urlparse, parse_qs

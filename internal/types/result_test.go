@@ -31,8 +31,10 @@ func TestCloneDeepCopiesMetadata(t *testing.T) {
 	t.Parallel()
 
 	original := types.Result{
-		Allowed: true,
-		Reason:  "ok",
+		Allowed:  true,
+		Verified: true,
+		Mode:     "",
+		Reason:   "ok",
 		CheckResults: []types.CheckResult{
 			{
 				Type:     types.CheckTypeSLSA,
@@ -41,6 +43,7 @@ func TestCloneDeepCopiesMetadata(t *testing.T) {
 				Detail:   testDetail,
 				Err:      nil,
 				Metadata: map[string]any{"builderID": "original"},
+				Missing:  false,
 			},
 		},
 	}
@@ -58,8 +61,10 @@ func TestCloneNilMetadata(t *testing.T) {
 	t.Parallel()
 
 	original := types.Result{
-		Allowed: true,
-		Reason:  "",
+		Allowed:  true,
+		Verified: true,
+		Mode:     "",
+		Reason:   "",
 		CheckResults: []types.CheckResult{
 			{
 				Type:     types.CheckTypeSLSA,
@@ -68,6 +73,7 @@ func TestCloneNilMetadata(t *testing.T) {
 				Detail:   testDetail,
 				Err:      nil,
 				Metadata: nil,
+				Missing:  false,
 			},
 		},
 	}

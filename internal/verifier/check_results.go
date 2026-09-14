@@ -27,10 +27,18 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
+// applyEnforcement records the verification outcome and effective mode on
+// result and applies the mode: enforce returns an error for a failed
+// verification, warn and disabled admit it while Verified stays false. A
+// result whose attestations could not be fetched is never verified, even
+// when fetch_failure_policy admits it.
 func applyEnforcement(
 	ctx context.Context, mode config.VerificationMode,
 	result *types.Result, imageRef string,
 ) (*types.Result, error) {
+	result.Verified = !resultHasFailures(result) && !result.Incomplete()
+	result.Mode = string(mode)
+
 	if result.Allowed {
 		return result, nil
 	}
@@ -69,17 +77,16 @@ func handleFetchError(
 		detail += " (circuit breaker open)"
 	}
 
-	checkResult := handleMissingAttestation(fetchFailurePolicy, types.CheckTypeFetch, detail)
-
-	return &types.Result{
-		Allowed:      checkResult.Passed,
-		Reason:       checkResult.Detail,
-		CheckResults: []types.CheckResult{*checkResult},
-	}
+	return resultFromCheck(
+		handleMissingAttestation(fetchFailurePolicy, types.CheckTypeFetch, detail),
+	)
 }
 
+// checkVSAMissing applies vsa.missingPolicy when no trusted VSA passed, which
+// covers both absent VSAs and VSAs that are untrusted, stale, unbound or
+// unparsable. It returns nil when direct verification should run.
 func checkVSAMissing(
-	pol *policy.Policy, imageRef string, met *metrics.Metrics,
+	pol *policy.Policy, detail string, met *metrics.Metrics,
 ) *types.Result {
 	missingPolicy := pol.MissingPolicyFor(types.CheckTypeVSA)
 
@@ -89,17 +96,7 @@ func checkVSAMissing(
 		return nil
 	}
 
-	check := handleMissingAttestation(
-		missingPolicy,
-		types.CheckTypeVSA,
-		"no VSA attestation found for image "+imageRef,
-	)
-
-	return &types.Result{
-		Allowed:      check.Passed,
-		Reason:       check.Detail,
-		CheckResults: []types.CheckResult{*check},
-	}
+	return resultFromCheck(handleMissingAttestation(missingPolicy, types.CheckTypeVSA, detail))
 }
 
 func appendVSAWarning(result *types.Result, pol *policy.Policy, detail string) {
@@ -143,6 +140,8 @@ func resultShouldUseShorterTTL(result *types.Result) bool {
 func combineResults(checks ...*types.CheckResult) *types.Result {
 	result := &types.Result{
 		Allowed:      true,
+		Verified:     false,
+		Mode:         "",
 		Reason:       "",
 		CheckResults: make([]types.CheckResult, 0, len(checks)),
 	}
@@ -189,24 +188,33 @@ func logMissingAttestation(
 	)
 }
 
+// handleMissingAttestation builds the result for an absent attestation (or a
+// failed fetch) according to the given action. Results for attestation types
+// are flagged as Missing so CEL never reports them as verified.
 func handleMissingAttestation(
 	pol types.Action, checkType types.CheckType, detail string,
 ) *types.CheckResult {
+	var result *types.CheckResult
+
 	switch pol {
 	case types.ActionDeny:
-		return types.FailResult(checkType, detail, nil)
+		result = types.FailResult(checkType, detail, nil)
 	case types.ActionWarn:
-		return types.WarnResult(checkType, detail)
+		result = types.WarnResult(checkType, detail)
 	case types.ActionAllow:
-		return types.PassResult(checkType, detail)
+		result = types.PassResult(checkType, detail)
 	default:
 		slog.Warn("Unrecognized missing attestation policy, defaulting to deny",
 			"policy", pol,
 			"check", checkType,
 		)
 
-		return types.FailResult(checkType, detail, nil)
+		result = types.FailResult(checkType, detail, nil)
 	}
+
+	result.Missing = checkType != types.CheckTypeFetch
+
+	return result
 }
 
 func extractPayloads(atts []attestation.VerifiedAttestation) [][]byte {

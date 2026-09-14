@@ -40,7 +40,7 @@ func TestServeMetricsDisabled(t *testing.T) {
 
 	plug := newDisabledPlugin(t)
 
-	err := serveMetrics(ctx, metrics.New(), "", plug)
+	err := serveMetrics(ctx, metrics.New(), "", plug, nil, defaultListenRetryPolicy())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -128,7 +128,7 @@ func startMetricsServer(t *testing.T, plug *plugin.Plugin) string {
 
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", met.Handler())
-	registerHealthProbes(mux, plug)
+	registerHealthProbes(mux, plug, nil)
 
 	srv := &http.Server{
 		Handler:           mux,

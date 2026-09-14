@@ -721,8 +721,12 @@ func TestBuildVarsTypes(t *testing.T) {
 		t.Fatal("vsa vars should be map[string]any")
 	}
 
-	if _, ok := vsaMap["level"].(int64); !ok {
-		t.Error("vsa.level should be an int64")
+	if present, ok := vsaMap["present"].(bool); !ok || present {
+		t.Error("vsa.present should be false without a VSA result")
+	}
+
+	if _, ok := vsaMap["level"]; ok {
+		t.Error("vsa.level should not be set without a VSA result")
 	}
 
 	sbomMap, ok := vars["sbom"].(map[string]any)
@@ -771,12 +775,12 @@ func TestBuildVarsTypes(t *testing.T) {
 		t.Error("notation.verified should be a bool")
 	}
 
-	if _, ok := notationMap[metaSignerDN].(string); !ok {
-		t.Error("notation.signerDN should be a string")
+	if _, ok := notationMap[metaSignerDN]; ok {
+		t.Error("notation.signerDN should not be set without a Notation result")
 	}
 
-	if _, ok := notationMap[metaTrustPolicy].(string); !ok {
-		t.Error("notation.trustPolicy should be a string")
+	if present, ok := sbomMap["present"].(bool); !ok || !present {
+		t.Error("sbom.present should be true with an SBOM result")
 	}
 }
 
@@ -1036,8 +1040,8 @@ func TestEvaluateNotationVariables(t *testing.T) {
 			pass: true,
 		},
 		{
-			name:    "notation defaults with nil result",
-			require: `notation.verified == false && notation.signerDN == "" && notation.trustPolicy == ""`,
+			name:    "notation absent with nil result",
+			require: `notation.verified == false && notation.present == false && !has(notation.signerDN)`,
 			result:  nil,
 			pass:    true,
 		},
@@ -1139,12 +1143,10 @@ func TestEvaluateExtendedSBOMVariables(t *testing.T) {
 			pass: true,
 		},
 		{
-			name: "sbom defaults with nil result",
-			require: `sbom.format == "" && sbom.componentCount == 0 && sbom.licenseCount == 0` +
-				` && sbom.cvssMax == 0.0 && sbom.cvssCriticalCount == 0 && sbom.cvssHighCount == 0` +
-				` && sbom.cvssMediumCount == 0`,
-			result: nil,
-			pass:   true,
+			name:    "sbom absent with nil result",
+			require: `sbom.verified == false && sbom.present == false && !has(sbom.format)`,
+			result:  nil,
+			pass:    true,
 		},
 	}
 
@@ -1569,11 +1571,10 @@ func TestEvaluateSCAIVariables(t *testing.T) {
 			pass: true,
 		},
 		{
-			name: "scai defaults with nil result",
-			require: `scai.verified == false && scai.attributes == "" ` +
-				`&& scai.attributeCount == 0 && scai.hasEvidence == false`,
-			result: nil,
-			pass:   true,
+			name:    "scai absent with nil result",
+			require: `scai.verified == false && scai.present == false && !has(scai.attributes)`,
+			result:  nil,
+			pass:    true,
 		},
 	}
 
@@ -1700,11 +1701,10 @@ func TestEvaluateSourceVariables(t *testing.T) {
 			pass: true,
 		},
 		{
-			name: "source defaults with nil result",
-			require: `source.verified == false && source.source == "" ` +
-				`&& source.branch == "" && source.level == 0`,
-			result: nil,
-			pass:   true,
+			name:    "source absent with nil result",
+			require: `source.verified == false && source.present == false && !has(source.source)`,
+			result:  nil,
+			pass:    true,
 		},
 	}
 
@@ -1760,11 +1760,10 @@ func TestEvaluateBuildEnvVariables(t *testing.T) {
 			pass: true,
 		},
 		{
-			name: "buildenv defaults with nil result",
-			require: `buildenv.verified == false && buildenv.properties == "" ` +
-				`&& buildenv.propertyCount == 0`,
-			result: nil,
-			pass:   true,
+			name:    "buildenv absent with nil result",
+			require: `buildenv.verified == false && buildenv.present == false && !has(buildenv.properties)`,
+			result:  nil,
+			pass:    true,
 		},
 		{
 			name: "buildenv.propertyValues value check",
@@ -1902,13 +1901,10 @@ func TestEvaluateVulnScanVariables(t *testing.T) {
 			pass: true,
 		},
 		{
-			name: "vulnscan defaults with nil result",
-			require: `vulnscan.verified == false && vulnscan.scanner == "" ` +
-				`&& vulnscan.vulnCount == 0 && vulnscan.maxScore == 0.0 ` +
-				`&& vulnscan.maxSeverity == "" && vulnscan.criticalCount == 0 ` +
-				`&& vulnscan.highCount == 0`,
-			result: nil,
-			pass:   true,
+			name:    "vulnscan absent with nil result",
+			require: `vulnscan.verified == false && vulnscan.present == false && !has(vulnscan.scanner)`,
+			result:  nil,
+			pass:    true,
 		},
 	}
 
@@ -2007,12 +2003,10 @@ func TestEvaluateTestResultVariables(t *testing.T) {
 			pass: true,
 		},
 		{
-			name: "testresult defaults with nil result",
-			require: `testresult.verified == false && testresult.result == "" ` +
-				`&& testresult.suiteCount == 0 && testresult.suites == "" ` +
-				`&& testresult.passed == 0 && testresult.failed == 0`,
-			result: nil,
-			pass:   true,
+			name:    "testresult absent with nil result",
+			require: `testresult.verified == false && testresult.present == false && !has(testresult.result)`,
+			result:  nil,
+			pass:    true,
 		},
 	}
 
@@ -2068,11 +2062,10 @@ func TestEvaluateReleaseVariables(t *testing.T) {
 			pass: true,
 		},
 		{
-			name: "release defaults with nil result",
-			require: `release.verified == false && release.purl == "" ` +
-				`&& release.packageId == ""`,
-			result: nil,
-			pass:   true,
+			name:    "release absent with nil result",
+			require: `release.verified == false && release.present == false && !has(release.purl)`,
+			result:  nil,
+			pass:    true,
 		},
 	}
 
@@ -2154,12 +2147,10 @@ func TestEvaluateRuntimeTraceVariables(t *testing.T) {
 			pass: true,
 		},
 		{
-			name: "runtimetrace defaults with nil result",
-			require: `runtimetrace.verified == false && runtimetrace.monitorType == "" ` +
-				`&& runtimetrace.processCount == 0 && runtimetrace.networkCount == 0 ` +
-				`&& runtimetrace.fileAccessCount == 0 && runtimetrace.fileNames == ""`,
-			result: nil,
-			pass:   true,
+			name:    "runtimetrace absent with nil result",
+			require: `runtimetrace.verified == false && runtimetrace.present == false && !has(runtimetrace.monitorType)`,
+			result:  nil,
+			pass:    true,
 		},
 	}
 
@@ -2220,11 +2211,10 @@ func TestEvaluateScorecardVariables(t *testing.T) {
 			pass: true,
 		},
 		{
-			name: "scorecard defaults with nil result",
-			require: `scorecard.verified == false && scorecard.repo == "" && ` +
-				`scorecard.version == "" && scorecard.score == 0.0 && size(scorecard.checks) == 0`,
-			result: nil,
-			pass:   true,
+			name:    "scorecard absent with nil result",
+			require: `scorecard.verified == false && scorecard.present == false && !has(scorecard.repo)`,
+			result:  nil,
+			pass:    true,
 		},
 	}
 

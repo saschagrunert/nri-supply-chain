@@ -48,9 +48,10 @@ dockers_v2:
   - images:
       - "ghcr.io/saschagrunert/nri-supply-chain"
     dockerfile: Dockerfile.goreleaser
+    # "latest" is added by the release workflow after the image was scanned,
+    # attested, and verified.
     tags:
       - "{{ .Version }}"
-      - latest
     platforms:
       - linux/amd64
       - linux/arm64

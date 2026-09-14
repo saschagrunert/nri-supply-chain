@@ -57,12 +57,10 @@ func applyMigrations(cfg *Config, steps []migration) error {
 		}
 
 		if cfg.ConfigVersion != step.fromVersion {
-			slog.Warn("migration list has a gap, stopping early",
-				"configVersion", cfg.ConfigVersion,
-				"nextMigration", step.fromVersion,
+			return fmt.Errorf(
+				"%w: config version %d, next migration starts at %d",
+				ErrMigrationGap, cfg.ConfigVersion, step.fromVersion,
 			)
-
-			break
 		}
 
 		slog.Info("applying config migration",

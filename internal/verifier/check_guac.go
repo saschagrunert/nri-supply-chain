@@ -99,7 +99,16 @@ func fetchGUACData(
 		}
 
 		fallback := applyGUACFallback(state, imageRef, result.Err)
-		if fallback != nil && result.Metadata != nil {
+
+		// Keep the data of queries that succeeded. With an allow fallback
+		// the failure itself is ignored, but partial data is still exposed.
+		if result.Metadata != nil {
+			if fallback == nil {
+				fallback = types.PassResult(types.CheckTypeGUAC, fmt.Sprintf(
+					"GUAC query failed for %s, allowed by fallback policy", imageRef,
+				))
+			}
+
 			fallback.Metadata = result.Metadata
 		}
 

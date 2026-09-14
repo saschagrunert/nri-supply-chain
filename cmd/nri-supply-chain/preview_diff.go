@@ -119,7 +119,7 @@ func runProposedPreview(
 		return nil, fmt.Errorf("creating proposed verifier: %w", err)
 	}
 
-	defer proposedVerif.Stop()
+	defer proposedVerif.StopContext(ctx)
 
 	return previewImages(ctx, images, namespace, &proposedCfg, proposedVerif, cache), nil
 }

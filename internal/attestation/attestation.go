@@ -19,6 +19,7 @@ package attestation
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
@@ -33,15 +34,56 @@ type TrustedKeyRef struct {
 	NotAfter  time.Time
 }
 
+// ErrVerificationFailed indicates that signed attestation material was found
+// for an image but none of it passed cryptographic verification. It is
+// distinct from transport and registry errors, which never wrap it, so callers
+// can deny instead of applying a lenient fetch failure policy.
+var ErrVerificationFailed = errors.New("attestation verification failed")
+
+// ErrTrustMaterialUnavailable indicates that the trust material needed to
+// verify an attestation could not be loaded, for example because the Sigstore
+// trusted root could not be fetched or a configured key file could not be
+// read. It is an availability problem, not a verification failure, so it
+// never wraps ErrVerificationFailed and the fetch failure policy applies.
+var ErrTrustMaterialUnavailable = errors.New("attestation trust material unavailable")
+
+// ErrIncompleteAttestationSet is wrapped together with ErrVerificationFailed
+// when the attestations of an image could not all be evaluated, for example
+// because a referrer count or size limit was exceeded or a stored bundle blob
+// failed its integrity check. Unlike attestations that merely failed
+// verification, such a set must deny: a dropped attestation could flip the
+// decision.
+var ErrIncompleteAttestationSet = errors.New("attestation set is incomplete")
+
 var (
 	errEmptyAttestation      = errors.New("empty attestation")
 	errAttestationTooLarge   = errors.New("attestation exceeds maximum size")
 	errAggregateSizeExceeded = errors.New("aggregate attestation size exceeded")
+	errReferrerLimitExceeded = fmt.Errorf(
+		"%w: referrer limit exceeded",
+		ErrIncompleteAttestationSet,
+	)
+	errInvalidReferrer       = errors.New("invalid referrer content")
+	errForeignLayer          = errors.New("layer references external URLs")
+	errTruncatedResponse     = errors.New("truncated registry response")
+	errDownloadLimitExceeded = errors.New("attestation download limit exceeded")
+	errUnsupportedLayerCodec = errors.New("unsupported attestation layer compression")
 	errInvalidPayloadType    = errors.New("invalid DSSE payload type")
 	errNoTrustedMaterial     = errors.New("no trusted keys or issuers configured")
 	errAllBundlesFailed      = errors.New("all bundle verifications failed")
 	errNoIssuers             = errors.New("at least one issuer is required")
 	errNoPEMBlock            = errors.New("no PEM block found")
+	errNoTrustedRoot         = errors.New("no Sigstore trusted root available")
+	errRootOutOfScope        = errors.New("trusted root is out of scope")
+	errMissingPredicateType  = errors.New("signed statement has no predicate type")
+	errNoTrustedKeys         = errors.New(
+		"bundle is signed with a public key but no trusted keys are configured",
+	)
+	errNoTrustedIssuers = errors.New(
+		"bundle is signed with a certificate but no trusted issuers are configured",
+	)
+	errUnsupportedSignature  = errors.New("bundle has neither a certificate nor a public key")
+	errTransparencyLogNeeded = errors.New("transparency log entry required but bundle has none")
 )
 
 const (
@@ -96,6 +138,10 @@ const (
 	// bundleMediaType is the OCI artifact type for Sigstore bundles.
 	bundleMediaType = "application/vnd.dev.sigstore.bundle.v0.3+json"
 
+	// bundleMediaTypeV01 is the Sigstore bundle v0.1 media type, which accepts
+	// transparency log entries with only an inclusion promise.
+	bundleMediaTypeV01 = "application/vnd.dev.sigstore.bundle+json;version=0.1"
+
 	// ociEmptyMediaType is the fallback artifact type some registries
 	// (notably GHCR) return for cosign-created attestations instead of
 	// the Sigstore bundle media type.
@@ -132,8 +178,61 @@ const (
 	SignatureTypeNotation SignatureType = "notation"
 )
 
-// BundleVerifyFunc verifies a Sigstore bundle and returns the extracted DSSE payload.
+// BundleVerifyFunc verifies a Sigstore bundle and returns the extracted DSSE
+// payload. It carries no signer identity; use SignedBundleVerifyFunc wherever
+// the identity that signed an attestation matters.
 type BundleVerifyFunc func(ctx context.Context, bundleBytes []byte, opts *FetchOptions) ([]byte, error)
+
+// SignedBundleVerifyFunc verifies a Sigstore bundle and returns the verified
+// payload together with the identity that signed it.
+type SignedBundleVerifyFunc func(
+	ctx context.Context, bundleBytes []byte, opts *FetchOptions,
+) (*VerifiedBundle, error)
+
+// SignerIdentity describes who signed a verified attestation.
+type SignerIdentity struct {
+	// KeyPath is the first entry of KeyPaths. Empty for keyless (certificate
+	// based) signatures.
+	KeyPath string
+	// KeyPaths lists every configured trusted public key path that holds the
+	// key which verified the signature and whose validity window contains the
+	// verification time, in configuration order. The same key can be
+	// configured at several paths (for example during key rotation or when
+	// shared by a builder and a verifier).
+	KeyPaths []string
+	// Issuer is the OIDC issuer recorded in the Fulcio signing certificate.
+	// Empty for key-based signatures.
+	Issuer string
+	// SAN is the Subject Alternative Name of the Fulcio signing certificate.
+	// Empty for key-based signatures.
+	SAN string
+}
+
+// MatchesAny reports whether match accepts the signer for any of its key
+// paths. Keyless signers are matched once with an empty key path.
+func (s *SignerIdentity) MatchesAny(match func(keyPath, issuer, san string) bool) bool {
+	if len(s.KeyPaths) == 0 {
+		return match(s.KeyPath, s.Issuer, s.SAN)
+	}
+
+	for _, keyPath := range s.KeyPaths {
+		if match(keyPath, s.Issuer, s.SAN) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// VerifiedBundle is the result of a successful Sigstore bundle verification.
+type VerifiedBundle struct {
+	// Payload is the verified DSSE payload (an in-toto statement).
+	Payload []byte
+	// PredicateType is the predicate type taken from the signed statement.
+	PredicateType string
+	// Signer is the identity whose signature was verified.
+	Signer SignerIdentity
+}
 
 // VerifiedAttestation holds a verified attestation with its parsed payload.
 type VerifiedAttestation struct {
@@ -141,6 +240,15 @@ type VerifiedAttestation struct {
 	Payload       []byte
 	Digest        string
 	SignatureType SignatureType
+
+	// Signer is the identity that signed the attestation. Zero for Notation
+	// signatures (verified later by the Notation checker) and for fetchers
+	// created with NewOCIFetcherWithVerifier, whose verify function does not
+	// report a signer.
+	Signer SignerIdentity
+	// Bundle is the raw Sigstore bundle JSON the attestation was verified
+	// from. Empty when the source was not a Sigstore bundle.
+	Bundle []byte
 
 	// Notation-specific fields (zero-valued for Sigstore attestations).
 	NotationMediaType        string

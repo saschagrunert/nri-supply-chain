@@ -57,6 +57,19 @@ const (
 	testUnreachableOCIRef = "localhost:1/nonexistent:v1"
 )
 
+// newRequest builds a verification request.
+func newRequest(
+	imageRef, digest, indexDigest, namespace, serviceAccount string,
+) *types.VerifyRequest {
+	return &types.VerifyRequest{
+		ImageRef:       imageRef,
+		Digest:         digest,
+		IndexDigest:    indexDigest,
+		Namespace:      namespace,
+		ServiceAccount: serviceAccount,
+	}
+}
+
 type delayFetcher struct {
 	delay   time.Duration
 	started chan struct{}
@@ -333,7 +346,8 @@ func TestVerify(t *testing.T) {
 			testutil.AssertNoError(t, err)
 
 			result, err := verif.Verify(
-				context.Background(), imageRef, testDigest, "", "default", "",
+				context.Background(),
+				newRequest(imageRef, testDigest, "", "default", ""),
 			)
 
 			if test.wantErr != nil {
@@ -369,13 +383,17 @@ func TestVerifyCache(t *testing.T) {
 	testutil.AssertNoError(t, err)
 
 	result1, err := verif.Verify(
-		context.Background(), "nginx:latest", testDigest, "", "default", "",
+		context.Background(),
+		newRequest("nginx:latest", testDigest, "", "default", ""),
 	)
+
 	testutil.AssertNoError(t, err)
 
 	result2, err := verif.Verify(
-		context.Background(), "nginx:latest", testDigest, "", "default", "",
+		context.Background(),
+		newRequest("nginx:latest", testDigest, "", "default", ""),
 	)
+
 	testutil.AssertNoError(t, err)
 
 	if result1.Reason != result2.Reason {
@@ -408,9 +426,10 @@ func TestVerifyCacheWarnMode(t *testing.T) {
 		"11111111111111111111111111111111"
 
 	result1, err := verif.Verify(
-		context.Background(), "nginx:latest",
-		cacheDigest, "", "default", "",
+		context.Background(),
+		newRequest("nginx:latest", cacheDigest, "", "default", ""),
 	)
+
 	testutil.AssertNoError(t, err)
 
 	if !result1.Allowed {
@@ -419,9 +438,10 @@ func TestVerifyCacheWarnMode(t *testing.T) {
 	}
 
 	result2, err := verif.Verify(
-		context.Background(), "nginx:latest",
-		cacheDigest, "", "default", "",
+		context.Background(),
+		newRequest("nginx:latest", cacheDigest, "", "default", ""),
 	)
+
 	testutil.AssertNoError(t, err)
 
 	if !result2.Allowed {
@@ -458,8 +478,8 @@ func TestVerifyCacheEnforceMode(t *testing.T) {
 		"22222222222222222222222222222222"
 
 	_, err = verif.Verify(
-		context.Background(), "nginx:latest",
-		enforceDigest, "", "default", "",
+		context.Background(),
+		newRequest("nginx:latest", enforceDigest, "", "default", ""),
 	)
 
 	if !errors.Is(err, verifier.ErrVerificationFailed) {
@@ -467,8 +487,8 @@ func TestVerifyCacheEnforceMode(t *testing.T) {
 	}
 
 	_, err = verif.Verify(
-		context.Background(), "nginx:latest",
-		enforceDigest, "", "default", "",
+		context.Background(),
+		newRequest("nginx:latest", enforceDigest, "", "default", ""),
 	)
 
 	if !errors.Is(err, verifier.ErrVerificationFailed) {
@@ -498,7 +518,8 @@ func TestVerifyNamespacePolicy(t *testing.T) {
 	testutil.AssertNoError(t, err)
 
 	_, err = verif.Verify(
-		context.Background(), "nginx:latest", testDigest, "", "default", "",
+		context.Background(),
+		newRequest("nginx:latest", testDigest, "", "default", ""),
 	)
 	if err == nil {
 		t.Error("expected error for default namespace")
@@ -508,9 +529,10 @@ func TestVerifyNamespacePolicy(t *testing.T) {
 		"e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3"
 
 	result, err := verif.Verify(
-		context.Background(), "nginx:latest",
-		stagingDigest, "", "staging", "",
+		context.Background(),
+		newRequest("nginx:latest", stagingDigest, "", "staging", ""),
 	)
+
 	testutil.AssertNoError(t, err)
 
 	if !result.Allowed {
@@ -689,9 +711,10 @@ func TestReloadPreservesCacheWhenConfigUnchanged(t *testing.T) {
 		"33333333333333333333333333333333"
 
 	result1, err := verif.Verify(
-		context.Background(), "nginx:latest",
-		reloadDigest, "", "default", "",
+		context.Background(),
+		newRequest("nginx:latest", reloadDigest, "", "default", ""),
 	)
+
 	testutil.AssertNoError(t, err)
 
 	reloadCfg := config.DefaultConfig()
@@ -703,8 +726,10 @@ func TestReloadPreservesCacheWhenConfigUnchanged(t *testing.T) {
 	testutil.AssertNoError(t, err)
 
 	result2, err := verif.Verify(
-		context.Background(), "nginx:latest", reloadDigest, "", "default", "",
+		context.Background(),
+		newRequest("nginx:latest", reloadDigest, "", "default", ""),
 	)
+
 	testutil.AssertNoError(t, err)
 
 	if result1.Reason != result2.Reason {
@@ -869,6 +894,77 @@ func TestReloadCreatesFetcherWhenTUFMirrorChanges(t *testing.T) {
 	}
 }
 
+func TestReloadRecreatesFetcherForTUFRootReplacedWhileNotRebuilt(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		// update applies the replaced root file without rebuilding the fetcher.
+		update func(t *testing.T, verif *verifier.Verifier, cfg *config.Config)
+	}{
+		{
+			name: "reload with verification disabled",
+			update: func(t *testing.T, verif *verifier.Verifier, cfg *config.Config) {
+				t.Helper()
+
+				disabled := *cfg
+				disabled.Verification = config.ModeDisabled
+				testutil.AssertNoError(t, verif.Reload(context.Background(), &disabled))
+			},
+		},
+		{
+			name: "OCI policy update",
+			update: func(t *testing.T, verif *verifier.Verifier, _ *config.Config) {
+				t.Helper()
+
+				testutil.AssertNoError(t, verif.ExportOnPolicyUpdate(context.Background(),
+					map[string]*policy.Policy{"": {Mode: config.ModeWarn}}))
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			server := httptest.NewServer(http.NotFoundHandler())
+			t.Cleanup(server.Close)
+
+			dir := t.TempDir()
+			testutil.WritePolicy(t, dir, "default.json", `{}`)
+
+			rootPath := filepath.Join(t.TempDir(), "root.json")
+			testutil.AssertNoError(t, os.WriteFile(rootPath, []byte(`{"root":1}`), 0o600))
+
+			cfg := config.DefaultConfig()
+			cfg.Verification = config.ModeWarn
+			cfg.PolicyDir = dir
+			cfg.Sigstore.TUFMirror = server.URL //nolint:staticcheck // backward compatibility
+			cfg.Sigstore.TUFRoot = rootPath     //nolint:staticcheck // backward compatibility
+
+			verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
+			testutil.AssertNoError(t, err)
+			t.Cleanup(verif.Stop)
+
+			testutil.AssertNoError(t, verif.Reload(context.Background(), cfg))
+
+			original := verif.ExportFetcher()
+			if original == nil {
+				t.Fatal("expected a fetcher after enabling verification")
+			}
+
+			testutil.AssertNoError(t, os.WriteFile(rootPath, []byte(`{"root":2}`), 0o600))
+			test.update(t, verif, cfg)
+
+			testutil.AssertNoError(t, verif.Reload(context.Background(), cfg))
+
+			if verif.ExportFetcher() == original {
+				t.Error("expected a fetcher built from the replaced TUF root")
+			}
+		})
+	}
+}
+
 func TestCacheAffectingFieldsChangedRegistries(t *testing.T) {
 	t.Parallel()
 
@@ -936,16 +1032,21 @@ func TestReloadClearsCacheWhenPolicyChanges(t *testing.T) {
 	cfg.PolicyDir = dir
 	cfg.CacheTTL = config.Duration{Duration: time.Hour}
 
-	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
+	// A fetcher keeps the test hermetic: without one, Reload creates a real
+	// registry fetcher.
+	fetcher := &mockFetcher{attestations: nil, err: nil}
+
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), fetcher)
 	testutil.AssertNoError(t, err)
 
 	const policyDigest = "sha256:44444444444444444444444444444444" +
 		"44444444444444444444444444444444"
 
 	result1, err := verif.Verify(
-		context.Background(), "nginx:latest",
-		policyDigest, "", "default", "",
+		context.Background(),
+		newRequest("nginx:latest", policyDigest, "", "default", ""),
 	)
+
 	testutil.AssertNoError(t, err)
 
 	testutil.WritePolicy(t, dir, "default.json", `{"slsa":{"missingPolicy":"deny"}}`)
@@ -959,9 +1060,10 @@ func TestReloadClearsCacheWhenPolicyChanges(t *testing.T) {
 	testutil.AssertNoError(t, err)
 
 	result2, err := verif.Verify(
-		context.Background(), "nginx:latest",
-		policyDigest, "", "default", "",
+		context.Background(),
+		newRequest("nginx:latest", policyDigest, "", "default", ""),
 	)
+
 	testutil.AssertNoError(t, err)
 
 	if result1.Reason == result2.Reason {
@@ -1040,6 +1142,8 @@ func TestResultHasFailures(t *testing.T) {
 			name: "allowed result has no failures",
 			result: &types.Result{
 				Allowed:      true,
+				Verified:     true,
+				Mode:         "",
 				Reason:       "ok",
 				CheckResults: nil,
 			},
@@ -1049,6 +1153,8 @@ func TestResultHasFailures(t *testing.T) {
 			name: "disallowed result has failures",
 			result: &types.Result{
 				Allowed:      false,
+				Verified:     false,
+				Mode:         "",
 				Reason:       "denied",
 				CheckResults: nil,
 			},
@@ -1057,12 +1163,14 @@ func TestResultHasFailures(t *testing.T) {
 		{
 			name: "allowed with failed check has failures",
 			result: &types.Result{
-				Allowed: true,
-				Reason:  "partial",
+				Allowed:  true,
+				Verified: false,
+				Mode:     "",
+				Reason:   "partial",
 				CheckResults: []types.CheckResult{{
 					Type: types.CheckTypeSLSA, Passed: false,
 					Status: types.StatusFail, Detail: "err", Err: nil,
-					Metadata: nil,
+					Metadata: nil, Missing: false,
 				}},
 			},
 			expected: true,
@@ -1070,12 +1178,14 @@ func TestResultHasFailures(t *testing.T) {
 		{
 			name: "allowed with passing checks has no failures",
 			result: &types.Result{
-				Allowed: true,
-				Reason:  "ok",
+				Allowed:  true,
+				Verified: true,
+				Mode:     "",
+				Reason:   "ok",
 				CheckResults: []types.CheckResult{{
 					Type: types.CheckTypeSLSA, Passed: true,
 					Status: types.StatusPass, Detail: "ok", Err: nil,
-					Metadata: nil,
+					Metadata: nil, Missing: false,
 				}},
 			},
 			expected: false,
@@ -1106,6 +1216,8 @@ func TestResultShouldUseShorterTTL(t *testing.T) {
 			name: "failed result uses shorter TTL",
 			result: &types.Result{
 				Allowed:      false,
+				Verified:     false,
+				Mode:         "",
 				Reason:       "denied",
 				CheckResults: nil,
 			},
@@ -1114,12 +1226,14 @@ func TestResultShouldUseShorterTTL(t *testing.T) {
 		{
 			name: "fetch type with passing check uses shorter TTL",
 			result: &types.Result{
-				Allowed: true,
-				Reason:  "ok",
+				Allowed:  true,
+				Verified: true,
+				Mode:     "",
+				Reason:   "ok",
 				CheckResults: []types.CheckResult{{
 					Type: types.CheckTypeFetch, Passed: true,
 					Status: types.StatusWarn, Detail: "fetch failed", Err: nil,
-					Metadata: nil,
+					Metadata: nil, Missing: false,
 				}},
 			},
 			expected: true,
@@ -1127,12 +1241,14 @@ func TestResultShouldUseShorterTTL(t *testing.T) {
 		{
 			name: "non-fetch passing result does not use shorter TTL",
 			result: &types.Result{
-				Allowed: true,
-				Reason:  "ok",
+				Allowed:  true,
+				Verified: true,
+				Mode:     "",
+				Reason:   "ok",
 				CheckResults: []types.CheckResult{{
 					Type: types.CheckTypeSLSA, Passed: true,
 					Status: types.StatusPass, Detail: "ok", Err: nil,
-					Metadata: nil,
+					Metadata: nil, Missing: false,
 				}},
 			},
 			expected: false,
@@ -1391,7 +1507,13 @@ func TestApplyCheckResult(t *testing.T) {
 	t.Run("fail sets allowed false and appends reason", func(t *testing.T) {
 		t.Parallel()
 
-		result := &types.Result{Allowed: true, Reason: "existing", CheckResults: nil}
+		result := &types.Result{
+			Allowed:      true,
+			Verified:     true,
+			Mode:         "",
+			Reason:       "existing",
+			CheckResults: nil,
+		}
 		check := types.FailResult(testCheckType, "new failure", nil)
 		verifier.ExportApplyCheckResult(result, check)
 
@@ -1407,7 +1529,13 @@ func TestApplyCheckResult(t *testing.T) {
 	t.Run("warn appends reason without setting allowed false", func(t *testing.T) {
 		t.Parallel()
 
-		result := &types.Result{Allowed: true, Reason: "", CheckResults: nil}
+		result := &types.Result{
+			Allowed:      true,
+			Verified:     true,
+			Mode:         "",
+			Reason:       "",
+			CheckResults: nil,
+		}
 		check := types.WarnResult(testCheckType, "warning detail")
 		verifier.ExportApplyCheckResult(result, check)
 
@@ -1423,7 +1551,13 @@ func TestApplyCheckResult(t *testing.T) {
 	t.Run("pass leaves result unchanged", func(t *testing.T) {
 		t.Parallel()
 
-		result := &types.Result{Allowed: true, Reason: "", CheckResults: nil}
+		result := &types.Result{
+			Allowed:      true,
+			Verified:     true,
+			Mode:         "",
+			Reason:       "",
+			CheckResults: nil,
+		}
 		check := types.PassResult(testCheckType, "ok")
 		verifier.ExportApplyCheckResult(result, check)
 
@@ -1497,9 +1631,9 @@ func TestVerifyExcludeDoubleStarPattern(t *testing.T) {
 
 	result, err := verif.Verify(
 		context.Background(),
-		"registry.k8s.io/coredns/coredns:v1.12.0",
-		testDigest, "", "default", "",
+		newRequest("registry.k8s.io/coredns/coredns:v1.12.0", testDigest, "", "default", ""),
 	)
+
 	testutil.AssertNoError(t, err)
 
 	if !result.Allowed {
@@ -1528,7 +1662,7 @@ func TestVerifyWarnModeAllowsOnContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	result, err := verif.Verify(ctx, "nginx:latest", testDigest, "", "default", "")
+	result, err := verif.Verify(ctx, newRequest("nginx:latest", testDigest, "", "default", ""))
 	testutil.AssertNoError(t, err)
 
 	if !result.Allowed {
@@ -1556,7 +1690,7 @@ func TestVerifyEnforceModeRejectsOnContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err = verif.Verify(ctx, "nginx:latest", testDigest, "", "default", "")
+	_, err = verif.Verify(ctx, newRequest("nginx:latest", testDigest, "", "default", ""))
 	if err == nil {
 		t.Error("expected error in enforce mode on context cancel")
 	}
@@ -1581,9 +1715,9 @@ func TestVerifyIncludeAllowsMatchingImage(t *testing.T) {
 
 	result, err := verif.Verify(
 		context.Background(),
-		"docker.io/myorg/app:latest",
-		testDigest, "", "default", "",
+		newRequest("docker.io/myorg/app:latest", testDigest, "", "default", ""),
 	)
+
 	testutil.AssertNoError(t, err)
 
 	if !result.Allowed {
@@ -1611,9 +1745,9 @@ func TestVerifyIncludeSkipsNonMatchingImage(t *testing.T) {
 
 	result, err := verif.Verify(
 		context.Background(),
-		"gcr.io/other/app:latest",
-		testDigest, "", "default", "",
+		newRequest("gcr.io/other/app:latest", testDigest, "", "default", ""),
 	)
+
 	testutil.AssertNoError(t, err)
 
 	if !result.Allowed {
@@ -1639,8 +1773,7 @@ func TestVerifyEmptyIncludeVerifiesEverything(t *testing.T) {
 
 	_, err = verif.Verify(
 		context.Background(),
-		"nginx:latest",
-		testDigest, "", "default", "",
+		newRequest("nginx:latest", testDigest, "", "default", ""),
 	)
 
 	if !errors.Is(err, verifier.ErrVerificationFailed) {
@@ -1668,9 +1801,9 @@ func TestVerifyExcludeTakesPrecedenceOverInclude(t *testing.T) {
 
 	result, err := verif.Verify(
 		context.Background(),
-		"docker.io/myorg/internal/tool",
-		testDigest, "", "default", "",
+		newRequest("docker.io/myorg/internal/tool", testDigest, "", "default", ""),
 	)
+
 	testutil.AssertNoError(t, err)
 
 	if !result.Allowed {
@@ -1704,8 +1837,10 @@ func TestVerifyPerNamespaceEnforceMode(t *testing.T) {
 
 	// Default namespace uses global warn mode, so verification failure is allowed.
 	result, err := verif.Verify(
-		context.Background(), "nginx:latest", testDigest, "", "default", "",
+		context.Background(),
+		newRequest("nginx:latest", testDigest, "", "default", ""),
 	)
+
 	testutil.AssertNoError(t, err)
 
 	if !result.Allowed {
@@ -1718,7 +1853,8 @@ func TestVerifyPerNamespaceEnforceMode(t *testing.T) {
 
 	// Production namespace uses per-namespace enforce mode, so verification failure is rejected.
 	_, err = verif.Verify(
-		context.Background(), "nginx:latest", prodDigest, "", testNsProduction, "",
+		context.Background(),
+		newRequest("nginx:latest", prodDigest, "", testNsProduction, ""),
 	)
 
 	if !errors.Is(err, verifier.ErrVerificationFailed) {
@@ -1751,8 +1887,10 @@ func TestVerifyPerNamespaceWarnModeAllows(t *testing.T) {
 		"66666666666666666666666666666666"
 
 	result, err := verif.Verify(
-		context.Background(), "nginx:latest", stagingDigest, "", "staging", "",
+		context.Background(),
+		newRequest("nginx:latest", stagingDigest, "", "staging", ""),
 	)
+
 	testutil.AssertNoError(t, err)
 
 	if !result.Allowed {
@@ -1888,16 +2026,20 @@ func TestVerifyPerNamespaceEnforceCacheHit(t *testing.T) {
 
 	// First call: enforce mode rejects.
 	_, err = verif.Verify(
-		context.Background(), "nginx:latest", cacheDigest, "", testNsProduction, "",
+		context.Background(),
+		newRequest("nginx:latest", cacheDigest, "", testNsProduction, ""),
 	)
+
 	if !errors.Is(err, verifier.ErrVerificationFailed) {
 		t.Fatalf("first call: expected ErrVerificationFailed, got %v", err)
 	}
 
 	// Second call (cache hit): enforce mode still rejects.
 	_, err = verif.Verify(
-		context.Background(), "nginx:latest", cacheDigest, "", testNsProduction, "",
+		context.Background(),
+		newRequest("nginx:latest", cacheDigest, "", testNsProduction, ""),
 	)
+
 	if !errors.Is(err, verifier.ErrVerificationFailed) {
 		t.Fatalf("second call (cache hit): expected ErrVerificationFailed, got %v", err)
 	}
@@ -1977,9 +2119,9 @@ func TestVerifyIncludeDoubleStarPattern(t *testing.T) {
 
 	result, err := verif.Verify(
 		context.Background(),
-		"docker.io/myorg/team/app:v1",
-		testDigest, "", "default", "",
+		newRequest("docker.io/myorg/team/app:v1", testDigest, "", "default", ""),
 	)
+
 	testutil.AssertNoError(t, err)
 
 	if !result.Allowed {
@@ -2022,7 +2164,7 @@ func TestVerifyDetachedVerificationPopulatesCache(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	result, err := verif.Verify(ctx, "nginx:latest", detachedDigest, "", "default", "")
+	result, err := verif.Verify(ctx, newRequest("nginx:latest", detachedDigest, "", "default", ""))
 	testutil.AssertNoError(t, err)
 
 	if !result.Allowed {
@@ -2033,8 +2175,8 @@ func TestVerifyDetachedVerificationPopulatesCache(t *testing.T) {
 		t.Fatal("expected VerificationInterruptedTotal >= 1")
 	}
 
-	// Ensure the singleflight goroutine has started (and called
-	// inflightWg.Add) before waiting, otherwise Wait returns
+	// Ensure the singleflight goroutine has started (and registered with
+	// the flight tracker) before waiting, otherwise the wait returns
 	// immediately on slow CI.
 	<-fetcher.started
 	verif.ExportWaitInflight()
@@ -2043,8 +2185,10 @@ func TestVerifyDetachedVerificationPopulatesCache(t *testing.T) {
 	hitsBefore := promtestutil.ToFloat64(met.CacheHitsTotal)
 
 	result2, err := verif.Verify(
-		context.Background(), "nginx:latest", detachedDigest, "", "default", "",
+		context.Background(),
+		newRequest("nginx:latest", detachedDigest, "", "default", ""),
 	)
+
 	testutil.AssertNoError(t, err)
 
 	if !result2.Allowed {
@@ -2088,7 +2232,7 @@ func TestVerifyDetachedVerificationEnforceRetryHitsCache(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	_, err = verif.Verify(ctx, "nginx:latest", enforceDigest, "", "default", "")
+	_, err = verif.Verify(ctx, newRequest("nginx:latest", enforceDigest, "", "default", ""))
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected context.DeadlineExceeded, got: %v", err)
 	}
@@ -2097,8 +2241,8 @@ func TestVerifyDetachedVerificationEnforceRetryHitsCache(t *testing.T) {
 		t.Fatal("expected VerificationInterruptedTotal >= 1")
 	}
 
-	// Ensure the singleflight goroutine has started (and called
-	// inflightWg.Add) before waiting, otherwise Wait returns
+	// Ensure the singleflight goroutine has started (and registered with
+	// the flight tracker) before waiting, otherwise the wait returns
 	// immediately on slow CI.
 	<-fetcher.started
 	verif.ExportWaitInflight()
@@ -2107,8 +2251,10 @@ func TestVerifyDetachedVerificationEnforceRetryHitsCache(t *testing.T) {
 	hitsBefore := promtestutil.ToFloat64(met.CacheHitsTotal)
 
 	result, err := verif.Verify(
-		context.Background(), "nginx:latest", enforceDigest, "", "default", "",
+		context.Background(),
+		newRequest("nginx:latest", enforceDigest, "", "default", ""),
 	)
+
 	testutil.AssertNoError(t, err)
 
 	if !result.Allowed {
@@ -2145,9 +2291,9 @@ func TestVerifyImageRuleMatchOverrides(t *testing.T) {
 	// Image matching the rule gets allow policy (so missing SLSA is fine).
 	result, err := verif.Verify(
 		context.Background(),
-		"docker.io/trusted/app:latest",
-		testDigest, "", "default", "",
+		newRequest("docker.io/trusted/app:latest", testDigest, "", "default", ""),
 	)
+
 	testutil.AssertNoError(t, err)
 
 	if !result.Allowed {
@@ -2181,8 +2327,7 @@ func TestVerifyImageRuleNoMatchUsesBase(t *testing.T) {
 	// Image not matching any rule uses base policy (deny).
 	_, err = verif.Verify(
 		context.Background(),
-		"docker.io/other/app:latest",
-		testDigest, "", "default", "",
+		newRequest("docker.io/other/app:latest", testDigest, "", "default", ""),
 	)
 
 	if !errors.Is(err, verifier.ErrVerificationFailed) {
@@ -2219,9 +2364,9 @@ func TestVerifyImageRuleFirstMatchWins(t *testing.T) {
 	// Image matches both rules; first rule (allow) should win.
 	result, err := verif.Verify(
 		context.Background(),
-		"docker.io/myorg/app:latest",
-		testDigest, "", "default", "",
+		newRequest("docker.io/myorg/app:latest", testDigest, "", "default", ""),
 	)
+
 	testutil.AssertNoError(t, err)
 
 	if !result.Allowed {
@@ -2309,32 +2454,45 @@ func TestResolveImagePolicyNoMatch(t *testing.T) {
 func TestCacheNamespaceKey(t *testing.T) {
 	t.Parallel()
 
-	t.Run("no rule returns namespace", func(t *testing.T) {
+	const imageRef = "ghcr.io/org/app:v1"
+
+	t.Run("no rule is scoped to namespace and image", func(t *testing.T) {
 		t.Parallel()
 
-		key := verifier.ExportCacheNamespaceKey("default", -1)
-		if key != "default" {
-			t.Errorf("expected %q, got %q", "default", key)
+		key := verifier.ExportCacheNamespaceKey("default", imageRef, -1)
+		if key != "default\x00"+imageRef {
+			t.Errorf("expected namespace and image key, got %q", key)
 		}
 	})
 
 	t.Run("with rule includes index", func(t *testing.T) {
 		t.Parallel()
 
-		key := verifier.ExportCacheNamespaceKey("default", 0)
-		if key == "default" {
-			t.Error("expected cache key to differ from plain namespace when rule matched")
+		key := verifier.ExportCacheNamespaceKey("default", imageRef, 0)
+		if key == verifier.ExportCacheNamespaceKey("default", imageRef, -1) {
+			t.Error("expected cache key to differ from the no-rule key when a rule matched")
 		}
 	})
 
 	t.Run("different rules produce different keys", func(t *testing.T) {
 		t.Parallel()
 
-		key0 := verifier.ExportCacheNamespaceKey("default", 0)
-		key1 := verifier.ExportCacheNamespaceKey("default", 1)
+		key0 := verifier.ExportCacheNamespaceKey("default", imageRef, 0)
+		key1 := verifier.ExportCacheNamespaceKey("default", imageRef, 1)
 
 		if key0 == key1 {
 			t.Error("expected different cache keys for different rule indices")
+		}
+	})
+
+	t.Run("different image references produce different keys", func(t *testing.T) {
+		t.Parallel()
+
+		key0 := verifier.ExportCacheNamespaceKey("default", "ghcr.io/org/app:v1", -1)
+		key1 := verifier.ExportCacheNamespaceKey("default", "ghcr.io/other/app:v1", -1)
+
+		if key0 == key1 {
+			t.Error("expected different cache keys for different image references")
 		}
 	})
 }
@@ -2362,8 +2520,10 @@ func TestOnPolicyUpdateAppliesNewPolicies(t *testing.T) {
 
 	// Before update: deny policy produces a failure reason.
 	result1, err := verif.Verify(
-		context.Background(), "nginx:latest", updateDigest, "", "default", "",
+		context.Background(),
+		newRequest("nginx:latest", updateDigest, "", "default", ""),
 	)
+
 	testutil.AssertNoError(t, err)
 
 	if result1.Reason == "" {
@@ -2386,8 +2546,10 @@ func TestOnPolicyUpdateAppliesNewPolicies(t *testing.T) {
 		"dddddddddddddddddddddddddddddd"
 
 	result2, err := verif.Verify(
-		context.Background(), "nginx:latest", postUpdateDigest, "", "default", "",
+		context.Background(),
+		newRequest("nginx:latest", postUpdateDigest, "", "default", ""),
 	)
+
 	testutil.AssertNoError(t, err)
 
 	if !result2.Allowed {
@@ -2423,9 +2585,9 @@ func TestVerifyImageRuleInheritance(t *testing.T) {
 	// Staging namespace inherits rules from default.
 	result, err := verif.Verify(
 		context.Background(),
-		"docker.io/trusted/app:latest",
-		testDigest, "", "staging", "",
+		newRequest("docker.io/trusted/app:latest", testDigest, "", "staging", ""),
 	)
+
 	testutil.AssertNoError(t, err)
 
 	if !result.Allowed {
@@ -2451,7 +2613,11 @@ func TestConcurrentVerifyAndReload(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	verif, err := verifier.New(ctx, cfg, metrics.New(), nil)
+	// A fetcher keeps the test hermetic: without one, Reload creates a real
+	// registry fetcher.
+	fetcher := &mockFetcher{attestations: nil, err: nil}
+
+	verif, err := verifier.New(ctx, cfg, metrics.New(), fetcher)
 	testutil.AssertNoError(t, err)
 
 	defer verif.Stop()
@@ -2465,7 +2631,7 @@ func TestConcurrentVerifyAndReload(t *testing.T) {
 			digest := fmt.Sprintf("sha256:%064x", i)
 
 			for ctx.Err() == nil {
-				_, _ = verif.Verify(ctx, "nginx:latest", digest, "", "default", "")
+				_, _ = verif.Verify(ctx, newRequest("nginx:latest", digest, "", "default", ""))
 			}
 		})
 	}
@@ -2563,7 +2729,7 @@ func TestCreateFetcherWithRoots(t *testing.T) {
 
 		cfg := config.DefaultConfig()
 		cfg.Sigstore.Roots = []config.SigstoreRootSource{
-			{Name: testRootNameGitHub, TUFMirror: testGitHubTUFMirror, TUFRoot: ""},
+			{Name: testRootNameGitHub, TUFMirror: testGitHubTUFMirror, TUFRoot: "", Issuers: nil},
 		}
 
 		// Note: this will attempt a TUF fetch which will fail, but the fetcher
@@ -2616,7 +2782,12 @@ func TestCreateFetcherWithRoots(t *testing.T) {
 		falseVal := false
 		cfg := config.DefaultConfig()
 		cfg.Sigstore.Roots = []config.SigstoreRootSource{
-			{Name: "internal", TUFMirror: "https://tuf.internal.example.com", TUFRoot: ""},
+			{
+				Name:      "internal",
+				TUFMirror: "https://tuf.internal.example.com",
+				TUFRoot:   "",
+				Issuers:   nil,
+			},
 		}
 		cfg.Sigstore.IncludePublicRoot = &falseVal
 
@@ -2692,7 +2863,7 @@ func TestCacheAffectingFieldsChangedRoots(t *testing.T) {
 	base := func() *config.Config {
 		cfg := config.DefaultConfig()
 		cfg.Sigstore.Roots = []config.SigstoreRootSource{
-			{Name: testRootNameGitHub, TUFMirror: testGitHubTUFMirror, TUFRoot: ""},
+			{Name: testRootNameGitHub, TUFMirror: testGitHubTUFMirror, TUFRoot: "", Issuers: nil},
 		}
 
 		return cfg
@@ -2717,7 +2888,7 @@ func TestCacheAffectingFieldsChangedRoots(t *testing.T) {
 		next.Sigstore.Roots = append(
 			next.Sigstore.Roots,
 			config.SigstoreRootSource{
-				Name: "extra", TUFMirror: "https://extra.example.com", TUFRoot: "",
+				Name: "extra", TUFMirror: "https://extra.example.com", TUFRoot: "", Issuers: nil,
 			},
 		)
 
@@ -2761,7 +2932,7 @@ func TestReloadCreatesFetcherWhenRootsChange(t *testing.T) {
 	cfg2.Verification = config.ModeWarn
 	cfg2.PolicyDir = dir
 	cfg2.Sigstore.Roots = []config.SigstoreRootSource{
-		{Name: testRootNameGitHub, TUFMirror: testGitHubTUFMirror, TUFRoot: ""},
+		{Name: testRootNameGitHub, TUFMirror: testGitHubTUFMirror, TUFRoot: "", Issuers: nil},
 	}
 
 	err = verif.Reload(context.Background(), cfg2)
@@ -2913,8 +3084,10 @@ func TestNewOCIUnreachableRejectsInEnforceMode(t *testing.T) {
 	defer verif.Stop()
 
 	_, verifyErr := verif.Verify(
-		t.Context(), "nginx:latest", testDigest, "", "default", "",
+		t.Context(),
+		newRequest("nginx:latest", testDigest, "", "default", ""),
 	)
+
 	if !errors.Is(verifyErr, verifier.ErrVerificationFailed) {
 		t.Errorf("expected ErrVerificationFailed, got %v", verifyErr)
 	}
@@ -2936,8 +3109,10 @@ func TestNewOCIUnreachableAllowsInWarnMode(t *testing.T) {
 	defer verif.Stop()
 
 	result, verifyErr := verif.Verify(
-		t.Context(), "nginx:latest", testDigest, "", "default", "",
+		t.Context(),
+		newRequest("nginx:latest", testDigest, "", "default", ""),
 	)
+
 	testutil.AssertNoError(t, verifyErr)
 
 	if !result.Allowed {
@@ -3113,9 +3288,9 @@ func TestVerifyAllowlistSkipsVerification(t *testing.T) {
 
 	result, err := verif.Verify(
 		context.Background(),
-		"nginx:latest",
-		testDigest, "", "default", "",
+		newRequest("nginx:latest", testDigest, "", "default", ""),
 	)
+
 	testutil.AssertNoError(t, err)
 
 	if !result.Allowed {
@@ -3157,8 +3332,7 @@ func TestVerifyNonAllowlistedDigestStillVerifies(t *testing.T) {
 
 	_, err = verif.Verify(
 		context.Background(),
-		"nginx:latest",
-		testDigest, "", "default", "",
+		newRequest("nginx:latest", testDigest, "", "default", ""),
 	)
 
 	if !errors.Is(err, verifier.ErrVerificationFailed) {
@@ -3187,8 +3361,7 @@ func TestReloadAllowlistBypassesVerification(t *testing.T) {
 
 	_, err = verif.Verify(
 		context.Background(),
-		"nginx:latest",
-		testDigest, "", "default", "",
+		newRequest("nginx:latest", testDigest, "", "default", ""),
 	)
 
 	if !errors.Is(err, verifier.ErrVerificationFailed) {
@@ -3205,9 +3378,9 @@ func TestReloadAllowlistBypassesVerification(t *testing.T) {
 
 	result, err := verif.Verify(
 		context.Background(),
-		"nginx:latest",
-		testDigest, "", "default", "",
+		newRequest("nginx:latest", testDigest, "", "default", ""),
 	)
+
 	testutil.AssertNoError(t, err)
 
 	if !result.Allowed {

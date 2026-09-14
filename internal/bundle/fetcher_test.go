@@ -15,7 +15,9 @@
 package bundle //nolint:testpackage // tests access internal store helpers
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -25,20 +27,34 @@ import (
 
 func passthroughVerifier(
 	_ context.Context, bundleBytes []byte, _ *attestation.FetchOptions,
-) ([]byte, error) {
-	return bundleBytes, nil
+) (*attestation.VerifiedBundle, error) {
+	var statement struct {
+		PredicateType string `json:"predicateType"`
+	}
+
+	_ = json.Unmarshal(bundleBytes, &statement)
+
+	return &attestation.VerifiedBundle{
+		Payload:       bundleBytes,
+		PredicateType: statement.PredicateType,
+		Signer: attestation.SignerIdentity{
+			KeyPath: "passthrough", KeyPaths: nil, Issuer: "", SAN: "",
+		},
+	}, nil
 }
 
 var errVerificationFailed = errors.New("verification failed")
 
-func failingVerifier(_ context.Context, _ []byte, _ *attestation.FetchOptions) ([]byte, error) {
+func failingVerifier(
+	_ context.Context, _ []byte, _ *attestation.FetchOptions,
+) (*attestation.VerifiedBundle, error) {
 	return nil, errVerificationFailed
 }
 
 func TestFetcherFetch(t *testing.T) {
 	t.Parallel()
 
-	payload := []byte(`{"predicateType":"test","predicate":{}}`)
+	payload := []byte(`{"predicateType":"` + testSLSAPredicate + `","predicate":{}}`)
 	digest := blobDigest(payload)
 	imageDigest := testImageDigest
 
@@ -93,6 +109,14 @@ func TestFetcherFetch(t *testing.T) {
 		t.Errorf("SignatureType = %q, want %q",
 			result[0].SignatureType, attestation.SignatureTypeSigstore)
 	}
+
+	if result[0].Signer.KeyPath != "passthrough" {
+		t.Errorf("Signer.KeyPath = %q, want %q", result[0].Signer.KeyPath, "passthrough")
+	}
+
+	if !bytes.Equal(result[0].Bundle, payload) {
+		t.Errorf("Bundle = %q, want %q", result[0].Bundle, payload)
+	}
 }
 
 func TestFetcherNilOptions(t *testing.T) {
@@ -146,7 +170,7 @@ func TestFetcherEmptyDigest(t *testing.T) {
 func TestFetcherVerificationFailure(t *testing.T) {
 	t.Parallel()
 
-	payload := []byte(`{"test":"data"}`)
+	payload := []byte(`{"predicateType":"test","test":"data"}`)
 	digest := blobDigest(payload)
 
 	manifest := &Manifest{ //nolint:exhaustruct_v5 // test data
@@ -176,8 +200,8 @@ func TestFetcherVerificationFailure(t *testing.T) {
 	result, err := fetcher.Fetch(context.Background(), "ref", &attestation.FetchOptions{
 		Digest: testImageDigest,
 	})
-	if err != nil {
-		t.Fatalf("Fetch() unexpected error: %v", err)
+	if !errors.Is(err, attestation.ErrVerificationFailed) {
+		t.Fatalf("Fetch() error = %v, want %v", err, attestation.ErrVerificationFailed)
 	}
 
 	if len(result) != 0 {
@@ -225,7 +249,7 @@ func TestFetcherExpiryAllowAndWarn(t *testing.T) {
 		t.Run(string(policy), func(t *testing.T) {
 			t.Parallel()
 
-			payload := []byte(`{"test":"data"}`)
+			payload := []byte(`{"predicateType":"test","test":"data"}`)
 			digest := blobDigest(payload)
 
 			manifest := &Manifest{ //nolint:exhaustruct_v5 // test data
@@ -274,7 +298,7 @@ func TestFetcherExpiryAllowAndWarn(t *testing.T) {
 func TestFetcherNoMaxAge(t *testing.T) {
 	t.Parallel()
 
-	payload := []byte(`{"test":"data"}`)
+	payload := []byte(`{"predicateType":"test","test":"data"}`)
 	digest := blobDigest(payload)
 
 	manifest := &Manifest{ //nolint:exhaustruct_v5 // test data
@@ -316,7 +340,7 @@ func TestFetcherNoMaxAge(t *testing.T) {
 func TestFetcherContextCanceled(t *testing.T) {
 	t.Parallel()
 
-	payload := []byte(`{"test":"data"}`)
+	payload := []byte(`{"predicateType":"test","test":"data"}`)
 	digest := blobDigest(payload)
 
 	manifest := &Manifest{ //nolint:exhaustruct_v5 // test data
@@ -357,7 +381,7 @@ func TestFetcherContextCanceled(t *testing.T) {
 func TestFetcherRequireSignatureMissing(t *testing.T) {
 	t.Parallel()
 
-	payload := []byte(`{"test":"data"}`)
+	payload := []byte(`{"predicateType":"test","test":"data"}`)
 	digest := blobDigest(payload)
 
 	manifest := &Manifest{ //nolint:exhaustruct_v5 // test data
@@ -402,7 +426,7 @@ func TestFetcherRequireSignatureMissing(t *testing.T) {
 func TestFetcherSignatureKeyConfiguredButUnsigned(t *testing.T) {
 	t.Parallel()
 
-	payload := []byte(`{"test":"data"}`)
+	payload := []byte(`{"predicateType":"test","test":"data"}`)
 	digest := blobDigest(payload)
 
 	manifest := &Manifest{ //nolint:exhaustruct_v5 // test data
@@ -433,24 +457,20 @@ func TestFetcherSignatureKeyConfiguredButUnsigned(t *testing.T) {
 		WithBundleSignatureKey(pubPath),
 	)
 
-	result, err := fetcher.Fetch(
+	_, err = fetcher.Fetch(
 		context.Background(), "ref", &attestation.FetchOptions{
 			Digest: testImageDigest,
 		},
 	)
-	if err != nil {
-		t.Fatalf("Fetch() should succeed with key configured but unsigned bundle: %v", err)
-	}
-
-	if len(result) != 1 {
-		t.Errorf("Fetch() count = %d, want 1", len(result))
+	if !errors.Is(err, ErrBundleSignatureRequired) {
+		t.Fatalf("Fetch() error = %v, want %v", err, ErrBundleSignatureRequired)
 	}
 }
 
 func TestFetcherMetricsCallbacks(t *testing.T) {
 	t.Parallel()
 
-	payload := []byte(`{"test":"data"}`)
+	payload := []byte(`{"predicateType":"test","test":"data"}`)
 	digest := blobDigest(payload)
 
 	manifest := &Manifest{ //nolint:exhaustruct_v5 // test data
@@ -553,7 +573,7 @@ func TestFetcherStoreCreatedAt(t *testing.T) {
 func TestFetcherSignatureVerification(t *testing.T) {
 	t.Parallel()
 
-	payload := []byte(`{"test":"data"}`)
+	payload := []byte(`{"predicateType":"test","test":"data"}`)
 	digest := blobDigest(payload)
 
 	manifest := &Manifest{ //nolint:exhaustruct_v5 // test data

@@ -53,6 +53,7 @@ func TestCreateBasic(t *testing.T) {
 				Payload:       payload,
 				Digest:        testImageDigest,
 				SignatureType: attestation.SignatureTypeSigstore,
+				Bundle:        payload,
 			}},
 		},
 		//nolint:exhaustruct_v5 // test data
@@ -175,6 +176,7 @@ func TestCreateWithSigning(t *testing.T) {
 				Payload:       payload,
 				Digest:        testImageDigest,
 				SignatureType: attestation.SignatureTypeSigstore,
+				Bundle:        payload,
 			}},
 		},
 		//nolint:exhaustruct_v5 // test data

@@ -34,115 +34,18 @@ func (p *Policy) EffectiveMode(global config.VerificationMode) config.Verificati
 	return global
 }
 
-func missingPolicyOrAllow(action types.Action) types.Action {
-	if action != "" {
-		return action
+// MissingPolicyFor returns the effective missing-attestation policy for
+// the given check type, defaulting to allow when the section or its
+// missingPolicy is not set. New attestation types only need an entry in the
+// section registry (and in AttestationCheckTypes).
+func (p *Policy) MissingPolicyFor(ct types.CheckType) types.Action {
+	spec := sectionForCheckType(ct)
+	if spec == nil {
+		return types.ActionAllow
 	}
 
-	return types.ActionAllow
-}
-
-//nolint:gochecknoglobals // static accessor registry per check type
-var missingPolicyAccessors = map[types.CheckType]func(*Sections) types.Action{
-	types.CheckTypeSLSA: func(s *Sections) types.Action {
-		if s.SLSA != nil {
-			return s.SLSA.MissingPolicy
-		}
-
-		return ""
-	},
-	types.CheckTypeVEX: func(s *Sections) types.Action {
-		if s.VEX != nil {
-			return s.VEX.MissingPolicy
-		}
-
-		return ""
-	},
-	types.CheckTypeVSA: func(s *Sections) types.Action {
-		if s.VSA != nil {
-			return s.VSA.MissingPolicy
-		}
-
-		return ""
-	},
-	types.CheckTypeNotation: func(s *Sections) types.Action {
-		if s.Notation != nil {
-			return s.Notation.MissingPolicy
-		}
-
-		return ""
-	},
-	types.CheckTypeSBOM: func(s *Sections) types.Action {
-		if s.SBOM != nil {
-			return s.SBOM.MissingPolicy
-		}
-
-		return ""
-	},
-	types.CheckTypeSCAI: func(s *Sections) types.Action {
-		if s.SCAI != nil {
-			return s.SCAI.MissingPolicy
-		}
-
-		return ""
-	},
-	types.CheckTypeSource: func(s *Sections) types.Action {
-		if s.Source != nil {
-			return s.Source.MissingPolicy
-		}
-
-		return ""
-	},
-	types.CheckTypeBuildEnv: func(s *Sections) types.Action {
-		if s.BuildEnv != nil {
-			return s.BuildEnv.MissingPolicy
-		}
-
-		return ""
-	},
-	types.CheckTypeVulnScan: func(s *Sections) types.Action {
-		if s.VulnScan != nil {
-			return s.VulnScan.MissingPolicy
-		}
-
-		return ""
-	},
-	types.CheckTypeTestResult: func(s *Sections) types.Action {
-		if s.TestResult != nil {
-			return s.TestResult.MissingPolicy
-		}
-
-		return ""
-	},
-	types.CheckTypeRelease: func(s *Sections) types.Action {
-		if s.Release != nil {
-			return s.Release.MissingPolicy
-		}
-
-		return ""
-	},
-	types.CheckTypeRuntimeTrace: func(s *Sections) types.Action {
-		if s.RuntimeTrace != nil {
-			return s.RuntimeTrace.MissingPolicy
-		}
-
-		return ""
-	},
-	types.CheckTypeScorecard: func(s *Sections) types.Action {
-		if s.Scorecard != nil {
-			return s.Scorecard.MissingPolicy
-		}
-
-		return ""
-	},
-}
-
-// MissingPolicyFor returns the effective missing-attestation policy for
-// the given check type. New attestation types only need an entry in
-// missingPolicyAccessors (and in AttestationCheckTypes).
-func (p *Policy) MissingPolicyFor(ct types.CheckType) types.Action {
-	if accessor, ok := missingPolicyAccessors[ct]; ok {
-		return missingPolicyOrAllow(accessor(&p.Sections))
+	if action := p.missingPolicy(spec); action != "" {
+		return action
 	}
 
 	return types.ActionAllow
@@ -212,9 +115,25 @@ func (p *Policy) Builders() []TrustedBuilder {
 	return nil
 }
 
-// Hash returns a SHA-256 hex digest of the policy's JSON representation.
+// Hash returns a SHA-256 hex digest of the policy's JSON representation and
+// of the fields set explicitly in its document and rules. Merges treat an
+// explicit zero value (e.g. false) differently from an omitted field, while
+// the JSON representation omits both.
 func (p *Policy) Hash() (string, error) {
-	data, err := json.Marshal(p)
+	rulesExplicit := make([]map[string]bool, len(p.Rules))
+	for idx := range p.Rules {
+		rulesExplicit[idx] = p.Rules[idx].explicit
+	}
+
+	data, err := json.Marshal(struct {
+		Policy        *Policy           `json:"policy"`
+		Explicit      map[string]bool   `json:"explicit"`
+		RulesExplicit []map[string]bool `json:"rulesExplicit"`
+	}{
+		Policy:        p,
+		Explicit:      p.explicit,
+		RulesExplicit: rulesExplicit,
+	})
 	if err != nil {
 		return "", fmt.Errorf("hashing policy: %w", err)
 	}

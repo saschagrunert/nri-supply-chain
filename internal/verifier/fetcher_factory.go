@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 
 	"github.com/sigstore/sigstore-go/pkg/root"
 
@@ -28,6 +29,9 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 )
+
+// publicRootSourceName labels the public Sigstore trusted root source.
+const publicRootSourceName = "public-sigstore"
 
 func createAndWarmFetcher(
 	ctx context.Context, cfg *config.Config, transportCache *registry.TransportCache,
@@ -81,9 +85,11 @@ func createFetcher(cfg *config.Config) (*attestation.OCIFetcher, error) {
 		return createScalarFetcher(scalarMirror, scalarRoot)
 	}
 
-	// New roots array path: single root without public root inclusion uses
-	// the simpler single-root constructor.
-	if len(effectiveRoots) == 1 && !cfg.Sigstore.ShouldIncludePublicRoot() {
+	// New roots array path: an unscoped single root without public root
+	// inclusion uses the simpler single-root constructor. Scoped roots always
+	// use the multi-root constructor, which applies the issuer restriction.
+	if len(effectiveRoots) == 1 && !cfg.Sigstore.ShouldIncludePublicRoot() &&
+		len(effectiveRoots[0].Issuers) == 0 {
 		return createSingleRootFetcher(effectiveRoots[0])
 	}
 
@@ -142,41 +148,217 @@ func createSingleRootFetcher(
 	), nil
 }
 
-func buildRootSourceConfigs(
+// plannedRoot is a trusted root source derived from the configuration before
+// any TUF root file is read.
+type plannedRoot struct {
+	name    string
+	mirror  string
+	tufRoot string
+	issuers []string
+}
+
+// planRootSources derives the trusted root sources of a roots array
+// configuration. When the public root is included, user roots with an empty
+// TUF mirror describe that same public root: they do not get a cache of their
+// own, but their issuer restrictions apply to the public root, so scoping
+// configured on them is never dropped.
+func planRootSources(
 	cfg *config.Config, roots []config.SigstoreRootSource,
-) ([]attestation.RootSourceConfig, error) {
-	var sources []attestation.RootSourceConfig
+) []plannedRoot {
+	var planned []plannedRoot
 
 	includePublic := cfg.Sigstore.ShouldIncludePublicRoot()
 
 	if includePublic {
-		sources = append(sources, attestation.RootSourceConfig{
-			Name:         "public-sigstore",
-			TUFMirror:    "",
-			TUFRootBytes: nil,
+		planned = append(planned, plannedRoot{
+			name:    publicRootSourceName,
+			mirror:  "",
+			tufRoot: "",
+			issuers: publicRootIssuers(roots),
 		})
 	}
 
 	for _, root := range roots {
-		// Skip user roots with empty TUF mirror when the public root is
-		// already included, avoiding duplicate caches for the same root.
 		if root.TUFMirror == "" && includePublic {
 			continue
 		}
 
-		tufRootBytes, err := readTUFRootBytes(root.TUFRoot)
+		planned = append(planned, plannedRoot{
+			name:    root.Name,
+			mirror:  root.TUFMirror,
+			tufRoot: root.TUFRoot,
+			issuers: root.Issuers,
+		})
+	}
+
+	return planned
+}
+
+// publicRootIssuers returns the issuer restriction of the included public
+// root: the union of the issuers of user roots with an empty TUF mirror, or
+// no restriction when there is no such root or one of them is unscoped.
+func publicRootIssuers(roots []config.SigstoreRootSource) []string {
+	var (
+		issuers []string
+		found   bool
+	)
+
+	for _, root := range roots {
+		if root.TUFMirror != "" {
+			continue
+		}
+
+		if len(root.Issuers) == 0 {
+			return nil
+		}
+
+		found = true
+
+		for _, issuer := range root.Issuers {
+			if !slices.Contains(issuers, issuer) {
+				issuers = append(issuers, issuer)
+			}
+		}
+	}
+
+	if !found {
+		return nil
+	}
+
+	return issuers
+}
+
+func buildRootSourceConfigs(
+	cfg *config.Config, roots []config.SigstoreRootSource,
+) ([]attestation.RootSourceConfig, error) {
+	planned := planRootSources(cfg, roots)
+	sources := make([]attestation.RootSourceConfig, 0, len(planned))
+
+	for idx := range planned {
+		tufRootBytes, err := readTUFRootBytes(planned[idx].tufRoot)
 		if err != nil {
 			return nil, err
 		}
 
+		if len(planned[idx].issuers) == 0 && planned[idx].mirror != "" {
+			slog.Warn("Sigstore root has no issuers restriction; certificates for any "+
+				"policy issuer are accepted from it (set issuers to scope the root)",
+				"root", planned[idx].name,
+			)
+		}
+
 		sources = append(sources, attestation.RootSourceConfig{
-			Name:         root.Name,
-			TUFMirror:    root.TUFMirror,
+			Name:         planned[idx].name,
+			TUFMirror:    planned[idx].mirror,
 			TUFRootBytes: tufRootBytes,
+			Issuers:      planned[idx].issuers,
 		})
 	}
 
 	return sources, nil
+}
+
+// offlineRootScope is the issuer restriction a verifying node applies to a
+// trusted root embedded in an offline bundle.
+type offlineRootScope struct {
+	issuers         []string
+	keylessDisabled bool
+	// known is true when the embedded root was matched to a configured root
+	// source by name.
+	known bool
+}
+
+// scopeOfflineRoot returns the issuer restriction for a trusted root embedded
+// in an offline bundle. The restriction always comes from the local
+// configuration, never from the bundle:
+//   - without a sigstore.roots array, the online fetcher trusts a single
+//     unscoped root, so embedded roots are unscoped as well;
+//   - a root named after a configured root source gets that source's issuers,
+//     exactly as online;
+//   - a root without a matching name (bundles of older releases, or a root
+//     given with --trusted-root) gets only the issuers that every configured
+//     root allows, so it can never vouch for more than any configured root.
+//     When no issuer is allowed by all of them, it is not trusted for
+//     certificates at all.
+func scopeOfflineRoot(cfg *config.Config, rootName string) offlineRootScope {
+	if len(cfg.Sigstore.Roots) == 0 {
+		return offlineRootScope{issuers: nil, keylessDisabled: false, known: true}
+	}
+
+	planned := planRootSources(cfg, cfg.Sigstore.EffectiveRoots())
+
+	if rootName != "" {
+		for idx := range planned {
+			if planned[idx].name == rootName {
+				return offlineRootScope{
+					issuers: planned[idx].issuers, keylessDisabled: false, known: true,
+				}
+			}
+		}
+	}
+
+	var (
+		allowed    []string
+		restricted bool
+	)
+
+	for idx := range planned {
+		if len(planned[idx].issuers) == 0 {
+			continue
+		}
+
+		if !restricted {
+			allowed = slices.Clone(planned[idx].issuers)
+			restricted = true
+
+			continue
+		}
+
+		allowed = slices.DeleteFunc(allowed, func(issuer string) bool {
+			return !slices.Contains(planned[idx].issuers, issuer)
+		})
+	}
+
+	return offlineRootScope{
+		issuers:         allowed,
+		keylessDisabled: restricted && len(allowed) == 0,
+		known:           false,
+	}
+}
+
+// offlineStaticRoots scopes the trusted roots embedded in an offline bundle
+// with the local configuration.
+func offlineStaticRoots(
+	cfg *config.Config, embedded []bundle.TrustedRootSource,
+) []attestation.StaticRoot {
+	roots := make([]attestation.StaticRoot, 0, len(embedded))
+
+	for idx := range embedded {
+		scope := scopeOfflineRoot(cfg, embedded[idx].Name)
+
+		if !scope.known {
+			slog.Warn("Bundle trusted root does not match a configured Sigstore root "+
+				"source; it is only trusted for issuers allowed by every configured root",
+				"root", embedded[idx].Name,
+				"issuers", scope.issuers,
+				"keylessDisabled", scope.keylessDisabled,
+			)
+		}
+
+		rootName := embedded[idx].Name
+		if rootName == "" {
+			rootName = "bundle"
+		}
+
+		roots = append(roots, attestation.StaticRoot{
+			Name:            rootName,
+			Root:            embedded[idx].Root,
+			Issuers:         scope.issuers,
+			KeylessDisabled: scope.keylessDisabled,
+		})
+	}
+
+	return roots
 }
 
 func readTUFRootBytes(path string) ([]byte, error) {
@@ -244,26 +426,30 @@ func createBundleFetcher(
 		return nil, fmt.Errorf("opening bundle store: %w", err)
 	}
 
-	trustedRoot, err := store.TrustedRoot()
+	embedded, err := store.TrustedRoots()
 	if err != nil {
-		slog.Warn("Bundle has no embedded trusted root, "+
-			"attestation verification will require key-based policy",
+		slog.Warn("Bundle has no embedded trusted root; only key-based "+
+			"attestations verified without a transparency log can be accepted",
 			"error", err)
+
+		embedded = nil
 	}
 
-	var verifyFunc attestation.BundleVerifyFunc
-	if trustedRoot != nil {
-		verifyFunc = func(ctx context.Context, bundleBytes []byte, opts *attestation.FetchOptions) ([]byte, error) {
-			return attestation.VerifyBundle(ctx, bundleBytes, opts, trustedRoot)
-		}
-	} else {
-		// Without a trusted root, attestations are extracted but not
-		// cryptographically verified at the bundle layer. Security
-		// still relies on the bundle manifest signature (when
-		// configured) and any key-based policy checks in the verifier.
-		verifyFunc = func(_ context.Context, bundleBytes []byte, _ *attestation.FetchOptions) ([]byte, error) {
-			return attestation.ExtractBundlePayload(bundleBytes)
-		}
+	roots := offlineStaticRoots(cfg, embedded)
+
+	if cfg.Offline.BundleSignatureKey == "" && slices.ContainsFunc(roots, unscopedStaticRoot) {
+		slog.Warn("Bundle trusted root is accepted for every policy issuer and the " +
+			"bundle manifest is not signature verified; set offline.bundle_signature_key " +
+			"and scope every sigstore.roots entry with issuers")
+	}
+
+	// Every bundled attestation is cryptographically verified. Without a
+	// trusted root, key-based bundles still verify against the policy keys
+	// while keyless bundles and transparency log checks fail closed.
+	verifyFunc := func(
+		ctx context.Context, bundleBytes []byte, opts *attestation.FetchOptions,
+	) (*attestation.VerifiedBundle, error) {
+		return attestation.VerifyBundleWithStaticRoots(ctx, bundleBytes, opts, roots)
 	}
 
 	opts := []bundle.FetcherOption{
@@ -281,6 +467,10 @@ func createBundleFetcher(
 	}
 
 	return bundle.NewFetcher(store, verifyFunc, opts...), nil
+}
+
+func unscopedStaticRoot(staticRoot attestation.StaticRoot) bool {
+	return len(staticRoot.Issuers) == 0 && !staticRoot.KeylessDisabled
 }
 
 func setBundleMetricsOnFetcher(fetcher attestation.Fetcher, met *metrics.Metrics) {

@@ -19,7 +19,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
+	"time"
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
 	openvex "github.com/openvex/go-vex/pkg/vex"
@@ -711,7 +713,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		}
 	})
 
-	t.Run("mix of valid and invalid with valid passing", func(t *testing.T) {
+	t.Run("mix of valid and invalid fails", func(t *testing.T) {
 		t.Parallel()
 
 		attestations := [][]byte{
@@ -729,8 +731,8 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		if !result.Passed {
-			t.Errorf("expected pass when at least one valid doc passes, got: %s", result.Detail)
+		if result.Passed {
+			t.Errorf("expected fail when any document is invalid, got: %s", result.Detail)
 		}
 	})
 }
@@ -888,7 +890,7 @@ func TestVerifyMultiple(t *testing.T) {
 	}
 }
 
-func TestVerifyMultipleSkipsInvalid(t *testing.T) {
+func TestVerifyMultipleInvalidDocumentFails(t *testing.T) {
 	t.Parallel()
 
 	goodDoc := validVEXDoc(openvex.StatusNotAffected)
@@ -907,9 +909,174 @@ func TestVerifyMultipleSkipsInvalid(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !result.Passed {
-		t.Errorf("expected pass after skipping invalid, got: %s", result.Detail)
+	if result.Passed || result.Status != types.StatusFail {
+		t.Errorf("expected fail when a document does not parse, got: %s", result.Detail)
 	}
+}
+
+func TestVerifyStatusMetadata(t *testing.T) {
+	t.Parallel()
+
+	emptyDoc := openvex.VEX{
+		Context:    testVEXContext,
+		ID:         "empty",
+		Statements: []openvex.Statement{},
+	}
+
+	otherImageDoc := validVEXDoc(openvex.StatusNotAffected)
+	otherImageDoc.Statements[0].Products = []openvex.Product{
+		{ID: "pkg:oci/other@sha256:" + strings.Repeat("0", 64)},
+	}
+
+	tests := []struct {
+		name       string
+		att        []byte
+		wantStatus string
+		wantPassed bool
+	}{
+		{
+			name: "not affected statement",
+			att: testutil.WrapInToto(
+				t,
+				validVEXDoc(openvex.StatusNotAffected),
+				testDigest,
+				testPredicateType,
+			),
+			wantStatus: "not_affected",
+			wantPassed: true,
+		},
+		{
+			name:       "empty statements report no_match",
+			att:        testutil.WrapInToto(t, emptyDoc, testDigest, testPredicateType),
+			wantStatus: vex.StatusNoMatch,
+			wantPassed: true,
+		},
+		{
+			name:       "null predicate reports no_match",
+			att:        wrapRawPredicate(t, []byte("null")),
+			wantStatus: vex.StatusNoMatch,
+			wantPassed: true,
+		},
+		{
+			name:       "statements for another image report no_match",
+			att:        testutil.WrapInToto(t, otherImageDoc, testDigest, testPredicateType),
+			wantStatus: vex.StatusNoMatch,
+			wantPassed: true,
+		},
+		{
+			name:       "cyclonedx SBOM without vulnerabilities reports no_match",
+			att:        wrapCycloneDXInToto(t, cdx.NewBOM(), testDigest),
+			wantStatus: vex.StatusNoMatch,
+			wantPassed: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			result, err := vex.VerifyMultiple(
+				context.Background(), [][]byte{test.att},
+				&policy.Policy{}, testImageRef, testDigest, nil,
+			)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result.Passed != test.wantPassed {
+				t.Errorf("expected passed=%v, got %s", test.wantPassed, result.Detail)
+			}
+
+			if got := result.Metadata["status"]; got != test.wantStatus {
+				t.Errorf("expected status %q, got %v", test.wantStatus, got)
+			}
+		})
+	}
+}
+
+func TestVerifyUnrecognizedPredicateFails(t *testing.T) {
+	t.Parallel()
+
+	att := wrapRawPredicate(t, []byte(`{"foo":"bar"}`))
+
+	_, err := vex.Verify(
+		context.Background(), att, &policy.Policy{}, testImageRef, testDigest, nil,
+	)
+	if !errors.Is(err, vex.ErrInvalidVEX) {
+		t.Errorf("expected ErrInvalidVEX for unrecognized predicate, got %v", err)
+	}
+}
+
+func TestVerifyMultipleMergesOpenVEXDocuments(t *testing.T) {
+	t.Parallel()
+
+	older := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	newer := older.Add(time.Hour)
+
+	affected := validVEXDoc(openvex.StatusAffected)
+	affected.Timestamp = &older
+
+	fixed := validVEXDoc(openvex.StatusFixed)
+	fixed.Timestamp = &newer
+
+	result, err := vex.VerifyMultiple(
+		context.Background(),
+		[][]byte{
+			testutil.WrapInToto(t, fixed, testDigest, testPredicateType),
+			testutil.WrapInToto(t, affected, testDigest, testPredicateType),
+		},
+		&policy.Policy{}, testImageRef, testDigest, nil,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.Passed {
+		t.Errorf("expected newer fixed statement to override older affected, got %s", result.Detail)
+	}
+}
+
+func TestVerifyMultipleRelatedDigestStatementsApply(t *testing.T) {
+	t.Parallel()
+
+	platformDigest := "sha256:" + strings.Repeat("b", 64)
+
+	// The document is attached to (and bound to) the index digest but its
+	// statement names the platform manifest digest.
+	doc := validVEXDoc(openvex.StatusAffected)
+	doc.Statements[0].Products = []openvex.Product{
+		{ID: platformDigest},
+	}
+
+	result, err := vex.VerifyMultiple(
+		context.Background(),
+		[][]byte{testutil.WrapInToto(t, doc, testDigest, testPredicateType)},
+		&policy.Policy{}, testImageRef, testDigest, nil, platformDigest,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Passed {
+		t.Errorf("expected affected statement about the platform digest to apply, got %s",
+			result.Detail)
+	}
+}
+
+func wrapRawPredicate(t *testing.T, predicate []byte) []byte {
+	t.Helper()
+
+	return testutil.MustMarshal(t, testutil.InTotoWrapper{
+		Type: testutil.InTotoStatementType,
+		Subject: []testutil.InTotoSubj{{
+			Name: testutil.TestSubjectName,
+			Digest: map[string]string{
+				testutil.TestDigestAlgo: testDigest[len(testutil.TestDigestAlgo)+1:],
+			},
+		}},
+		PredicateType: testPredicateType,
+		Predicate:     predicate,
+	})
 }
 
 func TestVerifyInTotoWrapped(t *testing.T) {
@@ -1233,6 +1400,40 @@ func TestVerifyCycloneDXFormatDetection(t *testing.T) {
 				t.Errorf("expected status %q, got %q", test.wantStatus, result.Status)
 			}
 		})
+	}
+}
+
+// TestVerifyCycloneDXScannerFindingsNoMatch covers a CycloneDX SBOM with
+// rated scanner findings and no analysis state. The findings are gated by the
+// sbom.cvss policy, so the VEX check must not deny the image for them.
+func TestVerifyCycloneDXScannerFindingsNoMatch(t *testing.T) {
+	t.Parallel()
+
+	score := 3.5
+	bom := cdx.NewBOM()
+	bom.Components = &[]cdx.Component{{Type: cdx.ComponentTypeLibrary, Name: "test-lib"}}
+	bom.Vulnerabilities = &[]cdx.Vulnerability{
+		{
+			ID:      "CVE-2024-0001",
+			Ratings: &[]cdx.VulnerabilityRating{{Score: &score, Severity: cdx.SeverityLow}},
+		},
+	}
+
+	att := wrapCycloneDXInToto(t, bom, testDigest)
+
+	result, err := vex.Verify(
+		context.Background(), att, &policy.Policy{}, testImageRef, testDigest, nil,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.Passed {
+		t.Errorf("expected scanner findings not to fail the VEX check, got %s", result.Detail)
+	}
+
+	if got := result.Metadata["status"]; got != vex.StatusNoMatch {
+		t.Errorf("expected status %q, got %v", vex.StatusNoMatch, got)
 	}
 }
 

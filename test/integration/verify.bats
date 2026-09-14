@@ -10,12 +10,12 @@ verification = "enforce"
 policy_dir = "$TEST_DIR/policies"
 EOF
 	run_binary --config "$TEST_DIR/config.toml" verify ":::invalid"
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 }
 
 @test "verify without config fails" {
 	run_binary verify "localhost:1/nonexistent:latest"
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 	[[ "$output" == *"verification to be enabled"* ]]
 }
 
@@ -27,11 +27,11 @@ verification = "warn"
 policy_dir = "$TEST_DIR/policies"
 EOF
 	run_binary --config "$TEST_DIR/config.toml" verify "localhost:1/nonexistent:latest"
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 }
 
 @test "namespace flag without config fails" {
 	run_binary verify "localhost:1/nonexistent:latest" --namespace "kube-system"
-	[[ "$status" -ne 0 ]]
+	[[ "$status" -eq 2 ]]
 	[[ "$output" == *"verification to be enabled"* ]]
 }

@@ -93,7 +93,7 @@ func openTestStore(t *testing.T, storePath string) *bundle.Store {
 
 func noopVerify(
 	_ context.Context, _ []byte, _ *attestation.FetchOptions,
-) ([]byte, error) {
+) (*attestation.VerifiedBundle, error) {
 	return nil, nil
 }
 

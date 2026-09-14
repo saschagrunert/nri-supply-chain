@@ -35,15 +35,25 @@ import (
 const (
 	acrTokenUsername   = "<token>"
 	acrExchangeTimeout = 10 * time.Second
-	acrScope           = "https://management.azure.com/.default"
+	// acrRegistryScope requests a token for the container registry audience
+	// only. It is preferred over the Azure Resource Manager scope, which
+	// grants access to the management plane of the whole subscription.
+	acrRegistryScope = "https://containerregistry.azure.net/.default"
+	// acrManagementScope is the legacy, broader scope. It is only used when
+	// a registry rejects registry-audience tokens.
+	acrManagementScope = "https://management.azure.com/.default"
 	grantTypeValue     = "access_token"
 	acrTokenCacheTTL   = 30 * time.Minute
+	// acrFailureBackoff caches credential failures so that every image pull
+	// does not repeat a slow Azure token request against a broken setup.
+	acrFailureBackoff = 30 * time.Second
 )
 
 var (
-	errNotACR            = errors.New("not an Azure Container Registry host")
-	errExchangeStatus    = errors.New("ACR token exchange failed")
-	errEmptyRefreshToken = errors.New("ACR token exchange returned empty refresh token")
+	errNotACR               = errors.New("not an Azure Container Registry host")
+	errExchangeStatus       = errors.New("ACR token exchange failed")
+	errExchangeUnauthorized = errors.New("ACR token exchange rejected the access token")
+	errEmptyRefreshToken    = errors.New("ACR token exchange returned empty refresh token")
 )
 
 type acrExchangeResponse struct {
@@ -55,14 +65,28 @@ type cachedRefreshToken struct {
 	expiresAt time.Time
 }
 
+type cachedFailure struct {
+	err       error
+	expiresAt time.Time
+}
+
+// accessTokenFunc acquires an Azure AD access token for the given scope.
+type accessTokenFunc func(ctx context.Context, scope string) (string, error)
+
+// exchangeFunc exchanges an Azure AD access token for an ACR refresh token.
+type exchangeFunc func(ctx context.Context, client *http.Client, host, accessToken string) (string, error)
+
 type acrHelper struct {
 	client      *http.Client
 	credMu      sync.Mutex
 	cred        *azidentity.DefaultAzureCredential
 	tokenMu     sync.Mutex
 	tokens      map[string]cachedRefreshToken
+	failures    map[string]cachedFailure
 	defaultOnce sync.Once
 	defaultHTTP *http.Client
+	accessToken accessTokenFunc
+	exchange    exchangeFunc
 }
 
 func newACRHelper() *acrHelper {
@@ -83,30 +107,78 @@ func (a *acrHelper) Get(serverURL string) (username, password string, err error)
 		return acrTokenUsername, cached, nil
 	}
 
+	failure := a.recentFailure(host)
+	if failure != nil {
+		return "", "", failure
+	}
+
 	// authn.Helper.Get has no context parameter, so use a detached timeout.
 	ctx, cancel := context.WithTimeout(context.Background(), acrExchangeTimeout)
 	defer cancel()
 
-	cred, credErr := a.credential()
-	if credErr != nil {
-		return "", "", credErr
-	}
+	refreshToken, err := a.acquireRefreshToken(ctx, host)
+	if err != nil {
+		a.cacheFailure(host, err)
 
-	token, tokenErr := cred.GetToken(ctx, policy.TokenRequestOptions{
-		Scopes: []string{acrScope},
-	})
-	if tokenErr != nil {
-		return "", "", fmt.Errorf("acquiring Azure token: %w", tokenErr)
-	}
-
-	refreshToken, exchangeErr := exchangeACRToken(ctx, a.httpClient(), host, token.Token)
-	if exchangeErr != nil {
-		return "", "", exchangeErr
+		return "", "", err
 	}
 
 	a.cacheToken(host, refreshToken)
 
 	return acrTokenUsername, refreshToken, nil
+}
+
+// acquireRefreshToken exchanges a registry-scoped Azure token for an ACR
+// refresh token. The broader management scope is only tried when the
+// registry rejects the registry-scoped token.
+func (a *acrHelper) acquireRefreshToken(ctx context.Context, host string) (string, error) {
+	var lastErr error
+
+	for _, scope := range []string{acrRegistryScope, acrManagementScope} {
+		token, tokenErr := a.getAccessToken(ctx, scope)
+		if tokenErr != nil {
+			return "", fmt.Errorf("acquiring Azure token: %w", tokenErr)
+		}
+
+		refreshToken, exchangeErr := a.exchangeToken(ctx, host, token)
+		if exchangeErr == nil {
+			return refreshToken, nil
+		}
+
+		lastErr = exchangeErr
+
+		if !errors.Is(exchangeErr, errExchangeUnauthorized) {
+			break
+		}
+	}
+
+	return "", lastErr
+}
+
+func (a *acrHelper) getAccessToken(ctx context.Context, scope string) (string, error) {
+	if a.accessToken != nil {
+		return a.accessToken(ctx, scope)
+	}
+
+	cred, err := a.credential()
+	if err != nil {
+		return "", err
+	}
+
+	token, err := cred.GetToken(ctx, policy.TokenRequestOptions{Scopes: []string{scope}})
+	if err != nil {
+		return "", fmt.Errorf("requesting token for scope %q: %w", scope, err)
+	}
+
+	return token.Token, nil
+}
+
+func (a *acrHelper) exchangeToken(ctx context.Context, host, accessToken string) (string, error) {
+	if a.exchange != nil {
+		return a.exchange(ctx, a.httpClient(), host, accessToken)
+	}
+
+	return exchangeACRToken(ctx, a.httpClient(), host, accessToken)
 }
 
 func (a *acrHelper) credential() (*azidentity.DefaultAzureCredential, error) {
@@ -139,6 +211,31 @@ func (a *acrHelper) cachedToken(host string) (string, bool) {
 	return cached.value, true
 }
 
+// recentFailure returns the cached credential failure for host, or nil when
+// there is none or the backoff has elapsed.
+func (a *acrHelper) recentFailure(host string) error {
+	a.tokenMu.Lock()
+	defer a.tokenMu.Unlock()
+
+	failure, ok := a.failures[host]
+	if !ok || time.Now().After(failure.expiresAt) {
+		return nil
+	}
+
+	return failure.err
+}
+
+func (a *acrHelper) cacheFailure(host string, err error) {
+	a.tokenMu.Lock()
+	defer a.tokenMu.Unlock()
+
+	if a.failures == nil {
+		a.failures = make(map[string]cachedFailure)
+	}
+
+	a.failures[host] = cachedFailure{err: err, expiresAt: time.Now().Add(acrFailureBackoff)}
+}
+
 func (a *acrHelper) cacheToken(host, refreshToken string) {
 	a.tokenMu.Lock()
 	defer a.tokenMu.Unlock()
@@ -151,6 +248,8 @@ func (a *acrHelper) cacheToken(host, refreshToken string) {
 		value:     refreshToken,
 		expiresAt: time.Now().Add(acrTokenCacheTTL),
 	}
+
+	delete(a.failures, host)
 }
 
 const acrHTTPClientTimeout = 30 * time.Second
@@ -226,6 +325,12 @@ func exchangeACRToken(
 	}
 
 	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return "", fmt.Errorf(
+			"%w: %w: status %d", errExchangeStatus, errExchangeUnauthorized, resp.StatusCode,
+		)
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("%w: status %d", errExchangeStatus, resp.StatusCode)

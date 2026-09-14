@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"net"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -30,6 +31,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 	"github.com/sigstore/sigstore-go/pkg/root"
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/registry"
@@ -41,15 +43,27 @@ var (
 )
 
 const (
-	maxTotalAttestationSize   = 50 << 20 // 50 MiB aggregate limit per image
-	maxReferrers              = 50
+	maxTotalAttestationSize = 50 << 20 // 50 MiB aggregate limit per image
+	// maxTotalDownloadSize bounds the bytes downloaded for one image fetch,
+	// including referrers that turn out to be junk. Stored bundles carry the
+	// payload base64 encoded plus signing material, so the limit leaves room
+	// above maxTotalAttestationSize for legitimate attestation sets.
+	maxTotalDownloadSize      = 2 * maxTotalAttestationSize
+	maxReferrers              = 50      // Sigstore bundle referrers per image
+	maxNotationReferrers      = 10      // Notation signature referrers per image
+	maxBaselineReferrers      = 5       // baseline SBOM referrers per image
+	maxReferrerManifestSize   = 4 << 20 // referrer manifests above this are skipped
+	maxLoggedReferrers        = 100
 	maxConcurrentCollectFetch = 5
 	trustedRootCacheTTL       = 1 * time.Hour
 	trustedRootMaxStaleness   = 24 * time.Hour
 	negativeCacheTTL          = 5 * time.Minute
-	fetchMaxRetries           = 2
-	fetchRetryBaseDelay       = 500 * time.Millisecond
-	fetchRetryJitterDivisor   = 2
+	// failedRootRetryInterval bounds how often a trusted root refresh is
+	// retried while no cached or pre-seeded root is available.
+	failedRootRetryInterval = 30 * time.Second
+	fetchMaxRetries         = 2
+	fetchRetryBaseDelay     = 500 * time.Millisecond
+	fetchRetryJitterDivisor = 2
 )
 
 // ImageFetchFunc fetches an OCI image by reference.
@@ -60,7 +74,7 @@ type ReferrersFunc func(d name.Digest, options ...remote.Option) (ociV1.ImageInd
 
 // OCIFetcher discovers attestations via the OCI Referrers API.
 type OCIFetcher struct {
-	verifyBundle BundleVerifyFunc
+	verifyBundle SignedBundleVerifyFunc
 	fetchImage   ImageFetchFunc
 	referrers    ReferrersFunc
 	// rootCache is captured by the verifyBundle closure; stored for exhaustruct compliance.
@@ -69,6 +83,8 @@ type OCIFetcher struct {
 	limiter            atomic.Pointer[rate.Limiter]
 	transportCache     atomic.Pointer[registry.TransportCache]
 	maxAttestationSize atomic.Int64
+	// downloadLimit overrides maxTotalDownloadSize when positive.
+	downloadLimit      atomic.Int64
 	onMirrorFallback   func(registryHost string)
 	onMirrorFallbackMu sync.RWMutex
 }
@@ -167,6 +183,37 @@ func (f *OCIFetcher) CachedTrustedRoot() *root.TrustedRoot {
 	}
 
 	return nil
+}
+
+// CachedTrustedRoots returns every currently cached trusted root with its
+// source name and issuer restriction, without triggering a network fetch.
+// Roots that have not been cached yet are left out (call Warm first).
+func (f *OCIFetcher) CachedTrustedRoots() []StaticRoot {
+	caches := f.rootCaches
+	if f.rootCache != nil {
+		caches = []*trustedRootCache{f.rootCache}
+	}
+
+	roots := make([]StaticRoot, 0, len(caches))
+
+	for _, cache := range caches {
+		cache.mu.RLock()
+		trustedRoot, ok := cache.cachedHit()
+		cache.mu.RUnlock()
+
+		if !ok {
+			continue
+		}
+
+		roots = append(roots, StaticRoot{
+			Name:            cache.name,
+			Root:            trustedRoot,
+			Issuers:         slices.Clone(cache.issuers),
+			KeylessDisabled: false,
+		})
+	}
+
+	return roots
 }
 
 // Warm pre-fetches the Sigstore trusted root(s) so that the first verification
@@ -388,12 +435,9 @@ func (f *OCIFetcher) fetchWithRetry(
 			return attestations, nil
 		}
 
-		if ctx.Err() != nil {
-			return nil, fmt.Errorf("attestation fetch interrupted: %w", ctx.Err())
-		}
-
-		if !isTransientError(err) {
-			return nil, err
+		finalErr := finalFetchError(ctx, err)
+		if finalErr != nil {
+			return nil, finalErr
 		}
 
 		lastErr = err
@@ -405,6 +449,26 @@ func (f *OCIFetcher) fetchWithRetry(
 	)
 }
 
+// finalFetchError returns the error that ends the retry loop for err, or nil
+// when the fetch should be retried. Verification failures are final and win
+// over an interruption, so the fetch deadline cannot turn a deny into the
+// fetch failure policy.
+func finalFetchError(ctx context.Context, err error) error {
+	if errors.Is(err, ErrVerificationFailed) {
+		return err
+	}
+
+	if ctx.Err() != nil {
+		return fmt.Errorf("attestation fetch interrupted: %w", ctx.Err())
+	}
+
+	if !isTransientError(err) {
+		return err
+	}
+
+	return nil
+}
+
 func (f *OCIFetcher) fetchOnce(
 	ctx context.Context,
 	ref name.Digest,
@@ -412,45 +476,213 @@ func (f *OCIFetcher) fetchOnce(
 	remoteOpts []remote.Option,
 	fetchOpts *FetchOptions,
 ) ([]VerifiedAttestation, error) {
+	ctx = withDownloadBudget(ctx, f.effectiveDownloadLimit())
+
 	idx, err := f.referrers(ref, remoteOpts...)
 	if err != nil {
-		return nil, fmt.Errorf("listing referrers: %w", err)
+		return nil, referrersError("listing referrers", err)
 	}
 
 	manifest, err := idx.IndexManifest()
 	if err != nil {
-		return nil, fmt.Errorf("reading referrers index: %w", err)
+		return nil, referrersError("reading referrers index", err)
 	}
 
 	logReferrers(ctx, ref, digest, manifest.Manifests)
 
-	attestations, hadBundles := f.collectAttestations(
-		ctx, manifest.Manifests, ref, digest, remoteOpts, fetchOpts,
-	)
-
-	notationSigs := f.collectNotationSignatures(ctx, manifest.Manifests, ref, digest, remoteOpts)
-	attestations = append(attestations, notationSigs...)
-
-	ctxErr := ctx.Err()
-	if ctxErr != nil {
-		return nil, fmt.Errorf("attestation fetch interrupted: %w", ctxErr)
-	}
-
-	if hadBundles && len(attestations) == 0 {
+	selection := selectReferrers(ctx, manifest.Manifests)
+	if selection.dropped > 0 {
 		return nil, fmt.Errorf(
-			"%w: all referrer bundles failed verification", errAllBundlesFailed,
+			"%w: %w: %d referrers exceed the per-image limits",
+			ErrVerificationFailed, errReferrerLimitExceeded, selection.dropped,
 		)
 	}
 
-	if len(attestations) == 0 {
+	attestations, notationSigs, baselineSBOMs, err := f.collectSelection(
+		ctx, &selection, ref, digest, remoteOpts, fetchOpts,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	attestations = append(attestations, notationSigs...)
+
+	if len(attestations) == 0 && len(baselineSBOMs) == 0 {
 		return f.cosignTagFallback(ctx, ref, digest, remoteOpts, fetchOpts)
 	}
 
-	// Collected after the bundle check so baseline SBOMs don't mask verification failures.
-	baselineSBOMs := f.collectBaselineSBOMs(ctx, manifest.Manifests, ref, digest, remoteOpts)
-	attestations = append(attestations, baselineSBOMs...)
+	return append(attestations, baselineSBOMs...), nil
+}
 
-	return attestations, nil
+func (f *OCIFetcher) effectiveDownloadLimit() int64 {
+	if limit := f.downloadLimit.Load(); limit > 0 {
+		return limit
+	}
+
+	return maxTotalDownloadSize
+}
+
+// downloadBudget counts the bytes downloaded during one fetch pass, so junk
+// referrers cannot make the plugin download without bound.
+type downloadBudget struct {
+	used  atomic.Int64
+	limit int64
+}
+
+type downloadBudgetKey struct{}
+
+func withDownloadBudget(ctx context.Context, limit int64) context.Context {
+	return context.WithValue(
+		ctx,
+		downloadBudgetKey{},
+		&downloadBudget{used: atomic.Int64{}, limit: limit},
+	)
+}
+
+// reserveDownload checks that size more bytes fit the download budget of the
+// fetch in ctx before they are downloaded.
+func reserveDownload(ctx context.Context, size int64) error {
+	budget, ok := ctx.Value(downloadBudgetKey{}).(*downloadBudget)
+	if !ok {
+		return nil
+	}
+
+	if used := budget.used.Load(); used+size > budget.limit {
+		return fmt.Errorf(
+			"%w: %d bytes already downloaded, %d more exceed %d",
+			errDownloadLimitExceeded, used, size, budget.limit,
+		)
+	}
+
+	return nil
+}
+
+// chargeDownload records size downloaded bytes against the download budget of
+// the fetch in ctx.
+func chargeDownload(ctx context.Context, size int64) error {
+	budget, ok := ctx.Value(downloadBudgetKey{}).(*downloadBudget)
+	if !ok {
+		return nil
+	}
+
+	if used := budget.used.Add(size); used > budget.limit {
+		return fmt.Errorf(
+			"%w: %d bytes downloaded, limit %d", errDownloadLimitExceeded, used, budget.limit,
+		)
+	}
+
+	return nil
+}
+
+// collectSelection fetches and verifies the selected referrers. The bundle,
+// Notation, and baseline SBOM collectors are independent and run
+// concurrently: they share the download budget in ctx, record their outcomes
+// in separate stats that are merged afterwards, and return attestations in
+// selection order, so the result does not depend on scheduling. An incomplete
+// attestation set recorded before an interruption wins: the fetch deadline
+// must not turn a deny into the fetch failure policy.
+func (f *OCIFetcher) collectSelection(
+	ctx context.Context, selection *referrerSelection,
+	ref name.Digest, digest string, remoteOpts []remote.Option, fetchOpts *FetchOptions,
+) (attestations, notationSigs, baselineSBOMs []VerifiedAttestation, err error) {
+	var (
+		group                                     errgroup.Group
+		bundleStats, notationStats, baselineStats *collectStats
+	)
+
+	group.Go(func() error {
+		attestations, bundleStats = f.collectBundles(
+			ctx, selection.bundles, ref, digest, remoteOpts, fetchOpts,
+		)
+
+		return nil
+	})
+
+	group.Go(func() error {
+		notationSigs, notationStats = f.collectNotationSignatures(
+			ctx, selection.notation, ref, digest, remoteOpts,
+		)
+
+		return nil
+	})
+
+	group.Go(func() error {
+		baselineSBOMs, baselineStats = f.collectBaselineSBOMs(
+			ctx, selection.baselines, ref, digest, remoteOpts, fetchOpts,
+		)
+
+		return nil
+	})
+
+	// The collectors report outcomes through their stats, never through
+	// the group.
+	_ = group.Wait()
+
+	err = evaluateCollection(
+		len(attestations)+len(notationSigs), bundleStats, notationStats, baselineStats,
+	)
+	if errors.Is(err, ErrVerificationFailed) {
+		return nil, nil, nil, err
+	}
+
+	ctxErr := ctx.Err()
+	if ctxErr != nil {
+		return nil, nil, nil, fmt.Errorf("attestation fetch interrupted: %w", ctxErr)
+	}
+
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	return attestations, notationSigs, baselineSBOMs, nil
+}
+
+// evaluateCollection turns referrer outcomes into a fetch error. An incomplete
+// referrer set must not be evaluated, because a missing attestation could flip
+// a decision:
+//   - a referrer dropped because a size or count limit was exceeded wraps
+//     ErrVerificationFailed, so the image is denied;
+//   - a transport error fails the fetch (retries and fetch failure handling
+//     apply), even if other referrers failed verification: the referrer that
+//     could not be fetched might have verified;
+//   - when nothing verified and at least one referrer failed verification or
+//     was not a valid attestation, the error wraps ErrVerificationFailed.
+func evaluateCollection(verified int, stats ...*collectStats) error {
+	var merged collectStats
+
+	for _, other := range stats {
+		merged.merge(other)
+	}
+
+	if merged.limitErr != nil {
+		return fmt.Errorf(
+			"%w: %w: %w", ErrVerificationFailed, errReferrerLimitExceeded, merged.limitErr,
+		)
+	}
+
+	if merged.fetchErr != nil {
+		return fmt.Errorf("fetching referrer: %w", merged.fetchErr)
+	}
+
+	if verified == 0 && merged.verifyFailures > 0 {
+		return fmt.Errorf(
+			"%w: %w: all %d referrers failed verification",
+			ErrVerificationFailed, errAllBundlesFailed, merged.verifyFailures,
+		)
+	}
+
+	return nil
+}
+
+// referrersError classifies a failure to list the referrers of an image.
+// The fallback referrers tag can be pushed by anyone with push access, so a
+// listing that is reachable but malformed counts as a verification failure.
+func referrersError(what string, err error) error {
+	if isTransportFailure(err) {
+		return fmt.Errorf("%s: %w", what, err)
+	}
+
+	return fmt.Errorf("%w: %w: %s: %w", ErrVerificationFailed, errInvalidReferrer, what, err)
 }
 
 func isTransientError(err error) bool {

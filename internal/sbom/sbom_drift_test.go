@@ -583,7 +583,9 @@ func TestParseSPDXExtractsVersionAndChecksums(t *testing.T) {
 	t.Parallel()
 
 	doc := spdxDocument{
-		SPDXVersion: "SPDX-2.3",
+		SPDXVersion:       "SPDX-2.3",
+		DocumentDescribes: nil,
+		Relationships:     nil,
 		Packages: []spdxPackage{
 			{
 				Name:             testLibName,
@@ -667,6 +669,7 @@ func TestParseCycloneDXExtractsVersionAndHashes(t *testing.T) {
 	doc := cyclonedxBOM{
 		Components: []cyclonedxComponent{
 			{
+				Type:    "library",
 				Name:    testLibName,
 				Version: "3.0.0",
 				PURL:    "pkg:npm/mylib@3.0.0",
@@ -674,11 +677,13 @@ func TestParseCycloneDXExtractsVersionAndHashes(t *testing.T) {
 					{License: &cyclonedxLicenseRef{
 						ID:   testLicMIT,
 						Name: "",
-					}},
+					}, Expression: ""},
 				},
 				Hashes: []cyclonedxHash{
 					{Algorithm: "SHA-256", Content: "112233"},
 				},
+				Properties: nil,
+				Components: nil,
 			},
 		},
 		Vulnerabilities: nil,

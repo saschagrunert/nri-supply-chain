@@ -26,9 +26,11 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/sigstore/sigstore-go/pkg/bundle"
 	"github.com/sigstore/sigstore-go/pkg/root"
@@ -49,17 +51,49 @@ func ResetPEMKeyCache() {
 	pemKeyCache.Clear()
 }
 
+// rootSource supplies one Sigstore trusted root together with the OIDC
+// issuers whose certificates that root may vouch for.
+type rootSource struct {
+	name string
+	// issuers restricts the certificate issuers accepted from this root.
+	// Empty means every issuer trusted by the policy is accepted.
+	issuers []string
+	get     func(ctx context.Context) (*root.TrustedRoot, error)
+	// keylessDisabled refuses certificates of every issuer from this root.
+	// The root still provides transparency log material for key-based
+	// bundles.
+	keylessDisabled bool
+	// skipSCTs disables the signed certificate timestamp requirement. Only
+	// tests set it, for virtual Fulcio instances that issue no SCTs.
+	skipSCTs bool
+}
+
+func rootSourceFromCache(cachedRoot *trustedRootCache) rootSource {
+	src := rootSource{
+		name:    "",
+		issuers: nil,
+		get: func(ctx context.Context) (*root.TrustedRoot, error) {
+			return fetchTrustedRootWithContext(ctx, cachedRoot)
+		},
+		keylessDisabled: false,
+		skipSCTs:        false,
+	}
+
+	if cachedRoot != nil {
+		src.name = cachedRoot.name
+		src.issuers = cachedRoot.issuers
+	}
+
+	return src
+}
+
 func verifyBundleWithCache(
 	ctx context.Context,
 	bundleBytes []byte,
 	opts *FetchOptions,
 	cachedRoot *trustedRootCache,
-) ([]byte, error) {
-	return verifyBundleCommon(ctx, bundleBytes, opts, func() (
-		root.TrustedMaterialCollection, []verify.VerifierOption, []verify.PolicyOption, error,
-	) {
-		return buildVerificationConfig(ctx, opts, cachedRoot)
-	})
+) (*VerifiedBundle, error) {
+	return verifyBundleCommon(ctx, bundleBytes, opts, []rootSource{rootSourceFromCache(cachedRoot)})
 }
 
 func verifyBundleWithMultipleRoots(
@@ -67,24 +101,104 @@ func verifyBundleWithMultipleRoots(
 	bundleBytes []byte,
 	opts *FetchOptions,
 	rootCaches []*trustedRootCache,
-) ([]byte, error) {
-	return verifyBundleCommon(ctx, bundleBytes, opts, func() (
-		root.TrustedMaterialCollection, []verify.VerifierOption, []verify.PolicyOption, error,
-	) {
-		return buildVerificationConfigMultiRoot(ctx, opts, rootCaches)
-	})
+) (*VerifiedBundle, error) {
+	sources := make([]rootSource, 0, len(rootCaches))
+	for _, cache := range rootCaches {
+		sources = append(sources, rootSourceFromCache(cache))
+	}
+
+	return verifyBundleCommon(ctx, bundleBytes, opts, sources)
 }
 
-type buildConfigFunc func() (
-	root.TrustedMaterialCollection, []verify.VerifierOption, []verify.PolicyOption, error,
-)
+// VerifyBundle verifies a sigstore bundle against the given trusted root and
+// returns the verified payload and signer. This is the entry point for offline
+// verification where the caller supplies a pre-loaded TrustedRoot directly.
+// A nil trustedRoot is allowed for key-based bundles verified without a
+// transparency log; keyless bundles and transparency log checks fail closed.
+func VerifyBundle(
+	ctx context.Context,
+	bundleBytes []byte,
+	opts *FetchOptions,
+	trustedRoot *root.TrustedRoot,
+) (*VerifiedBundle, error) {
+	return VerifyBundleWithIssuers(ctx, bundleBytes, opts, trustedRoot, nil)
+}
+
+// VerifyBundleWithIssuers is VerifyBundle with the trusted root restricted to
+// vouch only for certificates of the given OIDC issuers. Empty issuers place
+// no restriction.
+func VerifyBundleWithIssuers(
+	ctx context.Context,
+	bundleBytes []byte,
+	opts *FetchOptions,
+	trustedRoot *root.TrustedRoot,
+	issuers []string,
+) (*VerifiedBundle, error) {
+	var roots []StaticRoot
+
+	if trustedRoot != nil {
+		roots = []StaticRoot{{
+			Name: "bundle", Root: trustedRoot, Issuers: issuers, KeylessDisabled: false,
+		}}
+	}
+
+	return VerifyBundleWithStaticRoots(ctx, bundleBytes, opts, roots)
+}
+
+// StaticRoot is a trusted root supplied directly, for example embedded in an
+// offline bundle, together with the OIDC issuers it may vouch for.
+type StaticRoot struct {
+	// Name labels the root in errors and logs.
+	Name string
+	// Root is the trusted root material.
+	Root *root.TrustedRoot
+	// Issuers restricts the certificate issuers the root may vouch for.
+	// Empty means no restriction unless KeylessDisabled is set.
+	Issuers []string
+	// KeylessDisabled refuses certificates of every issuer from this root,
+	// while it still provides transparency log material for key-based
+	// bundles.
+	KeylessDisabled bool
+}
+
+// VerifyBundleWithStaticRoots verifies a bundle against pre-loaded trusted
+// roots, each restricted to its own issuers. Every root is tried on its own,
+// so a certificate is only accepted from a root trusted for its issuer.
+func VerifyBundleWithStaticRoots(
+	ctx context.Context,
+	bundleBytes []byte,
+	opts *FetchOptions,
+	roots []StaticRoot,
+) (*VerifiedBundle, error) {
+	sources := make([]rootSource, 0, len(roots))
+
+	for idx := range roots {
+		if roots[idx].Root == nil {
+			continue
+		}
+
+		trustedRoot := roots[idx].Root
+
+		sources = append(sources, rootSource{
+			name:    roots[idx].Name,
+			issuers: roots[idx].Issuers,
+			get: func(context.Context) (*root.TrustedRoot, error) {
+				return trustedRoot, nil
+			},
+			keylessDisabled: roots[idx].KeylessDisabled,
+			skipSCTs:        false,
+		})
+	}
+
+	return verifyBundleCommon(ctx, bundleBytes, opts, sources)
+}
 
 func verifyBundleCommon(
 	ctx context.Context,
 	bundleBytes []byte,
 	opts *FetchOptions,
-	buildConfig buildConfigFunc,
-) ([]byte, error) {
+	sources []rootSource,
+) (*VerifiedBundle, error) {
 	err := ctx.Err()
 	if err != nil {
 		return nil, fmt.Errorf("context canceled before bundle verification: %w", err)
@@ -97,221 +211,441 @@ func verifyBundleCommon(
 		return nil, fmt.Errorf("parsing sigstore bundle: %w", err)
 	}
 
-	trustedMaterial, verifierOpts, policyOpts, err := buildConfig()
+	artPolicy, err := artifactPolicy(opts.Digest)
+	if err != nil {
+		return nil, fmt.Errorf("artifact policy: %w", err)
+	}
+
+	signer, err := verifySigner(ctx, &bndl, opts, artPolicy, sources)
 	if err != nil {
 		return nil, err
 	}
 
-	verifier, err := verify.NewVerifier(trustedMaterial, verifierOpts...)
+	payload, err := extractVerifiedPayload(&bndl)
+	if err != nil {
+		return nil, err
+	}
+
+	predicateType := extractPredicateType(payload)
+	if predicateType == "" {
+		return nil, errMissingPredicateType
+	}
+
+	return &VerifiedBundle{
+		Payload:       payload,
+		PredicateType: predicateType,
+		Signer:        signer,
+	}, nil
+}
+
+// verifySigner verifies the bundle signature with the key-based or keyless
+// path, depending on the verification material the bundle carries.
+func verifySigner(
+	ctx context.Context,
+	bndl *bundle.Bundle,
+	opts *FetchOptions,
+	artPolicy verify.ArtifactPolicyOption,
+	sources []rootSource,
+) (SignerIdentity, error) {
+	verificationContent, err := bndl.VerificationContent()
+	if err != nil {
+		return SignerIdentity{}, fmt.Errorf("reading bundle verification material: %w", err)
+	}
+
+	switch {
+	case verificationContent.Certificate() != nil:
+		return verifyKeyless(ctx, bndl, opts, artPolicy, sources)
+	case verificationContent.PublicKey() != nil:
+		return verifyKeyBased(ctx, bndl, opts, artPolicy, sources)
+	default:
+		return SignerIdentity{}, errUnsupportedSignature
+	}
+}
+
+// verifyKeyBased verifies a bundle signed with a long-lived public key. Without
+// a transparency log requirement the key validity window (notBefore/notAfter)
+// is checked against the current time, because the signing time claimed by
+// the bundle cannot be trusted. With a transparency log requirement the log's
+// integrated time (or a trusted timestamp) is used instead.
+func verifyKeyBased(
+	ctx context.Context,
+	bndl *bundle.Bundle,
+	opts *FetchOptions,
+	artPolicy verify.ArtifactPolicyOption,
+	sources []rootSource,
+) (SignerIdentity, error) {
+	if len(opts.TrustedKeys) == 0 {
+		return SignerIdentity{}, fmt.Errorf("%w: %w", errNoTrustedMaterial, errNoTrustedKeys)
+	}
+
+	keys, err := buildKeyMaterial(opts.TrustedKeys)
+	if err != nil {
+		return SignerIdentity{}, err
+	}
+
+	pol := verify.NewPolicy(artPolicy, verify.WithKey())
+
+	if !opts.RequireTransparencyLog {
+		result, verifyErr := runVerifier(
+			bndl, root.TrustedMaterialCollection{keys.material}, pol, verify.WithCurrentTime(),
+		)
+		if verifyErr != nil {
+			return SignerIdentity{}, verifyErr
+		}
+
+		return keys.signerFromResult(result)
+	}
+
+	if len(sources) == 0 {
+		return SignerIdentity{}, fmt.Errorf(
+			"%w: transparency log verification requires one", errNoTrustedRoot,
+		)
+	}
+
+	var failures rootFailures
+
+	for idx := range sources {
+		trustedRoot, rootErr := sources[idx].get(ctx)
+		if rootErr != nil {
+			failures.unavailable(sources[idx].name, trustedRootError(rootErr))
+
+			continue
+		}
+
+		result, verifyErr := runVerifier(
+			bndl, root.TrustedMaterialCollection{keys.material, trustedRoot}, pol,
+			verify.WithTransparencyLog(1), verify.WithObserverTimestamps(1),
+		)
+		if verifyErr != nil {
+			failures.rejected(verifyErr)
+
+			continue
+		}
+
+		return keys.signerFromResult(result)
+	}
+
+	return SignerIdentity{}, failures.err()
+}
+
+// trustedRootError marks a failure to obtain a Sigstore trusted root as
+// unavailable trust material.
+func trustedRootError(err error) error {
+	return fmt.Errorf("%w: fetching sigstore trusted root: %w", ErrTrustMaterialUnavailable, err)
+}
+
+// rootFailures collects why each trusted root did not verify a bundle. One
+// unavailable root that was in scope for the bundle means the trust material
+// to decide was missing, so the fetch failure policy applies even if other
+// roots loaded and rejected the bundle: the unavailable root might have
+// verified it.
+type rootFailures struct {
+	errs []error
+}
+
+// unavailable records a root whose trust material could not be loaded. err
+// wraps ErrTrustMaterialUnavailable.
+func (f *rootFailures) unavailable(rootName string, err error) {
+	f.errs = append(f.errs, fmt.Errorf("trusted root %q: %w", rootName, err))
+}
+
+func (f *rootFailures) rejected(err error) {
+	f.errs = append(f.errs, err)
+}
+
+// record classifies a verification error of one root. A root out of scope
+// for the bundle is recorded like a rejection: it could not have verified it.
+func (f *rootFailures) record(rootName string, err error) {
+	if errors.Is(err, ErrTrustMaterialUnavailable) {
+		f.unavailable(rootName, err)
+
+		return
+	}
+
+	f.rejected(err)
+}
+
+func (f *rootFailures) err() error {
+	return errors.Join(f.errs...)
+}
+
+// verifyKeyless verifies a bundle signed with a Fulcio certificate. Each
+// trusted root is tried on its own so a certificate is only accepted when it
+// chains to a root that is trusted for the certificate's issuer.
+func verifyKeyless(
+	ctx context.Context,
+	bndl *bundle.Bundle,
+	opts *FetchOptions,
+	artPolicy verify.ArtifactPolicyOption,
+	sources []rootSource,
+) (SignerIdentity, error) {
+	if len(opts.TrustedIssuers) == 0 {
+		return SignerIdentity{}, fmt.Errorf("%w: %w", errNoTrustedMaterial, errNoTrustedIssuers)
+	}
+
+	tlogEntries, err := bndl.TlogEntries()
+	if err != nil {
+		return SignerIdentity{}, fmt.Errorf("reading transparency log entries: %w", err)
+	}
+
+	if opts.RequireTransparencyLog && len(tlogEntries) == 0 {
+		return SignerIdentity{}, errTransparencyLogNeeded
+	}
+
+	if len(sources) == 0 {
+		return SignerIdentity{}, fmt.Errorf(
+			"%w: keyless verification requires one", errNoTrustedRoot,
+		)
+	}
+
+	var failures rootFailures
+
+	for idx := range sources {
+		signer, verifyErr := verifyKeylessWithRoot(
+			ctx, bndl, opts, artPolicy, &sources[idx], len(tlogEntries) > 0,
+		)
+		if verifyErr == nil {
+			return signer, nil
+		}
+
+		failures.record(sources[idx].name, verifyErr)
+	}
+
+	return SignerIdentity{}, failures.err()
+}
+
+func verifyKeylessWithRoot(
+	ctx context.Context,
+	bndl *bundle.Bundle,
+	opts *FetchOptions,
+	artPolicy verify.ArtifactPolicyOption,
+	src *rootSource,
+	hasTlog bool,
+) (SignerIdentity, error) {
+	issuers, err := rootIssuers(opts, src)
+	if err != nil {
+		return SignerIdentity{}, err
+	}
+
+	certID, err := buildCertificateIdentity(issuers, opts.SANPatterns)
+	if err != nil {
+		return SignerIdentity{}, err
+	}
+
+	trustedRoot, err := src.get(ctx)
+	if err != nil {
+		return SignerIdentity{}, trustedRootError(err)
+	}
+
+	verifierOpts := []verify.VerifierOption{verify.WithObserverTimestamps(1)}
+
+	if !src.skipSCTs {
+		verifierOpts = append(verifierOpts, verify.WithSignedCertificateTimestamps(1))
+	}
+
+	// Transparency log entries present in the bundle are always verified, so
+	// their integrated time can serve as the observer timestamp.
+	if hasTlog {
+		verifierOpts = append(verifierOpts, verify.WithTransparencyLog(1))
+	}
+
+	result, err := runVerifier(
+		bndl, trustedRoot, verify.NewPolicy(artPolicy, verify.WithCertificateIdentity(certID)),
+		verifierOpts...,
+	)
+	if err != nil {
+		return SignerIdentity{}, err
+	}
+
+	if result.Signature == nil || result.Signature.Certificate == nil {
+		return SignerIdentity{}, fmt.Errorf(
+			"%w: verification result has no certificate", errUnsupportedSignature,
+		)
+	}
+
+	return SignerIdentity{
+		KeyPath:  "",
+		KeyPaths: nil,
+		Issuer:   result.Signature.Certificate.Issuer,
+		SAN:      result.Signature.Certificate.SubjectAlternativeName,
+	}, nil
+}
+
+// rootIssuers returns the policy issuers a trusted root may vouch for, or an
+// error wrapping errRootOutOfScope when it may vouch for none of them.
+func rootIssuers(opts *FetchOptions, src *rootSource) ([]string, error) {
+	if src.keylessDisabled {
+		return nil, fmt.Errorf(
+			"%w: %w: trusted root %q is not trusted for any certificate issuer",
+			errNoTrustedIssuers, errRootOutOfScope, src.name,
+		)
+	}
+
+	issuers := scopeIssuers(opts.TrustedIssuers, src.issuers)
+	if len(issuers) == 0 {
+		return nil, fmt.Errorf(
+			"%w: %w: trusted root %q is not trusted for issuers %v",
+			errNoTrustedIssuers, errRootOutOfScope, src.name, opts.TrustedIssuers,
+		)
+	}
+
+	return issuers, nil
+}
+
+func runVerifier(
+	entity verify.SignedEntity,
+	trustedMaterial root.TrustedMaterial,
+	pol verify.PolicyBuilder,
+	opts ...verify.VerifierOption,
+) (*verify.VerificationResult, error) {
+	// The predicate is read from the verified DSSE payload directly, so skip
+	// materializing it (large SBOM predicates are expensive to parse).
+	opts = append(opts, verify.WithoutStatementPredicate())
+
+	verifier, err := verify.NewVerifier(trustedMaterial, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("creating sigstore verifier: %w", err)
 	}
 
-	artPolicy, artErr := artifactPolicy(opts.Digest)
-	if artErr != nil {
-		return nil, fmt.Errorf("artifact policy: %w", artErr)
-	}
-
-	pol := verify.NewPolicy(
-		artPolicy,
-		policyOpts...,
-	)
-
-	_, err = verifier.Verify(&bndl, pol)
+	result, err := verifier.Verify(entity, pol)
 	if err != nil {
 		return nil, fmt.Errorf("verifying sigstore bundle: %w", err)
 	}
 
-	return extractVerifiedPayload(&bndl)
+	return result, nil
 }
 
-func buildVerificationConfigMultiRoot(
-	ctx context.Context,
-	opts *FetchOptions,
-	rootCaches []*trustedRootCache,
-) (root.TrustedMaterialCollection, []verify.VerifierOption, []verify.PolicyOption, error) {
-	var (
-		materials    root.TrustedMaterialCollection
-		verifierOpts []verify.VerifierOption
-		policyOpts   []verify.PolicyOption
-	)
-
-	if len(opts.TrustedKeys) > 0 {
-		keyMaterial, err := buildKeyMaterial(opts.TrustedKeys)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-
-		materials = append(materials, keyMaterial)
-		verifierOpts = append(
-			verifierOpts,
-			keyOnlyVerifierOpts(len(opts.TrustedIssuers) > 0, opts.RequireTransparencyLog)...,
-		)
-		policyOpts = append(policyOpts, verify.WithKey())
-	}
-
-	if len(opts.TrustedIssuers) > 0 {
-		issuerMaterial, issuerVerifierOpts, issuerPolicyOpts, err := buildKeylessConfigMultiRoot(
-			ctx, opts, rootCaches,
-		)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-
-		materials = append(materials, issuerMaterial...)
-		verifierOpts = append(verifierOpts, issuerVerifierOpts...)
-		policyOpts = append(policyOpts, issuerPolicyOpts...)
-	}
-
-	if len(materials) == 0 {
-		return nil, nil, nil, fmt.Errorf(
-			"%w: provide trusted keys or issuers in policy", errNoTrustedMaterial,
-		)
-	}
-
-	return materials, verifierOpts, policyOpts, nil
+// keyEntry is one configured trusted key path with its validity window.
+type keyEntry struct {
+	path      string
+	notBefore time.Time
+	notAfter  time.Time
 }
 
-func buildKeylessConfigMultiRoot(
-	ctx context.Context,
-	opts *FetchOptions,
-	rootCaches []*trustedRootCache,
-) (root.TrustedMaterialCollection, []verify.VerifierOption, []verify.PolicyOption, error) {
-	var materials root.TrustedMaterialCollection
-
-	for _, cache := range rootCaches {
-		tr, err := fetchTrustedRootWithContext(ctx, cache)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("fetching sigstore trusted root: %w", err)
-		}
-
-		materials = append(materials, tr)
+func (e *keyEntry) validAt(t time.Time) bool {
+	if !e.notBefore.IsZero() && t.Before(e.notBefore) {
+		return false
 	}
 
-	verifierOpts := []verify.VerifierOption{
-		verify.WithSignedCertificateTimestamps(1),
-		verify.WithObserverTimestamps(1),
-	}
-
-	if opts.RequireTransparencyLog {
-		verifierOpts = append(verifierOpts, verify.WithTransparencyLog(1))
-	}
-
-	certID, err := buildCertificateIdentity(opts.TrustedIssuers, opts.SANPatterns)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
-	policyOpts := []verify.PolicyOption{verify.WithCertificateIdentity(certID)}
-
-	return materials, verifierOpts, policyOpts, nil
+	return e.notAfter.IsZero() || !t.After(e.notAfter)
 }
 
-func buildVerificationConfig(
-	ctx context.Context,
-	opts *FetchOptions,
-	cachedRoot *trustedRootCache,
-) (root.TrustedMaterialCollection, []verify.VerifierOption, []verify.PolicyOption, error) {
-	return buildVerificationConfigMultiRoot(ctx, opts, []*trustedRootCache{cachedRoot})
+// windowedKey is a trusted public key that may be configured at several paths
+// with different validity windows. It is valid at a time when any of its
+// entries is, and attribution later narrows the signer to the entries that
+// are valid at the verified time.
+type windowedKey struct {
+	signature.Verifier
+
+	entries []keyEntry
 }
 
-// VerifyBundle verifies a sigstore bundle against the given trusted root and
-// returns the extracted DSSE payload. This is the entry point for offline
-// verification where the caller supplies a pre-loaded TrustedRoot directly.
-func VerifyBundle(
-	ctx context.Context,
-	bundleBytes []byte,
-	opts *FetchOptions,
-	trustedRoot *root.TrustedRoot,
-) ([]byte, error) {
-	return verifyBundleCommon(ctx, bundleBytes, opts, func() (
-		root.TrustedMaterialCollection, []verify.VerifierOption, []verify.PolicyOption, error,
-	) {
-		return buildVerificationConfigWithRoot(opts, trustedRoot)
-	})
+// ValidAtTime implements root.TimeConstrainedVerifier.
+func (k *windowedKey) ValidAtTime(t time.Time) bool {
+	for idx := range k.entries {
+		if k.entries[idx].validAt(t) {
+			return true
+		}
+	}
+
+	return false
 }
 
-func buildVerificationConfigWithRoot(
-	opts *FetchOptions,
-	trustedRoot *root.TrustedRoot,
-) (root.TrustedMaterialCollection, []verify.VerifierOption, []verify.PolicyOption, error) {
-	var (
-		materials    root.TrustedMaterialCollection
-		verifierOpts []verify.VerifierOption
-		policyOpts   []verify.PolicyOption
-	)
+// trustedKeys is the loaded trusted key material together with the
+// configured entries of every key, indexed by key hint.
+type trustedKeys struct {
+	material *root.TrustedPublicKeyMaterial
+	byHint   map[string]*windowedKey
+}
 
-	if len(opts.TrustedKeys) > 0 {
-		keyMaterial, err := buildKeyMaterial(opts.TrustedKeys)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-
-		materials = append(materials, keyMaterial)
-		verifierOpts = append(
-			verifierOpts,
-			keyOnlyVerifierOpts(len(opts.TrustedIssuers) > 0, opts.RequireTransparencyLog)...,
-		)
-		policyOpts = append(policyOpts, verify.WithKey())
-	}
-
-	if len(opts.TrustedIssuers) > 0 {
-		materials = append(materials, trustedRoot)
-
-		verifierOpts = append(verifierOpts,
-			verify.WithSignedCertificateTimestamps(1),
-			verify.WithObserverTimestamps(1),
-		)
-
-		if opts.RequireTransparencyLog {
-			verifierOpts = append(verifierOpts, verify.WithTransparencyLog(1))
-		}
-
-		certID, err := buildCertificateIdentity(opts.TrustedIssuers, opts.SANPatterns)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-
-		policyOpts = append(policyOpts, verify.WithCertificateIdentity(certID))
-	}
-
-	if len(materials) == 0 {
-		return nil, nil, nil, fmt.Errorf(
-			"%w: provide trusted keys or issuers in policy", errNoTrustedMaterial,
+// signerFromResult attributes a verified key-based signature to the
+// configured key paths whose validity windows contain every verified
+// timestamp.
+func (k *trustedKeys) signerFromResult(result *verify.VerificationResult) (SignerIdentity, error) {
+	if result.Signature == nil || result.Signature.PublicKeyID == nil {
+		return SignerIdentity{}, fmt.Errorf(
+			"%w: verification result has no public key", errUnsupportedSignature,
 		)
 	}
 
-	return materials, verifierOpts, policyOpts, nil
-}
-
-func keyOnlyVerifierOpts(hasIssuers, requireTLog bool) []verify.VerifierOption {
-	if hasIssuers {
-		return nil
+	key, ok := k.byHint[string(*result.Signature.PublicKeyID)]
+	if !ok {
+		return SignerIdentity{}, fmt.Errorf(
+			"%w: verified key is not a configured trusted key", errNoTrustedKeys,
+		)
 	}
 
-	if requireTLog {
-		return []verify.VerifierOption{verify.WithTransparencyLog(1)}
+	times := make([]time.Time, 0, len(result.VerifiedTimestamps))
+	for idx := range result.VerifiedTimestamps {
+		times = append(times, result.VerifiedTimestamps[idx].Timestamp)
 	}
 
-	// Key-only without tlog skips timestamp verification. Operator-configured
-	// notBefore/notAfter bounds provide basic time-scoping, but tlog entries
-	// give cryptographic proof of signing time; require tlog in policy for
-	// stronger guarantees.
-	return []verify.VerifierOption{verify.WithNoObserverTimestamps()}
+	if len(times) == 0 {
+		times = append(times, time.Now())
+	}
+
+	var paths []string
+
+	for idx := range key.entries {
+		entry := &key.entries[idx]
+		if slices.Contains(paths, entry.path) || !validAtAll(entry, times) {
+			continue
+		}
+
+		paths = append(paths, entry.path)
+	}
+
+	if len(paths) == 0 {
+		return SignerIdentity{}, fmt.Errorf(
+			"%w: no configured key entry is valid at the verified signing time",
+			errNoTrustedKeys,
+		)
+	}
+
+	return SignerIdentity{KeyPath: paths[0], KeyPaths: paths, Issuer: "", SAN: ""}, nil
 }
 
-func buildKeyMaterial(keys []TrustedKeyRef) (*root.TrustedPublicKeyMaterial, error) {
-	verifiers := make(map[string]*root.ExpiringKey, len(keys))
+func validAtAll(entry *keyEntry, times []time.Time) bool {
+	for _, t := range times {
+		if !entry.validAt(t) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// scopeIssuers returns the policy issuers a trusted root may vouch for. An
+// empty root issuer list places no restriction.
+func scopeIssuers(policyIssuers, rootIssuers []string) []string {
+	if len(rootIssuers) == 0 {
+		return policyIssuers
+	}
+
+	scoped := make([]string, 0, len(policyIssuers))
+
+	for _, issuer := range policyIssuers {
+		if slices.Contains(rootIssuers, issuer) {
+			scoped = append(scoped, issuer)
+		}
+	}
+
+	return scoped
+}
+
+// buildKeyMaterial loads the trusted keys. A key configured at several paths
+// or with several validity windows keeps every entry, so one entry's window
+// neither extends nor restricts another entry's attribution. Failing to load
+// a key file is reported as unavailable trust material.
+func buildKeyMaterial(keys []TrustedKeyRef) (*trustedKeys, error) {
+	byHint := make(map[string]*windowedKey, len(keys))
 
 	for idx := range keys {
 		pubKey, err := loadPublicKeyFromPEM(keys[idx].Path)
 		if err != nil {
-			return nil, fmt.Errorf("loading public key %q: %w", keys[idx].Path, err)
-		}
-
-		keyVerifier, err := signature.LoadVerifier(pubKey, types.HashAlgorithmForKey(pubKey))
-		if err != nil {
-			return nil, fmt.Errorf("creating verifier for %q: %w", keys[idx].Path, err)
+			return nil, fmt.Errorf(
+				"%w: loading public key %q: %w", ErrTrustMaterialUnavailable, keys[idx].Path, err,
+			)
 		}
 
 		hint, hintErr := computeKeyHint(pubKey)
@@ -319,12 +653,42 @@ func buildKeyMaterial(keys []TrustedKeyRef) (*root.TrustedPublicKeyMaterial, err
 			return nil, fmt.Errorf("computing key hint for %q: %w", keys[idx].Path, hintErr)
 		}
 
-		// Zero-value time.Time means no validity period bounds; the key
-		// is accepted regardless of signing time.
-		verifiers[hint] = root.NewExpiringKey(keyVerifier, keys[idx].NotBefore, keys[idx].NotAfter)
+		entry := keyEntry{
+			path:      keys[idx].Path,
+			notBefore: keys[idx].NotBefore,
+			notAfter:  keys[idx].NotAfter,
+		}
+
+		if existing, ok := byHint[hint]; ok {
+			existing.entries = append(existing.entries, entry)
+
+			continue
+		}
+
+		keyVerifier, err := signature.LoadVerifier(pubKey, types.HashAlgorithmForKey(pubKey))
+		if err != nil {
+			return nil, fmt.Errorf("creating verifier for %q: %w", keys[idx].Path, err)
+		}
+
+		byHint[hint] = &windowedKey{Verifier: keyVerifier, entries: []keyEntry{entry}}
 	}
 
-	return root.NewTrustedPublicKeyMaterialFromMapping(verifiers), nil
+	material := root.NewTrustedPublicKeyMaterial(
+		func(keyID string) (root.TimeConstrainedVerifier, error) {
+			key, ok := byHint[keyID]
+			if !ok {
+				return nil, fmt.Errorf(
+					"%w: public key not found for key ID %q",
+					errNoTrustedKeys,
+					keyID,
+				)
+			}
+
+			return key, nil
+		},
+	)
+
+	return &trustedKeys{material: material, byHint: byHint}, nil
 }
 
 func loadPublicKeyFromPEM(path string) (crypto.PublicKey, error) {
@@ -492,7 +856,9 @@ func warnNoSANPatterns(issuers []string) {
 }
 
 // ExtractBundlePayload parses a Sigstore bundle and extracts the DSSE payload
-// without performing signature verification.
+// without performing signature verification. It must only be used for
+// display purposes (for example the inspect command), never for admission
+// decisions.
 func ExtractBundlePayload(bundleBytes []byte) ([]byte, error) {
 	var bndl bundle.Bundle
 

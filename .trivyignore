@@ -1,4 +1,10 @@
+# Every suppression must document an OpenVEX justification in a
+# "vex-justification:" comment directly above the ID. The release pipeline
+# publishes justified suppressions as not_affected VEX statements and all
+# others as under_investigation.
+
 # golang.org/x/crypto/openpgp deprecation notice (no fix version).
 # We don't use openpgp; it's a transitive dependency.
 # govulncheck confirms no reachable vulnerable code paths.
+# vex-justification: vulnerable_code_not_in_execute_path
 GO-2026-5932

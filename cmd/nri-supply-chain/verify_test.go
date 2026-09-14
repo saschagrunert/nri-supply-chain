@@ -71,7 +71,7 @@ func TestOutputVerifyResultAllowed(t *testing.T) {
 		{
 			Type: internaltypes.CheckTypeSLSA, Passed: true,
 			Status: internaltypes.StatusPass, Detail: testReasonVerified, Err: nil,
-			Metadata: nil,
+			Metadata: nil, Missing: false,
 		},
 	}
 
@@ -793,12 +793,12 @@ func TestOutputVerifyResultTableAllowed(t *testing.T) {
 		{
 			Type: internaltypes.CheckTypeSLSA, Passed: true,
 			Status: internaltypes.StatusPass, Detail: "SLSA level 3", Err: nil,
-			Metadata: nil,
+			Metadata: nil, Missing: false,
 		},
 		{
 			Type: internaltypes.CheckTypeVEX, Passed: true,
 			Status: internaltypes.StatusWarn, Detail: "advisory found", Err: nil,
-			Metadata: nil,
+			Metadata: nil, Missing: false,
 		},
 	}
 
@@ -848,7 +848,7 @@ func TestOutputVerifyResultTableDenied(t *testing.T) {
 		{
 			Type: internaltypes.CheckTypeSLSA, Passed: false,
 			Status: internaltypes.StatusFail, Detail: "no attestation", Err: nil,
-			Metadata: nil,
+			Metadata: nil, Missing: false,
 		},
 	}
 
@@ -1238,8 +1238,10 @@ func TestChecksFromNonNil(t *testing.T) {
 	t.Parallel()
 
 	result := &internaltypes.Result{
-		Allowed: true,
-		Reason:  "ok",
+		Allowed:  true,
+		Verified: true,
+		Mode:     "",
+		Reason:   "ok",
 		CheckResults: []internaltypes.CheckResult{
 			*internaltypes.PassResult(internaltypes.CheckTypeSLSA, testReasonVerified),
 		},

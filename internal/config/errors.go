@@ -29,6 +29,12 @@ var (
 	// ErrDigestResolveTimeoutTooHigh indicates the digest resolve timeout exceeds the maximum.
 	ErrDigestResolveTimeoutTooHigh = errors.New("digest_resolve_timeout exceeds maximum")
 
+	// ErrAdmissionTimeoutNotPositive indicates a non-positive admission timeout.
+	ErrAdmissionTimeoutNotPositive = errors.New("admission_timeout must be positive")
+
+	// ErrAdmissionTimeoutTooHigh indicates the admission timeout exceeds the maximum.
+	ErrAdmissionTimeoutTooHigh = errors.New("admission_timeout exceeds maximum")
+
 	// ErrCacheTTLNegative indicates a negative cache TTL.
 	ErrCacheTTLNegative = errors.New("cache_ttl must be non-negative")
 
@@ -129,6 +135,12 @@ var (
 
 	// ErrPollIntervalTooShort indicates the poll interval is below the minimum.
 	ErrPollIntervalTooShort = errors.New("policy.poll_interval must be at least 30s")
+
+	// ErrOCIMaxStalenessInvalid indicates policy.oci_max_staleness is negative
+	// or shorter than policy.poll_interval.
+	ErrOCIMaxStalenessInvalid = errors.New(
+		"policy.oci_max_staleness must be 0 (unlimited) or at least policy.poll_interval",
+	)
 
 	// ErrPolicyIssuersAndKeysMutuallyExclusive indicates both issuers and keys
 	// are configured, which is not supported by sigstore-go.
@@ -361,4 +373,14 @@ var (
 
 	// ErrRemediationCooldownTooLong indicates the cooldown exceeds the maximum.
 	ErrRemediationCooldownTooLong = errors.New("remediation.cooldown is too long")
+
+	// ErrMigrationGap indicates the config migration chain is missing a step,
+	// so the config cannot be brought up to the latest schema version.
+	ErrMigrationGap = errors.New("config migration chain has a gap")
+
+	// ErrPolicyOCIUnsignedInEnforce indicates an OCI policy source has no
+	// signature trust material configured while running in enforce mode.
+	ErrPolicyOCIUnsignedInEnforce = errors.New(
+		"policy.source \"oci\" requires policy.issuers or policy.keys in enforce mode",
+	)
 )

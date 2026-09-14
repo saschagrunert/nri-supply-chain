@@ -102,11 +102,8 @@ func runPreviewCmd(
 	code := runPreview(
 		os.Stdout, images, namespace, outputFormat, comparePolicy, cfg,
 	)
-	if code != exitSuccess {
-		return errExitNonZero
-	}
 
-	return nil
+	return exitWith(code)
 }
 
 func loadImages(args []string, imagesFile string) ([]string, error) {

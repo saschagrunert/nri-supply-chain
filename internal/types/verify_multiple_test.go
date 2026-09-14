@@ -282,7 +282,7 @@ func TestVerifyMultipleWithMergeEmpty(t *testing.T) {
 	testutil.AssertEqual(t, testPassDetail, result.Detail)
 }
 
-func TestVerifyMultipleWithMergeErrorAndPass(t *testing.T) {
+func TestVerifyMultipleWithMergeErrorAndPassFails(t *testing.T) {
 	t.Parallel()
 
 	attestations := [][]byte{[]byte("err"), []byte("ok")}
@@ -301,7 +301,59 @@ func TestVerifyMultipleWithMergeErrorAndPass(t *testing.T) {
 	)
 
 	testutil.AssertNoError(t, err)
+	testutil.AssertEqual(t, false, result.Passed)
+	testutil.AssertEqual(t, types.StatusFail, result.Status)
+	testutil.AssertContains(t, result.Detail, "1 of 2 test documents failed verification")
+}
+
+func TestVerifyMultipleWithMergeSoftFailNotPassed(t *testing.T) {
+	t.Parallel()
+
+	attestations := [][]byte{[]byte("soft"), []byte("ok")}
+
+	result, err := types.VerifyMultipleWithMerge(context.Background(),
+		types.CheckTypeVulnScan, testLabel, testPassDetail,
+		attestations,
+		func(att []byte) (*types.CheckResult, error) {
+			if string(att) == "soft" {
+				return types.SoftFailResult(types.CheckTypeVulnScan, "inconclusive", nil), nil
+			}
+
+			return types.PassResult(types.CheckTypeVulnScan, testPassDetail), nil
+		},
+		noopMerge,
+	)
+
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqual(t, false, result.Passed)
+	testutil.AssertEqual(t, types.StatusWarn, result.Status)
+	testutil.AssertContains(t, result.Detail, "inconclusive")
+}
+
+func TestVerifyMultipleFirstPassOfPassesItem(t *testing.T) {
+	t.Parallel()
+
+	type item struct {
+		name string
+		ok   bool
+	}
+
+	items := []item{{name: "a", ok: false}, {name: "b", ok: true}}
+
+	result, err := types.VerifyMultipleFirstPassOf(context.Background(),
+		types.CheckTypeSLSA, testLabel, items,
+		func(it *item) (*types.CheckResult, error) {
+			if it.ok {
+				return types.PassResult(types.CheckTypeSLSA, it.name), nil
+			}
+
+			return types.FailResult(types.CheckTypeSLSA, it.name, nil), nil
+		},
+	)
+
+	testutil.AssertNoError(t, err)
 	testutil.AssertTrue(t, result.Passed)
+	testutil.AssertEqual(t, "b", result.Detail)
 }
 
 func TestVerifyMultipleWithMergeMetadataMerged(t *testing.T) {

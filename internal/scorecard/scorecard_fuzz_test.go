@@ -38,7 +38,26 @@ func FuzzVerify(f *testing.F) {
 		}
 	}`))
 
+	// Seed: date-only Scorecard date, exercising date parsing and freshness.
+	f.Add([]byte(`{
+		"_type":"https://in-toto.io/Statement/v1",
+		"subject":[{"name":"test","digest":{"sha256":"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"}}],
+		"predicateType":"https://scorecard.dev/result/v0.1",
+		"predicate":{
+			"date":"2026-08-20",
+			"repo":{"name":"github.com/example/project"},
+			"scorecard":{"version":"v5.4.0"},
+			"score":5,
+			"checks":[{"name":"Code-Review","score":5}]
+		}
+	}`))
+
+	sourcesPolicy := &policy.Policy{
+		Trust: &policy.TrustPolicy{Sources: []string{"https://github.com/example/*"}},
+	}
+
 	f.Fuzz(func(_ *testing.T, data []byte) {
 		scorecard.Verify(context.Background(), data, &policy.Policy{}, testDigest)
+		scorecard.Verify(context.Background(), data, sourcesPolicy, testDigest)
 	})
 }

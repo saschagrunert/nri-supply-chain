@@ -20,16 +20,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
+	"path"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/checker"
 	"github.com/saschagrunert/nri-supply-chain/internal/glob"
-	"github.com/saschagrunert/nri-supply-chain/internal/intoto"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
-
-const checkType = types.CheckTypeRuntimeTrace
 
 var (
 	// ErrInvalidRuntimeTrace indicates the runtime trace attestation could not be parsed.
@@ -47,12 +49,17 @@ var (
 
 	// ErrFutureTimestamp indicates the runtime trace timestamp is in the future.
 	ErrFutureTimestamp = errors.New("runtime trace timestamp is in the future")
+
+	errMissingMonitorType = errors.New("monitor.type is required")
+	errMissingMonitorLog  = errors.New("monitorLog is required")
 )
 
+const fileScheme = "file"
+
 type runtimeTracePredicate struct {
-	Monitor    traceMonitor    `json:"monitor"`
-	MonitorLog traceMonitorLog `json:"monitorLog"`
-	Metadata   *traceMetadata  `json:"metadata,omitempty"`
+	Monitor    traceMonitor     `json:"monitor"`
+	MonitorLog *traceMonitorLog `json:"monitorLog"`
+	Metadata   *traceMetadata   `json:"metadata,omitempty"`
 }
 
 type traceMonitor struct {
@@ -65,10 +72,13 @@ type traceMonitorLog struct {
 	FileAccess []traceFileAccess `json:"fileAccess,omitempty"`
 }
 
+// traceFileAccess is the ResourceDescriptor subset used for file access
+// checks.
 type traceFileAccess struct {
-	Name   string            `json:"name,omitempty"`
-	URI    string            `json:"uri,omitempty"`
-	Digest map[string]string `json:"digest,omitempty"`
+	Name             string            `json:"name,omitempty"`
+	URI              string            `json:"uri,omitempty"`
+	DownloadLocation string            `json:"downloadLocation,omitempty"`
+	Digest           map[string]string `json:"digest,omitempty"`
 }
 
 type traceMetadata struct {
@@ -76,102 +86,92 @@ type traceMetadata struct {
 	BuildFinishedOn *time.Time `json:"buildFinishedOn,omitempty"`
 }
 
+//nolint:gochecknoglobals // immutable check declaration
+var spec = &checker.Spec[runtimeTracePredicate]{
+	Info: checker.Info{
+		Type:  types.CheckTypeRuntimeTrace,
+		Label: "runtime trace",
+	},
+	Aggregation: checker.AllMustPass,
+	ErrInvalid:  ErrInvalidRuntimeTrace,
+	Validate:    validatePredicate,
+	Meta:        predicateMeta,
+	Freshness: &checker.Freshness[runtimeTracePredicate]{
+		Timestamp: func(pred *runtimeTracePredicate) *time.Time {
+			if pred.Metadata == nil {
+				return nil
+			}
+
+			return pred.Metadata.BuildFinishedOn
+		},
+		MaxAge: func(pol *policy.Policy) *time.Duration {
+			if pol.RuntimeTrace == nil || pol.RuntimeTrace.MaxAge == "" {
+				return nil
+			}
+
+			return &pol.RuntimeTrace.MaxAgeDuration
+		},
+		Label:     "build finished",
+		ErrStale:  ErrStaleRuntimeTrace,
+		ErrFuture: ErrFutureTimestamp,
+	},
+	Rules: []checker.Rule[runtimeTracePredicate]{
+		checkMonitorType,
+		checkForbiddenFiles,
+	},
+	Merge: map[string]checker.MergeFunc{
+		"processCount":    checker.Sum(),
+		"networkCount":    checker.Sum(),
+		"fileAccessCount": checker.Sum(),
+		"monitorType":     checker.CSV(),
+		"fileNames":       checker.CSV(),
+	},
+}
+
+// Info returns the check type and label of the runtime trace check.
+func Info() checker.Info {
+	return spec.Info
+}
+
 // Verify checks a single runtime trace attestation against the given policy.
 func Verify(
 	ctx context.Context,
 	att []byte, pol *policy.Policy, imageDigest string,
 ) (*types.CheckResult, error) {
-	ctxErr := ctx.Err()
-	if ctxErr != nil {
-		return nil, fmt.Errorf("verification cancelled: %w", ctxErr)
-	}
-
-	predicate, err := intoto.VerifySubjectAndExtractPredicate(att, imageDigest)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidRuntimeTrace, err)
-	}
-
-	return verifyRuntimeTracePredicate(predicate, pol)
+	//nolint:wrapcheck // the generic checker returns domain errors
+	return spec.Verify(ctx, att, pol, imageDigest)
 }
 
 // VerifyMultiple checks multiple runtime trace attestations. Any policy
-// violation in any document causes failure.
+// violation or invalid document causes failure.
 func VerifyMultiple(
 	ctx context.Context,
 	attestations [][]byte, pol *policy.Policy, imageDigest string,
 ) (*types.CheckResult, error) {
-	//nolint:wrapcheck // VerifyMultipleWithMerge returns domain errors
-	return types.VerifyMultipleWithMerge(
-		ctx, checkType, "runtime trace", "runtime trace verification passed",
-		attestations,
-		func(att []byte) (*types.CheckResult, error) {
-			return Verify(ctx, att, pol, imageDigest)
-		},
-		mergeTraceMeta,
-	)
+	//nolint:wrapcheck // the generic checker returns domain errors
+	return spec.VerifyMultiple(ctx, attestations, pol, imageDigest)
 }
 
-func verifyRuntimeTracePredicate(
-	predicate []byte, pol *policy.Policy,
-) (*types.CheckResult, error) {
-	var pred runtimeTracePredicate
-
-	err := json.Unmarshal(predicate, &pred)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidRuntimeTrace, err)
+func validatePredicate(pred *runtimeTracePredicate) error {
+	if strings.TrimSpace(pred.Monitor.Type) == "" {
+		return errMissingMonitorType
 	}
 
-	fileNames := collectFileNames(pred.MonitorLog.FileAccess)
+	if pred.MonitorLog == nil {
+		return errMissingMonitorLog
+	}
 
-	meta := map[string]any{
+	return nil
+}
+
+func predicateMeta(pred *runtimeTracePredicate) map[string]any {
+	return map[string]any{
 		"monitorType":     pred.Monitor.Type,
 		"processCount":    int64(len(pred.MonitorLog.Process)),
 		"networkCount":    int64(len(pred.MonitorLog.Network)),
 		"fileAccessCount": int64(len(pred.MonitorLog.FileAccess)),
-		"fileNames":       strings.Join(fileNames, ","),
+		"fileNames":       strings.Join(collectFileNames(pred.MonitorLog.FileAccess), ","),
 	}
-
-	if pol.RuntimeTrace == nil {
-		result := check.Pass()
-		result.Metadata = meta
-
-		return result, nil
-	}
-
-	if len(pol.RuntimeTrace.TrustedMonitors) > 0 {
-		err = verifyMonitorType(pred.Monitor.Type, pol.RuntimeTrace.TrustedMonitors)
-		if err != nil {
-			result := check.Fail(err.Error())
-			result.Metadata = meta
-
-			return result, nil
-		}
-	}
-
-	if len(pol.RuntimeTrace.ForbiddenFilePatterns) > 0 {
-		err = checkForbiddenFiles(
-			pred.MonitorLog.FileAccess, pol.RuntimeTrace.ForbiddenFilePatterns,
-		)
-		if err != nil {
-			result := check.Fail(err.Error())
-			result.Metadata = meta
-
-			return result, nil
-		}
-	}
-
-	err = verifyFreshness(pred.Metadata, pol)
-	if err != nil {
-		result := check.Fail(err.Error())
-		result.Metadata = meta
-
-		return result, nil
-	}
-
-	result := check.Pass()
-	result.Metadata = meta
-
-	return result, nil
 }
 
 func collectFileNames(files []traceFileAccess) []string {
@@ -191,110 +191,202 @@ func collectFileNames(files []traceFileAccess) []string {
 	return names
 }
 
-func verifyMonitorType(monitorType string, trusted []string) error {
-	if monitorType == "" {
-		return fmt.Errorf("%w: monitor type not specified in attestation", ErrUntrustedMonitor)
+func checkMonitorType(pred *runtimeTracePredicate, pol *policy.Policy) string {
+	if pol.RuntimeTrace == nil || len(pol.RuntimeTrace.TrustedMonitors) == 0 {
+		return ""
 	}
 
-	for _, pattern := range trusted {
-		matched, err := glob.Match(pattern, monitorType)
+	for _, pattern := range pol.RuntimeTrace.TrustedMonitors {
+		matched, err := glob.Match(pattern, pred.Monitor.Type)
 		if err != nil {
-			return fmt.Errorf("invalid monitor pattern %q: %w", pattern, err)
+			return fmt.Sprintf("invalid monitor pattern %q: %s", pattern, err)
 		}
 
 		if matched {
-			return nil
+			return ""
 		}
 	}
 
-	return fmt.Errorf("%w: %q", ErrUntrustedMonitor, monitorType)
+	return fmt.Sprintf("%s: %q", ErrUntrustedMonitor, pred.Monitor.Type)
 }
 
-func checkForbiddenFiles(files []traceFileAccess, patterns []string) error {
-	for idx := range files {
-		name := files[idx].Name
-		if name == "" {
-			name = files[idx].URI
-		}
-
-		if name == "" {
-			continue
-		}
-
-		for _, pattern := range patterns {
-			matched, err := glob.Match(pattern, name)
-			if err != nil {
-				return fmt.Errorf("invalid file pattern %q: %w", pattern, err)
-			}
-
-			if matched {
-				return fmt.Errorf("%w: %q matches %q", ErrForbiddenFileAccess, name, pattern)
-			}
-		}
+// checkForbiddenFiles matches the name, URI, and download location of every
+// file access against the forbidden patterns, so a benign name cannot hide a
+// forbidden URI. File URIs are also matched as their decoded, cleaned path so
+// that encodings such as file://localhost/, percent escapes (valid or not),
+// NUL bytes, or dot segments cannot evade a pattern. A file URL without a
+// derivable path fails the check.
+func checkForbiddenFiles(pred *runtimeTracePredicate, pol *policy.Policy) string {
+	if pol.RuntimeTrace == nil || len(pol.RuntimeTrace.ForbiddenFilePatterns) == 0 {
+		return ""
 	}
 
-	return nil
-}
-
-func verifyFreshness(metadata *traceMetadata, pol *policy.Policy) error {
-	maxAgeConfigured := pol.RuntimeTrace != nil && pol.RuntimeTrace.MaxAge != ""
-
-	if metadata == nil || metadata.BuildFinishedOn == nil {
-		if maxAgeConfigured {
-			return fmt.Errorf(
-				"%w: no build finished timestamp in attestation",
-				ErrStaleRuntimeTrace,
+	for idx := range pred.MonitorLog.FileAccess {
+		candidates, unresolved := fileCandidates(&pred.MonitorLog.FileAccess[idx])
+		if unresolved != "" {
+			return fmt.Sprintf(
+				"%s: cannot determine the path of %q",
+				ErrForbiddenFileAccess,
+				unresolved,
 			)
 		}
 
-		return nil
+		for _, candidate := range candidates {
+			violation := matchForbidden(candidate, pol.RuntimeTrace.ForbiddenFilePatterns)
+			if violation != "" {
+				return violation
+			}
+		}
 	}
 
-	if !maxAgeConfigured {
-		return nil
-	}
-
-	maxAge := &pol.RuntimeTrace.MaxAgeDuration
-
-	//nolint:wrapcheck // VerifyFreshness wraps the caller's sentinel errors
-	return types.VerifyFreshness(
-		*metadata.BuildFinishedOn,
-		maxAge,
-		"finished",
-		ErrFutureTimestamp,
-		ErrStaleRuntimeTrace,
-		ErrStaleRuntimeTrace,
-	)
+	return ""
 }
 
-func mergeTraceMeta(dst, src map[string]any) {
-	for key, val := range src {
-		existing, hasPrev := dst[key]
-		if !hasPrev {
-			dst[key] = val
+// fileCandidates returns every spelling of a file access that forbidden
+// patterns are matched against. unresolved is the first file URL for which
+// no path could be derived.
+func fileCandidates(file *traceFileAccess) (candidates []string, unresolved string) {
+	add := func(value string) {
+		if value != "" && !slices.Contains(candidates, value) {
+			candidates = append(candidates, value)
+		}
+	}
 
+	for _, raw := range []string{file.Name, file.URI, file.DownloadLocation} {
+		if raw == "" {
 			continue
 		}
 
-		switch key {
-		case "processCount", "networkCount", "fileAccessCount":
-			if dstCount, ok := existing.(int64); ok {
-				if srcCount, ok := val.(int64); ok {
-					dst[key] = dstCount + srcCount
-				}
-			}
-		case "monitorType", "fileNames":
-			if dstStr, ok := existing.(string); ok {
-				if srcStr, ok := val.(string); ok {
-					dst[key] = types.MergeCommaSeparated(dstStr, srcStr)
-				}
-			}
-		default:
+		add(raw)
+
+		decoded, derived := decodedPaths(raw)
+		if !derived && unresolved == "" {
+			unresolved = raw
+		}
+
+		for _, value := range decoded {
+			add(value)
 		}
 	}
+
+	return candidates, unresolved
 }
 
-var check = types.Checker{ //nolint:gochecknoglobals,gosec // package-scoped helper
-	Type:    checkType,
-	PassMsg: "runtime trace verification passed",
+// decodedPaths returns the cleaned filesystem paths a file reference may
+// denote: the path of a file URL (any host, with or without slashes after
+// the scheme), and for plain paths the cleaned and percent-decoded forms.
+// File URLs that url.Parse rejects (invalid percent escapes, control
+// characters) are split by hand. derived is false for a file URL without a
+// path.
+func decodedPaths(raw string) (paths []string, derived bool) {
+	add := func(value string) {
+		paths = append(paths, cleanedPathForms(value)...)
+	}
+
+	if scheme, rest, found := strings.Cut(
+		raw,
+		":",
+	); found &&
+		strings.EqualFold(scheme, fileScheme) {
+		parsed, err := url.Parse(fileScheme + ":" + rest)
+		if err == nil {
+			filePath := parsed.Path
+			if filePath == "" && parsed.Opaque != "" {
+				filePath = lenientUnescape(parsed.Opaque)
+			}
+
+			add(filePath)
+		}
+
+		manual := fileURLPath(rest)
+		add(manual)
+		add(lenientUnescape(manual))
+
+		return paths, len(paths) > 0
+	}
+
+	add(raw)
+	add(lenientUnescape(raw))
+
+	return paths, true
+}
+
+// fileURLPath returns the path of a file URL without its "file:" scheme,
+// removing a query or fragment and an optional "//authority" part.
+func fileURLPath(rest string) string {
+	if end := strings.IndexAny(rest, "?#"); end >= 0 {
+		rest = rest[:end]
+	}
+
+	authorityAndPath, hasAuthority := strings.CutPrefix(rest, "//")
+	if !hasAuthority {
+		return rest
+	}
+
+	slash := strings.IndexByte(authorityAndPath, '/')
+	if slash < 0 {
+		return ""
+	}
+
+	return authorityAndPath[slash:]
+}
+
+// cleanedPathForms returns the cleaned path and, when the path contains a
+// NUL byte, the cleaned path up to that byte, which is what the kernel
+// would open.
+func cleanedPathForms(value string) []string {
+	var forms []string
+
+	if value != "" {
+		forms = append(forms, path.Clean(value))
+	}
+
+	if before, _, hasNUL := strings.Cut(value, "\x00"); hasNUL && before != "" {
+		forms = append(forms, path.Clean(before))
+	}
+
+	return forms
+}
+
+// lenientUnescape decodes valid %XX escapes and keeps invalid ones verbatim.
+func lenientUnescape(value string) string {
+	if !strings.Contains(value, "%") {
+		return value
+	}
+
+	var builder strings.Builder
+
+	builder.Grow(len(value))
+
+	for idx := 0; idx < len(value); idx++ {
+		if value[idx] == '%' && idx+2 < len(value) {
+			decoded, err := strconv.ParseUint(value[idx+1:idx+3], 16, 8)
+			if err == nil {
+				builder.WriteByte(byte(decoded))
+
+				idx += 2
+
+				continue
+			}
+		}
+
+		builder.WriteByte(value[idx])
+	}
+
+	return builder.String()
+}
+
+func matchForbidden(candidate string, patterns []string) string {
+	for _, pattern := range patterns {
+		matched, err := glob.Match(pattern, candidate)
+		if err != nil {
+			return fmt.Sprintf("invalid file pattern %q: %s", pattern, err)
+		}
+
+		if matched {
+			return fmt.Sprintf("%s: %q matches %q", ErrForbiddenFileAccess, candidate, pattern)
+		}
+	}
+
+	return ""
 }

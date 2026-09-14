@@ -448,3 +448,137 @@ func TestVerifyMultipleFailureAndInvalidDocuments(t *testing.T) {
 		}
 	})
 }
+
+func TestVerifyTrustedRepository(t *testing.T) {
+	t.Parallel()
+
+	const scoredCommit = "0123abcd"
+
+	tests := []struct {
+		name       string
+		sources    []string
+		commit     string
+		wantPassed bool
+	}{
+		{name: "no sources configured", sources: nil, commit: scoredCommit, wantPassed: true},
+		{
+			name:       "https pattern matches schemeless name",
+			sources:    []string{"https://github.com/example/*"},
+			commit:     scoredCommit,
+			wantPassed: true,
+		},
+		{
+			name:       "schemeless pattern matches",
+			sources:    []string{"github.com/example/*"},
+			commit:     scoredCommit,
+			wantPassed: true,
+		},
+		{
+			name:       "other org rejected",
+			sources:    []string{"https://github.com/other/*"},
+			commit:     scoredCommit,
+			wantPassed: false,
+		},
+		{
+			name:       "git+ pattern matches",
+			sources:    []string{"git+https://github.com/example/*"},
+			commit:     scoredCommit,
+			wantPassed: true,
+		},
+		{
+			name:       "ref-pinned pattern matches scored commit",
+			sources:    []string{"git+https://" + testRepo + "@" + scoredCommit},
+			commit:     scoredCommit,
+			wantPassed: true,
+		},
+		{
+			name:       "ref-pinned pattern rejects other commit",
+			sources:    []string{"git+https://" + testRepo + "@ffff0000"},
+			commit:     scoredCommit,
+			wantPassed: false,
+		},
+		{
+			name:       "ref-pinned pattern rejects branch ref",
+			sources:    []string{"git+https://" + testRepo + "@refs/heads/*"},
+			commit:     scoredCommit,
+			wantPassed: false,
+		},
+		{
+			name:       "ref-pinned pattern rejects missing commit",
+			sources:    []string{"git+https://" + testRepo + "@**"},
+			commit:     "",
+			wantPassed: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			pol := &policy.Policy{}
+			if tc.sources != nil {
+				pol.Trust = &policy.TrustPolicy{
+					Sources: tc.sources,
+				}
+			}
+
+			doc := validDoc()
+			doc.Repo.Commit = tc.commit
+
+			result, err := scorecard.Verify(
+				context.Background(),
+				wrapInToto(t, doc, testDigest),
+				pol,
+				testDigest,
+			)
+			testutil.AssertNoError(t, err)
+			testutil.AssertEqual(t, tc.wantPassed, result.Passed)
+
+			if !tc.wantPassed && !strings.Contains(result.Detail, "trusted sources") {
+				t.Errorf("unexpected detail %q", result.Detail)
+			}
+		})
+	}
+}
+
+func TestVerifyDate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		date       string
+		wantErr    bool
+		wantPassed bool
+	}{
+		{name: "date only", date: "2026-01-02", wantErr: false, wantPassed: true},
+		{name: "lowercase rfc3339", date: "2026-01-02t10:00:00z", wantErr: false, wantPassed: true},
+		{name: "future date", date: "2999-01-02", wantErr: false, wantPassed: false},
+		{name: "unparsable date", date: "yesterday", wantErr: true, wantPassed: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			doc := validDoc()
+			doc.Date = tc.date
+
+			result, err := scorecard.Verify(
+				context.Background(),
+				wrapInToto(t, doc, testDigest),
+				&policy.Policy{},
+				testDigest,
+			)
+			if tc.wantErr {
+				if !errors.Is(err, scorecard.ErrInvalidScorecard) {
+					t.Fatalf("expected ErrInvalidScorecard, got %v", err)
+				}
+
+				return
+			}
+
+			testutil.AssertNoError(t, err)
+			testutil.AssertEqual(t, tc.wantPassed, result.Passed)
+		})
+	}
+}

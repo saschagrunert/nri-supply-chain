@@ -43,8 +43,8 @@ var (
 )
 
 // policyTrustStore implements the notation-go truststore.X509TrustStore interface.
-// It serves certificates from policy-configured file paths, caching loaded
-// certificates for the lifetime of the policy.
+// It serves certificates from policy-configured file paths, caching
+// successfully loaded certificates for the lifetime of the policy.
 type policyTrustStore struct {
 	stores map[string]*storeEntry
 	mu     sync.RWMutex
@@ -55,7 +55,6 @@ type storeEntry struct {
 	certPaths []string
 	certs     []*x509.Certificate
 	loaded    bool
-	loadErr   error
 }
 
 func newTrustStore(stores []policy.NotationTrustStore) (*policyTrustStore, error) {
@@ -75,7 +74,6 @@ func newTrustStore(stores []policy.NotationTrustStore) (*policyTrustStore, error
 			certPaths: store.Certificates,
 			certs:     nil,
 			loaded:    false,
-			loadErr:   nil,
 		}
 	}
 
@@ -117,16 +115,20 @@ func (ts *policyTrustStore) GetCertificates(
 	defer ts.mu.Unlock()
 
 	if entry.loaded {
-		return entry.certs, entry.loadErr
+		return entry.certs, nil
 	}
 
 	certs, err := loadCertificates(entry.certPaths)
+	if err != nil {
+		// Load errors are not cached: a transient read failure must not keep
+		// failing every Notation check until the next policy reload.
+		return nil, err
+	}
 
 	entry.certs = certs
-	entry.loadErr = err
 	entry.loaded = true
 
-	return certs, err
+	return certs, nil
 }
 
 func loadCertificates(paths []string) ([]*x509.Certificate, error) {

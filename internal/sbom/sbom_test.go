@@ -41,6 +41,7 @@ const (
 	testFormatSPDX           = "spdx"
 	testLicenseGPL3Only      = "GPL-3.0-only"
 	testLicenseGPL2Only      = "GPL-2.0-only"
+	testLicenseGPL2OrLater   = "GPL-2.0+"
 	testMethodCVSSv31        = "CVSSv31"
 	testSeverityMedium       = "medium"
 	testSeverityHigh         = "high"
@@ -936,7 +937,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		}
 	})
 
-	t.Run("mix of valid and invalid with valid passing", func(t *testing.T) {
+	t.Run("mix of valid and invalid fails", func(t *testing.T) {
 		t.Parallel()
 
 		attestations := [][]byte{
@@ -952,8 +953,8 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		)
 		testutil.AssertNoError(t, err)
 
-		if !result.Passed {
-			t.Errorf("expected pass with valid doc, got: %s", result.Detail)
+		if result.Passed {
+			t.Errorf("expected fail when any document is invalid, got: %s", result.Detail)
 		}
 	})
 }

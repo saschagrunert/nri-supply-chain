@@ -79,6 +79,42 @@ func TestToRegex(t *testing.T) {
 			noMatch: "user@a/b.example.com",
 		},
 		{
+			name:    "exclamation negates character class",
+			pattern: "[!e]vil",
+			match:   "dvil",
+			noMatch: "evil",
+		},
+		{
+			name:    "caret negates character class",
+			pattern: "[^e]vil",
+			match:   "dvil",
+			noMatch: "evil",
+		},
+		{
+			name:    "negated class does not match slash",
+			pattern: "a[^b]c",
+			match:   "axc",
+			noMatch: "a/c",
+		},
+		{
+			name:    "exclamation negated class does not match slash",
+			pattern: "a[!b]c",
+			match:   "axc",
+			noMatch: "a/c",
+		},
+		{
+			name:    "negated class with leading bracket member",
+			pattern: "[!]a]x",
+			match:   "bx",
+			noMatch: "]x",
+		},
+		{
+			name:    "class with leading bracket member",
+			pattern: "[]a]x",
+			match:   "]x",
+			noMatch: "bx",
+		},
+		{
 			name:    "backslash in character class escapes next char",
 			pattern: `[\d].example.com`,
 			match:   `d.example.com`,
@@ -284,5 +320,32 @@ func TestResetCache(t *testing.T) {
 
 	if !matched {
 		t.Error("expected match after cache reset")
+	}
+}
+
+func TestHasBangNegation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		pattern string
+		want    bool
+	}{
+		{pattern: "[!e]vil", want: true},
+		{pattern: "ghcr.io/org/[!x]*", want: true},
+		{pattern: "[^e]vil", want: false},
+		{pattern: "[e!]vil", want: false},
+		{pattern: `\[!e]vil`, want: false},
+		{pattern: "[!", want: false},
+		{pattern: "ghcr.io/org/**", want: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.pattern, func(t *testing.T) {
+			t.Parallel()
+
+			if got := glob.HasBangNegation(test.pattern); got != test.want {
+				t.Errorf("HasBangNegation(%q) = %v, want %v", test.pattern, got, test.want)
+			}
+		})
 	}
 }

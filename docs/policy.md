@@ -47,6 +47,7 @@ patterns for the nri-supply-chain plugin.
   - [Signature Verification](#signature-verification)
   - [Notation (Notary v2) Signature Verification](#notation-notary-v2-signature-verification)
   - [SBOM Verification](#sbom-verification)
+  - [Predicate Validation](#predicate-validation)
   - [SCAI Verification](#scai-verification)
   - [Source Track Verification](#source-track-verification)
   - [Build Environment Verification](#build-environment-verification)
@@ -120,7 +121,7 @@ Define which builders and issuers you trust. For GitHub Actions with keyless
       }
     ],
     "issuers": ["https://token.actions.githubusercontent.com"],
-    "sanPatterns": ["https://github.com/myorg/*"],
+    "sanPatterns": ["https://github.com/myorg/**"],
     "sources": ["https://github.com/myorg/*"]
   }
 }
@@ -156,7 +157,7 @@ provenance:
       }
     ],
     "issuers": ["https://token.actions.githubusercontent.com"],
-    "sanPatterns": ["https://github.com/myorg/*"]
+    "sanPatterns": ["https://github.com/myorg/**"]
   },
   "slsa": {
     "missingPolicy": "deny"
@@ -184,7 +185,7 @@ base images or internal tooling with `exclude`:
       }
     ],
     "issuers": ["https://token.actions.githubusercontent.com"],
-    "sanPatterns": ["https://github.com/myorg/*"]
+    "sanPatterns": ["https://github.com/myorg/**"]
   },
   "slsa": {
     "missingPolicy": "deny"
@@ -791,11 +792,36 @@ nri-supply-chain json-schema policy
         },
         "maxLevel": {
           "type": "integer"
+        },
+        "keys": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "identities": {
+          "items": {
+            "$ref": "#/$defs/TrustedIdentity"
+          },
+          "type": "array"
         }
       },
       "additionalProperties": false,
       "type": "object",
       "required": ["id", "maxLevel"]
+    },
+    "TrustedIdentity": {
+      "properties": {
+        "issuer": {
+          "type": "string"
+        },
+        "sanPattern": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": ["issuer", "sanPattern"]
     },
     "TrustedVerifier": {
       "properties": {
@@ -815,6 +841,12 @@ nri-supply-chain json-schema policy
         "notAfter": {
           "type": "string",
           "format": "date-time"
+        },
+        "identities": {
+          "items": {
+            "$ref": "#/$defs/TrustedIdentity"
+          },
+          "type": "array"
         }
       },
       "additionalProperties": false,
@@ -900,8 +932,10 @@ it supports.
 ### `mode` (string)
 
 Overrides the global `verification` mode for this namespace. Valid values:
-`"disabled"`, `"warn"`, `"enforce"`. When empty or omitted, the global mode
-from the operational config applies.
+`"disabled"`, `"warn"`, `"enforce"`. When omitted on `default.json`, the global
+mode from the operational config applies. When omitted on a namespace policy,
+the mode of `default.json` applies (see below), falling back to the global mode
+when `default.json` does not set one.
 
 The per-namespace mode can only be equal to or stricter than the global mode.
 Strictness order: `disabled` < `warn` < `enforce`. For example, global `warn`
@@ -910,6 +944,17 @@ with a namespace `enforce` is valid, but global `enforce` with a namespace
 
 When set on `default.json`, the mode applies to all namespaces that fall
 back to the default policy (i.e., namespaces without their own policy file).
+Namespace policies that do not set `mode` also use the mode of `default.json`,
+whether or not they set `inherits`, so moving a mode into `default.json` never
+weakens other namespaces. Set `mode` explicitly on a namespace policy to use a
+different (still at least as strict as global) mode.
+
+When the global `verification` mode is `disabled`, policies are not evaluated
+and every container is admitted, even when a policy sets `mode` to `warn` or
+`enforce`. The global `disabled` mode acts as an emergency kill switch, so the
+plugin only logs a warning for such policies and still starts or reloads. The
+`validate` subcommand reports the same condition as an error, so CI catches the
+mismatch before rollout.
 
 This is useful for gradually rolling out enforcement: set the global mode to
 `warn` and promote individual namespaces to `enforce` as confidence grows.
@@ -917,21 +962,59 @@ This is useful for gradually rolling out enforcement: set the global mode to
 ### `inherits` (boolean)
 
 When set to `true` on a namespace policy (`<namespace>.json`), unset fields
-are inherited from `default.json` instead of using empty defaults. Only valid
-on namespace policies; the default policy cannot set `inherits`.
+are inherited from `default.json` instead of using empty defaults. Sections
+are merged field by field (see [Namespace Overrides](#namespace-overrides)).
+Only valid on namespace policies; the default policy cannot set `inherits`.
 
 ### `trust` (object)
 
 Trust roots for verification. All sub-fields are optional.
 
-| Field         | Type  | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| ------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `builders`    | array | Trusted SLSA provenance builders. Each entry has `id` (URI) and `maxLevel` (0-3). Builder IDs must be unique within a policy. Note: `maxLevel` is only enforced by VSA verification (`vsa.minimumLevel`), not during SLSA provenance checks, because provenance attestations do not declare a build level.                                                                                                                                                                                                                                                                                                                                            |
-| `verifiers`   | array | Trusted VSA verifiers. Each entry has `id` (URI) and an optional `keys` (array of absolute paths to PEM public keys). Verifier IDs must be unique within a policy. When `keys` is set, the keys are used for Sigstore bundle signature verification. Use `keys` for key rotation so that both old and new keys are accepted simultaneously. Optional `notBefore` and `notAfter` (RFC 3339 timestamps) bound the validity window for key-based verification; signatures outside this window are rejected. When `keys` is empty or omitted, bundles are verified via keyless (Fulcio/OIDC) using `issuers` and `sanPatterns`, which must be configured. |
-| `issuers`     | array | Trusted OIDC issuers for keyless (Fulcio) verification.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `sanPatterns` | array | Accepted certificate Subject Alternative Names. Supports glob patterns: `*` matches any non-`/` sequence, `**` matches any characters including `/`, `?` matches a single non-`/` character, `[...]` matches a character class. Use `**` for GitHub Actions OIDC SANs that include workflow paths (e.g., `https://github.com/org/repo/**`). Required when `issuers` is set in `enforce` mode. In `warn` mode, omitting this field accepts any SAN from a trusted issuer (with a log warning).                                                                                                                                                         |
-| `sources`     | array | Allowed source repository glob patterns matched against the full URI from source attestations (e.g., `https://github.com/myorg/*`). Supports the same glob syntax as `sanPatterns`: `*` matches non-`/` characters, `**` matches any characters including `/`.                                                                                                                                                                                                                                                                                                                                                                                        |
-| `buildTypes`  | array | Accepted build type URIs for SLSA provenance.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Field         | Type  | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `builders`    | array | Trusted SLSA provenance builders. Each entry has `id` (URI) and `maxLevel` (0-3), plus optional `keys` (absolute paths to PEM public keys) and `identities` (keyless signing identities, see below) that bind the builder to its signer. Builder IDs must be unique within a policy. A bound builder is only accepted from provenance signed by one of its keys or identities; an unbound builder is accepted from any trusted signer (a warning is logged). Note: `maxLevel` is only enforced by VSA verification (`vsa.minimumLevel`), not during SLSA provenance checks, because provenance attestations do not declare a build level.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `verifiers`   | array | Trusted VSA verifiers. Each entry has `id` (URI), an optional `keys` (array of absolute paths to PEM public keys), and optional `identities` (keyless signing identities, see below). Verifier IDs must be unique within a policy. A VSA claiming a verifier `id` is only trusted when it was signed by one of that verifier's `keys` or `identities`; a verifier with neither never short-circuits verification. When `keys` is set, the keys are used for Sigstore bundle signature verification. Use `keys` for key rotation so that both old and new keys are accepted simultaneously. Optional `notBefore` and `notAfter` (RFC 3339 timestamps) bound the validity window for key-based verification: without `signatures.requireTransparencyLog` the window is checked against the current time (every signature of the key is rejected once `notAfter` passed), with it against the transparency log integrated time. When `keys` is empty or omitted, bundles are verified via keyless (Fulcio/OIDC) using `issuers` and `sanPatterns`, which must be configured in the effective policy (after inheritance from `default.json` and after merging each image rule). Verifier keys are unique, but builders may share a key. |
+| `issuers`     | array | Trusted OIDC issuers for keyless (Fulcio) verification.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `sanPatterns` | array | Accepted certificate Subject Alternative Names. Supports glob patterns: `*` matches any non-`/` sequence, `**` matches any characters including `/`, `?` matches a single non-`/` character, `[...]` matches a character class. Use `**` for GitHub Actions OIDC SANs that include workflow paths (e.g., `https://github.com/org/repo/**`). Required when `issuers` is set in `enforce` mode. In `warn` mode, omitting this field accepts any SAN from a trusted issuer (with a log warning).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `sources`     | array | Allowed source repository glob patterns for SLSA provenance, Source Track, and Scorecard attestations (e.g., `https://github.com/myorg/*`). A pattern is matched against the source repository without a `git+` prefix or ref; a ref-pinned pattern such as `git+https://github.com/myorg/repo@refs/tags/*` must also match the ref (see [SLSA Provenance](#slsa-provenance)). Supports the same glob syntax as `sanPatterns`: `*` matches non-`/` characters, `**` matches any characters including `/`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `buildTypes`  | array | Accepted build type URIs for SLSA provenance.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+
+Each `identities` entry of a builder or verifier:
+
+| Field        | Type   | Required | Description                                                                                                                                            |
+| ------------ | ------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `issuer`     | string | yes      | OIDC issuer recorded in the signing certificate (exact match). It should also be listed in `trust.issuers`, otherwise the certificate is not accepted. |
+| `sanPattern` | string | yes      | Glob pattern for the certificate Subject Alternative Name (same syntax as `sanPatterns`).                                                              |
+
+Binding matters because `trust.issuers` and `sanPatterns` (and all verifier
+keys) form a single trust set for every attestation type. Builder keys are only
+trusted for SLSA provenance, so a provenance signing key cannot sign other
+attestation types. A verifier key may not be listed by another verifier or by
+a builder, while several builders may share a key. Without a binding,
+any trusted signer, for example any workflow of the organization that matches
+`sanPatterns`, could sign a VSA naming the trusted verifier and skip all other
+checks. Bind each verifier to the workflow or key that actually issues its
+VSAs:
+
+```json
+{
+  "trust": {
+    "issuers": ["https://token.actions.githubusercontent.com"],
+    "sanPatterns": ["https://github.com/myorg/**"],
+    "verifiers": [
+      {
+        "id": "https://github.com/myorg/verifier/.github/workflows/verify.yml",
+        "identities": [
+          {
+            "issuer": "https://token.actions.githubusercontent.com",
+            "sanPattern": "https://github.com/myorg/verifier/.github/workflows/verify.yml@refs/heads/main"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
 
 ### `include` (array of strings)
 
@@ -940,7 +1023,10 @@ matching at least one pattern are verified; all others are allowed without
 verification. When empty or omitted, all images are eligible for verification
 (the default). Uses the same glob syntax as `exclude`: `*` matches any
 non-`/` sequence, `**` matches any characters including `/`. If both
-`include` and `exclude` are set, `exclude` takes precedence.
+`include` and `exclude` are set, `exclude` takes precedence. Because images
+that match no pattern skip verification, matching is broad (see
+[Pattern Matching](#pattern-matching)) and a warning is logged when `include`
+is used in `enforce` mode.
 
 ### `exclude` (array of strings)
 
@@ -1007,7 +1093,7 @@ against the configured trust stores and trust policy.
 | Field               | Type   | Default                                   | Description                                                                                                                                                                                                                                                                                                 |
 | ------------------- | ------ | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `missingPolicy`     | string | `allow`                                   | Behavior when no Notation signature is found: `allow`, `warn`, `deny`                                                                                                                                                                                                                                       |
-| `verificationLevel` | string | `strict`                                  | How strict verification is: `strict`, `permissive`, `audit`, `skip`. `skip` is rejected in `enforce` mode.                                                                                                                                                                                                  |
+| `verificationLevel` | string | `strict`                                  | How strict verification is: `strict`, `permissive`, `audit`, `skip`. `skip` and `audit` are rejected in `enforce` mode (`audit` only logs authenticity failures). `permissive` logs a warning in `enforce` mode because it does not enforce expiry and revocation.                                          |
 | `revocationMode`    | string | (none, inherits from `verificationLevel`) | Certificate revocation checking: `strict` (enforce OCSP/CRL), `soft` (log failures), `skip` (explicitly disable revocation checking). When omitted, no override is set and the base verification level controls revocation behavior. Cannot be set when `verificationLevel` is `skip`. Recommended: `soft`. |
 | `trustStores`       | array  | (none)                                    | Named certificate trust stores for signature verification (see below)                                                                                                                                                                                                                                       |
 | `trustPolicy`       | array  | (none)                                    | Trust policy rules that map registry scopes to trust stores and trusted identities (see below)                                                                                                                                                                                                              |
@@ -1053,6 +1139,31 @@ SPDX and CycloneDX SBOM attestations attached to container images.
 When both `deny` and `allow` are set, deny takes precedence: a license in both
 lists is denied.
 
+License values that are SPDX expressions (SPDX `licenseConcluded` and
+`licenseDeclared`, CycloneDX `license.id` and `expression`, SPDX 3 license
+expressions) are split into identifiers before matching. Parentheses and any
+Unicode whitespace are token boundaries (`MIT AND(GPL-3.0-only)`),
+`AND`/`OR`/`WITH` are matched case-insensitively, and exception identifiers
+after `WITH` (identifiers containing `exception`, ending in `-note`, or
+starting with `AdditionRef-`) are skipped. Any other identifier after `WITH`
+is checked like a license. Every identifier of an expression is checked, so
+`MIT OR GPL-3.0-only` is denied by a `GPL-3.0-only` deny entry and requires
+both identifiers in an allow list. Identifiers are compared
+case-insensitively, zero-width characters (such as U+200B or a byte order
+mark) are ignored or act as separators, and the deprecated (`GPL-2.0`),
+`-only`, `+`, and `-or-later` forms are normalized. A deny entry covers every
+form of its license version, so `GPL-2.0-only`, `GPL-2.0`, and
+`GPL-2.0-or-later` each deny `GPL-2.0+` and `GPL-2.0-only`. An allow entry
+only covers its own scope: `GPL-2.0-only` (or `GPL-2.0`) allows `GPL-2.0` and
+`GPL-2.0-only`, while `GPL-2.0+` and `GPL-2.0-only+` require
+`GPL-2.0-or-later`. CycloneDX
+free-text `license.name` values are matched verbatim, and the licenses of the
+BOM subject (`metadata.component`) are checked too. SPDX 3 expanded licensing
+elements are resolved: `WithAdditionOperator` yields its subject license and
+`OrLaterOperator` yields its subject license with a `+` suffix. License
+references that cannot be resolved count as an unknown license, which fails
+any allow list.
+
 #### `sbom.component` (object)
 
 | Field   | Type  | Default | Description                                                                   |
@@ -1063,12 +1174,43 @@ lists is denied.
 When both `deny` and `allow` are set, deny takes precedence: a component
 matching a deny entry is denied even if it also matches an allow entry.
 
+When `allow` is set, package components without a PURL fail the check because
+they cannot be matched against the allow list. Components that are not packages
+are exempt: CycloneDX components of type `operating-system`, `file`, `data`,
+`device`, `firmware`, `platform`, or `cryptographic-asset`; SPDX packages the
+document describes (the image itself) or whose primary purpose is
+`OPERATING-SYSTEM`, `FILE`, `CONTAINER`, `SOURCE`, `ARCHIVE`, `DEVICE`, or
+`FIRMWARE`. Application components without a PURL that describe a lock or
+manifest file rather than a versioned package are exempt as well: CycloneDX
+components of type `application` without a version or classified by Trivy as
+`lang-pkgs` (property `aquasecurity:trivy:Class`), and SPDX packages with the
+primary purpose `APPLICATION` and no version. Nested CycloneDX components are
+checked like top-level ones. The number of non-exempt components without a
+PURL is exposed in the check metadata as `componentsWithoutPURL`. A CycloneDX
+BOM without components (for example for scratch or static images) is an SBOM
+only when it names its subject in `metadata.component`. A CycloneDX document
+with neither components nor `metadata.component`, such as a VEX-only document,
+is not treated as an SBOM: it is ignored by the SBOM check, and when no other
+SBOM attestation exists `missingPolicy` applies. With several SBOM documents,
+the metadata aggregates across them: `componentCount` and
+`componentsWithoutPURL` are summed, `licenseCount` counts the distinct
+licenses, and `format` lists every format (for example `cyclonedx,spdx`).
+
 #### `sbom.cvss` (object)
 
 CVSS vulnerability scoring thresholds. Only evaluated for CycloneDX SBOMs
 (SPDX does not carry vulnerability data). A vulnerability is flagged if it
 exceeds `maxScore` or meets/exceeds `minSeverity` (OR logic). Ignored CVEs
 still contribute to aggregate statistics for visibility in CEL rules.
+
+CycloneDX documents without components and without `metadata.component`
+(vulnerability disclosure reports or VEX documents) are not SBOMs, but their
+unresolved rated vulnerabilities (analysis state `exploitable`, `in_triage`,
+or none) are still evaluated against these thresholds, so moving findings into
+a separate document cannot hide them. Such a document fails the SBOM check
+when a finding exceeds the thresholds; otherwise it only contributes to the
+`cvss*` statistics and does not count as an SBOM for `missingPolicy`,
+`componentCount`, or `format`.
 
 | Field         | Type   | Default | Description                                                                       |
 | ------------- | ------ | ------- | --------------------------------------------------------------------------------- |
@@ -1095,8 +1237,11 @@ Packages are matched by PURL; packages without a PURL are ignored.
 | `maxModified` | int    | (none)  | Maximum number of modified packages allowed before failing                                   |
 | `maxScore`    | number | (none)  | Maximum drift score allowed. Computed as `(added*3 + modified*2 + removed) / baseline_count` |
 
-When no baseline SBOM referrer is found for an image, drift detection is
-skipped (no failure). All thresholds must be non-negative.
+When any threshold is set, a baseline is mandatory: the check fails when no
+baseline SBOM referrer is found or when any baseline SBOM cannot be parsed.
+Without thresholds, drift is computed for information only (exposed in
+metadata and CEL) and missing or unparsable baselines are skipped. All
+thresholds must be non-negative.
 
 ### `scai` (object)
 
@@ -1258,8 +1403,14 @@ Each rule is an object with:
 | `runtimeTrace` | object | no       | Override runtime trace settings (same schema as `runtimeTrace`) |
 | `scorecard`    | object | no       | Override Scorecard settings (same schema as `scorecard`)        |
 
-Fields not set in a rule are inherited from the base policy. The `images`
-patterns use the same glob syntax as `include` and `exclude`.
+Fields not set in a rule are inherited from the base policy. Sections are
+merged field by field with the same semantics as
+[namespace overrides](#namespace-overrides), so a rule that only sets
+`slsa.maxAge` keeps the base `slsa.missingPolicy`. The `cel` section is
+replaced as a whole: `"cel": {"rules": []}` removes the base CEL rules for the
+matching images. The `images` patterns use the same glob syntax as `include`
+and `exclude`; like `exclude`, they only match the reference as reported by
+the runtime and its normalized fully qualified forms.
 
 Rules are evaluated after `include`/`exclude` filtering. An image that is
 excluded never reaches rule evaluation.
@@ -1308,7 +1459,8 @@ All other images use the base policy (`warn` on missing provenance).
 Custom verification rules using [CEL (Common Expression Language)](https://github.com/google/cel-go).
 CEL rules run after all standard checks complete and can
 reference their results. All rules must pass (all-must-pass semantics).
-Expressions are compiled at policy load time, so syntax errors are caught
+Expressions are compiled at policy load time, so syntax errors, type errors,
+and unknown fields (for example a misspelled field like `image.registryx`) are caught
 early. CEL rules are not evaluated when a trusted VSA short-circuits
 verification (see [verification.md](verification.md) step 8).
 
@@ -1324,6 +1476,16 @@ Each rule is an object with:
 | `require` | string | yes      | CEL expression that must evaluate to `true` for the check to pass.                                                                    |
 | `message` | string | no       | Human-readable message shown when `require` evaluates to `false`.                                                                     |
 
+**Missing attestations:** every attestation variable (all variables except
+`image` and `guac`) provides `present` and `verified`. When no attestation of
+the type was found, `present` and `verified` are both `false`, even if the
+type's `missingPolicy` allowed the image, and no data fields are provided.
+Reading a data field of a missing attestation (for example
+`vulnscan.criticalCount == 0`) is an evaluation error, which fails the CEL
+check instead of seeing a clean default. Guard such expressions with
+`present`, for example `!vulnscan.present || vulnscan.criticalCount == 0`, or
+require the attestation with `vulnscan.present == true`.
+
 **Available variables:**
 
 | Variable                       | Type   | Description                                       |
@@ -1333,12 +1495,16 @@ Each rule is an object with:
 | `image.repository`             | string | Repository path                                   |
 | `image.digest`                 | string | Image digest                                      |
 | `image.namespace`              | string | Kubernetes namespace                              |
+| `<type>.present`               | bool   | Whether an attestation of the type was found      |
 | `slsa.verified`                | bool   | Whether SLSA check passed                         |
 | `slsa.builderID`               | string | Builder ID from SLSA provenance                   |
 | `slsa.buildType`               | string | Build type from SLSA provenance                   |
 | `slsa.source`                  | string | Source URI from SLSA provenance                   |
+| `slsa.sourceRef`               | string | Source git ref or commit SHA                      |
+| `slsa.sourceDigest`            | string | Source commit digest (`algorithm:value`)          |
+| `slsa.trustConfigured`         | bool   | Whether builders, sources, or build types are set |
 | `vex.verified`                 | bool   | Whether VEX check passed                          |
-| `vex.status`                   | string | VEX status (e.g. `not_affected`, `affected`)      |
+| `vex.status`                   | string | Status: `affected`, `not_affected`, `no_match`    |
 | `vsa.verified`                 | bool   | Whether VSA check passed                          |
 | `vsa.verifierID`               | string | VSA verifier ID                                   |
 | `vsa.result`                   | string | VSA verification result (e.g. `PASSED`, `FAILED`) |
@@ -1347,7 +1513,7 @@ Each rule is an object with:
 | `notation.signerDN`            | string | Signer distinguished name from certificate        |
 | `notation.trustPolicy`         | string | Name of the matched trust policy                  |
 | `sbom.verified`                | bool   | Whether SBOM check passed                         |
-| `sbom.format`                  | string | SBOM format (`spdx` or `cyclonedx`)               |
+| `sbom.format`                  | string | SBOM formats, comma separated (`cyclonedx,spdx`)  |
 | `sbom.componentCount`          | int    | Number of components in the SBOM                  |
 | `sbom.licenseCount`            | int    | Number of licenses in the SBOM                    |
 | `sbom.cvssMax`                 | float  | Highest CVSS score across all vulnerabilities     |
@@ -1372,6 +1538,7 @@ Each rule is an object with:
 | `buildenv.properties`          | string | Comma-separated property names                    |
 | `buildenv.propertyCount`       | int    | Number of environment properties                  |
 | `buildenv.propertyValues`      | map    | Property name-value pairs (`map[string]string`)   |
+| `buildenv.conflicts`           | list   | Properties dropped because attestations disagree  |
 | `vulnscan.verified`            | bool   | Whether vulnerability scan verification passed    |
 | `vulnscan.scanner`             | string | Scanner URI                                       |
 | `vulnscan.vulnCount`           | int    | Number of vulnerabilities found                   |
@@ -1379,6 +1546,7 @@ Each rule is an object with:
 | `vulnscan.maxSeverity`         | string | Highest severity across all vulnerabilities       |
 | `vulnscan.criticalCount`       | int    | Number of critical-severity vulnerabilities       |
 | `vulnscan.highCount`           | int    | Number of high-severity vulnerabilities           |
+| `vulnscan.unknownCount`        | int    | Number of vulnerabilities with unknown severity   |
 | `testresult.verified`          | bool   | Whether test result verification passed           |
 | `testresult.result`            | string | Overall test result (e.g. `pass`, `fail`)         |
 | `testresult.suiteCount`        | int    | Number of test suites                             |
@@ -1394,12 +1562,13 @@ Each rule is an object with:
 | `runtimetrace.networkCount`    | int    | Number of network log entries                     |
 | `runtimetrace.fileAccessCount` | int    | Number of file access entries                     |
 | `runtimetrace.fileNames`       | string | Comma-separated file names from file accesses     |
-| `guac.available`               | bool   | Whether the GUAC server was reachable             |
+| `guac.available`               | bool   | Whether all enabled GUAC queries succeeded        |
 | `guac.vulnerabilities`         | list   | Direct vulnerabilities (id, package)              |
 | `guac.transitive_vulns`        | list   | Transitive vulnerabilities (same fields)          |
 | `guac.scorecard.aggregate`     | float  | OpenSSF Scorecard aggregate score                 |
 | `guac.scorecard.checks`        | map    | Individual Scorecard check scores                 |
 | `guac.scorecard.source`        | string | Source repository from the Scorecard              |
+| `guac.scorecard.truncated`     | bool   | Too many linked repositories to determine a score |
 | `guac.dependencies`            | list   | Transitive dependency PURLs (truncated by max)    |
 | `guac.dependency_count`        | int    | Total transitive dependencies (before truncation) |
 | `scorecard.verified`           | bool   | Whether OpenSSF Scorecard verification passed     |
@@ -1408,8 +1577,31 @@ Each rule is an object with:
 | `scorecard.score`              | float  | Aggregate Scorecard score                         |
 | `scorecard.checks`             | map    | Check-name to integer-score map                   |
 
-Standard string functions are available via `ext.Strings()`: `startsWith`,
-`endsWith`, `contains`, `matches`.
+`vex.status` can also be `under_investigation`; see
+[VEX](#vex-vulnerability-exploitability-exchange) for the meaning of
+`no_match`.
+
+GUAC data is fail-closed. The booleans `guac.vulnerabilities_available`,
+`guac.scorecard_available`, and `guac.dependencies_available` report whether
+the corresponding query was enabled and succeeded. When a query did not
+succeed (or GUAC is not configured), its data fields are absent:
+`guac.vulnerabilities`, `guac.transitive_vulns`, `guac.scorecard`,
+`guac.dependencies`, and `guac.dependency_count` are not set, so any rule that
+reads them fails evaluation, which fails the CEL check (a denial in enforce
+mode, a warning in warn mode). The error names the availability flag to guard
+with. This covers both positive rules (`guac.vulnerabilities.size() == 0`) and
+negative rules (`!guac.vulnerabilities.exists(v, v.id == "CVE-2024-1234")`).
+Use the `*_available` flags or `has(guac.vulnerabilities)` to write rules that
+tolerate missing data explicitly. `guac.scorecard` only reflects repositories
+GUAC links to the image digest. When more repositories or packages are linked
+than can be queried, `guac.scorecard.truncated` is `true`, the aggregate is
+`0`, and `guac.scorecard.source` is `guac:truncated`, so a rule such as
+`guac.scorecard.source == "" || guac.scorecard.aggregate >= 7.0` does not
+mistake a truncated result for an image without a linked repository.
+
+The CEL built-in string functions `startsWith`, `endsWith`, `contains`, and
+`matches` are available, as well as the `ext.Strings()` extension library
+(for example `lowerAscii`, `split`, `replace`, and `trim`).
 
 **Limits:**
 
@@ -1439,7 +1631,8 @@ Example:
 
 The `cel` section can be set at the top level, in per-image `rules`, and in
 namespace overrides. When `"inherits": true` is set, the CEL section is
-inherited from the default policy unless the namespace policy defines its own.
+inherited from the default policy unless the namespace policy defines its own,
+which replaces it as a whole.
 
 ## Verification Types
 
@@ -1454,8 +1647,50 @@ performed:
   `trust.builders` list.
 - **Build type**: If `trust.buildTypes` is configured, the
   `buildDefinition.buildType` must match one of the allowed types.
-- **Source repository**: If `trust.sources` is configured, the `source` in
-  `externalParameters` must match an allowed glob pattern.
+- **Source repository**: If `trust.sources` is configured, the source repository
+  must match an allowed glob pattern. The source is read from the layout of the
+  build type:
+  - `https://actions.github.io/buildtypes/workflow/v1` and
+    `https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1`:
+    `externalParameters.workflow.repository` and `workflow.ref`.
+  - `https://slsa-framework.github.io/gcb-buildtypes/triggered-build/v1`:
+    `externalParameters.sourceToBuild.repository` and `sourceToBuild.ref` when
+    `sourceToBuild` names a repository, otherwise
+    `externalParameters.configSource.repository` and `configSource.ref` (the
+    specification omits `sourceToBuild`, or keeps only its `dir`, when the
+    built source is the configuration source). When `sourceToBuild` and
+    `configSource` name different repositories, both must match a trusted
+    source pattern, because the build configuration controls the build steps.
+  - Other build types, or when the layout above is absent: a top-level
+    `externalParameters.source` (a URI string, or an object with `uri` and
+    `digest`), then the layouts above.
+
+  Git URIs such as `git+https://github.com/org/repo@refs/heads/main` are
+  normalized to the repository `https://github.com/org/repo` and the ref
+  `refs/heads/main`. An explicit `ref` parameter (for example `workflow.ref`)
+  takes precedence over a ref embedded in the repository URI. A pattern
+  without `@` is matched against the normalized repository only, so ref text
+  can never satisfy a repository wildcard. A ref-pinned pattern such as
+  `git+https://github.com/org/repo@refs/tags/*` (the `git+` prefix is
+  optional) is split into its repository and ref parts, which must match the
+  normalized repository and the resolved ref; a source without a ref does not
+  match it. The source ref and digest are also exposed to CEL as
+  `slsa.sourceRef` and `slsa.sourceDigest`.
+
+- **Resolved dependencies**: Every `buildDefinition.resolvedDependencies` entry
+  that refers to the source repository must carry a digest. When both sides name
+  a ref, the refs must match: fully qualified refs must be identical
+  (`refs/tags/v1` does not match `refs/heads/v1`), while a short name matches a
+  branch or tag of that name. When the source ref is a commit SHA, the ref
+  comparison is skipped and the SHA must instead match the dependency's commit
+  digest of the same length: a 40 hex character SHA is compared with a
+  `gitCommit` or `sha1` digest, a 64 hex character SHA with a `gitCommit` or
+  `sha256` digest. A dependency without a digest of that length is not
+  compared. A source digest must likewise match a dependency digest of the same
+  algorithm. For Cloud Build, a dependency of the `configSource` repository may
+  match either the built source or the configuration source, so both can use
+  the same repository at different refs. The digest is exposed as
+  `sourceDigest` metadata.
 - **Unknown parameters**: If `slsa.rejectUnknownParameters` is enabled,
   unrecognized `externalParameters` fields cause rejection. The recognized set
   defaults to GitHub Actions parameters (`source`, `repository`, `ref`,
@@ -1464,6 +1699,8 @@ performed:
   (`startedOn` for v1, `buildStartedOn` for v0.2) are checked for basic sanity.
   Future timestamps beyond a 60-second clock skew tolerance are rejected, as are
   timestamps more than 200 years old (which indicate crafted or corrupt data).
+  A zero timestamp (`0001-01-01T00:00:00Z`, as written for an unset Go
+  `time.Time`) is treated as absent.
 - **Freshness**: If `slsa.maxAge` is configured, the build timestamp must be
   present and within the configured maximum age. This defends against tag
   rollback attacks by rejecting stale provenance attestations. When `slsa.maxAge`
@@ -1473,6 +1710,12 @@ Note: `trust.builders[].maxLevel` is not checked during provenance
 verification. SLSA provenance does not declare a build level; levels are a
 property of the builder's infrastructure. Use `vsa.minimumLevel` to enforce
 build level requirements via VSA verification.
+
+When none of `trust.builders`, `trust.sources`, or `trust.buildTypes` is
+configured, any provenance with a matching subject passes the builder and source
+checks. The check then reports `warn` instead of `pass` (for example
+`slsa:warn` in the container annotation) and sets the `trustConfigured`
+metadata to `false`, so an unconstrained provenance check stays visible.
 
 When multiple provenance attestations exist, verification passes if any single
 valid attestation from a trusted builder passes (any-pass semantics).
@@ -1513,8 +1756,10 @@ Verifies VEX documents in two formats:
 - [CycloneDX VEX](https://cyclonedx.org/capabilities/vex/) (via CycloneDX BOM
   vulnerability entries with `analysis.state`)
 
-The format is detected automatically from the predicate content. The same
-policy settings apply to both formats.
+The format is detected automatically from the predicate content: OpenVEX by
+`@context` or `statements`, CycloneDX by `bomFormat`. A JSON `null` or empty
+object predicate is an empty document. Any other content is rejected as an
+invalid VEX document. The same policy settings apply to both formats.
 
 **OpenVEX status handling:**
 
@@ -1522,28 +1767,107 @@ policy settings apply to both formats.
 - `affected`: fail
 - `under_investigation`: controlled by `underInvestigationPolicy` (default:
   allow)
+- Any other status (including differently cased values such as `Affected`):
+  treated as affected
+
+**OpenVEX statement precedence:** statements from all OpenVEX documents for
+the image are grouped by vulnerability name, product scope (the image, or the
+matched packages including their versions), and subcomponent scope. The
+result does not depend on the order of statements or documents. Among
+statements of the same match strength (see below) the most recent statement
+wins, using the statement `last_updated` or `timestamp` and falling back to
+the document `last_updated` or `timestamp`. A later `fixed` statement
+therefore overrides an earlier `affected` statement. When timestamps are
+equal, the most restrictive status wins.
 
 **CycloneDX VEX status handling** (mapped from `analysis.state`):
 
 - `not_affected`, `false_positive`, `resolved`, `resolved_with_pedigree`: pass
 - `exploitable`: fail
 - `in_triage`: controlled by `underInvestigationPolicy` (default: allow)
-- Missing or empty `analysis`: treated as affected
+- Unknown `analysis.state`: treated as affected
+- Missing or empty `analysis.state`: not a VEX statement and ignored by the
+  VEX check. Such findings (for example scanner output in an SBOM) are gated
+  by [`sbom.cvss`](#sbomcvss-object) instead
 
-CycloneDX BOMs without a `vulnerabilities` section are treated as pure SBOMs
-with no VEX data (pass, not an error).
+**Product matching:** an identifier refers to the image when it is the image
+digest (also percent-encoded, as in `sha256%3A...`), an image reference with
+that digest, or an OCI or docker PURL whose version is the image digest. When
+the image was resolved from a manifest list, both the index digest and the
+platform manifest digest identify the image. Qualifiers such as
+`repository_url`, `tag`, or `arch` do not prevent a digest match, and
+`repository_url` may include the image name (`docker.io/library/nginx`, as
+the PURL specification requires), omit it, or name only the registry. An OCI
+or docker PURL without a digest matches by name: its name, namespace (for
+example `library` in `pkg:docker/library/nginx`), `repository_url`, and tag
+(a tag version or `tag` qualifier, compared when the image reference names a
+tag) must all agree with the image, so `pkg:docker/bitnami/nginx@1.25` does
+not match `docker.io/library/nginx:1.27`. Statements that can only raise
+severity (`affected`, `under_investigation`, or an unknown status) are matched
+leniently: an OCI or docker PURL with the image name applies even when its
+namespace, tag, or `repository_url` differ (for example after a retag or a
+mirror), as long as it does not carry a different digest. A lenient match is
+ignored for a vulnerability that a strictly matching statement covers, and a
+lenient match naming another tag is ignored whenever any statement in the
+documents matches the image strictly: such documents distinguish the image
+from its other versions, so in a multi-version document `affected` for
+`?tag=v0` does not apply to `:v1`. Package PURLs listed in a statement whose
+lenient match is ignored still apply as package products. `not_affected` and
+`fixed` statements require the strict match. OpenVEX product `hashes` are
+compared by algorithm (`sha-256` equals `sha256`) and hex value. Because the
+document is bound to the image digest, an OpenVEX product that is a package
+PURL (for example `pkg:npm/lodash@4.17.20`, as emitted by scanners) applies to
+the image as one of its components; statements about different packages, or
+different versions of a package, are resolved independently. A versionless
+package PURL forms its own scope, so it can raise severity for the package but
+never resolve a statement about a specific version. Package-level `fixed` or
+`not_affected` statements do not count as statements about the image: when
+only such statements exist, the status stays `no_match`.
 
-Product matching operates at the image level using digest comparison and PURL
-(`pkg:oci/...`) matching. For CycloneDX, vulnerability `affects[].ref` entries
-are resolved to components via BOM-ref, then matched by component hash or PURL.
+**Match strength:** a statement that identifies the image only by name, or
+applies through a package PURL, can raise the severity of a statement bound to
+the image digest but never lower it. It is considered when it is not older
+than the most recent digest-bound statement. A newer name-only `not_affected`
+therefore does not override a digest-bound `affected`, a newer name-only
+`affected` raises a digest-bound `not_affected`, and a newer digest-bound
+`not_affected` overrides an older name-only `affected`. A statement without any
+timestamp (neither on the statement nor on the document) ties with every other
+statement, so its status wins when it is more restrictive.
+
+For CycloneDX, the BOM is bound to the image digest through the in-toto
+subject, so it describes the image. A vulnerability applies to the image when
+an `affects[].ref` resolves (via BOM-ref, including `metadata.component` and
+nested components) to a component of the BOM, is a BOM-Link (`urn:cdx:`), is a
+package PURL, or identifies the image. This covers scanner output such as
+Trivy, where vulnerabilities reference package components. Vulnerabilities
+that are not resolved (`exploitable`, `in_triage`, or an unknown state) are
+matched leniently: references that carry a different image digest
+(another digest, a PURL with another digest, or a container component with
+another hash) or an image PURL with a different image name are ignored, so
+unknown BOM-refs (for example from a separate SBOM), CPEs, retagged image
+PURLs, and the BOM subject (`metadata.component`, whatever its name) still
+apply, while a finding for another image of a multi-image document does not.
+Resolved vulnerabilities must identify the image or one of its components. A
+vulnerability without `affects` applies to the image.
+
+**Reported status:** the check metadata `status` (and the CEL variable
+`vex.status`) is `affected`, `under_investigation`, `not_affected`, or
+`no_match`. `no_match` means the VEX documents are valid but contain no
+statement about the image (for example an empty document, or a CycloneDX SBOM
+without vulnerabilities). It passes, but it is never reported as
+`not_affected`. Use a CEL rule such as `vex.status != "no_match"` to require an
+explicit statement. The metadata `matchedStatements` counts the statements
+that apply to the image.
 
 When multiple VEX documents exist (in either format), the most restrictive
-result wins: any `affected`/`exploitable` status causes failure regardless of
-other documents.
+result wins: any effective `affected`/`exploitable` status causes failure
+regardless of other documents.
 
-If all VEX documents fail to parse or verify (as opposed to being absent),
-the check always fails regardless of `missingPolicy`. The `missingPolicy`
-setting only controls behavior when no VEX attestation exists at all.
+Every VEX document must parse and bind to the image digest. If any VEX
+document fails to parse or verify (as opposed to being absent), the check
+fails regardless of `missingPolicy` and of the other documents. The
+`missingPolicy` setting only controls behavior when no VEX attestation exists
+at all.
 
 ### VSA (Verification Summary Attestation)
 
@@ -1552,34 +1876,49 @@ attestations. A VSA records the outcome of a prior SLSA and VEX verification
 performed by a trusted verifier, allowing the plugin to skip those checks when
 the VSA is trusted and PASSED. Checks performed:
 
-- **Verifier trust**: `verifier.id` must appear in `trust.verifiers`.
+- **Verifier trust**: `verifier.id` must appear in `trust.verifiers`, and the
+  VSA must be signed by one of that verifier's `keys` or `identities`.
 - **Verification result**: `PASSED` is required. `FAILED` from a trusted
   verifier is a hard reject that prevents fallback to SLSA/VEX.
 - **Build level**: `verifiedLevels` must meet the `vsa.minimumLevel` threshold.
-- **Resource URI**: `resourceUri` must match the image reference.
+- **Resource URI**: `resourceUri` must be digest-pinned and name the same
+  repository and digest as the image. References are normalized before
+  comparison: every Docker Hub alias (`docker.io`, `index.docker.io`,
+  `registry-1.docker.io`, `registry.hub.docker.com`) is equal, and official
+  images may omit `library/`, so `docker.io/library/nginx@sha256:...` and
+  `registry-1.docker.io/nginx@sha256:...` are equal.
+- **Subject**: A statement `subject[].digest` must match the image digest.
 - **SLSA version**: `slsaVersion` must be >= `1.0`.
 - **Policy match**: If `vsa.policy` is configured, `policy.uri` must match.
-- **Freshness**: `timeVerified` must be within the `vsa.maxAge` window.
+- **Freshness**: `timeVerified` (RFC 3339, lowercase `t` and `z` accepted) must
+  be within the `vsa.maxAge` window.
 
 VSA-first logic:
 
-- Trusted PASSED: short-circuits all other checks.
-- Trusted FAILED: hard reject, no fallback allowed.
-- Untrusted or stale: falls through to direct SLSA + VEX verification.
-- Missing: controlled by `vsa.missingPolicy`. When set to `allow` (the
-  default) or left empty, falls through to direct SLSA + VEX verification.
-  When set to `warn`, allows with a warning. When set to `deny`, rejects
-  immediately without fallback.
+- Trusted PASSED: short-circuits all other checks. CEL rules still run, but
+  they only see the VSA result; rules that reference other attestation types
+  see them as not present (`present == false`).
+- Trusted FAILED: hard reject, no fallback allowed. A FAILED result is only
+  honored after the resource URI and subject are bound to the image, and only
+  when the VSA was signed by its verifier, so a FAILED VSA for a different
+  image or from another signer cannot deny this one.
+- No trusted PASSED VSA (missing, untrusted, signed by a signer not bound to
+  the verifier, unbound to the image, stale, or unparsable): controlled by
+  `vsa.missingPolicy`. When set to `allow` (the default) or left empty, falls
+  through to direct verification. When set to `warn`, falls through with a
+  warning. When set to `deny`, rejects immediately without fallback.
 
 ### Signature Verification
 
 All attestations must be valid [Sigstore](https://sigstore.dev) bundles with a
 verified signature. Unsigned or incorrectly signed attestations are dropped
 during the fetch phase and never reach SLSA, VEX, or VSA verification. If all
-discovered bundles fail signature verification, the fetch is treated as a
-failure and handled according to the `fetch_failure_policy` in the
-[operational config](config.md). If some bundles verify and others do not, only
-the verified ones are used (invalid bundles are logged and discarded).
+discovered bundles fail signature verification, the image fails
+verification: it is rejected in enforce mode regardless of
+`fetch_failure_policy`, which only covers registry and network errors (see
+[config.md](config.md#fetch-failures)). If some bundles verify and others do
+not, only the verified ones are used (invalid bundles are logged and
+discarded).
 
 The plugin supports two verification modes that can be used independently or
 together:
@@ -1592,8 +1931,10 @@ Sigstore public-good instance (Fulcio + Rekor).
 
 **Key-based**: Uses local PEM public keys. Configure `trust.verifiers` with
 the verifier ID and `keys` paths. Optional `notBefore`/`notAfter` fields
-restrict the validity window for the verifier's keys. Does not require network
-access to Sigstore infrastructure.
+restrict the validity window for the verifier's keys. Without a transparency
+log the window is checked against the current time, since the signing time
+claimed by the bundle cannot be trusted. Does not require network access to
+Sigstore infrastructure.
 
 When `signatures.requireTransparencyLog` is true, attestations must include a
 valid Rekor transparency log entry. This is recommended for keyless
@@ -1703,16 +2044,32 @@ Checks performed:
   key. Added, removed, and modified packages are counted and a weighted drift
   score is computed. When `sbom.drift` thresholds are configured, exceeding
   any threshold causes failure. Drift results are always exposed as CEL
-  variables (`sbom.drift.*`) regardless of whether thresholds are set.
-  If no baseline referrer is found, drift detection is skipped.
+  variables (`sbom.drift.*`) regardless of whether thresholds are set. With
+  thresholds configured, a missing or unparsable baseline fails the check;
+  without thresholds, drift detection is skipped when no usable baseline is
+  found.
 
-When multiple SBOM attestations exist, any denied license or component in any
-document causes failure. CVSS metadata from passing attestations is accumulated
-and available in CEL rules.
+Supported documents: SPDX 2.x JSON, SPDX 3.0 and 3.0.1 JSON-LD (package types
+`software_Package` and `software_SoftwarePackage`, versions from
+`software_packageVersion`, PURLs from `software_packageUrl` or external
+identifiers, and licenses from `hasConcludedLicense`/`hasDeclaredLicense`
+Relationship elements), and CycloneDX JSON (including nested components and
+license expressions). Each SBOM payload is decoded once.
 
-If all SBOM documents fail to parse (as opposed to being absent), the check
-always fails regardless of `missingPolicy`. The `missingPolicy` setting only
-controls behavior when no SBOM attestation exists at all.
+When multiple SBOM attestations exist, every document must parse and pass: any
+denied license or component in any document causes failure, and so does any
+document that fails to parse. CVSS metadata from passing attestations is
+accumulated and available in CEL rules.
+
+The `purls` list in the check metadata (used to match vulnerability feeds
+against running containers) has qualifiers and subpaths removed, is
+deduplicated, and is capped at 10000 entries. When the cap is hit, the list
+ends with the marker `pkg:generic/nri-supply-chain/purls-truncated`, and feed
+matching treats the image as affected by every feed entry.
+
+If any SBOM document fails to parse (as opposed to being absent), the check
+fails regardless of `missingPolicy`. The `missingPolicy` setting only controls
+behavior when no SBOM attestation exists at all.
 
 Example configuration:
 
@@ -1744,6 +2101,26 @@ Example configuration:
 }
 ```
 
+### Predicate Validation
+
+The SCAI, Source Track, Build Environment, Vulnerability Scan, Test Result,
+Release, Runtime Trace, and OpenSSF Scorecard checks share the following
+behavior:
+
+- **Required fields**: A predicate that is empty, `null`, not a JSON object, or
+  missing the fields its specification requires is invalid, even when the
+  corresponding policy section is not configured. The required fields are
+  listed in each section below.
+- **Timestamps**: A timestamp more than 60 seconds in the future, or more than
+  200 years in the past, fails the check whether or not `maxAge` is configured.
+  When `maxAge` is configured, the timestamp must also be present and within the
+  maximum age. A zero timestamp (`0001-01-01T00:00:00Z`) is treated as absent.
+- **Multiple documents**: For checks where all attestations must pass, a
+  document that cannot be parsed or validated fails the check even when other
+  documents pass. For any-pass checks, invalid documents are reported only when
+  no document passes. Documents that contradict each other (for example the
+  same build environment property with different values) also fail the check.
+
 ### SCAI Verification
 
 Verifies [SCAI](https://github.com/in-toto/attestation/blob/main/spec/predicates/scai.md)
@@ -1755,6 +2132,8 @@ fine-grained property assertions.
 Checks performed:
 
 - **Subject digest**: The in-toto `subject[].digest` must match the image digest.
+- **Required fields**: `attributes` must contain at least one entry, and every
+  entry must have a non-empty `attribute`.
 - **Required attributes**: If `scai.requiredAttributes` is configured, every
   listed attribute name must be present in the report (case-insensitive match).
 - **Forbidden attributes**: If `scai.forbiddenAttributes` is configured, none
@@ -1770,8 +2149,8 @@ are summed, attribute name lists are concatenated (deduplicated), and the
 `hasEvidence` flag uses AND logic (all attestations must have evidence for the merged
 result to be true).
 
-If all SCAI documents fail to parse (as opposed to being absent), the check
-always fails regardless of `missingPolicy`. The `missingPolicy` setting only
+If any SCAI document fails to parse or validate (as opposed to being absent),
+the check fails regardless of `missingPolicy`. The `missingPolicy` setting only
 controls behavior when no SCAI attestation exists at all.
 
 Example configuration:
@@ -1797,12 +2176,18 @@ build the image.
 Checks performed:
 
 - **Subject digest**: The in-toto `subject[].digest` must match the image digest.
+- **Required fields**: The first `sourceLocations` entry must have a non-empty
+  `uri`.
 - **Trusted source**: The source repository in the attestation must match one of
-  the `trust.sources` glob patterns.
+  the `trust.sources` glob patterns. Patterns are interpreted as for SLSA
+  provenance: the `git+` prefix is optional, a ref embedded in the source URI
+  is not part of the repository, and a ref-pinned pattern is matched against
+  `branch` (or the embedded ref when `branch` is empty). A short branch name
+  such as `main` also matches `refs/heads/main`.
 - **Minimum level**: If `source.minimumLevel` is configured, the source level in
   the attestation must meet or exceed it.
-- **Freshness**: If `source.maxAge` is configured, the attestation timestamp
-  must be within the specified duration.
+- **Freshness**: `sourceMetadata.verifiedOn` is checked as described in
+  [Predicate Validation](#predicate-validation) using `source.maxAge`.
 
 When multiple source attestations exist, any single valid attestation that
 passes all checks is sufficient. Metadata from the first passing attestation is
@@ -1833,15 +2218,32 @@ environment in which an artifact was built.
 Checks performed:
 
 - **Subject digest**: The in-toto `subject[].digest` must match the image digest.
+- **Required fields**: `environment` must contain at least one property, and
+  every property must have a non-empty `name`.
+- **Unambiguous values**: A property name (compared case-insensitively) that
+  appears more than once with different values makes the document invalid.
+  When the same property has different values in two attestations (for
+  example a build ID after a re-attestation), the check still passes, but the
+  property is dropped from `buildenv.propertyValues` and listed in
+  `buildenv.conflicts`. A CEL rule reading a dropped property
+  fails closed, while rules on unambiguous properties keep working.
 - **Required properties**: If `buildEnv.requiredProperties` is configured, every
   listed property name must be present in the environment (case-insensitive match).
 - **Forbidden properties**: If `buildEnv.forbiddenProperties` is configured, none
   of the listed property names may appear in the environment (case-insensitive
   match).
 
-When multiple build environment attestations exist, any policy violation in any
-document causes failure. Metadata from passing attestations is merged: property
-counts are summed and property name lists are concatenated (deduplicated).
+The `buildEnv` section only constrains property names; property values are not
+checked. To require specific values, use a CEL rule on
+`buildenv.propertyValues`, for example
+`buildenv.propertyValues['HERMETIC'] == 'true'`.
+
+When multiple build environment attestations exist, any policy violation or
+invalid document causes failure. Required and forbidden properties are checked
+in every attestation. Metadata from passing attestations is merged: property
+counts are summed, property name lists are concatenated (deduplicated), and
+property values are combined, dropping properties whose values differ (see
+`buildenv.conflicts`).
 
 Example configuration:
 
@@ -1863,20 +2265,54 @@ attestations (predicate types `https://in-toto.io/attestation/vulns/v0.1` and
 Vulnerability scan attestations capture the results of automated vulnerability
 scanning of container images.
 
+Two predicate layouts are accepted:
+
+- **Specification layout**: `scanner.uri`, `scanner.version`, `scanner.db`,
+  and `scanner.result[]`, where each result has an `id` and a `severity` list of
+  `{method, score}` entries, with `metadata.scanStartedOn` and
+  `metadata.scanFinishedOn`. The nested form from the specification's field
+  table, `scanner.result[].vulnerability.{id, severity}`, is accepted as well,
+  and `severity` may be a single `{method, score}` object.
+- **Legacy layout**: `scanner.uri` with `result.vulnerabilities[]`, where each
+  vulnerability has an `id`, a textual `severity`, and a numeric `score`, with
+  `metadata.scannedOn`. When `result` is present, `result.vulnerabilities` must
+  be an array, so a report in another format (for example a raw scanner report
+  under `result`) is rejected instead of being read as a clean scan.
+
+The severity of each vulnerability is derived from all of its entries, keeping
+the most severe: numeric scores (strings or numbers) are read as CVSS base
+scores and mapped to qualitative ratings (low 0.1 to 3.9, medium 4.0 to 6.9,
+high 7.0 to 8.9, critical 9.0 to 10.0), and textual scores are read as
+severities (`moderate` counts as medium, `important` as high, `negligible` as
+low). EPSS entries and values that are neither, such as CVSS vectors, are
+ignored.
+
 Checks performed:
 
 - **Subject digest**: The in-toto `subject[].digest` must match the image digest.
+- **Required fields**: `scanner.uri` and either `scanner.result` or `result`
+  must be present, and every vulnerability must have an `id`.
 - **CVSS threshold**: If `vulnScan.maxScore` is configured, no vulnerability may
-  have a CVSS score exceeding the threshold (after filtering `ignoreCVEs`).
+  have a CVSS score exceeding the threshold (after filtering `ignoreCVEs`). A
+  vulnerability without a numeric score is compared using the lowest score of
+  its severity.
 - **Severity threshold**: If `vulnScan.minSeverity` is configured, no
   vulnerability may have a severity at or above the threshold (after filtering
   `ignoreCVEs`).
-- **Freshness**: If `vulnScan.maxAge` is configured, the scan timestamp must be
-  within the specified duration.
+- **Unknown severity**: When `maxScore` or `minSeverity` is configured, a
+  vulnerability whose severity cannot be determined fails the check. Add its ID
+  to `ignoreCVEs` to accept it explicitly.
+- **Freshness**: `scanFinishedOn` (or `scannedOn`, then `scanStartedOn`) is
+  checked as described in [Predicate Validation](#predicate-validation) using
+  `vulnScan.maxAge`. Zero timestamps are skipped in favor of the next one.
+
+The `maxSeverity` metadata ranks an unknown severity above `none`, so a finding
+that could not be classified is never hidden behind a clean result, and
+`unknownCount` counts such findings.
 
 When both `maxScore` and `minSeverity` are set, a vulnerability is flagged if
 either condition is met (OR logic). When multiple scan attestations exist, any
-policy violation in any document causes failure.
+policy violation or invalid document causes failure.
 
 Example configuration:
 
@@ -1902,12 +2338,23 @@ against an artifact.
 Checks performed:
 
 - **Subject digest**: The in-toto `subject[].digest` must match the image digest.
-- **Overall result**: The top-level `result` must be `pass` or `passed`
-  (case-insensitive).
+- **Required fields**: `result` must be present.
+- **Overall result**: The top-level `result` must be `pass`, `passed`, `warn`,
+  or `warned` (case-insensitive). The specification defines `WARNED` as a run
+  that passed with warnings; the number of `warnedTests` is exposed as the
+  `warned` metadata.
+- **Consistency**: A passing `result` fails when `failedTests` is non-empty or
+  when any entry in `suites` has a failing result (`fail`, `failed`, `error`) or
+  a non-zero `failed` count.
 - **Required suites**: If `testResult.requiredSuites` is configured, every
-  listed suite name must be present and have a passing result.
-- **Freshness**: If `testResult.maxAge` is configured, the test result timestamp
-  must be within the specified duration.
+  listed name must be a suite with a passing result or appear in `passedTests`
+  or `warnedTests`.
+- **Freshness**: `metadata.finishedOn` is checked as described in
+  [Predicate Validation](#predicate-validation) using `testResult.maxAge`.
+
+Both the specification fields (`result`, `configuration`, `passedTests`,
+`warnedTests`, `failedTests`) and the suite-based fields (`suites`,
+`metadata.finishedOn`) are understood.
 
 When multiple test result attestations exist, any policy violation in any
 document causes failure. Metadata from passing attestations is merged: suite
@@ -1935,6 +2382,7 @@ repository, capturing the package URL (purl) and optional package identifier.
 Checks performed:
 
 - **Subject digest**: The in-toto `subject[].digest` must match the image digest.
+- **Required fields**: `purl` must be non-empty.
 - **Trusted registries**: If `release.trustedRegistries` is configured, the
   `purl` field must match at least one glob pattern.
 - **Package ID**: If `release.requirePackageId` is `true`, the `packageId`
@@ -1965,12 +2413,18 @@ monitor, including process activity, network connections, and file accesses.
 Checks performed:
 
 - **Subject digest**: The in-toto `subject[].digest` must match the image digest.
+- **Required fields**: `monitor.type` must be non-empty and `monitorLog` must be
+  present.
 - **Trusted monitors**: If `runtimeTrace.trustedMonitors` is configured, the
   `monitor.type` field must match at least one glob pattern.
 - **Forbidden files**: If `runtimeTrace.forbiddenFilePatterns` is configured,
-  no file access entry may match any forbidden pattern.
-- **Freshness**: If `runtimeTrace.maxAge` is configured, the
-  `metadata.buildFinishedOn` timestamp must be within the specified duration.
+  none of the `name`, `uri`, or `downloadLocation` of any file access entry may
+  match a forbidden pattern. File URLs (`file:///path`, `file://localhost/path`,
+  `file:/path`, in any scheme case) are also matched as their percent-decoded
+  path, and paths are additionally matched after cleaning (`//`, `.`, and `..`
+  segments), so alternative encodings cannot evade a pattern.
+- **Freshness**: `metadata.buildFinishedOn` is checked as described in
+  [Predicate Validation](#predicate-validation) using `runtimeTrace.maxAge`.
 
 When multiple runtime trace attestations exist, all must pass (all-must-pass
 semantics). Metadata from passing attestations is merged: process, network, and
@@ -2003,10 +2457,23 @@ Checks performed:
 - **Result structure**: The repository, Scorecard version, aggregate score, and
   at least one named check must be present. Scores must be in Scorecard's
   `-1` (inconclusive) to `10` range.
+- **Trusted repository**: If `trust.sources` is configured, `repo.name` must
+  match one of the patterns. Scorecard reports names without a scheme
+  (`github.com/org/repo`), so the name is also matched with an `https://`
+  prefix. Patterns are interpreted as for SLSA provenance: the `git+` prefix
+  is optional, and a ref-pinned pattern such as
+  `git+https://github.com/org/repo@<ref>` is matched against `repo.commit`,
+  because Scorecard results carry no ref. A result without `repo.commit`
+  never matches a ref-pinned pattern.
 - **Aggregate score**: If `scorecard.minScore` is configured, the aggregate
   score must be greater than or equal to it.
 - **Per-check scores**: Every entry in `scorecard.checks` must exist in the
   result and meet or exceed its configured minimum.
+- **Date**: When present, `date` must be an RFC 3339 timestamp or a
+  `YYYY-MM-DD` date that is not in the future. A `YYYY-MM-DD` date is the
+  scanner's local date, which can be a day ahead of UTC, so date-only values get
+  a 24 hour tolerance. The `scorecard` section has no `maxAge`, so result age is
+  not limited.
 
 When multiple Scorecard attestations exist, all must pass. CEL metadata is
 merged conservatively: the lowest aggregate and per-check score is retained,
@@ -2049,11 +2516,49 @@ These fields support glob patterns with the same syntax as `sanPatterns`:
 - `?` matches any single non-`/` character
 - `[abc]` matches any character in the set
 
-Patterns are matched against the full image reference as received from the
-container runtime, including registry and path components. For example,
-`registry.io/org/*` matches `registry.io/org/repo` but not
+- `[!abc]` and `[^abc]` match any character not in the set, except `/`
+
+`include` and `exclude` patterns are matched against the full image reference as
+received from the container runtime, including registry and path components. For
+example, `registry.io/org/*` matches `registry.io/org/repo` but not
 `registry.io/org/team/repo`. Use `registry.io/org/**` to match any nesting
-depth.
+depth. `trust.sources` patterns are matched against source repositories instead
+(see [`trust`](#trust-object)).
+
+References are also matched in normalized form, with every Docker Hub alias
+(`index.docker.io`, `registry-1.docker.io`, `registry.hub.docker.com`) spelled
+as `docker.io` and official images under `library/` (for example
+`registry-1.docker.io/nginx:1.27` matches `docker.io/library/nginx:*`; VEX
+identifiers use the same normalization). How far normalization applies depends
+on the list:
+
+- `include` matches broadly, because an image that matches no include pattern
+  skips verification. Short names are normalized (`nginx:1.27` matches
+  `docker.io/library/nginx:*`), the bare repository is a match target, and a
+  pattern with a tag part also covers digest-pinned references of the same
+  repository (`ghcr.io/org/app:*` matches `ghcr.io/org/app@sha256:...`).
+- `exclude` always relaxes verification and a rule can relax it, so `exclude`
+  and rule `images` match conservatively: only the reported reference and, for
+  references that
+  already name a registry, its normalized `repository:tag` and
+  `repository@digest` forms. A reference that carries a digest is only matched
+  by its digest, because the runtime runs the digest and ignores the tag: the
+  reported reference is matched without its tag, so neither
+  `ghcr.io/org/app:v1` nor a tag wildcard such as `ghcr.io/org/app:v1*`
+  matches `ghcr.io/org/app:v1.0@sha256:...`, while `ghcr.io/org/app@sha256:*`
+  and `ghcr.io/org/**` do. Short names are not normalized, because the runtime
+  may resolve them against other registries.
+
+Rules are evaluated in order and can tighten verification as well as relax
+it. A rule or exclude pattern scoped to a tag (`ghcr.io/org/app:prod-*`) never
+matches a digest-pinned reference, since the pod author controls the tag and
+the runtime ignores it. Such a reference falls through to later rules or the
+base policy, so a tag-scoped rule cannot be relied on to tighten
+verification: scope tightening rules by repository, covering both spellings
+(`ghcr.io/org/app:*` and `ghcr.io/org/app@*`), or with `ghcr.io/org/**`, and
+put them before broader relaxing rules. The plugin logs a warning for rule
+`images` patterns scoped to a tag. A tag-scoped `exclude` fails safe
+(digest-pinned references are verified) and is only logged at info level.
 
 Common mistake: writing `nginx:*` as an exclude pattern will not match
 `docker.io/library/nginx:latest` because `*` does not cross `/` boundaries.
@@ -2067,7 +2572,10 @@ expressions for certificate matching:
 - `*` matches any sequence of non-`/` characters
 - `**` matches any characters including `/`
 - `?` matches any single non-`/` character
-- `[...]` character classes are supported (including negation with `[^...]`)
+- `[...]` character classes are supported (including negation with `[^...]`
+  or `[!...]`; negated classes never match `/`). Earlier releases matched
+  `[!...]` literally, so policy loading logs a warning for patterns that use
+  it; escape the bracket (`\[!`) to match a literal `[!`.
 - All other characters are treated as literals
 
 Example: `https://github.com/myorg/*` matches `https://github.com/myorg/repo`
@@ -2079,14 +2587,40 @@ SANs that include nested paths, for example
 ## Namespace Overrides
 
 A file named `<namespace>.json` in the policy directory overrides
-`default.json` for pods in that namespace.
+`default.json` for pods in that namespace. The file name must be
+`default.json` or a lowercase Kubernetes namespace name (RFC 1123 label)
+followed by `.json`; other names such as `Prod.json` fail the policy load
+instead of silently never applying. Hidden files (names starting with `.`,
+such as `.json`, editor backups, or `.#default.json` lock files) are skipped
+with a warning. Symlinked policy files are
+followed when they resolve inside the policy directory, as with Kubernetes
+ConfigMap volumes. Any invalid or unreadable policy file fails the whole load,
+and a reload that would replace loaded policies with an empty set is refused,
+so a namespace never silently falls back to `default.json`.
 
-By default, the override is a full replacement. If a namespace policy sets
-`"inherits": true`, unset top-level fields (`trust`, `include`, `exclude`,
-`slsa`, `vex`, `vsa`, `signatures`, `notation`, `sbom`, `scai`, `source`,
-`buildEnv`, `vulnScan`, `testResult`, `release`, `runtimeTrace`, `scorecard`, `cel`, `rules`) are inherited from the default
-policy. Each top-level section that is set in the namespace policy replaces
-the default's section entirely. The default policy itself cannot set `inherits`.
+By default, the override is a full replacement (except for `mode`, see
+[`mode`](#mode-string)). If a namespace policy sets `"inherits": true`, unset
+top-level fields (`trust`, `include`, `exclude`, `slsa`, `vex`, `vsa`,
+`signatures`, `notation`, `sbom`, `scai`, `source`, `buildEnv`, `vulnScan`,
+`testResult`, `release`, `runtimeTrace`, `scorecard`, `cel`, `rules`) are
+inherited from the default policy. The default policy itself cannot set
+`inherits`.
+
+Sections set in both policies are merged field by field:
+
+- A field that appears in the namespace policy replaces the default's value,
+  including explicit `false`, `0`, and `""` values.
+- Fields omitted from the namespace policy (or set to `null`) keep the
+  default's value. For example, overriding only `slsa.maxAge` keeps the
+  default `slsa.missingPolicy: "deny"`.
+- Lists (for example `trust.builders` or `sbom.license.deny`) and maps replace
+  the default's value as a whole.
+- `include`, `exclude`, `rules`, and the `cel` section replace the default's
+  value as a whole.
+- Field names must use the documented spelling. JSON field matching is
+  otherwise case-insensitive, so a policy spelling a field differently (for
+  example `MissingPolicy`) is rejected instead of being silently ignored by the
+  merge.
 
 This is useful for:
 
@@ -2143,8 +2677,9 @@ Example: `default.json` requires provenance, but `dev.json` allows everything:
 
 In this example, `staging.json` inherits all remaining sections (`trust`,
 `include`, `exclude`, `slsa`, `vsa`, `signatures`, `notation`, `sbom`, `scai`,
-`source`, `buildEnv`, `vulnScan`, `testResult`, `release`, `runtimeTrace`, `scorecard`, `cel`, `rules`) from
-`default.json` but replaces the `vex` section.
+`source`, `buildEnv`, `vulnScan`, `testResult`, `release`, `runtimeTrace`,
+`scorecard`, `cel`, `rules`) from `default.json` and sets the two `vex` fields
+on top of the default's `vex` section.
 
 ## Deployment Patterns
 
@@ -2241,9 +2776,9 @@ broader ones.
 
 ### VSA-accelerated verification
 
-Use a trusted verifier to pre-verify images. When a valid VSA exists,
-verification completes with a single attestation check instead of fetching and
-verifying SLSA + VEX individually:
+Use a trusted verifier to pre-verify images. When a valid VSA signed by the
+verifier's key or identity exists, verification completes with a single
+attestation check instead of fetching and verifying SLSA + VEX individually:
 
 ```json
 {
@@ -2329,9 +2864,14 @@ time bounds apply per-verifier (not per-key), use separate verifier entries
 ```
 
 The overlap between `notAfter` on the old entry and `notBefore` on the new
-entry allows a smooth transition. Signatures from the old key are rejected
-after its `notAfter`, while the new key accepts signatures from its
-`notBefore` onward.
+entry allows a smooth transition. Without `signatures.requireTransparencyLog`
+the window is checked against the current time: once the old entry's
+`notAfter` has passed, every attestation signed with the old key is rejected,
+so re-sign attestations with the new key before that time. With
+`requireTransparencyLog: true`, the window is checked against the transparency
+log integrated time, and attestations logged before `notAfter` stay valid.
+Replacing a key file in place and reloading the configuration invalidates
+cached verification results.
 
 ### Multi-verification mode
 
@@ -2348,7 +2888,7 @@ The plugin tries both modes; either can satisfy the policy:
       }
     ],
     "issuers": ["https://token.actions.githubusercontent.com"],
-    "sanPatterns": ["https://github.com/myorg/*"],
+    "sanPatterns": ["https://github.com/myorg/**"],
     "sources": ["https://github.com/myorg/*"]
   },
   "slsa": {

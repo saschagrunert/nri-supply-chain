@@ -24,10 +24,12 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/fileutil"
+	"github.com/saschagrunert/nri-supply-chain/internal/glob"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
@@ -79,16 +81,16 @@ func (c *Config) validatePolicyKeysRuntime() []error {
 	var errs []error
 
 	for _, keyPath := range c.Policy.Keys {
-		keyInfo, statErr := os.Lstat(keyPath)
+		keyInfo, statErr := fileutil.StatContained(keyPath)
 
 		switch {
+		case errors.Is(statErr, fileutil.ErrSymlink):
+			errs = append(errs, fmt.Errorf(
+				"%w: policy.keys %q", ErrSymlinkNotAllowed, keyPath,
+			))
 		case statErr != nil:
 			errs = append(errs, fmt.Errorf(
 				"policy.keys file %q: %w", keyPath, statErr,
-			))
-		case keyInfo.Mode()&os.ModeSymlink != 0:
-			errs = append(errs, fmt.Errorf(
-				"%w: policy.keys %q", ErrSymlinkNotAllowed, keyPath,
 			))
 		case !keyInfo.Mode().IsRegular():
 			errs = append(errs, fmt.Errorf(
@@ -112,16 +114,16 @@ func (c *Config) validateRegistryCACertsRuntime() []error {
 	for idx := range c.Registries {
 		reg := &c.Registries[idx]
 		if reg.CACert != "" {
-			caInfo, statErr := os.Lstat(reg.CACert)
-			if statErr != nil {
-				errs = append(errs, fmt.Errorf(
-					"%w: registries[%d] ca_cert %q: %w",
-					ErrRegistryCACertNotFound, idx, reg.CACert, statErr,
-				))
-			} else if caInfo.Mode()&os.ModeSymlink != 0 {
+			_, statErr := fileutil.StatContained(reg.CACert)
+			if errors.Is(statErr, fileutil.ErrSymlink) {
 				errs = append(errs, fmt.Errorf(
 					"%w: registries[%d] ca_cert %q",
 					ErrSymlinkNotAllowed, idx, reg.CACert,
+				))
+			} else if statErr != nil {
+				errs = append(errs, fmt.Errorf(
+					"%w: registries[%d] ca_cert %q: %w",
+					ErrRegistryCACertNotFound, idx, reg.CACert, statErr,
 				))
 			}
 		}
@@ -210,16 +212,16 @@ func (c *Config) validateTUFRootRuntime() []error {
 }
 
 func validateTUFRootFile(path, label string) []error {
-	rootInfo, err := os.Lstat(path)
-	if err != nil {
+	rootInfo, err := fileutil.StatContained(path)
+	if errors.Is(err, fileutil.ErrSymlink) {
 		return []error{fmt.Errorf(
-			"%w: %q: %w", ErrTUFRootNotFound, path, err,
+			"%w: %s %q", ErrSymlinkNotAllowed, label, path,
 		)}
 	}
 
-	if rootInfo.Mode()&os.ModeSymlink != 0 {
+	if err != nil {
 		return []error{fmt.Errorf(
-			"%w: %s %q", ErrSymlinkNotAllowed, label, path,
+			"%w: %q: %w", ErrTUFRootNotFound, path, err,
 		)}
 	}
 
@@ -417,124 +419,76 @@ func (c *Config) validateFetchAndCache() error {
 }
 
 func (c *Config) validateTimeoutFields() []error {
-	var errs []error
-
-	if c.FetchTimeout.Duration <= 0 {
-		errs = append(errs, fmt.Errorf(
-			"%w: got %s", ErrFetchTimeoutNotPositive, c.FetchTimeout.Duration,
-		))
-	}
-
-	if c.FetchTimeout.Duration > maxFetchTimeout {
-		errs = append(errs, fmt.Errorf(
-			"%w: got %s, max %s",
-			ErrFetchTimeoutTooHigh, c.FetchTimeout.Duration, maxFetchTimeout,
-		))
-	}
-
-	if c.DigestResolveTimeout.Duration <= 0 {
-		errs = append(errs, fmt.Errorf(
-			"%w: got %s", ErrDigestResolveTimeoutNotPositive, c.DigestResolveTimeout.Duration,
-		))
-	}
-
-	if c.DigestResolveTimeout.Duration > maxDigestResolveTimeout {
-		errs = append(errs, fmt.Errorf(
-			"%w: got %s, max %s",
-			ErrDigestResolveTimeoutTooHigh,
-			c.DigestResolveTimeout.Duration,
-			maxDigestResolveTimeout,
-		))
-	}
-
-	return errs
+	return validateRanges(
+		numericRange[time.Duration]{
+			value:       c.FetchTimeout.Duration,
+			minimum:     time.Nanosecond,
+			maximum:     maxFetchTimeout,
+			errBelow:    ErrFetchTimeoutNotPositive,
+			errAbove:    ErrFetchTimeoutTooHigh,
+			showMinimum: false,
+		},
+		numericRange[time.Duration]{
+			value:       c.DigestResolveTimeout.Duration,
+			minimum:     time.Nanosecond,
+			maximum:     maxDigestResolveTimeout,
+			errBelow:    ErrDigestResolveTimeoutNotPositive,
+			errAbove:    ErrDigestResolveTimeoutTooHigh,
+			showMinimum: false,
+		},
+		numericRange[time.Duration]{
+			value:       c.AdmissionTimeout.Duration,
+			minimum:     time.Nanosecond,
+			maximum:     maxAdmissionTimeout,
+			errBelow:    ErrAdmissionTimeoutNotPositive,
+			errAbove:    ErrAdmissionTimeoutTooHigh,
+			showMinimum: false,
+		},
+	)
 }
 
 func (c *Config) validateCacheFields() error {
-	var errs []error
-
-	if c.CacheTTL.Duration < 0 {
-		errs = append(errs, fmt.Errorf(
-			"%w: got %s", ErrCacheTTLNegative, c.CacheTTL.Duration,
-		))
-	}
-
-	if c.CacheTTL.Duration > maxCacheTTL {
-		errs = append(errs, fmt.Errorf(
-			"%w: got %s, max %s",
-			ErrCacheTTLTooHigh, c.CacheTTL.Duration, maxCacheTTL,
-		))
-	}
-
-	if c.CacheFailureTTL.Duration < 0 {
-		errs = append(errs, fmt.Errorf(
-			"%w: got %s", ErrCacheFailureTTLNegative, c.CacheFailureTTL.Duration,
-		))
-	}
-
-	if c.CacheFailureTTL.Duration > maxCacheFailTTL {
-		errs = append(errs, fmt.Errorf(
-			"%w: got %s, max %s",
-			ErrCacheFailureTTLTooHigh, c.CacheFailureTTL.Duration, maxCacheFailTTL,
-		))
-	}
-
-	return errors.Join(errs...)
+	return errors.Join(validateRanges(
+		numericRange[time.Duration]{
+			value: c.CacheTTL.Duration, minimum: 0, maximum: maxCacheTTL,
+			errBelow: ErrCacheTTLNegative, errAbove: ErrCacheTTLTooHigh, showMinimum: false,
+		},
+		numericRange[time.Duration]{
+			value:       c.CacheFailureTTL.Duration,
+			minimum:     0,
+			maximum:     maxCacheFailTTL,
+			errBelow:    ErrCacheFailureTTLNegative,
+			errAbove:    ErrCacheFailureTTLTooHigh,
+			showMinimum: false,
+		},
+	)...)
 }
 
 func (c *Config) validateResilienceFields() error {
-	var errs []error
+	errs := validateRanges(
+		numericRange[time.Duration]{
+			value: c.CircuitBreakerCooldown.Duration, minimum: time.Nanosecond,
+			maximum:  maxCircuitBreakerCooldown,
+			errBelow: ErrCircuitBreakerCooldown, errAbove: ErrCircuitBreakerCooldownTooHigh,
+			showMinimum: false,
+		},
+		numericRange[time.Duration]{
+			value: c.VerificationTimeout.Duration, minimum: time.Nanosecond,
+			maximum:  maxVerificationTimeout,
+			errBelow: ErrVerificationTimeoutNotPositive, errAbove: ErrVerificationTimeoutTooHigh,
+			showMinimum: false,
+		},
+	)
 
-	if c.CircuitBreakerThreshold <= 0 {
-		errs = append(errs, fmt.Errorf(
-			"%w: got %d", ErrCircuitBreakerThreshold, c.CircuitBreakerThreshold,
-		))
-	}
-
-	if c.CircuitBreakerCooldown.Duration <= 0 {
-		errs = append(errs, fmt.Errorf(
-			"%w: got %s", ErrCircuitBreakerCooldown, c.CircuitBreakerCooldown.Duration,
-		))
-	}
-
-	if c.CircuitBreakerCooldown.Duration > maxCircuitBreakerCooldown {
-		errs = append(errs, fmt.Errorf(
-			"%w: got %s, max %s",
-			ErrCircuitBreakerCooldownTooHigh,
-			c.CircuitBreakerCooldown.Duration,
-			maxCircuitBreakerCooldown,
-		))
-	}
-
-	if c.VerificationTimeout.Duration <= 0 {
-		errs = append(errs, fmt.Errorf(
-			"%w: got %s", ErrVerificationTimeoutNotPositive, c.VerificationTimeout.Duration,
-		))
-	}
-
-	if c.VerificationTimeout.Duration > maxVerificationTimeout {
-		errs = append(errs, fmt.Errorf(
-			"%w: got %s, max %s",
-			ErrVerificationTimeoutTooHigh,
-			c.VerificationTimeout.Duration,
-			maxVerificationTimeout,
-		))
-	}
-
+	errs = append(errs, validateRanges(numericRange[int]{
+		value: c.CircuitBreakerThreshold, minimum: 1, maximum: 0,
+		errBelow: ErrCircuitBreakerThreshold, errAbove: nil, showMinimum: false,
+	})...)
 	errs = append(errs, c.validateCheckTimeout()...)
-
-	if c.FetchRateLimit < 0 {
-		errs = append(errs, fmt.Errorf(
-			"%w: got %g", ErrFetchRateLimitNegative, c.FetchRateLimit,
-		))
-	}
-
-	if c.FetchRateLimit > maxFetchRateLimit {
-		errs = append(errs, fmt.Errorf(
-			"%w: got %g, max %g", ErrFetchRateLimitTooHigh, c.FetchRateLimit, maxFetchRateLimit,
-		))
-	}
-
+	errs = append(errs, validateRanges(numericRange[float64]{
+		value: c.FetchRateLimit, minimum: 0, maximum: maxFetchRateLimit,
+		errBelow: ErrFetchRateLimitNegative, errAbove: ErrFetchRateLimitTooHigh, showMinimum: false,
+	})...)
 	errs = append(errs, c.validateLimitsFields()...)
 
 	return errors.Join(errs...)
@@ -561,30 +515,58 @@ func (c *Config) validateCheckTimeout() []error {
 }
 
 func (c *Config) validateLimitsFields() []error {
+	return validateRanges(
+		numericRange[int64]{
+			value: c.MaxAttestationSize, minimum: minAttestationSize, maximum: maxAttestationSize,
+			errBelow: ErrMaxAttestationSizeTooSmall, errAbove: ErrMaxAttestationSizeTooLarge,
+			showMinimum: false,
+		},
+		numericRange[int64]{
+			value:       int64(c.CacheMaxEntries),
+			minimum:     minCacheMaxEntries,
+			maximum:     maxCacheMaxEntries,
+			errBelow:    ErrCacheMaxEntriesTooSmall,
+			errAbove:    ErrCacheMaxEntriesTooLarge,
+			showMinimum: false,
+		},
+	)
+}
+
+// numericRange describes a bounded numeric config field. A nil errBelow or
+// errAbove disables the corresponding bound.
+type numericRange[T int | int64 | float64 | time.Duration] struct {
+	value       T
+	minimum     T
+	maximum     T
+	errBelow    error
+	errAbove    error
+	showMinimum bool
+}
+
+// validateRanges checks each range and reports values below the minimum as
+// "<err>: got <value>" (with ", min <minimum>" when showMinimum is set) and
+// values above the maximum as "<err>: got <value>, max <maximum>".
+func validateRanges[T int | int64 | float64 | time.Duration](ranges ...numericRange[T]) []error {
 	var errs []error
 
-	if c.MaxAttestationSize < minAttestationSize {
-		errs = append(errs, fmt.Errorf(
-			"%w: got %d", ErrMaxAttestationSizeTooSmall, c.MaxAttestationSize,
-		))
-	}
+	for idx := range ranges {
+		bounds := &ranges[idx]
 
-	if c.MaxAttestationSize > maxAttestationSize {
-		errs = append(errs, fmt.Errorf(
-			"%w: got %d", ErrMaxAttestationSizeTooLarge, c.MaxAttestationSize,
-		))
-	}
+		if bounds.errBelow != nil && bounds.value < bounds.minimum {
+			if bounds.showMinimum {
+				errs = append(errs, fmt.Errorf(
+					"%w: got %v, min %v", bounds.errBelow, bounds.value, bounds.minimum,
+				))
+			} else {
+				errs = append(errs, fmt.Errorf("%w: got %v", bounds.errBelow, bounds.value))
+			}
+		}
 
-	if c.CacheMaxEntries < minCacheMaxEntries {
-		errs = append(errs, fmt.Errorf(
-			"%w: got %d", ErrCacheMaxEntriesTooSmall, c.CacheMaxEntries,
-		))
-	}
-
-	if c.CacheMaxEntries > maxCacheMaxEntries {
-		errs = append(errs, fmt.Errorf(
-			"%w: got %d", ErrCacheMaxEntriesTooLarge, c.CacheMaxEntries,
-		))
+		if bounds.errAbove != nil && bounds.value > bounds.maximum {
+			errs = append(errs, fmt.Errorf(
+				"%w: got %v, max %v", bounds.errAbove, bounds.value, bounds.maximum,
+			))
+		}
 	}
 
 	return errs
@@ -723,7 +705,38 @@ func (c *Config) validatePolicyConfig() error {
 		))
 	}
 
+	err := c.Policy.validateMaxStaleness()
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	if !c.Policy.SignatureVerificationRequired() {
+		if c.Verification == ModeEnforce {
+			errs = append(errs, ErrPolicyOCIUnsignedInEnforce)
+		} else {
+			slog.Warn(
+				"policy.source \"oci\" without policy.issuers or policy.keys accepts "+
+					"unsigned policy artifacts; anyone with push access can change policies",
+				"oci_ref", c.Policy.OCIRef,
+			)
+		}
+	}
+
 	return errors.Join(errs...)
+}
+
+// validateMaxStaleness checks that oci_max_staleness is either unlimited (0)
+// or at least one poll interval.
+func (p *PolicyConfig) validateMaxStaleness() error {
+	maxStaleness := p.OCIMaxStaleness.Duration
+	if maxStaleness == 0 || maxStaleness >= p.PollInterval.Duration {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"%w: got %s, poll_interval %s",
+		ErrOCIMaxStalenessInvalid, maxStaleness, p.PollInterval.Duration,
+	)
 }
 
 // validatePolicySignatureFields checks structural constraints on signature
@@ -763,6 +776,15 @@ func validatePolicySignatureEntries(pol *PolicyConfig) []error {
 
 	if slices.Contains(pol.SANPatterns, "") {
 		errs = append(errs, ErrPolicySANPatternEmpty)
+	}
+
+	for _, pattern := range pol.SANPatterns {
+		if glob.HasBangNegation(pattern) {
+			slog.Warn("policy.san_patterns entry uses a \"[!...]\" character class, "+
+				"which negates the class; earlier releases matched \"!\" literally",
+				"pattern", pattern,
+			)
+		}
 	}
 
 	if slices.Contains(pol.Keys, "") {
@@ -962,7 +984,7 @@ func (c *Config) validateGUACConfigRuntime() []error {
 	return errs
 }
 
-func (c *Config) validateRemediationConfig() error { //nolint:cyclop,funlen // sequential field checks
+func (c *Config) validateRemediationConfig() error {
 	rem := &c.Remediation
 
 	if !rem.Enabled() {
@@ -983,46 +1005,23 @@ func (c *Config) validateRemediationConfig() error { //nolint:cyclop,funlen // s
 		errs = append(errs, fmt.Errorf("%w: %q", ErrRemediationModeInvalid, rem.Mode))
 	}
 
-	if rem.Interval.Duration < minRemediationInterval {
-		errs = append(errs, fmt.Errorf(
-			"%w: got %s, min %s",
-			ErrRemediationIntervalTooShort, rem.Interval.Duration, minRemediationInterval,
-		))
-	}
-
-	if rem.Interval.Duration > maxRemediationInterval {
-		errs = append(errs, fmt.Errorf(
-			"%w: got %s, max %s",
-			ErrRemediationIntervalTooLong, rem.Interval.Duration, maxRemediationInterval,
-		))
-	}
-
-	if rem.BatchSize < 1 {
-		errs = append(errs, fmt.Errorf(
-			"%w: got %d", ErrRemediationBatchSizeInvalid, rem.BatchSize,
-		))
-	}
-
-	if rem.BatchSize > maxRemediationBatchSize {
-		errs = append(errs, fmt.Errorf(
-			"%w: got %d, max %d",
-			ErrRemediationBatchSizeTooLarge, rem.BatchSize, maxRemediationBatchSize,
-		))
-	}
-
-	if rem.Cooldown.Duration < minRemediationCooldown {
-		errs = append(errs, fmt.Errorf(
-			"%w: got %s, min %s",
-			ErrRemediationCooldownTooShort, rem.Cooldown.Duration, minRemediationCooldown,
-		))
-	}
-
-	if rem.Cooldown.Duration > maxRemediationCooldown {
-		errs = append(errs, fmt.Errorf(
-			"%w: got %s, max %s",
-			ErrRemediationCooldownTooLong, rem.Cooldown.Duration, maxRemediationCooldown,
-		))
-	}
+	errs = append(errs, validateRanges(
+		numericRange[time.Duration]{
+			value: rem.Interval.Duration, minimum: minRemediationInterval,
+			maximum: maxRemediationInterval, showMinimum: true,
+			errBelow: ErrRemediationIntervalTooShort, errAbove: ErrRemediationIntervalTooLong,
+		},
+		numericRange[time.Duration]{
+			value: rem.Cooldown.Duration, minimum: minRemediationCooldown,
+			maximum: maxRemediationCooldown, showMinimum: true,
+			errBelow: ErrRemediationCooldownTooShort, errAbove: ErrRemediationCooldownTooLong,
+		},
+	)...)
+	errs = append(errs, validateRanges(numericRange[int]{
+		value: rem.BatchSize, minimum: 1, maximum: maxRemediationBatchSize,
+		errBelow: ErrRemediationBatchSizeInvalid, errAbove: ErrRemediationBatchSizeTooLarge,
+		showMinimum: false,
+	})...)
 
 	if rem.FeedDir != "" && !filepath.IsAbs(rem.FeedDir) {
 		errs = append(errs, fmt.Errorf(
@@ -1192,17 +1191,17 @@ func (c *Config) validateSignatureKeyFileRuntime() []error {
 		return nil
 	}
 
-	keyInfo, statErr := os.Lstat(c.Offline.BundleSignatureKey)
+	keyInfo, statErr := fileutil.StatContained(c.Offline.BundleSignatureKey)
 
 	switch {
-	case statErr != nil:
-		return []error{fmt.Errorf(
-			"%w: %w", ErrBundleSignatureKeyNotFound, statErr,
-		)}
-	case keyInfo.Mode()&os.ModeSymlink != 0:
+	case errors.Is(statErr, fileutil.ErrSymlink):
 		return []error{fmt.Errorf(
 			"%w: offline.bundle_signature_key %q",
 			ErrSymlinkNotAllowed, c.Offline.BundleSignatureKey,
+		)}
+	case statErr != nil:
+		return []error{fmt.Errorf(
+			"%w: %w", ErrBundleSignatureKeyNotFound, statErr,
 		)}
 	case !keyInfo.Mode().IsRegular():
 		return []error{fmt.Errorf(

@@ -313,7 +313,7 @@ func TestVerify(t *testing.T) {
 			wantErr:    nil,
 			wantPass:   true,
 			wantType:   types.CheckTypeSLSA,
-			wantStatus: types.StatusPass,
+			wantStatus: types.StatusWarn,
 		},
 		{
 			name: "untrusted build type",
@@ -620,7 +620,7 @@ func TestVerify(t *testing.T) {
 			wantErr:    nil,
 			wantPass:   true,
 			wantType:   types.CheckTypeSLSA,
-			wantStatus: types.StatusPass,
+			wantStatus: types.StatusWarn,
 		},
 		{
 			name: "v1 fresh provenance within maxAge",
@@ -643,7 +643,7 @@ func TestVerify(t *testing.T) {
 			wantErr:    nil,
 			wantPass:   true,
 			wantType:   types.CheckTypeSLSA,
-			wantStatus: types.StatusPass,
+			wantStatus: types.StatusWarn,
 		},
 		{
 			name: "v1 stale provenance beyond maxAge",
@@ -680,7 +680,7 @@ func TestVerify(t *testing.T) {
 			wantErr:    nil,
 			wantPass:   true,
 			wantType:   types.CheckTypeSLSA,
-			wantStatus: types.StatusPass,
+			wantStatus: types.StatusWarn,
 		},
 		{
 			name: "v1 maxAge configured but missing timestamp",
@@ -717,7 +717,7 @@ func TestVerify(t *testing.T) {
 			wantErr:    nil,
 			wantPass:   true,
 			wantType:   types.CheckTypeSLSA,
-			wantStatus: types.StatusPass,
+			wantStatus: types.StatusWarn,
 		},
 		{
 			name: "v1 future timestamp beyond tolerance",
@@ -1460,7 +1460,7 @@ func TestVerifyMultiple(t *testing.T) {
 			},
 			policy:             &policy.Policy{},
 			wantPass:           false,
-			wantDetailContains: "no valid provenance:",
+			wantDetailContains: "no valid provenance attestation:",
 		},
 		{
 			name: "one stale and one fresh passes",

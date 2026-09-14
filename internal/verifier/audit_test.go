@@ -155,8 +155,10 @@ func TestLogResultSerializesControlCharacters(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	result := &types.Result{
-		Allowed: true,
-		Reason:  "",
+		Allowed:  true,
+		Verified: true,
+		Mode:     "",
+		Reason:   "",
 		CheckResults: []types.CheckResult{
 			{
 				Type:     types.CheckTypeSLSA,
@@ -165,6 +167,7 @@ func TestLogResultSerializesControlCharacters(t *testing.T) {
 				Detail:   "image with\nnewline\tand\ttabs",
 				Err:      nil,
 				Metadata: nil,
+				Missing:  false,
 			},
 		},
 	}
@@ -330,8 +333,10 @@ func TestLogResultMultipleChecks(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	result := &types.Result{
-		Allowed: false,
-		Reason:  "verification failed",
+		Allowed:  false,
+		Verified: false,
+		Mode:     "",
+		Reason:   "verification failed",
 		CheckResults: []types.CheckResult{
 			{
 				Type:     types.CheckTypeSLSA,
@@ -340,6 +345,7 @@ func TestLogResultMultipleChecks(t *testing.T) {
 				Detail:   "no SLSA provenance found",
 				Err:      nil,
 				Metadata: nil,
+				Missing:  false,
 			},
 			{
 				Type:     types.CheckTypeSBOM,
@@ -348,6 +354,7 @@ func TestLogResultMultipleChecks(t *testing.T) {
 				Detail:   "SBOM verified",
 				Err:      nil,
 				Metadata: nil,
+				Missing:  false,
 			},
 		},
 	}

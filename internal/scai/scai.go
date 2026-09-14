@@ -22,17 +22,17 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/saschagrunert/nri-supply-chain/internal/intoto"
+	"github.com/saschagrunert/nri-supply-chain/internal/checker"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
-
-const checkType = types.CheckTypeSCAI
 
 var (
 	// ErrInvalidSCAI indicates the SCAI document could not be parsed.
 	ErrInvalidSCAI = errors.New("invalid SCAI document")
 
+	errNoAttributes       = errors.New("attribute report has no attributes")
+	errEmptyAttribute     = errors.New("attribute assertion has an empty attribute name")
 	errMissingAttribute   = errors.New("required attribute missing")
 	errForbiddenAttribute = errors.New("forbidden attribute present")
 	errMissingEvidence    = errors.New("attribute missing required evidence")
@@ -59,99 +59,96 @@ type attribute struct {
 	Evidence  json.RawMessage `json:"evidence,omitempty"`
 }
 
+//nolint:gochecknoglobals // immutable check declaration
+var spec = &checker.Spec[attributeReport]{
+	Info: checker.Info{
+		Type:  types.CheckTypeSCAI,
+		Label: "SCAI",
+	},
+	Aggregation: checker.AllMustPass,
+	ErrInvalid:  ErrInvalidSCAI,
+	Validate:    validateReport,
+	Meta:        reportMeta,
+	Freshness:   nil,
+	Rules:       []checker.Rule[attributeReport]{checkAttributePolicy},
+	Merge: map[string]checker.MergeFunc{
+		"attributeCount": checker.Sum(),
+		"attributes":     checker.CSV(),
+		"hasEvidence":    checker.And(),
+	},
+}
+
+// Info returns the check type and label of the SCAI check.
+func Info() checker.Info {
+	return spec.Info
+}
+
 // Verify checks a single SCAI attestation against the given policy.
 func Verify(
 	ctx context.Context,
 	att []byte, pol *policy.Policy, imageDigest string,
 ) (*types.CheckResult, error) {
-	ctxErr := ctx.Err()
-	if ctxErr != nil {
-		return nil, fmt.Errorf("verification cancelled: %w", ctxErr)
-	}
-
-	predicate, err := intoto.VerifySubjectAndExtractPredicate(att, imageDigest)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidSCAI, err)
-	}
-
-	return verifySCAIPredicate(predicate, pol)
+	//nolint:wrapcheck // the generic checker returns domain errors
+	return spec.Verify(ctx, att, pol, imageDigest)
 }
 
-// VerifyMultiple checks multiple SCAI attestations. Any policy violation
-// in any document causes failure.
+// VerifyMultiple checks multiple SCAI attestations. Any policy violation or
+// invalid document causes failure.
 func VerifyMultiple(
 	ctx context.Context,
 	attestations [][]byte, pol *policy.Policy, imageDigest string,
 ) (*types.CheckResult, error) {
-	//nolint:wrapcheck // VerifyMultipleWithMerge returns domain errors
-	return types.VerifyMultipleWithMerge(
-		ctx, checkType, "SCAI", "SCAI verification passed",
-		attestations,
-		func(att []byte) (*types.CheckResult, error) {
-			return Verify(ctx, att, pol, imageDigest)
-		},
-		mergeAttributeMeta,
-	)
+	//nolint:wrapcheck // the generic checker returns domain errors
+	return spec.VerifyMultiple(ctx, attestations, pol, imageDigest)
 }
 
-func verifySCAIPredicate(
-	predicate []byte, pol *policy.Policy,
-) (*types.CheckResult, error) {
-	var report attributeReport
-
-	err := json.Unmarshal(predicate, &report)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidSCAI, err)
+// validateReport enforces the SCAI v0.3 requirement that a report carries
+// at least one attribute assertion with a non-empty attribute.
+func validateReport(report *attributeReport) error {
+	if len(report.Attributes) == 0 {
+		return errNoAttributes
 	}
 
+	for idx := range report.Attributes {
+		if strings.TrimSpace(report.Attributes[idx].Attribute) == "" {
+			return fmt.Errorf("%w: attributes[%d]", errEmptyAttribute, idx)
+		}
+	}
+
+	return nil
+}
+
+func reportMeta(report *attributeReport) map[string]any {
 	attrNames := make([]string, 0, len(report.Attributes))
 	for idx := range report.Attributes {
 		attrNames = append(attrNames, report.Attributes[idx].Attribute)
 	}
 
-	hasEvidence := allHaveEvidence(report.Attributes)
-
-	meta := map[string]any{
+	return map[string]any{
 		"attributeCount": int64(len(report.Attributes)),
 		"attributes":     strings.Join(attrNames, ","),
-		"hasEvidence":    hasEvidence,
+		"hasEvidence":    allHaveEvidence(report.Attributes),
 	}
-
-	if pol.SCAI == nil {
-		result := check.Pass()
-		result.Metadata = meta
-
-		return result, nil
-	}
-
-	violation := checkAttributePolicy(report.Attributes, pol.SCAI, hasEvidence)
-	if violation != "" {
-		result := check.Fail(violation)
-		result.Metadata = meta
-
-		return result, nil
-	}
-
-	result := check.Pass()
-	result.Metadata = meta
-
-	return result, nil
 }
 
-func checkAttributePolicy(attrs []attribute, pol *policy.SCAIPolicy, hasEvidence bool) string {
-	for _, required := range pol.RequiredAttributes {
-		if !containsAttribute(attrs, required) {
+func checkAttributePolicy(report *attributeReport, pol *policy.Policy) string {
+	if pol.SCAI == nil {
+		return ""
+	}
+
+	for _, required := range pol.SCAI.RequiredAttributes {
+		if !containsAttribute(report.Attributes, required) {
 			return fmt.Sprintf("%s: %q", errMissingAttribute, required)
 		}
 	}
 
-	for _, forbidden := range pol.ForbiddenAttributes {
-		if containsAttribute(attrs, forbidden) {
+	for _, forbidden := range pol.SCAI.ForbiddenAttributes {
+		if containsAttribute(report.Attributes, forbidden) {
 			return fmt.Sprintf("%s: %q", errForbiddenAttribute, forbidden)
 		}
 	}
 
-	if pol.RequireEvidence && !hasEvidence {
+	if pol.SCAI.RequireEvidence && !allHaveEvidence(report.Attributes) {
 		return errMissingEvidence.Error()
 	}
 
@@ -170,79 +167,11 @@ func containsAttribute(attrs []attribute, name string) bool {
 
 func allHaveEvidence(attrs []attribute) bool {
 	for idx := range attrs {
-		if len(attrs[idx].Evidence) == 0 ||
-			string(attrs[idx].Evidence) == "null" ||
-			string(attrs[idx].Evidence) == "{}" ||
-			string(attrs[idx].Evidence) == "[]" {
+		evidence := strings.TrimSpace(string(attrs[idx].Evidence))
+		if evidence == "" || evidence == "null" || evidence == "{}" || evidence == "[]" {
 			return false
 		}
 	}
 
 	return len(attrs) > 0
-}
-
-func mergeAttributeMeta(dst, src map[string]any) {
-	for key, val := range src {
-		existing, hasPrev := dst[key]
-		if !hasPrev {
-			dst[key] = val
-
-			continue
-		}
-
-		if merged, ok := mergeMetaValue(key, existing, val); ok {
-			dst[key] = merged
-		}
-	}
-}
-
-func mergeMetaValue(key string, existing, incoming any) (any, bool) {
-	switch key {
-	case "attributeCount":
-		return mergeInt64Sum(existing, incoming)
-	case "attributes":
-		return mergeStringAttrs(existing, incoming)
-	case "hasEvidence":
-		return mergeBoolAND(existing, incoming)
-	default:
-		return nil, false
-	}
-}
-
-func mergeInt64Sum(existing, incoming any) (any, bool) {
-	dstCount, dstOK := existing.(int64)
-	srcCount, srcOK := incoming.(int64)
-
-	if !dstOK || !srcOK {
-		return nil, false
-	}
-
-	return dstCount + srcCount, true
-}
-
-func mergeStringAttrs(existing, incoming any) (any, bool) {
-	dstAttrs, dstOK := existing.(string)
-	srcAttrs, srcOK := incoming.(string)
-
-	if !dstOK || !srcOK {
-		return nil, false
-	}
-
-	return types.MergeCommaSeparated(dstAttrs, srcAttrs), true
-}
-
-func mergeBoolAND(existing, incoming any) (any, bool) {
-	dstEvidence, dstOK := existing.(bool)
-	srcEvidence, srcOK := incoming.(bool)
-
-	if !dstOK || !srcOK {
-		return nil, false
-	}
-
-	return dstEvidence && srcEvidence, true
-}
-
-var check = types.Checker{ //nolint:gochecknoglobals,gosec // package-scoped helper
-	Type:    checkType,
-	PassMsg: "SCAI verification passed",
 }

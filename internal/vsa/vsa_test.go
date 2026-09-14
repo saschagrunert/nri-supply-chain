@@ -38,11 +38,26 @@ const (
 	testBuildLevel2   = "SLSA_BUILD_LEVEL_2"
 	testBuildLevel1   = "SLSA_BUILD_LEVEL_1"
 	testBuildLevelPfx = "SLSA_BUILD_LEVEL_"
+	testSHA256        = "sha256"
+
+	testSubjectMismatch = "subject digest mismatch"
 )
+
+func testSubjects() []vsa.Subject {
+	return []vsa.Subject{
+		{
+			Name: "docker.io/library/nginx",
+			Digest: map[string]string{
+				testSHA256: testImageRef[strings.LastIndex(testImageRef, ":")+1:],
+			},
+		},
+	}
+}
 
 func validVSAStatement() vsa.Statement {
 	return vsa.Statement{
 		Type:          "https://in-toto.io/Statement/v1",
+		Subject:       testSubjects(),
 		PredicateType: "https://slsa.dev/verification_summary/v1",
 		Predicate: vsa.Predicate{
 			Verifier: vsa.Verifier{
@@ -1193,5 +1208,154 @@ func TestVerifyCancelledContext(t *testing.T) {
 
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled, got: %v", err)
+	}
+}
+
+func TestVerifyBinding(t *testing.T) {
+	t.Parallel()
+
+	otherDigest := "sha256:" + strings.Repeat("0", 64)
+
+	tests := []struct {
+		name       string
+		modify     func(*vsa.Statement)
+		imageRef   string
+		wantPassed bool
+		wantReject bool
+		wantDetail string
+	}{
+		{
+			name: "docker hub short and canonical forms match",
+			modify: func(s *vsa.Statement) {
+				s.Predicate.ResourceURI = strings.Replace(
+					testImageRef,
+					"docker.io",
+					"index.docker.io",
+					1,
+				)
+			},
+			imageRef:   "nginx@" + testImageRef[strings.Index(testImageRef, "@")+1:],
+			wantPassed: true,
+			wantReject: false,
+			wantDetail: "",
+		},
+		{
+			name: "missing subject fails",
+			modify: func(s *vsa.Statement) {
+				s.Subject = nil
+			},
+			imageRef:   testImageRef,
+			wantPassed: false,
+			wantReject: false,
+			wantDetail: testSubjectMismatch,
+		},
+		{
+			name: "subject for other digest fails",
+			modify: func(s *vsa.Statement) {
+				s.Subject = []vsa.Subject{
+					{Name: "x", Digest: map[string]string{testSHA256: strings.Repeat("0", 64)}},
+				}
+			},
+			imageRef:   testImageRef,
+			wantPassed: false,
+			wantReject: false,
+			wantDetail: testSubjectMismatch,
+		},
+		{
+			name: "FAILED VSA for another image is not a hard reject",
+			modify: func(s *vsa.Statement) {
+				s.Predicate.VerificationResult = vsa.ResultFailed
+				s.Predicate.ResourceURI = "docker.io/library/other@" + otherDigest
+			},
+			imageRef:   testImageRef,
+			wantPassed: false,
+			wantReject: false,
+			wantDetail: "resource URI mismatch",
+		},
+		{
+			name: "FAILED VSA with unrelated subject is not a hard reject",
+			modify: func(s *vsa.Statement) {
+				s.Predicate.VerificationResult = vsa.ResultFailed
+				s.Subject = []vsa.Subject{
+					{Name: "x", Digest: map[string]string{testSHA256: strings.Repeat("0", 64)}},
+				}
+			},
+			imageRef:   testImageRef,
+			wantPassed: false,
+			wantReject: false,
+			wantDetail: testSubjectMismatch,
+		},
+		{
+			name:       "tag image reference cannot be bound",
+			modify:     nil,
+			imageRef:   "docker.io/library/nginx:latest",
+			wantPassed: false,
+			wantReject: false,
+			wantDetail: "not digest-pinned",
+		},
+		{
+			name: "lowercase RFC 3339 separators accepted",
+			modify: func(s *vsa.Statement) {
+				s.Predicate.TimeVerified = strings.ToLower(time.Now().UTC().Format(time.RFC3339))
+			},
+			imageRef:   testImageRef,
+			wantPassed: true,
+			wantReject: false,
+			wantDetail: "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			stmt := validVSAStatement()
+			if tc.modify != nil {
+				tc.modify(&stmt)
+			}
+
+			result, err := vsa.Verify(
+				context.Background(),
+				testutil.MustMarshal(t, stmt),
+				trustedPolicy(),
+				tc.imageRef,
+				nil,
+			)
+			testutil.AssertNoError(t, err)
+			testutil.AssertEqual(t, tc.wantPassed, result.Check.Passed)
+			testutil.AssertEqual(t, tc.wantReject, result.HardReject)
+
+			if tc.wantDetail != "" {
+				testutil.AssertContains(t, result.Check.Detail, tc.wantDetail)
+			}
+		})
+	}
+}
+
+func TestVerifyMatchedVerifiers(t *testing.T) {
+	t.Parallel()
+
+	pol := trustedPolicy()
+	pol.Trust.Verifiers = append(
+		pol.Trust.Verifiers,
+		policy.TrustedVerifier{
+			ID:   testVerifierID,
+			Keys: []string{"/etc/keys/rotated.pub"},
+		},
+		policy.TrustedVerifier{
+			ID:   "https://example.com/other",
+			Keys: []string{"/etc/keys/other.pub"},
+		},
+	)
+
+	result, err := vsa.Verify(
+		context.Background(), testutil.MustMarshal(t, validVSAStatement()), pol, testImageRef, nil,
+	)
+	testutil.AssertNoError(t, err)
+	testutil.AssertTrue(t, result.Check.Passed)
+	testutil.AssertEqual(t, 2, len(result.MatchedVerifiers))
+
+	for idx := range result.MatchedVerifiers {
+		testutil.AssertEqual(t, testVerifierID, result.MatchedVerifiers[idx].ID)
 	}
 }

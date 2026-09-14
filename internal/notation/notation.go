@@ -17,10 +17,16 @@ package notation
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"strconv"
 	"strings"
+	"sync"
 
 	notationlib "github.com/notaryproject/notation-go"
 	"github.com/notaryproject/notation-go/verifier"
@@ -52,6 +58,9 @@ const (
 
 	// trustPolicyDocVersion is the trust policy document version.
 	trustPolicyDocVersion = "1.0"
+
+	// maxCachedVerifiers bounds the verifier cache; it is cleared when full.
+	maxCachedVerifiers = 64
 )
 
 var (
@@ -176,33 +185,117 @@ func buildMultipleResult(failReasons []string) *types.CheckResult {
 	return check.Fail("no notation signatures found")
 }
 
+// cachedVerifier is a Notation verifier built for one policy and trust store
+// state, reused across verifications.
+type cachedVerifier struct {
+	verifier  notationlib.Verifier
+	policyDoc *trustpolicy.Document
+}
+
+var (
+	verifierCacheMu sync.Mutex                     //nolint:gochecknoglobals // process-wide cache
+	verifierCache   = map[string]*cachedVerifier{} //nolint:gochecknoglobals // process-wide cache
+)
+
+// ResetVerifierCache clears cached Notation verifiers. Cached entries are keyed
+// by policy content and certificate file metadata, so rotated certificates are
+// picked up automatically; this is only needed to release memory.
+func ResetVerifierCache() {
+	verifierCacheMu.Lock()
+	defer verifierCacheMu.Unlock()
+
+	clear(verifierCache)
+}
+
 //nolint:ireturn // notation.Verifier is the API type returned by notation-go.
 func buildVerifierForImage(
 	notationPolicy *policy.NotationPolicy, imageRef string,
 ) (notationlib.Verifier, string, error) {
-	policyDoc := buildTrustPolicyDocument(notationPolicy)
-
-	err := policyDoc.Validate()
+	cached, err := verifierForPolicy(notationPolicy)
 	if err != nil {
-		return nil, "", fmt.Errorf("%w: %w", ErrBuildTrustPolicy, err)
+		return nil, "", err
 	}
 
-	trustStore, err := newTrustStore(notationPolicy.TrustStores)
-	if err != nil {
-		return nil, "", fmt.Errorf("%w: %w", ErrBuildVerifier, err)
-	}
-
-	notationVerifier, err := verifier.New(policyDoc, trustStore, nil)
-	if err != nil {
-		return nil, "", fmt.Errorf("%w: %w", ErrBuildVerifier, err)
-	}
-
-	tp, err := policyDoc.GetApplicableTrustPolicy(imageRef)
+	tp, err := cached.policyDoc.GetApplicableTrustPolicy(imageRef)
 	if err != nil {
 		return nil, "", fmt.Errorf("%w for %q: %w", ErrNoApplicableTrustPolicy, imageRef, err)
 	}
 
-	return notationVerifier, tp.Name, nil
+	return cached.verifier, tp.Name, nil
+}
+
+// verifierForPolicy returns a cached verifier for the policy, building one
+// when the policy or any referenced certificate file changed.
+func verifierForPolicy(notationPolicy *policy.NotationPolicy) (*cachedVerifier, error) {
+	key := verifierCacheKey(notationPolicy)
+
+	verifierCacheMu.Lock()
+	defer verifierCacheMu.Unlock()
+
+	if cached, ok := verifierCache[key]; ok {
+		return cached, nil
+	}
+
+	policyDoc := buildTrustPolicyDocument(notationPolicy)
+
+	err := policyDoc.Validate()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrBuildTrustPolicy, err)
+	}
+
+	trustStore, err := newTrustStore(notationPolicy.TrustStores)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrBuildVerifier, err)
+	}
+
+	notationVerifier, err := verifier.New(policyDoc, trustStore, nil)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrBuildVerifier, err)
+	}
+
+	if len(verifierCache) >= maxCachedVerifiers {
+		clear(verifierCache)
+	}
+
+	cached := &cachedVerifier{verifier: notationVerifier, policyDoc: policyDoc}
+	verifierCache[key] = cached
+
+	return cached, nil
+}
+
+// verifierCacheKey derives a cache key from the policy content and the size
+// and modification time of every referenced certificate file.
+func verifierCacheKey(notationPolicy *policy.NotationPolicy) string {
+	hasher := sha256.New()
+
+	policyJSON, err := json.Marshal(notationPolicy)
+	if err != nil {
+		// Unreachable for plain policy structs; fall back to a unique key so
+		// nothing stale is ever reused.
+		policyJSON = []byte(err.Error())
+	}
+
+	_, _ = hasher.Write(policyJSON)
+
+	for _, store := range notationPolicy.TrustStores {
+		for _, certPath := range store.Certificates {
+			_, _ = hasher.Write([]byte("\x00" + certPath))
+
+			info, statErr := os.Stat(certPath)
+			if statErr != nil {
+				_, _ = hasher.Write([]byte("\x00missing"))
+
+				continue
+			}
+
+			_, _ = hasher.Write([]byte(
+				"\x00" + strconv.FormatInt(info.Size(), 10) +
+					"\x00" + strconv.FormatInt(info.ModTime().UnixNano(), 10),
+			))
+		}
+	}
+
+	return hex.EncodeToString(hasher.Sum(nil))
 }
 
 func buildTrustPolicyDocument(notationPolicy *policy.NotationPolicy) *trustpolicy.Document {
@@ -329,10 +422,48 @@ func verifySignatureEntry(
 		"trustPolicy": trustPolicyName,
 	}
 
-	result := check.Pass()
+	result := resultFromOutcome(ctx, outcome, imageRef)
 	result.Metadata = meta
 
 	return result
+}
+
+// resultFromOutcome inspects validations that notation-go only logged. A nil
+// error from Verify does not mean the signature is trusted: at the "audit"
+// level authenticity failures are logged, and at "skip" nothing is verified.
+// Integrity and authenticity failures fail the check; logged expiry,
+// revocation, and timestamp failures pass with a warning.
+func resultFromOutcome(
+	ctx context.Context, outcome *notationlib.VerificationOutcome, imageRef string,
+) *types.CheckResult {
+	if outcome == nil {
+		return check.Fail("Notation verification returned no outcome")
+	}
+
+	if outcome.VerificationLevel != nil &&
+		outcome.VerificationLevel.Name == trustpolicy.LevelSkip.Name {
+		return check.Fail("Notation signature verification skipped by trust policy")
+	}
+
+	hardFailures, warnings := classifyLoggedFailures(outcome.VerificationResults)
+
+	if len(hardFailures) > 0 {
+		slog.WarnContext(ctx, "Notation signature failed logged validations",
+			"image", imageRef,
+			"failures", hardFailures,
+		)
+
+		return check.Fail("Notation signature not trusted: " + strings.Join(hardFailures, "; "))
+	}
+
+	if len(warnings) > 0 {
+		return types.WarnResult(
+			checkType,
+			"Notation signature verified with logged failures: "+strings.Join(warnings, "; "),
+		)
+	}
+
+	return check.Pass()
 }
 
 func extractSignerDN(outcome *notationlib.VerificationOutcome) string {
@@ -346,6 +477,31 @@ func extractSignerDN(outcome *notationlib.VerificationOutcome) string {
 	}
 
 	return chain[0].Subject.String()
+}
+
+// classifyLoggedFailures splits failed validations into failures that break
+// trust (integrity, authenticity, unknown types) and warnings.
+func classifyLoggedFailures(
+	results []*notationlib.ValidationResult,
+) (hardFailures, warnings []string) {
+	for _, validation := range results {
+		if validation == nil || validation.Error == nil {
+			continue
+		}
+
+		detail := fmt.Sprintf("%s: %s", validation.Type, validation.Error)
+
+		switch validation.Type {
+		case trustpolicy.TypeAuthenticTimestamp, trustpolicy.TypeExpiry, trustpolicy.TypeRevocation:
+			warnings = append(warnings, detail)
+		case trustpolicy.TypeIntegrity, trustpolicy.TypeAuthenticity:
+			hardFailures = append(hardFailures, detail)
+		default:
+			hardFailures = append(hardFailures, detail)
+		}
+	}
+
+	return hardFailures, warnings
 }
 
 var check = types.Checker{ //nolint:gochecknoglobals // package-scoped helper

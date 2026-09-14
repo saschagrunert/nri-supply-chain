@@ -23,6 +23,28 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 )
 
+// NewACRHelperWithFuncs creates an ACR helper with injected token acquisition
+// and exchange functions for testing.
+func NewACRHelperWithFuncs(
+	accessToken func(ctx context.Context, scope string) (string, error),
+	exchange func(ctx context.Context, client *http.Client, host, accessToken string) (string, error),
+) *acrHelper {
+	helper := newACRHelper()
+	helper.accessToken = accessToken
+	helper.exchange = exchange
+
+	return helper
+}
+
+// ACRRegistryScope exposes acrRegistryScope for testing.
+const ACRRegistryScope = acrRegistryScope
+
+// ACRManagementScope exposes acrManagementScope for testing.
+const ACRManagementScope = acrManagementScope
+
+// ErrExchangeUnauthorized exposes errExchangeUnauthorized for testing.
+var ErrExchangeUnauthorized = errExchangeUnauthorized
+
 // GetCachedTransport exposes getTransport for testing.
 func (tc *TransportCache) GetCachedTransport(prefix string) (http.RoundTripper, error) {
 	return tc.getTransport(prefix)

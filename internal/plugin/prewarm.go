@@ -23,6 +23,8 @@ import (
 
 	"github.com/containerd/nri/pkg/api"
 	"golang.org/x/sync/semaphore"
+
+	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
 const (
@@ -34,64 +36,137 @@ type prewarmImage struct {
 	imageRef    string
 	digest      string
 	indexDigest string
-	namespace   string
-	container   string
+	// runtimeDigest is the digest the runtime reports for the image, which
+	// is resolved like in CreateContainer when no digest is known.
+	runtimeDigest string
+	namespace     string
+	container     string
+	// containerIDs lists the recovered containers running this image. A
+	// digest resolved from runtimeDigest identifies the image they run, so
+	// it is recorded for them.
+	containerIDs []string
 }
 
 func (p *Plugin) collectPrewarmImages(
-	containers []*api.Container, podNS map[string]string,
+	ctx context.Context, containers []*api.Container, podNS map[string]string,
 ) []prewarmImage {
 	var images []prewarmImage
 
-	seen := make(map[string]struct{})
+	seen := make(map[string]int)
 
 	for _, ctr := range containers {
-		annotations := ctr.GetAnnotations()
-		imageRef, digest := resolveImage(annotations)
+		// Resolve the image like CreateContainer does, so pre-warmed cache
+		// entries and recorded digests match what admission looks up.
+		imageRef, digest, runtimeDigest := resolveContainerImage(ctr)
 
 		if imageRef == "" {
 			continue
 		}
 
 		namespace := podNS[ctr.GetPodSandboxId()]
-		serviceAccount := annotations[AnnotationServiceAccountPersist]
 
-		p.containers.Store(
-			ctr.GetId(),
-			&containerState{ //nolint:exhaustruct_v5 // zero-value fields intentional
-				imageRef:           imageRef,
-				digest:             digest,
-				namespace:          namespace,
-				serviceAccount:     serviceAccount,
-				createdAt:          time.Now(),
-				state:              StateVerified,
-				originalResources:  captureLinuxResources(ctr),
-				recoveredOnRestart: true,
-			},
-		)
+		p.recoverContainerState(ctx, ctr, imageRef, digest, runtimeDigest, namespace)
 
-		key := imageRef + "\x00" + namespace
-		if _, ok := seen[key]; ok {
+		// Containers of the same tag can run different images, so both the
+		// annotation digest and the runtime digest are part of the key.
+		key := imageRef + "\x00" + digest + "\x00" + runtimeDigest + "\x00" + namespace
+		if idx, ok := seen[key]; ok {
+			images[idx].containerIDs = append(images[idx].containerIDs, ctr.GetId())
+
 			continue
 		}
 
-		seen[key] = struct{}{}
+		seen[key] = len(images)
 
 		images = append(images, prewarmImage{
-			imageRef:    imageRef,
-			digest:      digest,
-			indexDigest: "",
-			namespace:   namespace,
-			container:   ctr.GetName(),
+			imageRef:      imageRef,
+			digest:        digest,
+			indexDigest:   "",
+			runtimeDigest: runtimeDigest,
+			namespace:     namespace,
+			container:     ctr.GetName(),
+			containerIDs:  []string{ctr.GetId()},
 		})
 	}
 
 	return images
 }
 
+// recoverContainerState registers a container reported by Synchronize. A
+// container that is already tracked keeps its state: Synchronize also runs
+// after every NRI reconnect, and resetting the entry would drop throttling,
+// cooldowns, and error counters of containers that kept running. A container
+// that is not tracked (plugin restart) starts as verified, or as throttled
+// when its current limits are the throttled form of the original limits
+// recorded at creation, so the next passing verification rolls them back.
+func (p *Plugin) recoverContainerState(
+	ctx context.Context, ctr *api.Container, imageRef, digest, runtimeDigest, namespace string,
+) {
+	original, trusted := recoveredOriginalResources(ctx, ctr)
+
+	state := StateVerified
+	if trusted && p.looksThrottled(captureLinuxResources(ctr), original) {
+		state = StateThrottled
+
+		slog.InfoContext(ctx, "Recovered throttled container",
+			"container", ctr.GetId(),
+			"image", imageRef,
+		)
+	}
+
+	unresolvedDigest := ""
+	if digest == "" {
+		unresolvedDigest = runtimeDigest
+	}
+
+	p.containers.StoreIfAbsent(
+		ctr.GetId(),
+		&containerState{ //nolint:exhaustruct_v5 // zero-value fields intentional
+			imageRef:           imageRef,
+			digest:             digest,
+			unresolvedDigest:   unresolvedDigest,
+			namespace:          namespace,
+			serviceAccount:     ctr.GetAnnotations()[AnnotationServiceAccountPersist],
+			createdAt:          time.Now(),
+			state:              state,
+			originalResources:  original,
+			recoveredOnRestart: !trusted,
+		},
+	)
+}
+
+// recoveredOriginalResources returns the original resource limits of a
+// container found at Synchronize. trusted is true when they come from the
+// AnnotationOriginalResources recorded at creation; otherwise the current
+// limits are returned, which may already be throttled by a previous plugin
+// instance.
+func recoveredOriginalResources(
+	ctx context.Context, ctr *api.Container,
+) (resources *api.LinuxResources, trusted bool) {
+	value, ok := ctr.GetAnnotations()[AnnotationOriginalResources]
+	if !ok {
+		return captureLinuxResources(ctr), false
+	}
+
+	decoded, err := decodeOriginalResources(value)
+	if err != nil {
+		slog.WarnContext(ctx, "Ignoring invalid original resources annotation",
+			"container", ctr.GetId(),
+			"error", err,
+		)
+
+		return captureLinuxResources(ctr), false
+	}
+
+	return decoded, true
+}
+
 type resolveResult struct {
 	img prewarmImage
 	ok  bool
+	// fromRuntimeDigest is set when img.digest was resolved from the digest
+	// the runtime reported, rather than taken from annotations or a tag.
+	fromRuntimeDigest bool
 }
 
 func (p *Plugin) resolvePrewarmDigests(
@@ -104,7 +179,7 @@ func (p *Plugin) resolvePrewarmDigests(
 
 	for idx := range images {
 		if images[idx].digest != "" {
-			results[idx] = resolveResult{img: images[idx], ok: true}
+			results[idx] = resolveResult{img: images[idx], ok: true, fromRuntimeDigest: false}
 
 			continue
 		}
@@ -131,14 +206,45 @@ func (p *Plugin) resolvePrewarmDigests(
 
 	waitGroup.Wait()
 
+	p.recordRuntimeDigests(results)
+
 	return deduplicateResults(results)
+}
+
+// recordRuntimeDigests stores digests resolved from the runtime-reported
+// image digest on the recovered containers without one, so the continuous
+// verifier re-verifies the image they actually run. Digests taken from
+// annotations are already recorded, and digests resolved from a tag only warm
+// the cache: the tag's current registry digest need not be the image the
+// containers run, so it must not drive remediation. A runtime digest the
+// registry could not resolve is not recorded either; the continuous verifier
+// resolves it later.
+func (p *Plugin) recordRuntimeDigests(results []resolveResult) {
+	for idx := range results {
+		res := &results[idx]
+		if !res.ok || !res.fromRuntimeDigest || res.img.digest == "" {
+			continue
+		}
+
+		for _, id := range res.img.containerIDs {
+			p.containers.UpdateState(id, func(cState *containerState) {
+				if cState.digest == "" {
+					cState.digest = res.img.digest
+					cState.indexDigest = res.img.indexDigest
+					cState.unresolvedDigest = ""
+				}
+			})
+		}
+	}
 }
 
 func (p *Plugin) resolveOneDigest(
 	ctx context.Context, img *prewarmImage, result *resolveResult,
 ) {
 	resolveCtx, resolveCancel := context.WithTimeout(ctx, time.Duration(p.fetchTimeout.Load()))
-	dig, idxDig, resolveErr := p.digestResolver(resolveCtx, img.imageRef)
+	dig, idxDig, _, unresolved, resolveErr := p.resolveImageDigests(
+		resolveCtx, img.imageRef, img.runtimeDigest,
+	)
 
 	resolveCancel()
 
@@ -155,19 +261,24 @@ func (p *Plugin) resolveOneDigest(
 	resolved := *img
 	resolved.digest = dig
 	resolved.indexDigest = idxDig
-	*result = resolveResult{img: resolved, ok: true}
+	*result = resolveResult{
+		img: resolved, ok: true, fromRuntimeDigest: img.runtimeDigest != "" && !unresolved,
+	}
 }
 
 func deduplicateResults(results []resolveResult) []prewarmImage {
 	resolved := make([]prewarmImage, 0, len(results))
 	seen := make(map[string]struct{})
 
-	for _, res := range results {
+	for idx := range results {
+		res := &results[idx]
 		if !res.ok {
 			continue
 		}
 
-		key := res.img.digest + "\x00" + res.img.namespace
+		// Verification results are cached per image reference, digest and
+		// namespace, so only identical triples are redundant.
+		key := res.img.imageRef + "\x00" + res.img.digest + "\x00" + res.img.namespace
 		if _, exists := seen[key]; exists {
 			continue
 		}
@@ -182,10 +293,10 @@ func deduplicateResults(results []resolveResult) []prewarmImage {
 
 func (p *Plugin) prewarmCache(ctx context.Context, images []prewarmImage) {
 	defer func() {
-		p.prewarmDoneOnce.Do(func() { close(p.prewarmDoneCh) })
+		p.prewarm.markDone()
 
-		if p.prewarmDone != nil {
-			p.prewarmDone()
+		if p.prewarm.done != nil {
+			p.prewarm.done()
 		}
 	}()
 
@@ -238,9 +349,13 @@ func (p *Plugin) runPrewarmVerifications(
 		go func() {
 			defer sem.Release(1)
 
-			_, verifyErr := p.verifier.Verify(
-				ctx, img.imageRef, img.digest, img.indexDigest, img.namespace, "",
-			)
+			_, verifyErr := p.verifier.Verify(ctx, &types.VerifyRequest{
+				ImageRef:       img.imageRef,
+				Digest:         img.digest,
+				IndexDigest:    img.indexDigest,
+				Namespace:      img.namespace,
+				ServiceAccount: "",
+			})
 			if verifyErr != nil {
 				slog.DebugContext(ctx, "Pre-warm verification failed",
 					"image", img.imageRef,

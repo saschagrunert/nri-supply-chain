@@ -18,6 +18,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
 
@@ -138,12 +139,127 @@ func ExportAllowResult(
 // ExportWaitInflight waits for all in-flight singleflight verifications
 // to complete without stopping the cache.
 func (v *Verifier) ExportWaitInflight() {
-	v.inflightWg.Wait()
+	v.flights.wait(nil, false)
 }
 
 // ExportCacheNamespaceKey exposes cacheNamespaceKey for external tests.
-func ExportCacheNamespaceKey(namespace string, ruleIdx int) string {
-	return cacheNamespaceKey(namespace, ruleIdx)
+func ExportCacheNamespaceKey(namespace, imageRef string, ruleIdx int) string {
+	return cacheNamespaceKey(namespace, imageRef, ruleIdx)
+}
+
+// ExportGeneration returns the result cache generation of the current snapshot.
+func (v *Verifier) ExportGeneration() uint64 {
+	return v.state.Load().generation
+}
+
+// ExportFlightsBegin registers a running verification like a singleflight
+// closure does and returns whether it was admitted.
+func (v *Verifier) ExportFlightsBegin() bool {
+	return v.flights.begin()
+}
+
+// ExportFlightsEnd marks a verification registered by ExportFlightsBegin done.
+func (v *Verifier) ExportFlightsEnd() {
+	v.flights.end()
+}
+
+// ExportIsTransportFailure exposes isTransportFailure for external tests.
+func ExportIsTransportFailure(ctx context.Context, err error) bool {
+	return isTransportFailure(ctx, err)
+}
+
+// ExportCheckVSAOutcome evaluates VSA attestations and reports whether a
+// VSA passed or rejected the image, with the combined missing detail.
+func ExportCheckVSAOutcome(
+	ctx context.Context, atts []attestation.VerifiedAttestation,
+	pol *policy.Policy, imageRef, digest string, met *metrics.Metrics,
+) (passed, rejected bool, detail string) {
+	outcome := checkVSA(ctx, atts, pol, imageRef, digest, met, nil)
+
+	return outcome.passed != nil, outcome.rejected != nil, outcome.missingDetail(imageRef)
+}
+
+// ExportRunVSAAndParallelChecks runs the VSA and direct checks for the given
+// VSA attestations and GUAC result.
+func ExportRunVSAAndParallelChecks(
+	ctx context.Context, vsaAtts []attestation.VerifiedAttestation,
+	pol *policy.Policy, met *metrics.Metrics, imageRef, digest string,
+	guacResult *types.CheckResult,
+) *types.Result {
+	parsedRef, _ := name.ParseReference(imageRef)
+	bins := attestationBins{types.CheckTypeVSA: vsaAtts}
+
+	return runVSAAndParallelChecks(
+		ctx, bins, pol, met, imageRef, digest, "default", parsedRef, time.Second, guacResult, nil,
+	)
+}
+
+// ExportSetReloadPreparedHook installs a hook that runs after a reload
+// prepared its plan and before it applies it.
+func (v *Verifier) ExportSetReloadPreparedHook(hook func()) {
+	v.reloadPrepared = hook
+}
+
+// ExportBindBuilderSigner exposes the SLSA builder binding hook.
+func ExportBindBuilderSigner(
+	att *attestation.VerifiedAttestation, matched []policy.TrustedBuilder,
+) error {
+	return bindBuilderSigner(context.Background(), "image")(att, matched)
+}
+
+// ExportScopeBuilderKeys exposes scopeBuilderKeys for external tests.
+func ExportScopeBuilderKeys(
+	atts []attestation.VerifiedAttestation, pol *policy.Policy,
+) []attestation.VerifiedAttestation {
+	return scopeBuilderKeys(context.Background(), atts, pol, "image")
+}
+
+// ExportTrustFingerprint returns the trust material fingerprint for policies.
+func ExportTrustFingerprint(cfg *config.Config, policies map[string]*policy.Policy) string {
+	return computeTrustFingerprint(cfg, policies).String()
+}
+
+// ExportCheckSpecTypes returns the check types of the check registry in order.
+func ExportCheckSpecTypes() []types.CheckType {
+	checkTypes := make([]types.CheckType, 0, len(checkSpecs))
+	for idx := range checkSpecs {
+		checkTypes = append(checkTypes, checkSpecs[idx].checkType)
+	}
+
+	return checkTypes
+}
+
+// ExportInstallPoller installs an OCI policy poller that never polls, with
+// the given maximum staleness, and returns its policy fetcher.
+func (v *Verifier) ExportInstallPoller(
+	ociRef string,
+	maxStaleness time.Duration,
+) *policy.OCIFetcher {
+	fetcher := policy.NewOCIFetcher(nil)
+	done := make(chan struct{})
+	close(done)
+
+	v.poller.Store(&policyPoller{
+		poller:        policy.NewPoller(fetcher, ociRef, time.Minute, nil),
+		fetcher:       fetcher,
+		ociRef:        ociRef,
+		maxStaleness:  maxStaleness,
+		checkInterval: time.Minute,
+		cancel:        func() {},
+		done:          done,
+	})
+
+	return fetcher
+}
+
+// ExportOCIRollbackSeed exposes ociRollbackSeed for external tests.
+func (v *Verifier) ExportOCIRollbackSeed(ociRef string) time.Time {
+	return v.ociRollbackSeed(ociRef)
+}
+
+// ExportPredicateCheckTypes exposes the predicate to check type lookup.
+func ExportPredicateCheckTypes(predicateType string) []types.CheckType {
+	return predicateCheckTypes[predicateType]
 }
 
 // ExportExtractRegistryRepo exposes extractRegistryRepo for external tests.
@@ -192,6 +308,15 @@ func ExportNewSnapshot(cfg *config.Config, logger *slog.Logger, file *os.File) *
 		auditLogger:  logger,
 		auditLogFile: file,
 	}
+}
+
+// ExportScopeOfflineRoot exposes scopeOfflineRoot for external tests.
+func ExportScopeOfflineRoot(
+	cfg *config.Config, rootName string,
+) (issuers []string, keylessDisabled, known bool) {
+	scope := scopeOfflineRoot(cfg, rootName)
+
+	return scope.issuers, scope.keylessDisabled, scope.known
 }
 
 // ExportCreateFetcher exposes createFetcher for external tests.
@@ -269,4 +394,9 @@ func ExportTimedFetchGUACData(
 	ctx context.Context, state *snapshot, digest, imageRef string,
 ) *types.CheckResult {
 	return timedFetchGUACData(ctx, state, digest, imageRef)
+}
+
+// ExportFetcher returns the attestation fetcher of the current snapshot.
+func (v *Verifier) ExportFetcher() attestation.Fetcher {
+	return v.state.Load().fetcher
 }

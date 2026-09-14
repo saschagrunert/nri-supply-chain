@@ -32,6 +32,11 @@ func (f *OCIFetcher) SetImageFetchFunc(fn ImageFetchFunc) {
 	f.fetchHead = nil // disable HEAD optimization; mock functions only support GET
 }
 
+// TagScopedPatternsForTest exposes tagScopedPatterns for tests.
+func TagScopedPatternsForTest(patterns []string) []string {
+	return tagScopedPatterns(patterns)
+}
+
 // PrebuiltVerification exposes prebuiltVerification for tests.
 type PrebuiltVerification = prebuiltVerification
 
@@ -149,4 +154,9 @@ func BuildPolicyVerificationConfigForTest(
 	fetchTrustedRoot FetchTrustedRootFunc,
 ) (root.TrustedMaterialCollection, []verify.PolicyOption, error) {
 	return buildPolicyVerificationConfig(ctx, prebuilt, fetchTrustedRoot)
+}
+
+// CheckSectionRegistryForTest exposes checkSectionRegistry for tests.
+func CheckSectionRegistryForTest() error {
+	return checkSectionRegistry()
 }

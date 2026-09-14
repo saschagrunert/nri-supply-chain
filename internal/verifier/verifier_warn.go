@@ -221,8 +221,8 @@ func warnKeyOnlyWithoutTLog(ctx context.Context, label string, pol *policy.Polic
 
 	hasKeyOnly := false
 
-	for _, v := range pol.Trust.Verifiers {
-		if len(v.Keys) > 0 && len(pol.Trust.Issuers) == 0 {
+	for idx := range pol.Trust.Verifiers {
+		if len(pol.Trust.Verifiers[idx].Keys) > 0 && len(pol.Trust.Issuers) == 0 {
 			hasKeyOnly = true
 
 			break

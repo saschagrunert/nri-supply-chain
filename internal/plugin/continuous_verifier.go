@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"slices"
 	"strings"
@@ -27,6 +28,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
+	"github.com/saschagrunert/nri-supply-chain/internal/feed"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
@@ -52,20 +54,20 @@ type containerForReverify struct {
 // RunContinuousVerifier starts the background re-verification loop. It blocks
 // until ctx is cancelled. Start in the errgroup alongside nriStub.Run.
 func (p *Plugin) RunContinuousVerifier(ctx context.Context, interval time.Duration) {
-	if !p.continuousVerifierStarted.CompareAndSwap(false, true) {
+	if !p.remediation.started.CompareAndSwap(false, true) {
 		slog.WarnContext(ctx, "Continuous verifier already running, ignoring duplicate call")
 
 		return
 	}
 
-	defer p.continuousVerifierStarted.Store(false)
+	defer p.remediation.started.Store(false)
 
 	slog.InfoContext(ctx, "Continuous verifier waiting for prewarm", "interval", interval)
 
 	select {
 	case <-ctx.Done():
 		return
-	case <-p.prewarmDoneCh:
+	case <-p.prewarm.doneCh:
 	}
 
 	slog.InfoContext(ctx, "Continuous verifier started", "interval", interval)
@@ -81,9 +83,9 @@ func (p *Plugin) RunContinuousVerifier(ctx context.Context, interval time.Durati
 			return
 		case <-ticker.C:
 			p.runVerificationCycle(ctx, triggerTimer, nil, nil)
-		case <-p.reverifyTrigger:
+		case <-p.remediation.reverifyTrigger:
 			p.runVerificationCycle(ctx, triggerManual, nil, nil)
-		case feedPURLs := <-p.feedTrigger:
+		case feedPURLs := <-p.remediation.feedTrigger:
 			filterIDs := p.matchFeedPURLs(feedPURLs)
 			if len(filterIDs) > 0 {
 				p.runVerificationCycle(ctx, triggerFeed, filterIDs, feedPURLs)
@@ -92,19 +94,32 @@ func (p *Plugin) RunContinuousVerifier(ctx context.Context, interval time.Durati
 	}
 }
 
+// StartContinuousVerifier starts the continuous verifier in the background
+// unless it is already running, for example when a configuration passed by
+// the runtime enables remediation.
+func (p *Plugin) StartContinuousVerifier(ctx context.Context, interval time.Duration) {
+	if p.remediation.started.Load() {
+		return
+	}
+
+	go p.RunContinuousVerifier(ctx, interval)
+}
+
 //nolint:cyclop,funlen // batching, filtering, and yield logic require branching
 func (p *Plugin) runVerificationCycle(
 	ctx context.Context, trigger string,
 	filterIDs map[string]struct{}, feedPURLs []string,
 ) {
 	mode := config.RemediationModeDisabled
-	if modePtr := p.remediationMode.Load(); modePtr != nil {
+	if modePtr := p.remediation.mode.Load(); modePtr != nil {
 		mode = *modePtr
 	}
 
 	snapshot := p.containers.SnapshotIDs()
 
 	var targets []containerForReverify
+
+	resolved := make(map[string]digestResolution)
 
 	//nolint:gocritic // value copy intentional: snapshot holds copies
 	for containerID, csnap := range snapshot {
@@ -114,7 +129,7 @@ func (p *Plugin) runVerificationCycle(
 			}
 		}
 
-		targets = append(targets, containerForReverify{
+		target := containerForReverify{
 			id:             containerID,
 			imageRef:       csnap.imageRef,
 			digest:         csnap.digest,
@@ -122,7 +137,26 @@ func (p *Plugin) runVerificationCycle(
 			namespace:      csnap.namespace,
 			serviceAccount: csnap.serviceAccount,
 			state:          csnap.state,
-		})
+		}
+
+		if csnap.unresolvedDigest != "" &&
+			!p.resolveTargetDigest(ctx, &target, csnap.unresolvedDigest, resolved) {
+			continue
+		}
+
+		if target.digest == "" {
+			// Without a digest the verifier cannot bind attestations to the
+			// running image; containers without a known image digest are
+			// left alone instead of being reported as degraded.
+			slog.DebugContext(ctx, "Skipping re-verification of container without digest",
+				"container", containerID,
+				"image", csnap.imageRef,
+			)
+
+			continue
+		}
+
+		targets = append(targets, target)
 	}
 
 	if len(targets) == 0 {
@@ -133,7 +167,7 @@ func (p *Plugin) runVerificationCycle(
 
 	batchSize := p.batchSize()
 
-	var updates []*api.ContainerUpdate
+	var updates []*pendingUpdate
 
 	for batchStart := 0; batchStart < len(targets); batchStart += batchSize {
 		if ctx.Err() != nil {
@@ -180,39 +214,50 @@ func (p *Plugin) runVerificationCycle(
 func (p *Plugin) reverifyContainer(
 	ctx context.Context, target *containerForReverify,
 	trigger string, mode config.RemediationMode, feedPURLs []string,
-) *api.ContainerUpdate {
+) *pendingUpdate {
 	if trigger != triggerTimer {
 		p.verifier.InvalidateCache(target.digest, target.namespace)
 	}
 
 	start := time.Now()
 
-	result, err := p.verifier.Verify(
-		ctx, target.imageRef, target.digest, target.indexDigest,
-		target.namespace, target.serviceAccount,
-	)
+	result, err := p.verifier.Verify(ctx, &types.VerifyRequest{
+		ImageRef:       target.imageRef,
+		Digest:         target.digest,
+		IndexDigest:    target.indexDigest,
+		Namespace:      target.namespace,
+		ServiceAccount: target.serviceAccount,
+	})
 
 	duration := time.Since(start).Seconds()
 	p.metrics.ReverificationDuration.WithLabelValues(target.namespace).Observe(duration)
 
-	if err != nil {
+	// In enforce mode a failed verification comes with its result; only an
+	// error without a decision is a re-verification error.
+	if err != nil && (result == nil || !errors.Is(err, types.ErrVerificationFailed)) {
 		p.handleReverifyError(ctx, target, err)
+
+		return nil
+	}
+
+	// A verification that could not complete (for example a registry outage)
+	// says nothing about the image: it neither degrades the container nor
+	// recovers or rolls it back, and it does not count as an error. A
+	// persistent outage therefore never degrades a container, even in enforce
+	// mode; it is logged and counted so it stays visible.
+	if resultIncomplete(result) {
+		p.metrics.ReverificationTotal.WithLabelValues(target.namespace, "incomplete").Inc()
+		p.recordIncompleteReverification(ctx, target, result.Reason)
 
 		return nil
 	}
 
 	p.containers.UpdateState(target.id, func(cState *containerState) {
 		cState.consecutiveErrors = 0
+		cState.consecutiveIncomplete = 0
 	})
 
-	degraded := !result.Allowed
-	for i := range result.CheckResults {
-		if !result.CheckResults[i].Passed {
-			degraded = true
-
-			break
-		}
-	}
+	degraded := !result.Verified
 
 	resultLabel := "pass"
 	if degraded {
@@ -222,6 +267,89 @@ func (p *Plugin) reverifyContainer(
 	p.metrics.ReverificationTotal.WithLabelValues(target.namespace, resultLabel).Inc()
 
 	return p.applyStateTransition(ctx, target, result, degraded, trigger, mode, feedPURLs)
+}
+
+// digestResolution is the result of resolving a runtime image digest, shared
+// by the containers of a verification cycle that run the same image.
+type digestResolution struct {
+	digest      string
+	indexDigest string
+	err         error
+}
+
+// resolveTargetDigest resolves the runtime digest of a container whose digest
+// was not resolved at admission or recovery (verification was not needed, or
+// the registry was unreachable) and records the result, so the container is
+// re-verified against the image it runs. A failed resolution counts as an
+// incomplete re-verification and returns false.
+func (p *Plugin) resolveTargetDigest(
+	ctx context.Context, target *containerForReverify, runtimeDigest string,
+	resolved map[string]digestResolution,
+) bool {
+	key := target.imageRef + "\x00" + runtimeDigest
+
+	res, found := resolved[key]
+	if !found {
+		resolveCtx, cancel := context.WithTimeout(ctx, time.Duration(p.fetchTimeout.Load()))
+		res.digest, res.indexDigest, res.err = p.resolveRuntimeDigest(
+			resolveCtx, target.imageRef, runtimeDigest,
+		)
+
+		cancel()
+
+		resolved[key] = res
+	}
+
+	if res.err != nil {
+		p.metrics.ReverificationTotal.WithLabelValues(target.namespace, "incomplete").Inc()
+		p.recordIncompleteReverification(ctx, target, "resolving image digest: "+res.err.Error())
+
+		return false
+	}
+
+	p.containers.UpdateState(target.id, func(cState *containerState) {
+		if cState.unresolvedDigest == runtimeDigest {
+			cState.digest = res.digest
+			cState.indexDigest = res.indexDigest
+			cState.unresolvedDigest = ""
+		}
+	})
+
+	target.digest = res.digest
+	target.indexDigest = res.indexDigest
+
+	return true
+}
+
+// recordIncompleteReverification counts an incomplete re-verification and
+// warns once it has been incomplete for consecutiveErrorThreshold cycles.
+func (p *Plugin) recordIncompleteReverification(
+	ctx context.Context, target *containerForReverify, reason string,
+) {
+	incomplete := 0
+
+	p.containers.UpdateState(target.id, func(cState *containerState) {
+		cState.consecutiveIncomplete++
+		incomplete = cState.consecutiveIncomplete
+	})
+
+	if incomplete == consecutiveErrorThreshold {
+		slog.WarnContext(ctx,
+			"Re-verification keeps failing to complete; the container keeps its state",
+			"container", target.id,
+			"image", target.imageRef,
+			"cycles", incomplete,
+			"reason", reason,
+		)
+
+		return
+	}
+
+	slog.DebugContext(ctx, "Re-verification incomplete, keeping container state",
+		"container", target.id,
+		"image", target.imageRef,
+		"reason", reason,
+	)
 }
 
 func (p *Plugin) handleReverifyError(
@@ -251,25 +379,28 @@ func (p *Plugin) handleReverifyError(
 	})
 }
 
+// pendingUpdate is a container update and the state transition to record
+// once the runtime has applied it. Recording the transition only after a
+// successful UpdateContainers call keeps the state machine in its previous
+// state when the update fails, so the next cycle retries it.
+type pendingUpdate struct {
+	update *api.ContainerUpdate
+	commit func(cState *containerState)
+}
+
 //nolint:cyclop,funlen // state machine with three transitions and mode-gated remediation
 func (p *Plugin) applyStateTransition(
 	ctx context.Context, target *containerForReverify, result *types.Result,
 	degraded bool, trigger string, mode config.RemediationMode,
 	feedPURLs []string,
-) *api.ContainerUpdate {
+) *pendingUpdate {
 	triggerHash := computeTriggerHash(trigger, target.digest, feedPURLs)
 
-	var update *api.ContainerUpdate
+	var pending *pendingUpdate
 
 	p.containers.UpdateState(target.id, func(cState *containerState) {
 		cState.lastResult = result
 		cState.purls = extractPURLsFromResult(result)
-
-		wasRecoveredOnRestart := cState.recoveredOnRestart
-
-		if cState.recoveredOnRestart && !degraded {
-			cState.recoveredOnRestart = false
-		}
 
 		prevState := cState.state
 
@@ -283,7 +414,11 @@ func (p *Plugin) applyStateTransition(
 				"namespace", target.namespace,
 			)
 
-		case !degraded && prevState != StateVerified && prevState != StateSkipped:
+		case !degraded && prevState == StateThrottled && p.hasTrustedOriginals(cState):
+			// Stay throttled until the runtime confirms the rollback.
+			pending = p.rollbackUpdate(ctx, target, cState.originalResources)
+
+		case !degraded && prevState != StateVerified:
 			cState.state = StateVerified
 
 			slog.InfoContext(ctx, "Container verification recovered",
@@ -292,19 +427,9 @@ func (p *Plugin) applyStateTransition(
 				"namespace", target.namespace,
 				"from_state", prevState.String(),
 			)
-
-			if prevState == StateThrottled &&
-				cState.originalResources != nil &&
-				!wasRecoveredOnRestart {
-				update = buildRollbackUpdate(target.id, cState.originalResources)
-				p.metrics.RemediationActionsTotal.WithLabelValues(
-					"rollback", target.namespace,
-				).Inc()
-			} else {
-				p.metrics.RemediationActionsTotal.WithLabelValues(
-					"recover", target.namespace,
-				).Inc()
-			}
+			p.metrics.RemediationActionsTotal.WithLabelValues(
+				"recover", target.namespace,
+			).Inc()
 
 		case degraded && (prevState == StateVerified || prevState == StateSkipped):
 			cState.state = StateDegraded
@@ -319,37 +444,108 @@ func (p *Plugin) applyStateTransition(
 			p.metrics.RemediationActionsTotal.WithLabelValues("warn", target.namespace).Inc()
 
 		case degraded && prevState == StateDegraded:
-			if mode.Severity() >= config.RemediationModeThrottle.Severity() &&
-				cState.originalResources != nil {
-				if p.cooldownElapsed(cState) &&
-					(trigger == triggerTimer || cState.lastTriggerHash != triggerHash) {
-					cState.state = StateThrottled
-					cState.lastRemediation = time.Now()
-					cState.lastTriggerHash = triggerHash
-
-					cpuPct, memPct := p.throttlePercents()
-					update = p.buildThrottleUpdate(target.id, cState.originalResources)
-
-					slog.WarnContext(ctx, "Container throttled",
-						"container", target.id,
-						"image", target.imageRef,
-						"namespace", target.namespace,
-						"trigger", trigger,
-						"cpu_quota_percent", cpuPct,
-						"memory_limit_percent", memPct,
-					)
-					p.metrics.RemediationActionsTotal.WithLabelValues("throttle", target.namespace).
-						Inc()
-				}
+			if p.shouldThrottle(ctx, target, cState, mode, trigger, triggerHash) {
+				pending = p.throttleUpdate(
+					ctx,
+					target,
+					cState.originalResources,
+					trigger,
+					triggerHash,
+				)
 			}
 
 		case degraded && prevState == StateThrottled:
 			// Stays throttled until verification recovers (handled by the
-			// !degraded branch above). No escalation beyond Throttled.
+			// !degraded branches above). No escalation beyond Throttled.
 		}
 	})
 
-	return update
+	return pending
+}
+
+// hasTrustedOriginals reports whether the container's recorded original
+// resources can be restored. Resources captured from a container recovered
+// after a plugin restart without the original resources annotation may
+// already be throttled.
+func (p *Plugin) hasTrustedOriginals(cState *containerState) bool {
+	return cState.originalResources != nil && !cState.recoveredOnRestart
+}
+
+func (p *Plugin) shouldThrottle(
+	ctx context.Context, target *containerForReverify, cState *containerState,
+	mode config.RemediationMode, trigger, triggerHash string,
+) bool {
+	if mode.Severity() < config.RemediationModeThrottle.Severity() {
+		return false
+	}
+
+	if !p.hasTrustedOriginals(cState) {
+		// Throttling relative to resources that may already be throttled
+		// would stack limits and could never be rolled back correctly.
+		slog.DebugContext(ctx, "Not throttling container without recorded original resources",
+			"container", target.id,
+			"image", target.imageRef,
+			"recovered_on_restart", cState.recoveredOnRestart,
+		)
+
+		return false
+	}
+
+	return p.cooldownElapsed(cState) &&
+		(trigger == triggerTimer || cState.lastTriggerHash != triggerHash)
+}
+
+func (p *Plugin) throttleUpdate(
+	ctx context.Context, target *containerForReverify,
+	original *api.LinuxResources, trigger, triggerHash string,
+) *pendingUpdate {
+	update := p.buildThrottleUpdate(target.id, original)
+	if update == nil {
+		return nil
+	}
+
+	cpuPct, memPct := p.throttlePercents()
+
+	return &pendingUpdate{
+		update: update,
+		commit: func(cState *containerState) {
+			cState.state = StateThrottled
+			cState.lastRemediation = time.Now()
+			cState.lastTriggerHash = triggerHash
+
+			slog.WarnContext(ctx, "Container throttled",
+				"container", target.id,
+				"image", target.imageRef,
+				"namespace", target.namespace,
+				"trigger", trigger,
+				"cpu_quota_percent", cpuPct,
+				"memory_limit_percent", memPct,
+			)
+			p.metrics.RemediationActionsTotal.WithLabelValues("throttle", target.namespace).
+				Inc()
+		},
+	}
+}
+
+func (p *Plugin) rollbackUpdate(
+	ctx context.Context, target *containerForReverify, original *api.LinuxResources,
+) *pendingUpdate {
+	return &pendingUpdate{
+		update: buildRollbackUpdate(target.id, original),
+		commit: func(cState *containerState) {
+			cState.state = StateVerified
+
+			slog.InfoContext(ctx, "Container verification recovered",
+				"container", target.id,
+				"image", target.imageRef,
+				"namespace", target.namespace,
+				"from_state", StateThrottled.String(),
+			)
+			p.metrics.RemediationActionsTotal.WithLabelValues(
+				"rollback", target.namespace,
+			).Inc()
+		},
+	}
 }
 
 func (p *Plugin) cooldownElapsed(cState *containerState) bool {
@@ -358,7 +554,7 @@ func (p *Plugin) cooldownElapsed(cState *containerState) bool {
 	}
 
 	cooldown := config.DefaultRemediationCooldown
-	if cfg := p.remediationConfig.Load(); cfg != nil &&
+	if cfg := p.remediation.cfg.Load(); cfg != nil &&
 		cfg.Cooldown.Duration > 0 {
 		cooldown = cfg.Cooldown.Duration
 	}
@@ -401,7 +597,10 @@ func (p *Plugin) buildThrottleUpdate(
 		resources.Cpu = throttledCPU
 	}
 
-	if mem := original.GetMemory(); mem != nil {
+	// A memory limit below the container's working set makes the kernel
+	// OOM-kill it, so memory is only throttled when explicitly configured
+	// below 100 percent.
+	if mem := original.GetMemory(); mem != nil && memPercent < percentDivisor {
 		throttledMem := &api.LinuxMemory{}
 
 		if limit := mem.GetLimit(); limit != nil {
@@ -418,12 +617,100 @@ func (p *Plugin) buildThrottleUpdate(
 	return &api.ContainerUpdate{
 		ContainerId:   containerID,
 		Linux:         &api.LinuxContainerUpdate{Resources: resources},
-		IgnoreFailure: true,
+		IgnoreFailure: false,
 	}
 }
 
+// looksThrottled reports whether current holds exactly the limits a throttle
+// update derived from original sets, and at least one of them differs from
+// original. Limits changed for other reasons (for example an in-place resize)
+// do not match and are left alone.
+func (p *Plugin) looksThrottled(current, original *api.LinuxResources) bool {
+	throttled := p.buildThrottleUpdate("", original).GetLinux().GetResources()
+	if throttled == nil || current == nil {
+		return false
+	}
+
+	limits := []limitMatch{
+		compareLimit(
+			optionalInt64(throttled.GetCpu().GetQuota()),
+			optionalInt64(current.GetCpu().GetQuota()),
+			optionalInt64(original.GetCpu().GetQuota()),
+		),
+		compareLimit(
+			optionalUint64(throttled.GetCpu().GetShares()),
+			optionalUint64(current.GetCpu().GetShares()),
+			optionalUint64(original.GetCpu().GetShares()),
+		),
+		compareLimit(
+			optionalInt64(throttled.GetMemory().GetLimit()),
+			optionalInt64(current.GetMemory().GetLimit()),
+			optionalInt64(original.GetMemory().GetLimit()),
+		),
+	}
+
+	compared, changed := false, false
+
+	for _, limit := range limits {
+		if !limit.compared {
+			continue
+		}
+
+		if !limit.matches {
+			return false
+		}
+
+		compared = true
+		changed = changed || limit.changed
+	}
+
+	return compared && changed
+}
+
+// limitMatch is the comparison of one throttleable limit.
+type limitMatch struct {
+	// compared is false when the throttle update does not set the limit.
+	compared bool
+	// matches is true when the current limit equals the throttled limit.
+	matches bool
+	// changed is true when the throttled limit differs from the original.
+	changed bool
+}
+
+func compareLimit[T comparable](throttled, current, original *T) limitMatch {
+	if throttled == nil {
+		return limitMatch{compared: false, matches: false, changed: false}
+	}
+
+	return limitMatch{
+		compared: true,
+		matches:  current != nil && *current == *throttled,
+		changed:  original == nil || *original != *throttled,
+	}
+}
+
+func optionalInt64(value *api.OptionalInt64) *int64 {
+	if value == nil {
+		return nil
+	}
+
+	v := value.GetValue()
+
+	return &v
+}
+
+func optionalUint64(value *api.OptionalUInt64) *uint64 {
+	if value == nil {
+		return nil
+	}
+
+	v := value.GetValue()
+
+	return &v
+}
+
 func (p *Plugin) throttlePercents() (cpuPercent, memPercent int) {
-	if cfg := p.remediationConfig.Load(); cfg != nil {
+	if cfg := p.remediation.cfg.Load(); cfg != nil {
 		cpuPercent = cfg.Throttle.CPUQuotaPercent
 		memPercent = cfg.Throttle.MemoryLimitPercent
 	}
@@ -450,7 +737,7 @@ func buildRollbackUpdate(
 	return &api.ContainerUpdate{
 		ContainerId:   containerID,
 		Linux:         &api.LinuxContainerUpdate{Resources: restored},
-		IgnoreFailure: true,
+		IgnoreFailure: false,
 	}
 }
 
@@ -467,12 +754,21 @@ func deepCopyLinuxResources(src *api.LinuxResources) *api.LinuxResources {
 	return cloned
 }
 
-func (p *Plugin) applyUpdates(ctx context.Context, updates []*api.ContainerUpdate) {
+// applyUpdates sends the pending updates to the runtime and records the
+// state transition of every update the runtime applied. Failed updates keep
+// their previous state and are retried by the next cycle.
+func (p *Plugin) applyUpdates(ctx context.Context, pending []*pendingUpdate) {
 	stub := p.getStubUpdater()
 	if stub == nil {
 		slog.WarnContext(ctx, "Cannot apply remediation updates: NRI stub not available")
+		p.metrics.RemediationErrorsTotal.WithLabelValues("update").Inc()
 
 		return
+	}
+
+	updates := make([]*api.ContainerUpdate, 0, len(pending))
+	for _, pu := range pending {
+		updates = append(updates, pu.update)
 	}
 
 	failed, err := stub.UpdateContainers(updates)
@@ -483,11 +779,23 @@ func (p *Plugin) applyUpdates(ctx context.Context, updates []*api.ContainerUpdat
 		return
 	}
 
-	for _, f := range failed {
+	failedIDs := make(map[string]struct{}, len(failed))
+
+	for _, failedUpdate := range failed {
 		slog.WarnContext(ctx, "Container update failed",
-			"container", f.GetContainerId(),
+			"container", failedUpdate.GetContainerId(),
 		)
 		p.metrics.RemediationErrorsTotal.WithLabelValues("partial").Inc()
+
+		failedIDs[failedUpdate.GetContainerId()] = struct{}{}
+	}
+
+	for _, pu := range pending {
+		if _, didFail := failedIDs[pu.update.GetContainerId()]; didFail {
+			continue
+		}
+
+		p.containers.UpdateState(pu.update.GetContainerId(), pu.commit)
 	}
 }
 
@@ -506,10 +814,13 @@ func (p *Plugin) updateTrackedContainerGauge() {
 	p.metrics.TrackedContainers.WithLabelValues("throttled").Set(
 		float64(counts[StateThrottled]),
 	)
+	p.metrics.ReverificationIncompleteContainers.Set(
+		float64(p.containers.IncompleteCount(consecutiveErrorThreshold)),
+	)
 }
 
 func (p *Plugin) batchSize() int {
-	if cfg := p.remediationConfig.Load(); cfg != nil && cfg.BatchSize > 0 {
+	if cfg := p.remediation.cfg.Load(); cfg != nil && cfg.BatchSize > 0 {
 		return cfg.BatchSize
 	}
 
@@ -534,11 +845,11 @@ func computeTriggerHash(trigger, digest string, feedPURLs []string) string {
 	return hex.EncodeToString(h[:8])
 }
 
+// matchFeedPURLs returns the containers whose SBOM purls match the feed
+// specs. Matching compares package identity (type, namespace, name) and
+// honors feed versions and SEMVER ranges; see feed.Matcher.
 func (p *Plugin) matchFeedPURLs(feedPURLs []string) map[string]struct{} {
-	feedSet := make(map[string]struct{}, len(feedPURLs))
-	for _, purl := range feedPURLs {
-		feedSet[purl] = struct{}{}
-	}
+	matcher := feed.NewMatcher(feedPURLs)
 
 	snapshot := p.containers.SnapshotIDs()
 
@@ -546,12 +857,8 @@ func (p *Plugin) matchFeedPURLs(feedPURLs []string) map[string]struct{} {
 
 	//nolint:gocritic // value copy intentional: snapshot holds copies
 	for containerID, csnap := range snapshot {
-		for _, purl := range csnap.purls {
-			if _, found := feedSet[purl]; found {
-				matched[containerID] = struct{}{}
-
-				break
-			}
+		if matcher.MatchesAny(csnap.purls) {
+			matched[containerID] = struct{}{}
 		}
 	}
 
@@ -560,7 +867,7 @@ func (p *Plugin) matchFeedPURLs(feedPURLs []string) map[string]struct{} {
 
 const (
 	defaultThrottleCPUPercent = 10
-	defaultThrottleMemPercent = 50
+	defaultThrottleMemPercent = 100
 	percentDivisor            = 100
 	minCPUQuotaMicros         = 1000
 	minCPUShares              = 2

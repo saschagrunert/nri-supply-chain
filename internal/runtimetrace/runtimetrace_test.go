@@ -455,7 +455,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		testutil.AssertEqual(t, types.StatusFail, result.Status)
 	})
 
-	t.Run("mix of valid and invalid with valid passing", func(t *testing.T) {
+	t.Run("mix of valid and invalid fails", func(t *testing.T) {
 		t.Parallel()
 
 		attestations := [][]byte{
@@ -471,10 +471,88 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		)
 		testutil.AssertNoError(t, err)
 
-		if !result.Passed {
-			t.Errorf("expected pass with valid doc, got: %s", result.Detail)
+		if result.Passed {
+			t.Error("expected fail when any document is invalid")
 		}
 	})
+}
+
+func TestVerifyRejectsIncompletePredicates(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		predicate json.RawMessage
+	}{
+		{name: "empty object", predicate: json.RawMessage(`{}`)},
+		{name: "null predicate", predicate: json.RawMessage(`null`)},
+		{
+			name:      "missing monitor type",
+			predicate: json.RawMessage(`{"monitor":{},"monitorLog":{}}`),
+		},
+		{name: "missing monitor log", predicate: json.RawMessage(`{"monitor":{"type":"x"}}`)},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			att := testutil.WrapInToto(t, tc.predicate, testDigest, testPredicateType)
+
+			_, err := runtimetrace.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+			if !errors.Is(err, runtimetrace.ErrInvalidRuntimeTrace) {
+				t.Fatalf("expected ErrInvalidRuntimeTrace, got %v", err)
+			}
+		})
+	}
+}
+
+func TestVerifyForbiddenURIWithBenignName(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		file traceFileAccess
+	}{
+		{name: "path uri", file: traceFileAccess{Name: "shadow", URI: "/etc/shadow", Digest: nil}},
+		{
+			name: "file scheme uri",
+			file: traceFileAccess{Name: "shadow", URI: "file:///etc/shadow", Digest: nil},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			doc := validPredicate()
+			doc.MonitorLog.FileAccess = []traceFileAccess{tc.file}
+			att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
+
+			result, err := runtimetrace.Verify(context.Background(), att, &policy.Policy{
+				RuntimeTrace: &policy.RuntimeTracePolicy{
+					ForbiddenFilePatterns: []string{"/etc/**"},
+				},
+			}, testDigest)
+			testutil.AssertNoError(t, err)
+			testutil.AssertEqual(t, false, result.Passed)
+			testutil.AssertContains(t, result.Detail, "/etc/shadow")
+		})
+	}
+}
+
+func TestVerifyFutureTimestampWithoutMaxAge(t *testing.T) {
+	t.Parallel()
+
+	future := time.Now().Add(24 * time.Hour).UTC()
+	doc := validPredicate()
+	doc.Metadata = &traceMetadata{BuildStartedOn: nil, BuildFinishedOn: &future}
+	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
+
+	result, err := runtimetrace.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqual(t, false, result.Passed)
+	testutil.AssertContains(t, result.Detail, "future")
 }
 
 func TestVerifyFreshness(t *testing.T) {

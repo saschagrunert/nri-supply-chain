@@ -535,7 +535,7 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		testutil.AssertEqual(t, types.StatusFail, result.Status)
 	})
 
-	t.Run("mix of valid and invalid with valid passing", func(t *testing.T) {
+	t.Run("mix of valid and invalid fails", func(t *testing.T) {
 		t.Parallel()
 
 		attestations := [][]byte{
@@ -551,9 +551,11 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		)
 		testutil.AssertNoError(t, err)
 
-		if !result.Passed {
-			t.Errorf("expected pass with valid doc, got: %s", result.Detail)
+		if result.Passed {
+			t.Error("expected fail when any document is invalid")
 		}
+
+		testutil.AssertContains(t, result.Detail, "1 of 2 SCAI documents failed verification")
 	})
 }
 
@@ -585,56 +587,32 @@ func TestVerifyForbiddenDetailMessage(t *testing.T) {
 func TestVerifyEmptyAttributes(t *testing.T) {
 	t.Parallel()
 
-	doc := scaiReport{
-		Attributes: []scaiAttribute{},
+	tests := []struct {
+		name      string
+		predicate json.RawMessage
+	}{
+		{name: "empty attributes list", predicate: json.RawMessage(`{"attributes":[]}`)},
+		{name: "empty object", predicate: json.RawMessage(`{}`)},
+		{name: "null predicate", predicate: json.RawMessage(`null`)},
+		{name: "array predicate", predicate: json.RawMessage(`[]`)},
+		{
+			name:      "empty attribute name",
+			predicate: json.RawMessage(`{"attributes":[{"attribute":" "}]}`),
+		},
 	}
-	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-	t.Run("empty attributes with no policy passes", func(t *testing.T) {
-		t.Parallel()
+	for _, tc := range tests {
+		t.Run(tc.name+" is rejected without policy", func(t *testing.T) {
+			t.Parallel()
 
-		result, err := scai.Verify(context.Background(), att, &policy.Policy{}, testDigest)
-		testutil.AssertNoError(t, err)
+			att := testutil.WrapInToto(t, tc.predicate, testDigest, testPredicateType)
 
-		if !result.Passed {
-			t.Errorf("expected pass for empty attributes, got: %s", result.Detail)
-		}
-
-		attrCount, ok := result.Metadata["attributeCount"].(int64)
-		if !ok || attrCount != 0 {
-			t.Errorf("attributeCount = %v, want 0", result.Metadata["attributeCount"])
-		}
-	})
-
-	t.Run("empty attributes with required attribute fails", func(t *testing.T) {
-		t.Parallel()
-
-		result, err := scai.Verify(context.Background(), att, &policy.Policy{
-			SCAI: &policy.SCAIPolicy{
-				RequiredAttributes: []string{testAttrCodeReview},
-			},
-		}, testDigest)
-		testutil.AssertNoError(t, err)
-
-		if result.Passed {
-			t.Error("expected fail for empty attributes with required attribute")
-		}
-	})
-
-	t.Run("empty attributes with require evidence fails", func(t *testing.T) {
-		t.Parallel()
-
-		result, err := scai.Verify(context.Background(), att, &policy.Policy{
-			SCAI: &policy.SCAIPolicy{
-				RequireEvidence: true,
-			},
-		}, testDigest)
-		testutil.AssertNoError(t, err)
-
-		if result.Passed {
-			t.Error("expected fail for empty attributes with require evidence")
-		}
-	})
+			_, err := scai.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+			if !errors.Is(err, scai.ErrInvalidSCAI) {
+				t.Fatalf("expected ErrInvalidSCAI, got %v", err)
+			}
+		})
+	}
 }
 
 func TestVerifyRequiredDetailMessage(t *testing.T) {

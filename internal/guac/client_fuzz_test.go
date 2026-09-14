@@ -53,6 +53,9 @@ func FuzzParseScorecardResponse(f *testing.F) {
 	f.Add([]byte(`{"data":{"scorecards":[{"source":{"type":"git",` +
 		`"namespace":"github.com","name":"org/repo"},"scorecard":` +
 		`{"aggregateScore":7.5,"checks":[{"check":"Code-Review","score":8}]}}]}}`))
+	f.Add([]byte(`{"data":{"scorecards":[{"source":{"type":"git","namespaces":[` +
+		`{"namespace":"github.com/org","names":[{"name":"repo"}]}]},` +
+		`"scorecard":{"aggregateScore":4,"checks":[]}}]}}`))
 	f.Add([]byte(`{"errors":[{"message":"not found"}]}`))
 	f.Add([]byte(`{}`))
 	f.Add([]byte(`null`))
@@ -60,5 +63,30 @@ func FuzzParseScorecardResponse(f *testing.F) {
 
 	f.Fuzz(func(_ *testing.T, data []byte) {
 		_, _ = guac.ExportParseScorecardResponse(data)
+	})
+}
+
+func FuzzParseSourcesResponse(f *testing.F) {
+	f.Add([]byte(`{"data":{"IsOccurrence":[]}}`))
+	f.Add([]byte(`{"data":{"IsOccurrence":[{"subject":{"__typename":"Source","type":"git",` +
+		`"namespaces":[{"namespace":"github.com/org","names":[{"name":"repo"}]}]}}]}}`))
+	f.Add([]byte(`{"data":{"IsOccurrence":[{"subject":{"__typename":"Package","type":"npm"}}]}}`))
+	f.Add([]byte(`{"errors":[{"message":"bad"}]}`))
+	f.Add([]byte(`null`))
+
+	f.Fuzz(func(_ *testing.T, data []byte) {
+		_, _ = guac.ExportParseSourcesResponse(data)
+	})
+}
+
+func FuzzParsePackageSourcesResponse(f *testing.F) {
+	f.Add([]byte(`{"data":{"HasSourceAt":[]}}`))
+	f.Add([]byte(`{"data":{"HasSourceAt":[{"source":{"type":"git",` +
+		`"namespaces":[{"namespace":"github.com/org","names":[{"name":"repo"}]}]}}]}}`))
+	f.Add([]byte(`{"errors":[{"message":"bad"}]}`))
+	f.Add([]byte(`null`))
+
+	f.Fuzz(func(_ *testing.T, data []byte) {
+		_, _ = guac.ExportParsePackageSourcesResponse(data)
 	})
 }

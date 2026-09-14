@@ -49,6 +49,10 @@ var (
 )
 
 const (
+	// fallbackTransportKeySuffix distinguishes the cached mirror fallback
+	// transport of a registry prefix from its regular transport.
+	fallbackTransportKeySuffix = "\x00fallback"
+
 	transportDialTimeout   = 30 * time.Second
 	transportTLSTimeout    = 10 * time.Second
 	transportIdleTimeout   = 90 * time.Second
@@ -151,6 +155,39 @@ func (tc *TransportCache) getTransport(prefix string) (http.RoundTripper, error)
 	}
 
 	tc.transports[prefix] = builtTransport
+
+	return builtTransport, nil
+}
+
+// getFallbackTransport returns the cached transport used when falling back
+// from a mirror to the original registry: the registry's ca_cert with TLS
+// verification always enabled.
+func (tc *TransportCache) getFallbackTransport(reg *config.Registry) (http.RoundTripper, error) {
+	key := reg.Prefix + fallbackTransportKeySuffix
+
+	tc.mu.RLock()
+
+	if t, ok := tc.transports[key]; ok {
+		tc.mu.RUnlock()
+
+		return t, nil
+	}
+
+	tc.mu.RUnlock()
+
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+
+	if t, ok := tc.transports[key]; ok {
+		return t, nil
+	}
+
+	builtTransport, err := buildTransport(reg.CACert, false)
+	if err != nil {
+		return nil, err
+	}
+
+	tc.transports[key] = builtTransport
 
 	return builtTransport, nil
 }
@@ -395,11 +432,20 @@ func OptionsForRegistries(
 
 	transportOpt = remote.WithTransport(roundTripper)
 
-	// Build fallback info when a mirror is configured.
+	// Build fallback info when a mirror is configured. The fallback to the
+	// original registry always verifies TLS: reusing the mirror transport
+	// would let an insecure mirror setting silently downgrade verification
+	// for the upstream registry. The configured ca_cert is kept, because it
+	// may be the enterprise CA that signs the upstream registry certificate.
 	if reg.Mirror != "" {
+		fallbackTransport, fallbackErr := cache.getFallbackTransport(reg)
+		if fallbackErr != nil {
+			return imageRef, nil, nil, fallbackErr
+		}
+
 		fallback = &FallbackInfo{
 			OriginalRef:  imageRef,
-			TransportOpt: remote.WithTransport(roundTripper),
+			TransportOpt: remote.WithTransport(fallbackTransport),
 		}
 	}
 

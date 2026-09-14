@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"os"
 	"slices"
 	"strconv"
@@ -28,13 +27,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"golang.org/x/sync/semaphore"
 	"golang.org/x/sync/singleflight"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
-	"github.com/saschagrunert/nri-supply-chain/internal/cache"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
-	"github.com/saschagrunert/nri-supply-chain/internal/guac"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/registry"
@@ -42,11 +38,22 @@ import (
 )
 
 var (
-	// ErrVerificationFailed is returned when supply chain verification fails in enforce mode.
-	ErrVerificationFailed = errors.New("supply chain verification failed")
+	// ErrVerificationFailed is returned when supply chain verification fails
+	// in enforce mode. It is types.ErrVerificationFailed, so callers that only
+	// depend on the types package can detect it.
+	ErrVerificationFailed = types.ErrVerificationFailed
 
 	// ErrCircuitBreakerOpen is returned when the circuit breaker is open.
 	ErrCircuitBreakerOpen = errors.New("circuit breaker open for image")
+
+	// ErrVerifierStopped is returned for verifications requested while the
+	// verifier is shutting down.
+	ErrVerifierStopped = errors.New("verifier is stopping")
+
+	// ErrVerificationInProgress is returned to an admission that would join
+	// a verification already running for longer than the admission timeout,
+	// instead of waiting for it until the admission deadline.
+	ErrVerificationInProgress = errors.New("verification already in progress")
 
 	errUnexpectedVerifyResult = errors.New("verifier: unexpected singleflight result type")
 )
@@ -55,35 +62,32 @@ const (
 	maxConcurrentFetches        = 50
 	maxConcurrentFetchesPerHost = 10
 	warmTimeout                 = 30 * time.Second
-)
 
-type snapshot struct {
-	config           *config.Config
-	policies         map[string]*policy.Policy
-	policyHashes     map[string]string // lock-free copy updated with v.policyHashes under v.mu
-	cache            *cache.Cache
-	metrics          *metrics.Metrics
-	fetcher          attestation.Fetcher
-	circuitBreakers  *attestation.CircuitBreakerRegistry
-	fetchSem         *semaphore.Weighted
-	hostSem          *hostSemMap
-	auditLogger      *slog.Logger
-	auditLogFile     *os.File
-	allowlistDigests map[string]struct{}
-	guacClient       *guac.Client
-	guacBreaker      *attestation.CircuitBreaker
-}
+	// stopGracePeriod bounds how long Stop waits for in-flight
+	// verifications before releasing resources.
+	stopGracePeriod = 10 * time.Second
+)
 
 // Verifier performs supply chain attestation verification on container images.
 type Verifier struct {
 	state atomic.Pointer[snapshot]
 
-	mu           sync.Mutex // serializes Reload; v.policyHashes (not the snapshot copy) is only accessed under mu
-	policyHashes map[string]string
-	nodeName     string
-	inflight     singleflight.Group
-	inflightWg   sync.WaitGroup
-	poller       *policy.Poller
+	// reloadMu serializes whole reloads, including pausing and restarting the
+	// OCI policy poller, so concurrent reloads cannot lose the rollback guard
+	// or leak pollers. It is never taken by the poller callback.
+	reloadMu sync.Mutex
+	// mu serializes snapshot replacement (Reload and OCI policy updates).
+	mu         sync.Mutex
+	nodeName   string
+	inflight   singleflight.Group
+	flights    flightTracker
+	generation atomic.Uint64
+	poller     atomic.Pointer[policyPoller]
+	// flightStarts maps singleflight keys to the start time of the running
+	// verification, so admissions can avoid joining slow verifications.
+	flightStarts sync.Map
+	// reloadPrepared is a test hook called after a reload prepared its plan.
+	reloadPrepared func()
 }
 
 // NewFetcher creates an attestation fetcher configured from cfg. When offline
@@ -111,101 +115,50 @@ func New(
 
 	setBundleMetricsOnFetcher(fetcher, met)
 
-	policies, hashes, policyFetcher, ociDigest, err := loadAndHashPolicies(ctx, &cfgCopy, fetcher)
+	loaded, err := loadAndHashPolicies(ctx, &cfgCopy, fetcher, time.Time{})
 	if err != nil {
-		policies, hashes, policyFetcher, err = handleOCIStartupFailure(
-			ctx, &cfgCopy, policyFetcher, err,
-		)
+		loaded, err = handleOCIStartupFailure(ctx, &cfgCopy, loaded, err)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if cfgCopy.Enabled() && len(loaded.policies) > 0 {
+		err = validatePoliciesModes(cfgCopy.Verification, loaded.policies)
 		if err != nil {
 			return nil, err
 		}
 
-		ociDigest = ""
+		WarnEnforceDefaults(ctx, &cfgCopy, loaded.policies)
+		WarnWarnModeDefaults(ctx, &cfgCopy, loaded.policies)
 	}
 
-	if cfgCopy.Enabled() && len(policies) > 0 {
-		err = validatePoliciesModes(cfgCopy.Verification, policies)
-		if err != nil {
-			return nil, err
-		}
-
-		WarnEnforceDefaults(ctx, &cfgCopy, policies)
-		WarnWarnModeDefaults(ctx, &cfgCopy, policies)
+	verif := &Verifier{ //nolint:exhaustruct_v5 // zero-value fields are intentional
+		nodeName: resolveNodeName(),
 	}
 
-	snap, err := newSnapshot(&cfgCopy, policies, hashes, met, fetcher)
+	trust := computeTrustFingerprint(&cfgCopy, loaded.policies)
+
+	snap, err := verif.buildSnapshot(ctx, nil, &snapshotInput{
+		config:       &cfgCopy,
+		policies:     loaded.policies,
+		policyHashes: loaded.hashes,
+		trust:        trust,
+		fetcher:      fetcher,
+		fetcherBasis: fetcherBasis{config: &cfgCopy, sigstore: trust.sigstore},
+		metrics:      met,
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	verif := &Verifier{ //nolint:exhaustruct_v5 // zero-value fields are intentional
-		policyHashes: hashes,
-		nodeName:     resolveNodeName(),
-	}
 	verif.state.Store(snap)
 
 	if cfgCopy.Policy.Source == config.PolicySourceOCI {
-		verif.startPoller(ctx, policyFetcher, &cfgCopy, ociDigest)
+		verif.startPoller(ctx, loaded.policyFetcher, &cfgCopy, loaded.ociDigest)
 	}
 
 	return verif, nil
-}
-
-func newSnapshot(
-	cfg *config.Config,
-	policies map[string]*policy.Policy,
-	hashes map[string]string,
-	met *metrics.Metrics,
-	fetcher attestation.Fetcher,
-) (*snapshot, error) {
-	auditLogger, auditLogFile, auditErr := openAuditLogger(cfg.AuditLog)
-	if auditErr != nil {
-		return nil, fmt.Errorf("opening audit log: %w", auditErr)
-	}
-
-	snap := &snapshot{
-		config:       cfg,
-		policies:     policies,
-		policyHashes: maps.Clone(hashes),
-		cache: cache.NewWithGauge(
-			cfg.CacheTTL.Duration, cfg.CacheMaxEntries,
-			met.CacheEntriesTotal, met.CacheEvictionsTotal,
-		),
-		metrics: met,
-		fetcher: fetcher,
-		circuitBreakers: attestation.NewCircuitBreakerRegistry(
-			cfg.CircuitBreakerThreshold,
-			cfg.CircuitBreakerCooldown.Duration,
-		),
-		fetchSem: semaphore.NewWeighted(maxConcurrentFetches),
-		hostSem: &hostSemMap{
-			m: sync.Map{}, count: atomic.Int64{},
-			onOverflow: func() { met.HostSemOverflowTotal.Inc() },
-		},
-		auditLogger:      auditLogger,
-		auditLogFile:     auditLogFile,
-		allowlistDigests: buildAllowlistMap(cfg.AllowlistDigests),
-	}
-
-	if cfg.Guac.Enabled() {
-		guacClient, err := guac.NewClient(
-			cfg.Guac.Endpoint,
-			cfg.Guac.AuthTokenPath,
-			cfg.Guac.CACertPath,
-			cfg.Guac.Timeout.Duration,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("creating GUAC client: %w", err)
-		}
-
-		snap.guacClient = guacClient
-		snap.guacBreaker = attestation.NewCircuitBreaker(
-			cfg.CircuitBreakerThreshold,
-			cfg.CircuitBreakerCooldown.Duration,
-		)
-	}
-
-	return snap, nil
 }
 
 func buildAllowlistMap(entries []string) map[string]struct{} {
@@ -255,29 +208,34 @@ func policyHashForNamespace(hashes map[string]string, namespace string) string {
 }
 
 // Stop releases resources held by the verifier, including the cache's
-// background eviction goroutine and the OCI policy poller. Waits for
-// in-flight singleflight verifications to complete before stopping
-// the cache so they can write their results.
+// background eviction goroutine and the OCI policy poller. It waits up to
+// a short grace period for in-flight verifications so they can write their
+// results; use StopContext to control the wait.
 func (v *Verifier) Stop() {
-	v.stopPoller()
+	done := make(chan struct{})
 
-	v.inflightWg.Wait()
+	timer := time.AfterFunc(stopGracePeriod, func() { close(done) })
+	defer timer.Stop()
 
-	v.mu.Lock()
-	defer v.mu.Unlock()
+	v.stop(done)
+}
 
-	snap := v.state.Load()
-	snap.cache.Stop()
-	closeAuditLogFile(snap.auditLogFile)
-
-	if snap.guacClient != nil {
-		snap.guacClient.Close()
-	}
+// StopContext is like Stop but waits for in-flight verifications only until
+// ctx is done. Verifications requested after StopContext was called fail
+// with ErrVerifierStopped.
+func (v *Verifier) StopContext(ctx context.Context) {
+	v.stop(ctx.Done())
 }
 
 // CurrentConfig returns the current configuration snapshot.
 func (v *Verifier) CurrentConfig() *config.Config {
 	return v.state.Load().config
+}
+
+// AdmissionTimeout returns the configured bound for the NRI CreateContainer
+// admission (admission_timeout).
+func (v *Verifier) AdmissionTimeout() time.Duration {
+	return v.state.Load().config.AdmissionTimeout.Duration
 }
 
 // Enforcing returns true if the global verification mode is enforce.
@@ -300,20 +258,64 @@ func (v *Verifier) EffectiveModeForNamespace(namespace string) config.Verificati
 	return pol.EffectiveMode(state.config.Verification)
 }
 
+// ShouldVerify reports whether an image in the given namespace needs
+// verification. It returns false, with a reason, when verification is
+// disabled for the namespace or the image is excluded or not included by
+// the namespace policy. Callers use it to skip expensive preparation such as
+// registry digest resolution; Verify applies the same rules.
+func (v *Verifier) ShouldVerify(
+	ctx context.Context, namespace, imageRef string,
+) (verify bool, reason string) {
+	state := v.snap()
+
+	if !state.config.Enabled() {
+		return false, reasonVerificationDisabled
+	}
+
+	pol := policyForNamespace(state.policies, namespace)
+	if pol == nil {
+		return true, ""
+	}
+
+	if pol.EffectiveMode(state.config.Verification) == config.ModeDisabled {
+		return false, reasonVerificationDisabled
+	}
+
+	if !isIncluded(ctx, pol.Include, imageRef) {
+		return false, reasonNotIncluded
+	}
+
+	if isExcluded(ctx, pol.Exclude, imageRef) {
+		return false, reasonExcluded
+	}
+
+	return true, ""
+}
+
+const (
+	reasonVerificationDisabled = "verification disabled"
+	reasonNotIncluded          = "image is not included"
+	reasonExcluded             = "image is excluded"
+)
+
 // Ready returns true if the verifier is ready to serve requests.
 // When not ready, the second return value describes the reason.
 func (v *Verifier) Ready() (ready bool, reason string) {
 	state := v.state.Load()
 
-	if stateReady(state) {
-		return true, ""
-	}
-
 	if state.config == nil {
 		return false, "no config loaded"
 	}
 
-	return false, "no policies loaded"
+	if !stateReady(state) {
+		return false, "no policies loaded"
+	}
+
+	if stale, staleReason := v.policiesStale(); stale {
+		return false, staleReason
+	}
+
+	return true, ""
 }
 
 // Status returns the current operational status of the verifier, including
@@ -332,7 +334,7 @@ func (v *Verifier) Status() types.StatusResponse {
 		}
 	}
 
-	ready := stateReady(state)
+	ready, _ := v.Ready()
 	namespaces := policyNamespaces(state.policies)
 
 	return types.StatusResponse{
@@ -378,11 +380,11 @@ func policyNamespaces(policies map[string]*policy.Policy) []string {
 	return namespaces
 }
 
-// InvalidateCache removes a single entry from the verification result cache,
-// forcing the next Verify call for this digest+namespace to re-fetch and
-// re-evaluate attestations.
+// InvalidateCache removes the cached verification results for a digest in a
+// namespace, including results keyed by image reference or policy rule,
+// forcing the next Verify call to re-fetch and re-evaluate attestations.
 func (v *Verifier) InvalidateCache(digest, namespace string) {
-	v.snap().cache.Delete(digest, namespace)
+	v.snap().cache.DeleteAll(digest, namespace)
 }
 
 // TransportCache returns the transport cache from the current fetcher, or nil
@@ -393,86 +395,78 @@ func (v *Verifier) TransportCache() *registry.TransportCache {
 	return transportCacheFromFetcher(state.fetcher)
 }
 
-// Verify performs supply chain verification for the given image. When the image
-// was resolved from a manifest list, indexDigest should be the manifest list
-// digest so attestation lookup can find cosign-attached attestations. Pass ""
-// when the image is not a manifest list or the index digest is unknown.
-// serviceAccount is the pod's Kubernetes service account name (from NRI pod
-// annotations); pass "" when unavailable.
+// Verify performs supply chain verification for the given request. When the
+// image was resolved from a manifest list, req.IndexDigest should be the
+// manifest list digest so attestation lookup can find cosign-attached
+// attestations.
+//
+// The returned result reports the admission decision in Allowed and the
+// verification outcome in Verified. In enforce mode a failed verification
+// also returns an error wrapping ErrVerificationFailed.
 func (v *Verifier) Verify( //nolint:funlen // early-return branches inflate line count
-	ctx context.Context, imageRef, digest, indexDigest, namespace, serviceAccount string,
+	ctx context.Context, req *types.VerifyRequest,
 ) (*types.Result, error) {
 	state := v.snap()
+	imageRef, digest, namespace := req.ImageRef, req.Digest, req.Namespace
+	globalMode := state.config.Verification
 
 	info := &auditInfo{
 		policyHash:        "",
 		nodeName:          v.nodeName,
-		podServiceAccount: serviceAccount,
-		verificationMode:  "",
+		podServiceAccount: req.ServiceAccount,
+		verificationMode:  string(globalMode),
 	}
 
 	if !state.config.Enabled() {
-		info.verificationMode = string(config.ModeDisabled)
-
-		return allowResult(
-			ctx, state.auditLogger, imageRef, digest,
-			namespace, "verification disabled", info,
-		), nil
+		return skipResult(ctx, state, req, globalMode, reasonVerificationDisabled, info), nil
 	}
 
 	if _, ok := state.allowlistDigests[digest]; ok {
-		info.verificationMode = string(state.config.Verification)
 		state.metrics.VerificationSkippedTotal.WithLabelValues("allowlisted", namespace).Inc()
 
-		return allowResult(
-			ctx, state.auditLogger, imageRef, digest,
-			namespace, "image digest is allowlisted", info,
-		), nil
+		return skipResult(ctx, state, req, globalMode, "image digest is allowlisted", info), nil
 	}
 
 	slog.DebugContext(ctx, "Verifying image",
 		"image", imageRef, "digest", digest, "namespace", namespace)
+
 	pol := policyForNamespace(state.policies, namespace)
-
 	if pol == nil {
-		info.verificationMode = string(state.config.Verification)
-
 		result, err := handleMissingPolicy(ctx, state.config, imageRef, namespace)
-		if result != nil {
-			logResult(ctx, state.auditLogger, imageRef, digest, namespace, result, info)
-			recordMetrics(state.metrics, result, namespace)
-		}
+		logResult(ctx, state.auditLogger, imageRef, digest, namespace, result, info)
+		recordMetrics(state.metrics, result, namespace)
 
 		return result, err
 	}
 
 	info.policyHash = policyHashForNamespace(state.policyHashes, namespace)
-	info.verificationMode = string(state.config.Verification)
+	namespaceMode := pol.EffectiveMode(globalMode)
 
 	if !isIncluded(ctx, pol.Include, imageRef) {
 		state.metrics.VerificationSkippedTotal.WithLabelValues("not_included", namespace).Inc()
 
-		return allowResult(
-			ctx, state.auditLogger, imageRef, digest,
-			namespace, "image is not included", info,
-		), nil
+		return skipResult(ctx, state, req, namespaceMode, reasonNotIncluded, info), nil
 	}
 
 	if isExcluded(ctx, pol.Exclude, imageRef) {
 		state.metrics.VerificationSkippedTotal.WithLabelValues("excluded", namespace).Inc()
 
-		return allowResult(
-			ctx, state.auditLogger, imageRef, digest,
-			namespace, "image is excluded", info,
-		), nil
+		return skipResult(ctx, state, req, namespaceMode, reasonExcluded, info), nil
+	}
+
+	// The caller skipped digest resolution because an earlier snapshot did
+	// not require verification. Ask for the digest instead of verifying
+	// without one.
+	if digest == "" {
+		return nil, fmt.Errorf("%w: %s", types.ErrDigestRequired, imageRef)
 	}
 
 	resolvedPol, ruleIdx := ResolveImagePolicy(ctx, pol, imageRef)
-	effectiveMode := resolvedPol.EffectiveMode(state.config.Verification)
+	effectiveMode := resolvedPol.EffectiveMode(globalMode)
 
 	info.verificationMode = string(effectiveMode)
 
-	cacheNS := cacheNamespaceKey(namespace, ruleIdx)
+	cacheNS := cacheNamespaceKey(namespace, imageRef, ruleIdx)
 
 	result, err := v.handleCacheHit(
 		ctx, state, effectiveMode, imageRef, digest, namespace, cacheNS, info,
@@ -481,9 +475,7 @@ func (v *Verifier) Verify( //nolint:funlen // early-return branches inflate line
 		return result, err
 	}
 
-	result, err = v.verifyOnce(
-		ctx, state, resolvedPol, imageRef, digest, indexDigest, namespace, cacheNS, info,
-	)
+	result, err = v.verifyOnce(ctx, state, resolvedPol, effectiveMode, req, cacheNS, info)
 	if err != nil {
 		return handleVerifyError(ctx, state, effectiveMode, imageRef, digest, namespace, err, info)
 	}
@@ -491,12 +483,52 @@ func (v *Verifier) Verify( //nolint:funlen // early-return branches inflate line
 	return applyEnforcement(ctx, effectiveMode, result, imageRef)
 }
 
-func cacheNamespaceKey(namespace string, ruleIdx int) string {
-	if ruleIdx < 0 {
-		return namespace
+func (v *Verifier) stop(done <-chan struct{}) {
+	v.stopPoller()
+
+	if !v.flights.wait(done, true) {
+		slog.Warn("Stopping verifier while verifications are still in flight")
 	}
 
-	return namespace + "\x00r" + strconv.Itoa(ruleIdx)
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	snap := v.state.Load()
+	snap.cache.Stop()
+	closeAuditLogFile(snap.auditLogFile)
+
+	if snap.guacClient != nil {
+		snap.guacClient.Close()
+	}
+}
+
+// skipResult builds the result for an image that is admitted without
+// verification (disabled, allowlisted, excluded, not included).
+func skipResult(
+	ctx context.Context, state *snapshot, req *types.VerifyRequest,
+	mode config.VerificationMode, reason string, info *auditInfo,
+) *types.Result {
+	result := allowResult(
+		ctx, state.auditLogger, req.ImageRef, req.Digest, req.Namespace, reason, info,
+	)
+	result.Verified = true
+	result.Mode = string(mode)
+
+	return result
+}
+
+// cacheNamespaceKey builds the namespace part of the result cache key. Results
+// depend on the image reference (CEL image variables, Notation registry
+// scopes, VEX product matching, VSA resource binding) and on the policy rule
+// that matched, so both are part of the key. Cache.DeleteAll(digest,
+// namespace) removes every key built for a namespace.
+func cacheNamespaceKey(namespace, imageRef string, ruleIdx int) string {
+	key := namespace + "\x00" + imageRef
+	if ruleIdx < 0 {
+		return key
+	}
+
+	return key + "\x00r" + strconv.Itoa(ruleIdx)
 }
 
 func handleVerifyError(
@@ -519,6 +551,8 @@ func handleVerifyError(
 			ctx, state.auditLogger, imageRef, digest,
 			namespace, fmt.Sprintf("verification error: %s", err), info,
 		)
+		result.Verified = false
+		result.Mode = string(mode)
 		//nolint:exhaustruct_v5 // zero-value fields intentional
 		result.CheckResults = append(result.CheckResults, types.CheckResult{
 			Type:   types.CheckTypeInternal,
@@ -560,26 +594,32 @@ func (v *Verifier) handleCacheHit(
 	return applyEnforcement(ctx, mode, &result, imageRef)
 }
 
+// verifyOnce runs the checks for a cache miss, deduplicating concurrent
+// requests for the same image, namespace, rule and snapshot generation. The
+// verification continues in the background when ctx is done first (e.g. the
+// admission deadline expired) so its result still fills the cache.
 func (v *Verifier) verifyOnce(
 	ctx context.Context, state *snapshot, pol *policy.Policy,
-	imageRef, digest, indexDigest, namespace, cacheNS string,
+	mode config.VerificationMode, req *types.VerifyRequest, cacheNS string,
 	info *auditInfo,
 ) (*types.Result, error) {
-	flightKey := digest + "\x00" + cacheNS
-	if info != nil && info.podServiceAccount != "" {
-		flightKey += "\x00" + info.podServiceAccount
+	flightKey := strconv.FormatUint(state.generation, 10) + "\x00" + req.Digest + "\x00" + cacheNS
+
+	err := v.checkJoinable(ctx, state, flightKey)
+	if err != nil {
+		return nil, err
 	}
 
 	flightCh := v.inflight.DoChan(flightKey, func() (any, error) {
-		// Add(1) is inside the closure so only the executing goroutine
-		// (not shared waiters) increments the counter. There is a narrow
-		// race where Stop() could call Wait() before the goroutine
-		// reaches Add(1), but the consequence is benign: the goroutine
-		// writes to a stopped-but-valid cache and completes normally.
-		v.inflightWg.Add(1)
-		defer v.inflightWg.Done()
+		if !v.flights.begin() {
+			return nil, ErrVerifierStopped
+		}
+		defer v.flights.end()
 
-		if cached := state.cache.Get(digest, cacheNS); cached != nil {
+		v.flightStarts.Store(flightKey, time.Now())
+		defer v.flightStarts.Delete(flightKey)
+
+		if cached := state.cache.Get(req.Digest, cacheNS); cached != nil {
 			return cached, nil
 		}
 
@@ -592,12 +632,10 @@ func (v *Verifier) verifyOnce(
 		)
 		defer checkCancel()
 
-		result := runChecks(checkCtx, state, pol, imageRef, digest, indexDigest, namespace)
+		result, cacheTTL := runChecks(checkCtx, state, pol, mode, req)
 
-		if resultShouldUseShorterTTL(result) && state.config.CacheFailureTTL.Duration > 0 {
-			state.cache.SetWithTTL(digest, cacheNS, result, state.config.CacheFailureTTL.Duration)
-		} else {
-			state.cache.Set(digest, cacheNS, result)
+		if cacheTTL > 0 {
+			state.cache.SetWithTTL(req.Digest, cacheNS, result, cacheTTL)
 		}
 
 		return result, nil
@@ -607,8 +645,43 @@ func (v *Verifier) verifyOnce(
 	case <-ctx.Done():
 		return nil, fmt.Errorf("verification interrupted: %w", ctx.Err())
 	case res := <-flightCh:
-		return handleFlightResult(ctx, state, res, imageRef, digest, namespace, info)
+		return handleFlightResult(ctx, state, res, req.ImageRef, req.Digest, req.Namespace, info)
 	}
+}
+
+// checkJoinable fails fast when an admission would join a verification that
+// has already run for longer than the admission timeout. Waiting for it
+// would likely consume the whole admission budget, and the runtime holds a
+// node-wide lock while a plugin handles CreateContainer. The running
+// verification keeps filling the cache for later attempts. Requests that are
+// not bound by an admission deadline (CLI, pre-warming, re-verification)
+// always join.
+func (v *Verifier) checkJoinable(ctx context.Context, state *snapshot, flightKey string) error {
+	budget := state.config.AdmissionTimeout.Duration
+	if budget <= 0 {
+		return nil
+	}
+
+	deadline, bounded := ctx.Deadline()
+	if !bounded || time.Until(deadline) > budget {
+		return nil
+	}
+
+	value, running := v.flightStarts.Load(flightKey)
+	if !running {
+		return nil
+	}
+
+	started, ok := value.(time.Time)
+	if !ok {
+		return nil
+	}
+
+	if age := time.Since(started); age >= budget {
+		return fmt.Errorf("%w for %s", ErrVerificationInProgress, age.Round(time.Millisecond))
+	}
+
+	return nil
 }
 
 func handleFlightResult(

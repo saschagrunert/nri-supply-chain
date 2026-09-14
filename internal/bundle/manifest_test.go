@@ -49,8 +49,10 @@ func TestParseManifest(t *testing.T) {
 					},
 				},
 				TrustedRoot: &TrustedRootEntry{
+					Name:       "",
 					BlobDigest: "sha256:root789",
 					Size:       2048,
+					Issuers:    nil,
 				},
 			},
 		},
