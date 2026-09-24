@@ -24,7 +24,7 @@ require (
 	github.com/package-url/packageurl-go v0.1.7
 	github.com/prometheus/client_golang v1.24.1
 	github.com/sigstore/protobuf-specs v0.5.2
-	github.com/sigstore/sigstore v1.10.10
+	github.com/sigstore/sigstore v1.11.0
 	github.com/sigstore/sigstore-go v1.3.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/sync v0.23.0
