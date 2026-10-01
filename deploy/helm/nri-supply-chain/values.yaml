@@ -153,9 +153,12 @@ config:
 
 # Used only when config.policy.source is local. Keys must end in .json.
 # IMPORTANT: Replace "myorg" with your organization before deploying. The
-# exclude list skips Kubernetes system images so that kube-proxy, CoreDNS, and
-# CSI sidecars can start while the plugin bootstraps. Add your CNI images
-# (pinned by digest) as needed. Keep this policy in sync with
+# exclude list skips the Kubernetes images nodes need at bootstrap (control
+# plane, etcd, kube-proxy, DNS, konnectivity, pause, the AWS, GCP and OpenStack
+# cloud controller managers and CSI drivers, and the SIG Storage images) so that
+# they can start while the plugin bootstraps. Other registry.k8s.io images are
+# verified. Add your CNI and other node-critical images (pinned by digest) as
+# needed. Keep this policy in sync with
 # deploy/kubernetes/daemonset.yaml (checked by "make verify-manifests").
 policies:
   default.json: |
@@ -165,7 +168,24 @@ policies:
         "sanPatterns": ["https://github.com/myorg/**"],
         "sources": ["https://github.com/myorg/*"]
       },
-      "exclude": ["registry.k8s.io/**"],
+      "exclude": [
+        "registry.k8s.io/cloud-provider-gcp/cloud-controller-manager*",
+        "registry.k8s.io/cloud-provider-gcp/gcp-compute-persistent-disk-csi-driver*",
+        "registry.k8s.io/coredns/**",
+        "registry.k8s.io/dns/**",
+        "registry.k8s.io/etcd*",
+        "registry.k8s.io/kas-network-proxy/**",
+        "registry.k8s.io/kube-apiserver*",
+        "registry.k8s.io/kube-controller-manager*",
+        "registry.k8s.io/kube-proxy*",
+        "registry.k8s.io/kube-scheduler*",
+        "registry.k8s.io/pause*",
+        "registry.k8s.io/provider-aws/aws-ebs-csi-driver*",
+        "registry.k8s.io/provider-aws/cloud-controller-manager*",
+        "registry.k8s.io/provider-os/cinder-csi-plugin*",
+        "registry.k8s.io/provider-os/openstack-cloud-controller-manager*",
+        "registry.k8s.io/sig-storage/**"
+      ],
       "slsa": { "missingPolicy": "warn" },
       "vex": { "missingPolicy": "allow" }
     }
