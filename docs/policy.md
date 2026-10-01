@@ -64,6 +64,7 @@ patterns for the nri-supply-chain plugin.
   - [Gradual rollout](#gradual-rollout)
   - [Per-image policy rules](#per-image-policy-rules)
   - [VSA-accelerated verification](#vsa-accelerated-verification)
+  - [Images promoted to registry.k8s.io](#images-promoted-to-registryk8sio)
   - [Key rotation](#key-rotation)
     - [Time-bounded key rotation](#time-bounded-key-rotation)
   - [Multi-verification mode](#multi-verification-mode)
@@ -2807,6 +2808,64 @@ attestation check instead of fetching and verifying SLSA + VEX individually:
 }
 ```
 
+### Images promoted to registry.k8s.io
+
+The Kubernetes image promoter (kpromo) can attach a signed VSA to every digest
+it promotes to `registry.k8s.io`. Its verifier ID is
+`https://k8s.io/promo-tools/verifier/v1` and production promotion signs keyless
+as `krel-trust@k8s-releng-prod.iam.gserviceaccount.com` (issuer
+`https://accounts.google.com`). A rule trusts that verifier for one project and
+requires its VSA, so unattested or tampered digests are rejected:
+
+```json
+{
+  "rules": [
+    {
+      "images": ["registry.k8s.io/security-profiles-operator/**"],
+      "trust": {
+        "issuers": ["https://accounts.google.com"],
+        "sanPatterns": ["krel-trust@k8s-releng-prod.iam.gserviceaccount.com"],
+        "verifiers": [
+          {
+            "id": "https://k8s.io/promo-tools/verifier/v1",
+            "identities": [
+              {
+                "issuer": "https://accounts.google.com",
+                "sanPattern": "krel-trust@k8s-releng-prod.iam.gserviceaccount.com"
+              }
+            ]
+          }
+        ]
+      },
+      "vsa": { "missingPolicy": "deny" }
+    }
+  ]
+}
+```
+
+- `exclude` wins over rules, so no exclude pattern may match the images of the
+  rule. The shipped default policy only excludes the system images (see
+  [deployment.md](deployment.md#bootstrapping-and-system-components)), a
+  `registry.k8s.io/**` exclude skips the rule.
+- The promoter writes the VSA once, when it promotes the digest, so leave
+  `vsa.maxAge` unset.
+- `verifiedLevels` has `SLSA_BUILD_LEVEL_<n>` only for projects whose promoter
+  manifest has a provenance policy, otherwise `SLSA_BUILD_LEVEL_UNEVALUATED`.
+  Set `vsa.minimumLevel` only for such projects. Even then, the VSAs of the
+  platform manifests of a multi-arch image claim a level only when their own
+  attestations satisfy the policy, and the plugin uses them whenever the index
+  digest has no attestations, so `vsa.minimumLevel` can deny a multi-arch
+  image whose platform manifests are not attested on their own.
+- `policy.uri` names the promoter manifest, for example
+  `git+https://github.com/kubernetes/k8s.io#registry.k8s.io/manifests/k8s-staging-sp-operator/promoter-manifest.yaml`.
+  A digest promoted from several manifests, or a platform manifest of indexes
+  from different manifests, names the repository only
+  (`git+https://github.com/kubernetes/k8s.io`). Setting `vsa.policy` to one
+  manifest accepts only VSAs for that manifest and denies those.
+- The VSA is an OCI referrer of the digest and the plugin reads it from the
+  repository the image is pulled from, so `registry.k8s.io` has to serve
+  referrers.
+
 ### Key rotation
 
 During key rotation, configure `keys` to accept both the old and new verifier
@@ -2916,6 +2975,7 @@ Ready-to-use policy files are available in
 - [`namespace-override.json`](../deploy/examples/policies/namespace-override.json): Namespace override with `inherits: true`
 - [`vex-strict.json`](../deploy/examples/policies/vex-strict.json): Strict VEX verification requiring all images to have VEX attestations
 - [`vsa-accelerated.json`](../deploy/examples/policies/vsa-accelerated.json): VSA-first verification that short-circuits direct checks
+- [`registry-k8s-io.json`](../deploy/examples/policies/registry-k8s-io.json): System image excludes and a promoter VSA requirement for an image on `registry.k8s.io`
 - [`sbom-deny-list.json`](../deploy/examples/policies/sbom-deny-list.json): SBOM component and license deny-list
 - [`sbom-drift.json`](../deploy/examples/policies/sbom-drift.json): SBOM drift detection with baseline comparison thresholds
 - [`cel-rules.json`](../deploy/examples/policies/cel-rules.json): CEL policy expressions for custom verification logic

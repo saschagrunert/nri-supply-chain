@@ -414,11 +414,19 @@ Keep the plugin independent of anything that starts after it:
   start before the CNI plugin, so CNI pods are created while the plugin is
   absent (fail open) or, with a required plugin, never (deadlock).
 - **Node DNS.** `dnsPolicy: Default` avoids a dependency on cluster DNS.
-- **System image excludes.** The shipped default policy excludes
-  `registry.k8s.io/**` (kube-proxy, CoreDNS, CSI sidecars) so these
-  do not depend on attestations that upstream images usually lack. Add your
-  CNI and other node-critical images, and pin them by digest where your
-  tooling allows it, for example
+- **System image excludes.** The shipped default policy excludes the
+  Kubernetes images on `registry.k8s.io` that nodes need at bootstrap (control
+  plane, etcd, kube-proxy, CoreDNS and the node-local DNS cache, the
+  konnectivity agent and server, pause, the AWS, GCP and OpenStack cloud
+  controller managers and CSI drivers, and all `sig-storage` images) so these
+  do not depend on attestations that they usually lack. A denied cloud
+  controller manager, for example, keeps every node tainted as uninitialized.
+  Other `registry.k8s.io` images are verified, so in enforce mode check which
+  other `registry.k8s.io` images your nodes run before they start, see
+  [Images promoted to registry.k8s.io](policy.md#images-promoted-to-registryk8sio)
+  for trusting the verification summaries of the Kubernetes image promoter.
+  Add your CNI and other node-critical images, and pin them by digest where
+  your tooling allows it, for example
   `quay.io/cilium/cilium:v1.18.0@sha256:<digest>`. Excluded images are not
   verified, so keep the list minimal.
 - **Toleration annotations.** With a required plugin, annotate static pods and
