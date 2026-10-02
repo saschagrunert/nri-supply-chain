@@ -28,14 +28,17 @@
       "images": ["registry.k8s.io/security-profiles-operator/**"],
       "trust": {
         "issuers": ["https://accounts.google.com"],
-        "sanPatterns": ["krel-trust@k8s-releng-prod.iam.gserviceaccount.com"],
+        "sanPatterns": [
+          "krel-trust@k8s-releng-prod.iam.gserviceaccount.com",
+          "promoter-summaries@k8s-releng-prod.iam.gserviceaccount.com"
+        ],
         "verifiers": [
           {
             "id": "https://k8s.io/promo-tools/verifier/v1",
             "identities": [
               {
                 "issuer": "https://accounts.google.com",
-                "sanPattern": "krel-trust@k8s-releng-prod.iam.gserviceaccount.com"
+                "sanPattern": "promoter-summaries@k8s-releng-prod.iam.gserviceaccount.com"
               }
             ]
           }

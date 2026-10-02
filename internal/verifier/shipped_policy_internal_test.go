@@ -30,6 +30,7 @@ const (
 	testPromotedImage  = "registry.k8s.io/security-profiles-operator/security-profiles-operator:v1.1.0"
 	testPromoterIssuer = "https://accounts.google.com"
 	testPromoterSigner = "krel-trust@k8s-releng-prod.iam.gserviceaccount.com"
+	testSummarySigner  = "promoter-summaries@k8s-releng-prod.iam.gserviceaccount.com"
 )
 
 // shippedDefaultPolicy loads the default.json policy of the raw DaemonSet
@@ -156,13 +157,14 @@ func TestRegistryK8sIOExampleRequiresPromoterVSA(t *testing.T) {
 		if verifier.ID != "https://k8s.io/promo-tools/verifier/v1" ||
 			len(verifier.Keys) != 0 || len(verifier.Identities) != 1 ||
 			verifier.Identities[0].Issuer != testPromoterIssuer ||
-			verifier.Identities[0].SANPattern != testPromoterSigner {
+			verifier.Identities[0].SANPattern != testSummarySigner {
 			t.Errorf("expected the promoter verifier bound to %s, got %+v",
-				testPromoterSigner, verifier)
+				testSummarySigner, verifier)
 		}
 
-		if !slices.Equal(resolved.Trust.SANPatterns, []string{testPromoterSigner}) {
-			t.Errorf("expected only the promoter signer to be trusted, got %v",
+		trusted := []string{testPromoterSigner, testSummarySigner}
+		if !slices.Equal(resolved.Trust.SANPatterns, trusted) {
+			t.Errorf("expected only the promoter and summary signers to be trusted, got %v",
 				resolved.Trust.SANPatterns)
 		}
 	}

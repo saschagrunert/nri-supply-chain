@@ -2812,10 +2812,12 @@ attestation check instead of fetching and verifying SLSA + VEX individually:
 
 The Kubernetes image promoter (kpromo) can attach a signed VSA to every digest
 it promotes to `registry.k8s.io`. Its verifier ID is
-`https://k8s.io/promo-tools/verifier/v1` and production promotion signs keyless
-as `krel-trust@k8s-releng-prod.iam.gserviceaccount.com` (issuer
-`https://accounts.google.com`). A rule trusts that verifier for one project and
-requires its VSA, so unattested or tampered digests are rejected:
+`https://k8s.io/promo-tools/verifier/v1`. Production promotion signs the images
+keyless as `krel-trust@k8s-releng-prod.iam.gserviceaccount.com` and the VSAs as
+`promoter-summaries@k8s-releng-prod.iam.gserviceaccount.com`, an identity that
+only the production promotion jobs can use (issuer
+`https://accounts.google.com` for both). A rule trusts that verifier for one
+project and requires its VSA, so unattested or tampered digests are rejected:
 
 ```json
 {
@@ -2824,14 +2826,17 @@ requires its VSA, so unattested or tampered digests are rejected:
       "images": ["registry.k8s.io/security-profiles-operator/**"],
       "trust": {
         "issuers": ["https://accounts.google.com"],
-        "sanPatterns": ["krel-trust@k8s-releng-prod.iam.gserviceaccount.com"],
+        "sanPatterns": [
+          "krel-trust@k8s-releng-prod.iam.gserviceaccount.com",
+          "promoter-summaries@k8s-releng-prod.iam.gserviceaccount.com"
+        ],
         "verifiers": [
           {
             "id": "https://k8s.io/promo-tools/verifier/v1",
             "identities": [
               {
                 "issuer": "https://accounts.google.com",
-                "sanPattern": "krel-trust@k8s-releng-prod.iam.gserviceaccount.com"
+                "sanPattern": "promoter-summaries@k8s-releng-prod.iam.gserviceaccount.com"
               }
             ]
           }
@@ -2847,8 +2852,12 @@ requires its VSA, so unattested or tampered digests are rejected:
   rule. The shipped default policy only excludes the system images (see
   [deployment.md](deployment.md#bootstrapping-and-system-components)), a
   `registry.k8s.io/**` exclude skips the rule.
+- `sanPatterns` needs both identities: every keyless bundle, the VSA too, is
+  verified against them before the verifier's `identities` bind the VSA to
+  `promoter-summaries`.
 - The promoter writes the VSA once, when it promotes the digest, so leave
-  `vsa.maxAge` unset.
+  `vsa.maxAge` unset. Digests promoted before the promoter wrote VSAs have
+  none, so `vsa.missingPolicy: deny` rejects them.
 - `verifiedLevels` has `SLSA_BUILD_LEVEL_<n>` only for projects whose promoter
   manifest has a provenance policy, otherwise `SLSA_BUILD_LEVEL_UNEVALUATED`.
   Set `vsa.minimumLevel` only for such projects. Even then, the VSAs of the
