@@ -45,6 +45,7 @@ type auditEvent struct {
 	Status            string `json:"status,omitempty"`
 	Detail            string `json:"detail,omitempty"`
 	Decision          string `json:"decision,omitempty"`
+	Verified          bool   `json:"verified,omitempty"`
 	Reason            string `json:"reason,omitempty"`
 	PolicyHash        string `json:"policyHash,omitempty"`
 	NodeName          string `json:"nodeName,omitempty"`
@@ -75,6 +76,7 @@ func (e *auditEvent) logAttrs() []any {
 		attrs = append(attrs,
 			"allowed", e.Allowed,
 			"decision", e.Decision,
+			"verified", e.Verified,
 			"reason", e.Reason,
 		)
 	}
@@ -109,6 +111,10 @@ func applyAuditInfo(event *auditEvent, info *auditInfo) {
 	event.VerificationMode = info.verificationMode
 }
 
+// logResult writes the audit entries of a result after the verification
+// mode was applied: allowed and decision are the admission decision, verified
+// is the verification outcome. In warn mode a failed verification is allowed
+// but not verified.
 func logResult(
 	ctx context.Context, logger *slog.Logger,
 	imageRef, digest, namespace string,
@@ -135,12 +141,14 @@ func logResult(
 		decision = "allowed"
 	}
 
-	logAuditDecision(ctx, logger, imageRef, digest, namespace, decision, result.Reason, info)
+	logAuditDecision(
+		ctx, logger, imageRef, digest, namespace, decision, result.Reason, result.Verified, info,
+	)
 }
 
 func logAuditDecision(
 	ctx context.Context, logger *slog.Logger,
-	imageRef, digest, namespace, decision, reason string,
+	imageRef, digest, namespace, decision, reason string, verified bool,
 	info *auditInfo,
 ) {
 	event := &auditEvent{ //nolint:exhaustruct_v5 // remaining fields set by applyAuditInfo
@@ -150,19 +158,38 @@ func logAuditDecision(
 		Namespace:     namespace,
 		Allowed:       decision == "allowed",
 		Decision:      decision,
+		Verified:      verified,
 		Reason:        reason,
 	}
 	applyAuditInfo(event, info)
 	logger.InfoContext(ctx, auditMessage, event.logAttrs()...)
 }
 
-func allowResult(
-	ctx context.Context, logger *slog.Logger,
-	imageRef, digest, namespace, reason string,
-	info *auditInfo,
-) *types.Result {
-	logAuditDecision(ctx, logger, imageRef, digest, namespace, "allowed", reason, info)
+// logVerification writes the audit entries of a verification that ended
+// with result and err. A verification that ended with an error and no result
+// denies the image.
+func logVerification(
+	ctx context.Context, state *snapshot, req *types.VerifyRequest,
+	result *types.Result, err error, info *auditInfo,
+) {
+	if result != nil {
+		logResult(ctx, state.auditLogger, req.ImageRef, req.Digest, req.Namespace, result, info)
 
+		return
+	}
+
+	reason := "verification did not produce a result"
+	if err != nil {
+		reason = err.Error()
+	}
+
+	logAuditDecision(
+		ctx, state.auditLogger, req.ImageRef, req.Digest, req.Namespace,
+		"denied", reason, false, info,
+	)
+}
+
+func allowResult(reason string) *types.Result {
 	return &types.Result{
 		Allowed:      true,
 		Verified:     true,

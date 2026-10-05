@@ -454,3 +454,71 @@ func TestVerifyMultipleCancelledContext(t *testing.T) {
 		t.Errorf("expected context.Canceled, got: %v", err)
 	}
 }
+
+func TestVerifyTrustedRegistryMatchesParsedPURL(t *testing.T) {
+	t.Parallel()
+
+	const (
+		ociDigest    = "sha256%3Aabc123"
+		npmPattern   = "pkg:npm/@myorg/*"
+		ghcrPattern  = "pkg:oci/ghcr.io/myorg/*"
+		ociAppPrefix = "pkg:oci/app@" + ociDigest + "?repository_url="
+	)
+
+	tests := []struct {
+		name     string
+		purl     string
+		pattern  string
+		wantPass bool
+	}{
+		{"npm scope matches canonical encoding", "pkg:npm/%40myorg/pkg@1.0.0", npmPattern, true},
+		{"npm scope matches unencoded scope", "pkg:npm/@myorg/pkg@1.0.0", npmPattern, true},
+		{"npm other scope does not match", "pkg:npm/%40evil/pkg@1.0.0", npmPattern, false},
+		{
+			"oci repository_url with image name",
+			ociAppPrefix + "ghcr.io/myorg/app", ghcrPattern, true,
+		},
+		{
+			"oci repository_url without image name",
+			ociAppPrefix + "ghcr.io/myorg", ghcrPattern, true,
+		},
+		{
+			"oci repository_url with scheme",
+			ociAppPrefix + "https://ghcr.io/myorg/app/", ghcrPattern, true,
+		},
+		{
+			"oci other registry does not match",
+			ociAppPrefix + "evil.io/myorg/app", ghcrPattern, false,
+		},
+		{
+			"other qualifiers are not matched",
+			ociAppPrefix + "evil.io/x&tag=ghcr.io/myorg/app", ghcrPattern, false,
+		},
+		{"legacy oci namespace form", "pkg:oci/ghcr.io/myorg/app@" + ociDigest, ghcrPattern, true},
+		{"version pattern", "pkg:npm/lodash@4.17.21", "pkg:npm/lodash@4.*", true},
+		{"invalid purl fails", "not-a-purl", "**", false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			att := testutil.WrapInToto(t, relPredicate{PURL: test.purl, PackageID: testPackageID},
+				testDigest, testPredicateType)
+
+			result, err := release.Verify(context.Background(), att, &policy.Policy{
+				Release: &policy.ReleasePolicy{TrustedRegistries: []string{test.pattern}},
+			}, testDigest)
+			testutil.AssertNoError(t, err)
+
+			if result.Passed != test.wantPass {
+				t.Errorf(
+					"passed = %v, want %v (detail %q)",
+					result.Passed,
+					test.wantPass,
+					result.Detail,
+				)
+			}
+		})
+	}
+}

@@ -18,6 +18,9 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/google/go-containerregistry/pkg/name"
+
+	"github.com/saschagrunert/nri-supply-chain/internal/imageref"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
@@ -79,11 +82,18 @@ func (c *Config) normalizeCacheTTLs() {
 	}
 }
 
+// normalizePrefix lowercases a registry host and spells Docker Hub's
+// docker.io as name.DefaultRegistry ("index.docker.io"). Unlike
+// imageref.NormalizeRegistry, which spells Docker Hub as docker.io for
+// matching image patterns, registry prefixes are compared with the host
+// go-containerregistry reports for a reference (RegistryStr), which is
+// index.docker.io for docker.io and short names. Other Docker Hub aliases are
+// kept, because references naming them report them as their host.
 func normalizePrefix(prefix string) string {
 	lower := strings.ToLower(prefix)
 
-	if lower == "docker.io" {
-		return "index.docker.io"
+	if lower == imageref.DockerHubRegistry {
+		return name.DefaultRegistry
 	}
 
 	return lower

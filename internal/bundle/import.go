@@ -27,13 +27,18 @@ import (
 const (
 	maxBundleTarSize    = 1 << 30 // 1 GiB
 	maxBundleTarEntries = 10000
+
+	// backupSuffix names the previous store kept by the last import.
+	backupSuffix = ".old"
 )
 
 // Import extracts a bundle tar into the attestation store directory. Extraction
 // is atomic: the tar is first extracted to a temporary directory, validated,
 // and then moved to the final store path. If extraction or validation fails,
 // the store path is not modified. When verifyKeyPath is non-empty, the bundle
-// signature is verified before committing.
+// signature is verified before committing. The previous store is kept next to
+// the store path (suffixed ".old") until the next import, so a running plugin
+// that pinned it keeps reading consistent blobs until it reloads the store.
 func Import(bundlePath, storePath, verifyKeyPath string) error {
 	parentDir := filepath.Dir(storePath)
 
@@ -63,6 +68,8 @@ func Import(bundlePath, storePath, verifyKeyPath string) error {
 	if err != nil {
 		return fmt.Errorf("validating imported bundle: %w", err)
 	}
+
+	defer func() { _ = store.Close() }()
 
 	if verifyKeyPath != "" {
 		sigErr := VerifyManifestSignature(store.Manifest(), verifyKeyPath)
@@ -194,8 +201,12 @@ func extractFile(reader io.Reader, target string, size int64) error {
 	return nil
 }
 
+// atomicSwapStore moves the extracted bundle at tmpDir to storePath. The
+// existing store becomes the backup at storePath+".old", replacing the backup
+// of the import before. It is not removed right away: a running Store pins
+// its directory and still reads blobs from it after the swap.
 func atomicSwapStore(tmpDir, storePath string) error {
-	backupPath := storePath + ".old"
+	backupPath := storePath + backupSuffix
 	_ = os.RemoveAll(backupPath)
 
 	_, statErr := os.Stat(storePath)
@@ -215,8 +226,6 @@ func atomicSwapStore(tmpDir, storePath string) error {
 
 		return fmt.Errorf("moving bundle to store: %w", renameErr)
 	}
-
-	_ = os.RemoveAll(backupPath)
 
 	return nil
 }

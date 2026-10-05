@@ -270,9 +270,9 @@ func TestStoreTrustedRootMissing(t *testing.T) {
 		t.Fatalf("OpenStore() error: %v", err)
 	}
 
-	_, err = store.TrustedRoot()
+	_, err = store.TrustedRoots()
 	if !errors.Is(err, ErrTrustedRootMissing) {
-		t.Fatalf("TrustedRoot() error = %v, want %v", err, ErrTrustedRootMissing)
+		t.Fatalf("TrustedRoots() error = %v, want %v", err, ErrTrustedRootMissing)
 	}
 }
 

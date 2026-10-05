@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/containerd/nri/pkg/api"
-	"google.golang.org/protobuf/proto"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/feed"
@@ -37,6 +36,8 @@ const (
 	triggerTimer       = "timer"
 	triggerFeed        = "feed"
 	triggerManual      = "trigger"
+	// triggerPrewarm marks results recorded by cache pre-warming.
+	triggerPrewarm = "prewarm"
 )
 
 // containerForReverify holds a snapshot of container data needed for
@@ -167,6 +168,11 @@ func (p *Plugin) runVerificationCycle(
 
 	batchSize := p.batchSize()
 
+	// Containers of the same image share cached results: each digest and
+	// namespace is invalidated once per cycle, so later containers reuse the
+	// fresh result instead of re-fetching the attestations.
+	invalidated := make(map[string]struct{})
+
 	var updates []*pendingUpdate
 
 	for batchStart := 0; batchStart < len(targets); batchStart += batchSize {
@@ -178,7 +184,7 @@ func (p *Plugin) runVerificationCycle(
 		batch := targets[batchStart:end]
 
 		for j := range batch {
-			update := p.reverifyContainer(ctx, &batch[j], trigger, mode, feedPURLs)
+			update := p.reverifyContainer(ctx, &batch[j], trigger, mode, feedPURLs, invalidated)
 			if update != nil {
 				updates = append(updates, update)
 			}
@@ -211,12 +217,21 @@ func (p *Plugin) runVerificationCycle(
 	)
 }
 
+// reverifyContainer re-verifies a container. Triggers other than the timer
+// bypass cached results: the results of the container's digest and namespace
+// are invalidated unless invalidated shows that this cycle already did.
 func (p *Plugin) reverifyContainer(
 	ctx context.Context, target *containerForReverify,
 	trigger string, mode config.RemediationMode, feedPURLs []string,
+	invalidated map[string]struct{},
 ) *pendingUpdate {
 	if trigger != triggerTimer {
-		p.verifier.InvalidateCache(target.digest, target.namespace)
+		key := target.digest + "\x00" + target.namespace
+		if _, done := invalidated[key]; !done {
+			invalidated[key] = struct{}{}
+
+			p.verifier.InvalidateCache(target.digest, target.namespace)
+		}
 	}
 
 	start := time.Now()
@@ -245,7 +260,7 @@ func (p *Plugin) reverifyContainer(
 	// recovers or rolls it back, and it does not count as an error. A
 	// persistent outage therefore never degrades a container, even in enforce
 	// mode; it is logged and counted so it stays visible.
-	if resultIncomplete(result) {
+	if result.Incomplete() {
 		p.metrics.ReverificationTotal.WithLabelValues(target.namespace, "incomplete").Inc()
 		p.recordIncompleteReverification(ctx, target, result.Reason)
 
@@ -401,6 +416,7 @@ func (p *Plugin) applyStateTransition(
 	p.containers.UpdateState(target.id, func(cState *containerState) {
 		cState.lastResult = result
 		cState.purls = extractPURLsFromResult(result)
+		cState.awaitingFirstResult = false
 
 		prevState := cState.state
 
@@ -548,6 +564,14 @@ func (p *Plugin) rollbackUpdate(
 	}
 }
 
+// remediationEnabled reports whether a remediation mode is configured, which
+// is when the continuous verifier drives container state transitions.
+func (p *Plugin) remediationEnabled() bool {
+	mode := p.remediation.mode.Load()
+
+	return mode != nil && *mode != config.RemediationModeDisabled
+}
+
 func (p *Plugin) cooldownElapsed(cState *containerState) bool {
 	if cState.lastRemediation.IsZero() {
 		return true
@@ -560,198 +584,6 @@ func (p *Plugin) cooldownElapsed(cState *containerState) bool {
 	}
 
 	return time.Since(cState.lastRemediation) > cooldown
-}
-
-func (p *Plugin) buildThrottleUpdate(
-	containerID string, original *api.LinuxResources,
-) *api.ContainerUpdate {
-	if original == nil {
-		return nil
-	}
-
-	cpuPercent, memPercent := p.throttlePercents()
-	resources := &api.LinuxResources{}
-
-	if cpu := original.GetCpu(); cpu != nil {
-		throttledCPU := &api.LinuxCPU{}
-
-		if quota := cpu.GetQuota(); quota != nil {
-			throttledQuota := max(
-				quota.GetValue()*int64(cpuPercent)/percentDivisor,
-				minCPUQuotaMicros,
-			)
-
-			throttledCPU.Quota = &api.OptionalInt64{Value: throttledQuota}
-		}
-
-		if shares := cpu.GetShares(); shares != nil {
-			//nolint:gosec // cpuPercent is validated positive by throttlePercents()
-			throttledShares := max(
-				shares.GetValue()*uint64(cpuPercent)/percentDivisor,
-				minCPUShares,
-			)
-
-			throttledCPU.Shares = &api.OptionalUInt64{Value: throttledShares}
-		}
-
-		resources.Cpu = throttledCPU
-	}
-
-	// A memory limit below the container's working set makes the kernel
-	// OOM-kill it, so memory is only throttled when explicitly configured
-	// below 100 percent.
-	if mem := original.GetMemory(); mem != nil && memPercent < percentDivisor {
-		throttledMem := &api.LinuxMemory{}
-
-		if limit := mem.GetLimit(); limit != nil {
-			throttledLimit := max(
-				limit.GetValue()*int64(memPercent)/percentDivisor,
-				minMemoryLimitBytes,
-			)
-			throttledMem.Limit = &api.OptionalInt64{Value: throttledLimit}
-		}
-
-		resources.Memory = throttledMem
-	}
-
-	return &api.ContainerUpdate{
-		ContainerId:   containerID,
-		Linux:         &api.LinuxContainerUpdate{Resources: resources},
-		IgnoreFailure: false,
-	}
-}
-
-// looksThrottled reports whether current holds exactly the limits a throttle
-// update derived from original sets, and at least one of them differs from
-// original. Limits changed for other reasons (for example an in-place resize)
-// do not match and are left alone.
-func (p *Plugin) looksThrottled(current, original *api.LinuxResources) bool {
-	throttled := p.buildThrottleUpdate("", original).GetLinux().GetResources()
-	if throttled == nil || current == nil {
-		return false
-	}
-
-	limits := []limitMatch{
-		compareLimit(
-			optionalInt64(throttled.GetCpu().GetQuota()),
-			optionalInt64(current.GetCpu().GetQuota()),
-			optionalInt64(original.GetCpu().GetQuota()),
-		),
-		compareLimit(
-			optionalUint64(throttled.GetCpu().GetShares()),
-			optionalUint64(current.GetCpu().GetShares()),
-			optionalUint64(original.GetCpu().GetShares()),
-		),
-		compareLimit(
-			optionalInt64(throttled.GetMemory().GetLimit()),
-			optionalInt64(current.GetMemory().GetLimit()),
-			optionalInt64(original.GetMemory().GetLimit()),
-		),
-	}
-
-	compared, changed := false, false
-
-	for _, limit := range limits {
-		if !limit.compared {
-			continue
-		}
-
-		if !limit.matches {
-			return false
-		}
-
-		compared = true
-		changed = changed || limit.changed
-	}
-
-	return compared && changed
-}
-
-// limitMatch is the comparison of one throttleable limit.
-type limitMatch struct {
-	// compared is false when the throttle update does not set the limit.
-	compared bool
-	// matches is true when the current limit equals the throttled limit.
-	matches bool
-	// changed is true when the throttled limit differs from the original.
-	changed bool
-}
-
-func compareLimit[T comparable](throttled, current, original *T) limitMatch {
-	if throttled == nil {
-		return limitMatch{compared: false, matches: false, changed: false}
-	}
-
-	return limitMatch{
-		compared: true,
-		matches:  current != nil && *current == *throttled,
-		changed:  original == nil || *original != *throttled,
-	}
-}
-
-func optionalInt64(value *api.OptionalInt64) *int64 {
-	if value == nil {
-		return nil
-	}
-
-	v := value.GetValue()
-
-	return &v
-}
-
-func optionalUint64(value *api.OptionalUInt64) *uint64 {
-	if value == nil {
-		return nil
-	}
-
-	v := value.GetValue()
-
-	return &v
-}
-
-func (p *Plugin) throttlePercents() (cpuPercent, memPercent int) {
-	if cfg := p.remediation.cfg.Load(); cfg != nil {
-		cpuPercent = cfg.Throttle.CPUQuotaPercent
-		memPercent = cfg.Throttle.MemoryLimitPercent
-	}
-
-	if cpuPercent <= 0 {
-		cpuPercent = defaultThrottleCPUPercent
-	}
-
-	if memPercent <= 0 {
-		memPercent = defaultThrottleMemPercent
-	}
-
-	cpuPercent = min(cpuPercent, percentDivisor)
-	memPercent = min(memPercent, percentDivisor)
-
-	return cpuPercent, memPercent
-}
-
-func buildRollbackUpdate(
-	containerID string, original *api.LinuxResources,
-) *api.ContainerUpdate {
-	restored := deepCopyLinuxResources(original)
-
-	return &api.ContainerUpdate{
-		ContainerId:   containerID,
-		Linux:         &api.LinuxContainerUpdate{Resources: restored},
-		IgnoreFailure: false,
-	}
-}
-
-func deepCopyLinuxResources(src *api.LinuxResources) *api.LinuxResources {
-	if src == nil {
-		return nil
-	}
-
-	cloned, ok := proto.Clone(src).(*api.LinuxResources)
-	if !ok {
-		return nil
-	}
-
-	return cloned
 }
 
 // applyUpdates sends the pending updates to the runtime and records the
@@ -865,12 +697,4 @@ func (p *Plugin) matchFeedPURLs(feedPURLs []string) map[string]struct{} {
 	return matched
 }
 
-const (
-	defaultThrottleCPUPercent = 10
-	defaultThrottleMemPercent = 100
-	percentDivisor            = 100
-	minCPUQuotaMicros         = 1000
-	minCPUShares              = 2
-	minMemoryLimitBytes       = 4 << 20 // 4 MiB
-	consecutiveErrorThreshold = 3
-)
+const consecutiveErrorThreshold = 3

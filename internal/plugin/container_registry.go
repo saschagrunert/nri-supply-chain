@@ -74,7 +74,10 @@ type containerState struct {
 	originalResources  *api.LinuxResources
 	purls              []string
 	recoveredOnRestart bool
-	consecutiveErrors  int
+	// awaitingFirstResult is set for a container registered at Synchronize
+	// until pre-warming records the verification result of its image.
+	awaitingFirstResult bool
+	consecutiveErrors   int
 	// consecutiveIncomplete counts re-verifications in a row that could not
 	// complete (for example during a registry outage).
 	consecutiveIncomplete int

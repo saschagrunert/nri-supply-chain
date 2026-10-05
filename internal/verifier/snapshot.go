@@ -17,6 +17,7 @@ package verifier
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"os"
@@ -203,15 +204,22 @@ func (v *Verifier) newSnapshot(input *snapshotInput) (*snapshot, error) {
 }
 
 // retireSnapshot releases the components of prev that next no longer uses.
-// The audit log file is closed after a grace period so verifications still
-// holding prev can finish their writes.
+// The audit log file and a replaced fetcher holding resources (a bundle store
+// pinning its directory) are closed after a grace period, so verifications
+// still holding prev can finish; closing a fetcher also waits for its running
+// fetches.
 func retireSnapshot(prev, next *snapshot) {
 	if prev == nil {
 		return
 	}
 
+	retireFetcher(prev, next)
+
 	if prev.cache != next.cache {
+		// Both caches report to the same gauge; once prev is stopped only
+		// next updates it.
 		prev.cache.Stop()
+		next.cache.ReportSize()
 	}
 
 	if prev.guacClient != nil && prev.guacClient != next.guacClient {
@@ -224,6 +232,35 @@ func retireSnapshot(prev, next *snapshot) {
 		time.AfterFunc(prev.config.VerificationTimeout.Duration, func() {
 			closeAuditLogFile(oldFile)
 		})
+	}
+}
+
+// retireFetcher closes the fetcher of prev after the verification timeout
+// when next replaced it and it holds resources.
+func retireFetcher(prev, next *snapshot) {
+	closer, ok := prev.fetcher.(io.Closer)
+	if !ok || prev.fetcher == next.fetcher {
+		return
+	}
+
+	time.AfterFunc(prev.config.VerificationTimeout.Duration, func() {
+		err := closer.Close()
+		if err != nil {
+			slog.Warn("Failed to close replaced attestation fetcher", "error", err)
+		}
+	})
+}
+
+// closeFetcher closes fetcher when it holds resources.
+func closeFetcher(fetcher attestation.Fetcher) {
+	closer, ok := fetcher.(io.Closer)
+	if !ok {
+		return
+	}
+
+	err := closer.Close()
+	if err != nil {
+		slog.Warn("Failed to close attestation fetcher", "error", err)
 	}
 }
 

@@ -95,8 +95,11 @@ type Cache struct {
 	// digestIndex maps a digest to the keys of all its entries, so that
 	// DeleteAll only touches matching entries instead of scanning the cache.
 	digestIndex map[string]map[key]struct{}
-	stopOnce    sync.Once
-	stopCh      chan struct{}
+	// stopped is set by Stop; a stopped cache no longer updates the gauge,
+	// which a replacement cache reports to.
+	stopped  bool
+	stopOnce sync.Once
+	stopCh   chan struct{}
 }
 
 // New creates a new verification result cache with the given TTL.
@@ -130,6 +133,7 @@ func NewWithGauge(
 		expHeap:     nil,
 		heapIndex:   make(map[key]*heapEntry),
 		digestIndex: make(map[string]map[key]struct{}),
+		stopped:     false,
 		stopOnce:    sync.Once{},
 		stopCh:      make(chan struct{}),
 	}
@@ -311,9 +315,26 @@ func (c *Cache) MaxSize() int {
 
 // Stop terminates the background eviction goroutine. Safe to call multiple
 // times; only the first call has an effect. After Stop returns, no further
-// background eviction will occur.
+// background eviction will occur and the gauge is no longer updated, so a
+// cache that replaces this one can report to the same gauge. The cache can
+// still be used.
 func (c *Cache) Stop() {
-	c.stopOnce.Do(func() { close(c.stopCh) })
+	c.stopOnce.Do(func() {
+		c.mu.Lock()
+		c.stopped = true
+		c.mu.Unlock()
+
+		close(c.stopCh)
+	})
+}
+
+// ReportSize sets the gauge to the current number of entries, for example
+// after a replaced cache that reported to the same gauge was stopped.
+func (c *Cache) ReportSize() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.updateGaugeLocked()
 }
 
 func (c *Cache) backgroundEvict(interval time.Duration) {
@@ -341,7 +362,7 @@ func evictionInterval(ttl time.Duration) time.Duration {
 }
 
 func (c *Cache) updateGaugeLocked() {
-	if c.gauge != nil {
+	if c.gauge != nil && !c.stopped {
 		c.gauge.Set(float64(len(c.entries)))
 	}
 }

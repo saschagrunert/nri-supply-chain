@@ -55,6 +55,7 @@ const (
 	testStoreRefAlt         = "ca:store1"
 	testSubjectMediaType    = "application/vnd.oci.image.manifest.v1+json"
 	testTrustPolicyRuleName = "test-rule"
+	testTagImageRef         = "quay.io/x/app:v1"
 )
 
 func validNotationPolicy(t *testing.T) *policy.NotationPolicy {
@@ -396,130 +397,6 @@ func TestRevocationOverride(t *testing.T) {
 	}
 }
 
-func TestVerify(t *testing.T) {
-	t.Parallel()
-
-	testSig := &attestation.VerifiedAttestation{
-		PredicateType:     attestation.NotationSignatureMediaType,
-		Payload:           []byte("invalid-envelope"),
-		Digest:            testDigest,
-		SignatureType:     attestation.SignatureTypeNotation,
-		NotationMediaType: testNotationMediaType,
-	}
-
-	tests := []struct {
-		name     string
-		pol      func(t *testing.T) *policy.Policy
-		wantErr  error
-		wantNil  bool
-		wantPass bool
-	}{
-		{
-			name: "nil notation policy returns ErrNotationNotConfigured",
-			pol: func(t *testing.T) *policy.Policy {
-				t.Helper()
-
-				return &policy.Policy{}
-			},
-			wantErr:  ErrNotationNotConfigured,
-			wantNil:  true,
-			wantPass: false,
-		},
-		{
-			name: "empty trust stores returns ErrNoTrustStores",
-			pol: func(t *testing.T) *policy.Policy {
-				t.Helper()
-
-				return &policy.Policy{
-					Notation: &policy.NotationPolicy{
-						TrustStores: nil,
-						TrustPolicy: []policy.NotationTrustPolicyRule{
-							{
-								Name:              "rule",
-								RegistryScopes:    []string{"*"},
-								TrustStores:       []string{"ca:store"},
-								TrustedIdentities: []string{"*"},
-							},
-						},
-					},
-				}
-			},
-			wantErr:  ErrNoTrustStores,
-			wantNil:  true,
-			wantPass: false,
-		},
-		{
-			name: "empty trust policy returns ErrNoTrustPolicy",
-			pol: func(t *testing.T) *policy.Policy {
-				t.Helper()
-
-				return &policy.Policy{
-					Notation: &policy.NotationPolicy{
-						TrustStores: []policy.NotationTrustStore{
-							{
-								Name:         "store",
-								Type:         "ca",
-								Certificates: []string{testCertPlaceholder},
-							},
-						},
-						TrustPolicy: nil,
-					},
-				}
-			},
-			wantErr:  ErrNoTrustPolicy,
-			wantNil:  true,
-			wantPass: false,
-		},
-		{
-			name: "invalid envelope fails crypto verification",
-			pol: func(t *testing.T) *policy.Policy {
-				t.Helper()
-
-				return &policy.Policy{
-					Notation: validNotationPolicy(t),
-				}
-			},
-			wantErr:  nil,
-			wantNil:  false,
-			wantPass: false,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			ctx := context.Background()
-			pol := tc.pol(t)
-
-			result, err := Verify(ctx, testSig, testImageRef, testDigest, pol)
-
-			if tc.wantErr != nil {
-				if !errors.Is(err, tc.wantErr) {
-					t.Errorf("error = %v, want %v", err, tc.wantErr)
-				}
-			} else if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-
-			if tc.wantNil && result != nil {
-				t.Errorf("expected nil result, got %+v", result)
-			}
-
-			if !tc.wantNil {
-				if result == nil {
-					t.Fatal("expected non-nil result, got nil")
-				}
-
-				if result.Passed != tc.wantPass {
-					t.Errorf("passed = %v, want %v (detail: %s)",
-						result.Passed, tc.wantPass, result.Detail)
-				}
-			}
-		})
-	}
-}
-
 func TestVerifyMultiple(t *testing.T) {
 	t.Parallel()
 
@@ -719,7 +596,9 @@ func TestVerifySubjectDigestCrossCheck(t *testing.T) {
 				Notation: validNotationPolicy(t),
 			}
 
-			result, err := Verify(ctx, tc.sig, testImageRef, testDigest, pol)
+			result, err := VerifyMultiple(
+				ctx, []attestation.VerifiedAttestation{*tc.sig}, testImageRef, testDigest, pol,
+			)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -1135,4 +1014,205 @@ func TestVerifySignatureEntryVerifyError(t *testing.T) {
 	if !strings.Contains(result.Detail, "Notation signature verification failed") {
 		t.Errorf("unexpected detail: %s", result.Detail)
 	}
+}
+
+func TestArtifactReference(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		imageRef string
+		digest   string
+		want     string
+		wantErr  bool
+	}{
+		{
+			name:     "tag reference",
+			imageRef: testTagImageRef,
+			digest:   testDigest,
+			want:     "quay.io/x/app@" + testDigest,
+			wantErr:  false,
+		},
+		{
+			name:     "short name",
+			imageRef: "nginx",
+			digest:   testDigest,
+			want:     "docker.io/library/nginx@" + testDigest,
+			wantErr:  false,
+		},
+		{
+			name:     "docker hub alias with tag",
+			imageRef: "index.docker.io/library/nginx:1.27",
+			digest:   testDigest,
+			want:     "docker.io/library/nginx@" + testDigest,
+			wantErr:  false,
+		},
+		{
+			name:     "docker hub user repository",
+			imageRef: "docker.io/foo/bar:latest",
+			digest:   testDigest,
+			want:     "docker.io/foo/bar@" + testDigest,
+			wantErr:  false,
+		},
+		{
+			name:     "registry with port",
+			imageRef: "localhost:5000/app:v1",
+			digest:   testDigest,
+			want:     "localhost:5000/app@" + testDigest,
+			wantErr:  false,
+		},
+		{
+			name:     "digest reference uses the verified digest",
+			imageRef: "example.com/img@sha256:" + strings.Repeat("0", 64),
+			digest:   testDigest,
+			want:     "example.com/img@" + testDigest,
+			wantErr:  false,
+		},
+		{
+			name:     "invalid reference",
+			imageRef: "UPPER/Case:tag",
+			digest:   testDigest,
+			want:     "",
+			wantErr:  true,
+		},
+		{
+			name:     "missing digest",
+			imageRef: testTagImageRef,
+			digest:   "",
+			want:     "",
+			wantErr:  true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := artifactReference(tc.imageRef, tc.digest)
+			if tc.wantErr {
+				if !errors.Is(err, ErrInvalidImageReference) {
+					t.Fatalf("error = %v, want %v", err, ErrInvalidImageReference)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if got != tc.want {
+				t.Errorf("artifactReference() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestVerifyMultipleTagAndShortNameRefs checks that the tag and short name
+// references reported by the runtime select the scoped trust policy and reach
+// signature verification instead of failing on the reference format.
+func TestVerifyMultipleTagAndShortNameRefs(t *testing.T) {
+	t.Parallel()
+
+	notationPolicy := validNotationPolicy(t)
+	notationPolicy.TrustPolicy[0].RegistryScopes = []string{
+		"quay.io/x/app", "docker.io/nginx", "index.docker.io/foo/bar",
+	}
+	pol := &policy.Policy{Notation: notationPolicy}
+
+	signatures := []attestation.VerifiedAttestation{{
+		PredicateType:         attestation.NotationSignatureMediaType,
+		Payload:               []byte("invalid-envelope"),
+		Digest:                testDigest,
+		SignatureType:         attestation.SignatureTypeNotation,
+		NotationMediaType:     testNotationMediaType,
+		NotationSubjectDigest: testDigest,
+	}}
+
+	for _, imageRef := range []string{
+		testTagImageRef, "nginx", "nginx:1.27", "docker.io/library/nginx", "foo/bar:v2",
+	} {
+		t.Run(imageRef, func(t *testing.T) {
+			t.Parallel()
+
+			result, err := VerifyMultiple(
+				context.Background(),
+				signatures,
+				imageRef,
+				testDigest,
+				pol,
+			)
+			if err != nil {
+				t.Fatalf("VerifyMultiple() error: %v", err)
+			}
+
+			if result.Passed {
+				t.Fatal("invalid envelope passed verification")
+			}
+
+			if !strings.Contains(result.Detail, "Notation signature verification failed") ||
+				strings.Contains(result.Detail, "could not be parsed") ||
+				strings.Contains(result.Detail, "no applicable trust policy") {
+				t.Errorf("unexpected detail: %s", result.Detail)
+			}
+		})
+	}
+
+	_, err := VerifyMultiple(
+		context.Background(),
+		signatures,
+		"quay.io/x/other:v1",
+		testDigest,
+		pol,
+	)
+	if !errors.Is(err, ErrNoApplicableTrustPolicy) {
+		t.Fatalf("unscoped image: error = %v, want %v", err, ErrNoApplicableTrustPolicy)
+	}
+}
+
+func TestVerifySignaturesPassesArtifactReference(t *testing.T) {
+	t.Parallel()
+
+	mock := &capturingVerifier{opts: notationlib.VerifierVerifyOptions{}}
+	artifactRef := "docker.io/library/nginx@" + testDigest
+
+	_, err := verifySignatures(
+		context.Background(), mock,
+		[]attestation.VerifiedAttestation{{
+			NotationSubjectDigest:    testDigest,
+			NotationSubjectMediaType: testSubjectMediaType,
+			NotationMediaType:        testNotationMediaType,
+			Payload:                  []byte("payload"),
+		}},
+		artifactRef, testDigest, testRuleName,
+	)
+	if err != nil {
+		t.Fatalf("verifySignatures() error: %v", err)
+	}
+
+	if mock.opts.ArtifactReference != artifactRef {
+		t.Errorf("ArtifactReference = %q, want %q", mock.opts.ArtifactReference, artifactRef)
+	}
+}
+
+type capturingVerifier struct {
+	opts notationlib.VerifierVerifyOptions
+}
+
+func (c *capturingVerifier) Verify(
+	_ context.Context,
+	_ ocispec.Descriptor, //nolint:gocritic // interface requires value type
+	_ []byte,
+	opts notationlib.VerifierVerifyOptions,
+) (*notationlib.VerificationOutcome, error) {
+	c.opts = opts
+
+	return nil, errMockVerify
+}
+
+func (c *capturingVerifier) SkipVerify(
+	_ context.Context,
+	_ notationlib.VerifierVerifyOptions,
+) (bool, *trustpolicy.VerificationLevel, error) {
+	return false, nil, nil
 }

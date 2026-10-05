@@ -118,7 +118,8 @@ type statementGroup struct {
 //   - a statement without any timestamp ties with every other statement, so
 //     it raises the result to its status when that is more restrictive.
 //
-// Unknown statuses are treated as affected.
+// Unknown statuses are treated as affected. A not_affected statement without
+// justification and impact statement is invalid and ignored.
 func Evaluate(ctx context.Context, docs []*Document, image *imagematch.Image) (*Result, error) {
 	groups := make(map[string]*statementGroup)
 
@@ -135,6 +136,13 @@ func Evaluate(ctx context.Context, docs []*Document, image *imagematch.Image) (*
 
 			match := matchStatement(ctx, stmt, image)
 			if match.strength == imagematch.StrengthNone {
+				continue
+			}
+
+			if !justified(stmt) {
+				slog.WarnContext(ctx, "Ignoring OpenVEX not_affected statement without "+
+					"justification or impact statement", "vulnerability", vulnerabilityName(stmt))
+
 				continue
 			}
 
@@ -330,6 +338,15 @@ func newerOrMoreRestrictive(current, cand *candidate) *candidate {
 	default:
 		return current
 	}
+}
+
+// justified reports whether a statement meets the OpenVEX requirement that a
+// not_affected status carries a justification or an impact statement. A
+// statement violating it is invalid and must not resolve a vulnerability.
+func justified(stmt *openvex.Statement) bool {
+	return stmt.Status != openvex.StatusNotAffected ||
+		strings.TrimSpace(string(stmt.Justification)) != "" ||
+		strings.TrimSpace(stmt.ImpactStatement) != ""
 }
 
 func isKnownStatus(status openvex.Status) bool {

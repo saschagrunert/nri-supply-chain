@@ -17,6 +17,7 @@ package bundle //nolint:testpackage // tests use internal helpers
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
@@ -245,5 +246,89 @@ func TestCreateNoImages(t *testing.T) {
 	manifest := store.Manifest()
 	if len(manifest.Images) != 0 {
 		t.Errorf("image count = %d, want 0", len(manifest.Images))
+	}
+}
+
+// digestFetcher returns the attestations stored for the requested digest.
+type digestFetcher struct {
+	byDigest map[string][]attestation.VerifiedAttestation
+}
+
+func (m *digestFetcher) Fetch(
+	_ context.Context, _ string, opts *attestation.FetchOptions,
+) ([]attestation.VerifiedAttestation, error) {
+	return m.byDigest[opts.Digest], nil
+}
+
+// TestCreateBundlesIndexDigest checks that an image resolved from a manifest
+// list is bundled under its index digest too, so nodes of other platforms
+// find the attestations attached to the manifest list.
+func TestCreateBundlesIndexDigest(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	outputPath := filepath.Join(dir, "bundle.tar.gz")
+	storePath := filepath.Join(dir, "store")
+
+	platformDigest := "sha256:" + strings.Repeat("a", 64)
+	indexDigest := "sha256:" + strings.Repeat("b", 64)
+
+	attFor := func(digest string) []attestation.VerifiedAttestation {
+		return []attestation.VerifiedAttestation{{
+			PredicateType: testSLSAPredicate,
+			Payload:       []byte(digest),
+			Digest:        digest,
+			SignatureType: attestation.SignatureTypeSigstore,
+			Bundle:        []byte(`{"subject":"` + digest + `"}`),
+		}}
+	}
+
+	//nolint:exhaustruct_v5 // test data
+	opts := &CreateOptions{
+		Images:     []string{"registry.example.com/app:v1", "registry.example.com/app:latest"},
+		OutputPath: outputPath,
+		Fetcher: &digestFetcher{byDigest: map[string][]attestation.VerifiedAttestation{
+			platformDigest: attFor(platformDigest),
+			indexDigest:    attFor(indexDigest),
+		}},
+		//nolint:exhaustruct_v5 // test data
+		FetchOptions: &attestation.FetchOptions{},
+		ResolveDigest: func(context.Context, string) (string, string, error) {
+			return platformDigest, indexDigest, nil
+		},
+	}
+
+	err := Create(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Create() error: %v", err)
+	}
+
+	err = Import(outputPath, storePath, "")
+	if err != nil {
+		t.Fatalf("Import() error: %v", err)
+	}
+
+	store, err := OpenStore(storePath)
+	if err != nil {
+		t.Fatalf("OpenStore() error: %v", err)
+	}
+
+	for _, digest := range []string{platformDigest, indexDigest} {
+		stored, storeErr := store.AttestationsFor(digest)
+		if storeErr != nil {
+			t.Fatalf("AttestationsFor(%s) error: %v", digest, storeErr)
+		}
+
+		if len(stored) != 1 || !strings.Contains(string(stored[0].BundleBytes), digest) {
+			t.Errorf(
+				"AttestationsFor(%s) = %+v, want the attestation of that digest",
+				digest,
+				stored,
+			)
+		}
+
+		if refs := store.Manifest().Images[digest].Refs; len(refs) != 2 {
+			t.Errorf("refs of %s = %v, want both image references", digest, refs)
+		}
 	}
 }

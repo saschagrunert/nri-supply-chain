@@ -17,6 +17,7 @@ package bundle //nolint:testpackage // tests use internal test helpers
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -131,6 +132,28 @@ func TestParseManifestErrors(t *testing.T) {
 			input:   []byte(`{"version": -1}`),
 			wantErr: ErrManifestVersionUnsupported,
 		},
+		{
+			name: "null image entry",
+			input: []byte(
+				`{"version": 1, "images": {"sha256:` + strings.Repeat("a", 64) + `": null}}`,
+			),
+			wantErr: ErrManifestCorrupt,
+		},
+		{
+			name:    "image key is not a digest",
+			input:   []byte(`{"version": 1, "images": {"latest": {"attestations": []}}}`),
+			wantErr: ErrManifestCorrupt,
+		},
+		{
+			name:    "empty image key",
+			input:   []byte(`{"version": 1, "images": {"": {"attestations": []}}}`),
+			wantErr: ErrManifestCorrupt,
+		},
+		{
+			name:    "image key without algorithm",
+			input:   []byte(`{"version": 1, "images": {":abc": {"attestations": []}}}`),
+			wantErr: ErrManifestCorrupt,
+		},
 	}
 
 	for _, tt := range tests {
@@ -204,4 +227,21 @@ func FuzzParseManifest(f *testing.F) {
 	f.Fuzz(func(_ *testing.T, data []byte) {
 		_, _ = ParseManifest(data)
 	})
+}
+
+// TestNullImageEntryDoesNotPanic checks that a store whose manifest has a null
+// image entry is rejected when opened instead of crashing a later fetch.
+func TestNullImageEntryDoesNotPanic(t *testing.T) {
+	t.Parallel()
+
+	manifest := &Manifest{ //nolint:exhaustruct_v5 // test data
+		Version:   1,
+		CreatedAt: time.Now().UTC(),
+		Images:    map[string]*ImageEntry{testImageDigest: nil},
+	}
+
+	_, err := OpenStore(createTestStore(t, manifest, nil))
+	if !errors.Is(err, ErrManifestCorrupt) {
+		t.Fatalf("OpenStore() error = %v, want %v", err, ErrManifestCorrupt)
+	}
 }

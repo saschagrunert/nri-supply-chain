@@ -141,7 +141,7 @@ func TestComputeDrift(t *testing.T) {
 			name: "version change detected as modified",
 			current: []sbomPackage{
 				testPkgWithLicenses(
-					testLodashPURL, testLodashName, "4.17.22",
+					"pkg:npm/lodash@4.17.22", testLodashName, "4.17.22",
 					[]string{testLicMIT},
 					map[string]string{testAlgoSHA256: testHashABC123},
 				),
@@ -189,7 +189,7 @@ func TestComputeDrift(t *testing.T) {
 			name: "combined drift: added, removed, and modified",
 			current: []sbomPackage{
 				testPkgWithLicenses(
-					testLodashPURL, testLodashName, "4.17.22",
+					"pkg:npm/lodash@4.17.22", testLodashName, "4.17.22",
 					[]string{testLicMIT},
 					map[string]string{testAlgoSHA256: testHashABC123},
 				),
@@ -246,6 +246,74 @@ func TestComputeDrift(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestComputeDriftVersionedPURLs(t *testing.T) {
+	t.Parallel()
+
+	baseline := []sbomPackage{
+		testPkg("pkg:npm/a@1.0", "a", testVer10),
+		testPkg("pkg:npm/b@1.0", "b", testVer10),
+		testPkg("pkg:npm/b@2.0", "b", "2.0"),
+		testPkg("pkg:npm/c@1.0", "c", testVer10),
+	}
+
+	current := []sbomPackage{
+		// A version bump changes the purl but keeps the package identity.
+		testPkg("pkg:NPM/a@1.1", "a", "1.1"),
+		// One of two installed versions is bumped, the other is kept.
+		testPkg("pkg:npm/b@1.0", "b", testVer10),
+		testPkg("pkg:npm/b@3.0", "b", "3.0"),
+		testPkg("pkg:npm/c@1.0", "c", testVer10),
+		testPkg("pkg:npm/c@2.0", "c", "2.0"),
+	}
+
+	result := computeDrift(baseline, current)
+
+	testutil.AssertEqual(t, result.AddedCount, 1)
+	testutil.AssertEqual(t, result.RemovedCount, 0)
+	testutil.AssertEqual(t, result.ModifiedCount, 2)
+
+	maxModified := 1
+	if failure := checkDriftThresholds(
+		&result, &policy.SBOMDriftPolicy{MaxModified: &maxModified},
+	); failure == nil || failure.Passed {
+		t.Error("expected maxModified to fail on version bumps of versioned purls")
+	}
+}
+
+// TestComputeDriftVersionBumpIsModified pins the documented drift semantics:
+// a version bump is one modified package (score contribution 2), not an
+// addition and a removal (4), so only maxModified catches it.
+func TestComputeDriftVersionBumpIsModified(t *testing.T) {
+	t.Parallel()
+
+	baseline := []sbomPackage{testPkg("pkg:npm/a@1.0", "a", testVer10)}
+	current := []sbomPackage{testPkg("pkg:npm/a@1.1", "a", "1.1")}
+
+	result := computeDrift(baseline, current)
+
+	testutil.AssertEqual(t, result.AddedCount, 0)
+	testutil.AssertEqual(t, result.RemovedCount, 0)
+	testutil.AssertEqual(t, result.ModifiedCount, 1)
+	testutil.AssertEqual(t, result.Score, 2.0)
+
+	zero := 0
+
+	if failure := checkDriftThresholds(
+		&result, &policy.SBOMDriftPolicy{MaxAdded: &zero, MaxRemoved: &zero},
+	); failure != nil && !failure.Passed {
+		t.Errorf(
+			"expected maxAdded and maxRemoved to ignore a version bump, got %q",
+			failure.Detail,
+		)
+	}
+
+	if failure := checkDriftThresholds(
+		&result, &policy.SBOMDriftPolicy{MaxModified: &zero},
+	); failure == nil || failure.Passed {
+		t.Error("expected maxModified: 0 to fail on a version bump")
 	}
 }
 

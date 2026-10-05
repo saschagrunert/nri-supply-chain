@@ -77,6 +77,7 @@ func (v *Verifier) reload(ctx context.Context, cfg *config.Config) error {
 		metrics:      current.metrics,
 	})
 	if err != nil {
+		closeFetcher(plan.newFetcher)
 		v.resumePoller(ctx, paused)
 
 		return err
@@ -155,6 +156,8 @@ func (v *Verifier) prepareReload(
 	if cfg.Enabled() {
 		err = validatePoliciesModes(cfg.Verification, loaded.policies)
 		if err != nil {
+			closeFetcher(newFetcher)
+
 			return nil, err
 		}
 	}
@@ -272,6 +275,8 @@ func bundleStoreChangedOnDisk(fetcher attestation.Fetcher, cfg *config.Config) b
 	if err != nil {
 		return false
 	}
+
+	defer func() { _ = store.Close() }()
 
 	return !bundleFetcher.StoreCreatedAt().Equal(store.Manifest().CreatedAt)
 }

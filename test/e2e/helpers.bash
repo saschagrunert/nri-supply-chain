@@ -637,6 +637,12 @@ write_vex_predicate() {
 	local status="$2"
 	local product="$3"
 	local vuln_id="${4:-CVE-2024-0001}"
+	# OpenVEX requires a justification (or impact statement) for not_affected
+	# statements; the checker ignores not_affected statements without one.
+	local justification=""
+	if [[ "$status" == "not_affected" ]]; then
+		justification=', "justification": "component_not_present"'
+	fi
 
 	cat >"$file" <<-EOF
 		{
@@ -648,7 +654,7 @@ write_vex_predicate() {
 		    {
 		      "vulnerability": {"name": "${vuln_id}"},
 		      "products": [{"@id": "${product}"}],
-		      "status": "${status}"
+		      "status": "${status}"${justification}
 		    }
 		  ]
 		}

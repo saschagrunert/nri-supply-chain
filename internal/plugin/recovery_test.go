@@ -18,11 +18,14 @@ import (
 	"context"
 	"maps"
 	"testing"
+	"time"
 
 	"github.com/containerd/nri/pkg/api"
+	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
+	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/plugin"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
@@ -276,4 +279,184 @@ func TestRemediationUpdatesDoNotIgnoreFailures(t *testing.T) {
 	if rollback == nil || rollback.GetIgnoreFailure() {
 		t.Errorf("rollback update must not ignore failures: %+v", rollback)
 	}
+}
+
+func TestRecoveredContainerMatchedByFeedTrigger(t *testing.T) {
+	t.Parallel()
+
+	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+		result: &types.Result{
+			Allowed: true, Verified: true, Mode: "", Reason: "",
+			CheckResults: []types.CheckResult{
+				{ //nolint:exhaustruct_v5 // zero-value fields intentional
+					Type:     types.CheckTypeSBOM,
+					Passed:   true,
+					Status:   types.StatusPass,
+					Metadata: map[string]any{testMetadataPURLs: []string{testPURLGolangFoo}},
+				},
+			},
+		},
+	}
+
+	stub := &cvTestStub{} //nolint:exhaustruct_v5 // zero-value fields intentional
+	plug := newRemediationTestPlugin(t, verif, stub, 100)
+	done := make(chan struct{}, 1)
+
+	plug.ExportSetPrewarmDone(func() { done <- struct{}{} })
+
+	const (
+		first  = "ctr-recovered-1"
+		second = "ctr-recovered-2"
+	)
+
+	pods := []*api.PodSandbox{{Id: testPodID, Namespace: testNamespace, Name: testPodName}}
+	containers := []*api.Container{
+		recoveryContainer(first, nil, nil),
+		recoveryContainer(second, nil, nil),
+	}
+
+	_, err := plug.Synchronize(context.Background(), pods, containers)
+	testutil.AssertNoError(t, err)
+	waitForPrewarm(t, done)
+
+	matched := plug.ExportMatchFeedPURLs([]string{testPURLGolangFoo})
+
+	for _, id := range []string{first, second} {
+		if _, ok := matched[id]; !ok {
+			t.Errorf("expected recovered container %s to match the feed", id)
+		}
+
+		state, found := plug.ExportGetContainerState(id)
+		if !found {
+			t.Fatalf("expected recovered container %s to be tracked", id)
+		}
+
+		if state.State != plugin.StateVerified {
+			t.Errorf("state of %s = %v, want %v", id, state.State, plugin.StateVerified)
+		}
+	}
+}
+
+func TestRecoveredContainerDegradedByFailingPrewarm(t *testing.T) {
+	t.Parallel()
+
+	const id = "ctr-recovered-failing"
+
+	plug := failingPrewarmPlugin(t, true, id)
+
+	state, found := plug.ExportGetContainerState(id)
+	if !found {
+		t.Fatal("expected recovered container to be tracked")
+	}
+
+	if state.State != plugin.StateDegraded {
+		t.Errorf("state = %v, want %v", state.State, plugin.StateDegraded)
+	}
+
+	if !state.HasLastResult {
+		t.Error("expected the pre-warm result to be recorded")
+	}
+
+	wantHash := plugin.ExportComputeTriggerHash(plugin.ExportTriggerPrewarm, testDigest, nil)
+	if state.LastTriggerHash != wantHash {
+		t.Errorf("lastTriggerHash = %q, want %q", state.LastTriggerHash, wantHash)
+	}
+
+	warn := promtestutil.ToFloat64(
+		plug.ExportMetrics().RemediationActionsTotal.WithLabelValues("warn", testNamespace),
+	)
+	if warn != 1 {
+		t.Errorf("warn remediation actions = %v, want 1", warn)
+	}
+}
+
+// Without remediation the continuous verifier does not run and could never
+// recover a container degraded by pre-warming, so pre-warming only records
+// the result.
+func TestFailingPrewarmKeepsStateWithoutRemediation(t *testing.T) {
+	t.Parallel()
+
+	const id = "ctr-recovered-failing-no-remediation"
+
+	plug := failingPrewarmPlugin(t, false, id)
+
+	state, found := plug.ExportGetContainerState(id)
+	if !found {
+		t.Fatal("expected recovered container to be tracked")
+	}
+
+	if state.State != plugin.StateVerified {
+		t.Errorf("state = %v, want %v", state.State, plugin.StateVerified)
+	}
+
+	if !state.HasLastResult {
+		t.Error("expected the pre-warm result to be recorded")
+	}
+
+	if state.LastTriggerHash != "" {
+		t.Errorf("lastTriggerHash = %q, want empty", state.LastTriggerHash)
+	}
+
+	warn := promtestutil.ToFloat64(
+		plug.ExportMetrics().RemediationActionsTotal.WithLabelValues("warn", testNamespace),
+	)
+	if warn != 0 {
+		t.Errorf("warn remediation actions = %v, want 0", warn)
+	}
+}
+
+// A container whose pre-warm failed while remediation was off is still
+// degraded once remediation is enabled.
+func TestFailingPrewarmDegradesOnceRemediationIsEnabled(t *testing.T) {
+	t.Parallel()
+
+	const id = "ctr-recovered-failing-remediation-later"
+
+	plug := failingPrewarmPlugin(t, false, id)
+
+	plug.SetRemediationMode(config.RemediationModeWarn)
+	plug.ExportRunVerificationCycle(t.Context(), plugin.ExportTriggerTimer)
+
+	assertContainerState(t, plug, id, plugin.StateDegraded)
+
+	warn := promtestutil.ToFloat64(
+		plug.ExportMetrics().RemediationActionsTotal.WithLabelValues("warn", testNamespace),
+	)
+	if warn != 1 {
+		t.Errorf("warn remediation actions = %v, want 1", warn)
+	}
+}
+
+// failingPrewarmPlugin synchronizes a running container whose image fails
+// verification and waits for pre-warming to record the result.
+func failingPrewarmPlugin(t *testing.T, remediation bool, id string) *plugin.Plugin {
+	t.Helper()
+
+	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+		result: &types.Result{
+			Allowed: true, Verified: false, Mode: "", Reason: testDegradedReason,
+			CheckResults: []types.CheckResult{
+				*types.FailResult(types.CheckTypeSLSA, "no provenance", nil),
+			},
+		},
+	}
+
+	plug := plugin.New(verif, metrics.New(), "", 30*time.Second, time.Second, nil)
+	if remediation {
+		plug.SetRemediationMode(config.RemediationModeWarn)
+	}
+
+	done := make(chan struct{}, 1)
+
+	plug.ExportSetPrewarmDone(func() { done <- struct{}{} })
+
+	pods := []*api.PodSandbox{{Id: testPodID, Namespace: testNamespace, Name: testPodName}}
+
+	_, err := plug.Synchronize(
+		context.Background(), pods, []*api.Container{recoveryContainer(id, nil, nil)},
+	)
+	testutil.AssertNoError(t, err)
+	waitForPrewarm(t, done)
+
+	return plug
 }

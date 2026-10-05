@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+// Package daemon runs the NRI plugin daemon: the NRI connection with its
+// reconnects, the metrics and health servers, and the config reloads on
+// SIGHUP and file changes.
+package daemon
 
 import (
 	"context"
@@ -35,6 +38,14 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
+
+// DefaultConfigPath is the config file the daemon uses when it exists and no
+// other file is given.
+const DefaultConfigPath = "/etc/nri-supply-chain/config.toml"
+
+// forcedExitCode is the process exit code after a second shutdown signal or a
+// panic in the shutdown handler. It matches the CLI's error exit code.
+const forcedExitCode = 2
 
 const (
 	readTimeout         = 30 * time.Second
@@ -225,9 +236,28 @@ func logEffectiveConfig(configPath string, cfg *config.Config) {
 	slog.Info("Effective configuration", attrs...)
 }
 
-func startPlugin(
-	configPath string, settings nriSettings, cfg *config.Config,
-) int {
+// ShouldUseConfigFile reports whether the daemon reads its configuration
+// from path: path is set and, for DefaultConfigPath, the file exists.
+func ShouldUseConfigFile(path string) bool {
+	if path == "" {
+		return false
+	}
+
+	if path == DefaultConfigPath {
+		_, err := os.Stat(path)
+
+		return !os.IsNotExist(err)
+	}
+
+	return true
+}
+
+// Run runs the plugin daemon with cfg until SIGTERM or SIGINT. configPath is
+// the config file that is reloaded on SIGHUP and file changes; empty means
+// the plugin applies the configuration passed by the runtime. version is
+// reported in the build info metric. The returned error has already been
+// logged.
+func Run(version, configPath string, settings Settings, cfg *config.Config) error {
 	met := metrics.New()
 	met.SetBuildInfo(version, runtime.Version())
 
@@ -249,7 +279,7 @@ func startPlugin(
 
 		cancel()
 
-		return exitError
+		return fmt.Errorf("startup: %w", err)
 	}
 
 	plug := plugin.New(
@@ -275,12 +305,12 @@ func startPlugin(
 	if err != nil {
 		slog.Error("Plugin exited with error", "error", err)
 
-		return exitError
+		return err
 	}
 
 	slog.Info("Plugin stopped")
 
-	return exitSuccess
+	return nil
 }
 
 // runtimeConfigPlugin is the plugin API used to apply a configuration passed
@@ -395,19 +425,19 @@ func createVerifier(
 
 func runPlugin(
 	ctx context.Context, plug *plugin.Plugin, met *metrics.Metrics,
-	cfg *config.Config, settings nriSettings,
+	cfg *config.Config, settings Settings,
 ) error {
 	group, gctx := errgroup.WithContext(ctx)
 	conn := newNRIConnection(time.Now())
 
-	policy := defaultReconnectPolicy(settings.socketPath)
+	policy := defaultReconnectPolicy(settings.SocketPath)
 
 	group.Go(func() error {
 		return runNRI(gctx, plug, settings, newNRIStub, os.Getenv, policy, conn)
 	})
 
 	liveness := func() error {
-		return conn.liveness(settings.disconnectTimeout, time.Now(), policy.socketExists)
+		return conn.liveness(settings.DisconnectTimeout, time.Now(), policy.socketExists)
 	}
 
 	group.Go(func() error {
@@ -415,7 +445,7 @@ func runPlugin(
 	})
 
 	group.Go(func() error {
-		return serveHealth(gctx, settings.healthAddr, plug, liveness, defaultListenRetryPolicy())
+		return serveHealth(gctx, settings.HealthAddr, plug, liveness, defaultListenRetryPolicy())
 	})
 
 	if cfg.Remediation.Enabled() {

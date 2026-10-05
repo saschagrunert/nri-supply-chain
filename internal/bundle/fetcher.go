@@ -56,6 +56,11 @@ type Fetcher struct {
 	metrics                *Metrics
 	signatureOnce          sync.Once
 	signatureErr           error
+
+	// closeMu is held for reading by every Fetch and for writing by Close,
+	// so Close waits for running fetches before it releases the store.
+	closeMu sync.RWMutex
+	closed  bool
 }
 
 // FetcherOption configures a Fetcher.
@@ -77,6 +82,8 @@ func NewFetcher(
 		metrics:                nil,
 		signatureOnce:          sync.Once{},
 		signatureErr:           nil,
+		closeMu:                sync.RWMutex{},
+		closed:                 false,
 	}
 
 	for _, opt := range opts {
@@ -84,6 +91,22 @@ func NewFetcher(
 	}
 
 	return fetcher
+}
+
+// Close waits for running fetches to finish and releases the bundle store,
+// which pins the store directory it was opened from. Fetches afterwards fail
+// with ErrFetcherClosed. Close is idempotent.
+func (f *Fetcher) Close() error {
+	f.closeMu.Lock()
+	defer f.closeMu.Unlock()
+
+	if f.closed {
+		return nil
+	}
+
+	f.closed = true
+
+	return f.store.Close()
 }
 
 // SetMetrics sets the metrics callbacks after construction.
@@ -146,6 +169,13 @@ func (f *Fetcher) Fetch(
 
 	if opts.Digest == "" {
 		return nil, ErrDigestRequired
+	}
+
+	f.closeMu.RLock()
+	defer f.closeMu.RUnlock()
+
+	if f.closed {
+		return nil, ErrFetcherClosed
 	}
 
 	stalenessErr := f.checkStaleness()
@@ -300,6 +330,13 @@ func (f *Fetcher) checkStaleness() error {
 
 	f.recordStaleness(string(f.expiryPolicy))
 
+	if !result.Allowed && result.Future {
+		return fmt.Errorf(
+			"%w: creation time %s is in the future",
+			ErrBundleExpired, f.store.Manifest().CreatedAt.Format(time.RFC3339),
+		)
+	}
+
 	if !result.Allowed {
 		return fmt.Errorf(
 			"%w: age %s exceeds maximum %s",
@@ -312,6 +349,7 @@ func (f *Fetcher) checkStaleness() error {
 			"Bundle is stale",
 			"age", result.Age.Round(time.Second),
 			"maxAge", result.MaxAge,
+			"createdInFuture", result.Future,
 		)
 	}
 
@@ -361,6 +399,12 @@ func (f *Fetcher) verifySignature() error {
 		return ErrBundleSignatureRequired
 	}
 
+	// Without a key the signature cannot be verified, and accepting any
+	// signature would let whoever writes the bundle satisfy the requirement.
+	if f.requireBundleSignature && f.bundleSignatureKey == "" {
+		return ErrBundleSignatureKeyRequired
+	}
+
 	if f.bundleSignatureKey != "" {
 		// A configured key always requires a valid signature: accepting an
 		// unsigned (or stripped) manifest would let whoever writes the bundle
@@ -381,5 +425,6 @@ func isBlobIntegrityError(err error) bool {
 	return errors.Is(err, ErrBlobDigestMismatch) ||
 		errors.Is(err, ErrBlobSizeMismatch) ||
 		errors.Is(err, ErrBlobMissing) ||
-		errors.Is(err, ErrBlobNotRegular)
+		errors.Is(err, ErrBlobNotRegular) ||
+		errors.Is(err, ErrStoreReplaced)
 }

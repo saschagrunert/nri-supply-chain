@@ -17,10 +17,10 @@ package policy
 import (
 	"errors"
 	"fmt"
-	"net/url"
 	"strings"
 
 	celengine "github.com/saschagrunert/nri-supply-chain/internal/cel"
+	"github.com/saschagrunert/nri-supply-chain/internal/purl"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
@@ -115,17 +115,37 @@ func validateComponentPURLs(field string, components []string) []error {
 			continue
 		}
 
-		parsed, err := url.Parse(comp)
-		if err != nil || parsed.Scheme != "pkg" || parsed.Opaque == "" ||
-			!strings.Contains(parsed.Opaque, "/") {
+		if isComponentTypeEntry(comp) {
+			continue
+		}
+
+		// A namespace entry ("pkg:maven/org.example") parses as a package
+		// and covers every package below it.
+		_, err := purl.Parse(comp)
+		if err != nil {
 			errs = append(errs, fmt.Errorf(
-				"%w: %s[%d] got %q",
-				ErrInvalidComponentPURL, field, idx, comp,
+				"%w: %s[%d] got %q: %w",
+				ErrInvalidComponentPURL, field, idx, comp, err,
 			))
 		}
 	}
 
 	return errs
+}
+
+// isComponentTypeEntry reports whether a component list entry names every
+// package of a purl type ("pkg:npm" or "pkg:npm/"), mirroring how the SBOM
+// check parses the lists.
+func isComponentTypeEntry(entry string) bool {
+	const scheme = "pkg:"
+
+	if len(entry) <= len(scheme) || !strings.EqualFold(entry[:len(scheme)], scheme) {
+		return false
+	}
+
+	typ := strings.TrimSuffix(strings.TrimLeft(entry[len(scheme):], "/"), "/")
+
+	return typ != "" && !strings.ContainsAny(typ, "/@?#")
 }
 
 const (
@@ -188,9 +208,6 @@ func (s *Sections) validateSCAI() error {
 	return errors.Join(
 		validateNonEmpty("scai.requiredAttributes", s.SCAI.RequiredAttributes),
 		validateNonEmpty("scai.forbiddenAttributes", s.SCAI.ForbiddenAttributes),
-		validateNoOverlap(
-			s.SCAI.RequiredAttributes, s.SCAI.ForbiddenAttributes, ErrSCAIOverlappingAttributes,
-		),
 	)
 }
 
@@ -206,11 +223,49 @@ func (s *Sections) validateBuildEnv() error {
 	return errors.Join(
 		validateNonEmpty("buildEnv.requiredProperties", s.BuildEnv.RequiredProperties),
 		validateNonEmpty("buildEnv.forbiddenProperties", s.BuildEnv.ForbiddenProperties),
-		validateNoOverlap(
-			s.BuildEnv.RequiredProperties, s.BuildEnv.ForbiddenProperties,
-			ErrBuildEnvOverlappingProperties,
-		),
 	)
+}
+
+// validateOverlaps rejects entries that are both required and forbidden.
+// Rules are checked on the effective policy they produce, because a rule
+// only overrides the fields it sets: a rule forbidding an attribute the base
+// policy requires yields an overlap neither section has on its own.
+func (p *Policy) validateOverlaps() error {
+	errs := []error{sectionOverlaps(&p.Sections)}
+
+	for idx := range p.Rules {
+		rule := &p.Rules[idx]
+		if rule.SCAI == nil && rule.BuildEnv == nil {
+			continue
+		}
+
+		err := sectionOverlaps(&ApplyRule(p, rule).Sections)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("rules[%d]: %w", idx, err))
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+func sectionOverlaps(sections *Sections) error {
+	var errs []error
+
+	if sections.SCAI != nil {
+		errs = append(errs, validateNoOverlap(
+			sections.SCAI.RequiredAttributes, sections.SCAI.ForbiddenAttributes,
+			ErrSCAIOverlappingAttributes,
+		))
+	}
+
+	if sections.BuildEnv != nil {
+		errs = append(errs, validateNoOverlap(
+			sections.BuildEnv.RequiredProperties, sections.BuildEnv.ForbiddenProperties,
+			ErrBuildEnvOverlappingProperties,
+		))
+	}
+
+	return errors.Join(errs...)
 }
 
 // validateNoOverlap reports entries that appear (case-insensitively) in both

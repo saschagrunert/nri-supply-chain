@@ -132,7 +132,7 @@ func TestLogAuditDecisionWithAuditInfo(t *testing.T) {
 	verifier.ExportLogAuditDecision(
 		context.Background(), logger,
 		"docker.io/library/nginx:latest", "sha256:abc123",
-		"default", "allowed", "test reason", info,
+		"default", "allowed", "test reason", true, info,
 	)
 
 	output := buf.String()
@@ -221,7 +221,7 @@ func TestLogAuditDecision(t *testing.T) {
 	verifier.ExportLogAuditDecision(
 		context.Background(), logger,
 		"docker.io/library/nginx:latest", "sha256:abc123",
-		"default", "allowed", "image is excluded", nil,
+		"default", "allowed", "image is excluded", true, nil,
 	)
 
 	output := buf.String()
@@ -233,20 +233,13 @@ func TestLogAuditDecision(t *testing.T) {
 	testutil.AssertEqual(t, "allowed", parsed["decision"])
 	testutil.AssertEqual(t, "image is excluded", parsed["reason"])
 	testutil.AssertEqual(t, true, parsed["allowed"])
+	testutil.AssertEqual(t, true, parsed["verified"])
 }
 
 func TestAllowResultSetsAllowed(t *testing.T) {
 	t.Parallel()
 
-	var buf bytes.Buffer
-
-	logger := slog.New(slog.NewJSONHandler(&buf, nil))
-
-	result := verifier.ExportAllowResult(
-		context.Background(), logger,
-		"docker.io/library/nginx:latest", "sha256:abc123",
-		"default", "test reason", nil,
-	)
+	result := verifier.ExportAllowResult("test reason")
 
 	testutil.AssertEqual(t, true, result.Allowed)
 	testutil.AssertEqual(t, "test reason", result.Reason)
@@ -463,5 +456,57 @@ func TestReloadAuditLoggerClosesPreviousFile(t *testing.T) {
 	_, newFile := verifier.ExportReloadAuditLogger(context.Background(), prev, nextCfg)
 	if newFile != nil {
 		t.Cleanup(func() { verifier.ExportCloseAuditLogFile(newFile) })
+	}
+}
+
+func TestVerifyAuditRecordsAdmissionDecision(t *testing.T) {
+	t.Parallel()
+
+	auditPath := filepath.Join(t.TempDir(), "audit.log")
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.AuditLog = auditPath
+
+	verif, _ := newHardeningVerifier(t, cfg, newScriptedFetcher(nil), map[string]string{
+		testDefaultPolicy: `{"slsa": {"missingPolicy": "deny"}}`,
+	})
+
+	// The first verification runs the checks, the second hits the cache.
+	for range 2 {
+		result, err := verif.Verify(
+			context.Background(),
+			newRequest(testHardeningImage, testFetchDigest, "", testHardeningNS, ""),
+		)
+		testutil.AssertNoError(t, err)
+
+		if !result.Allowed || result.Verified {
+			t.Fatalf("expected warn mode to admit the failed verification, got %+v", result)
+		}
+	}
+
+	data, err := os.ReadFile(auditPath) //nolint:gosec // test temp dir
+	testutil.AssertNoError(t, err)
+
+	decisions := 0
+
+	for line := range strings.SplitSeq(strings.TrimSpace(string(data)), "\n") {
+		var event map[string]any
+
+		testutil.AssertNoError(t, json.Unmarshal([]byte(line), &event))
+
+		if _, ok := event["decision"]; !ok {
+			continue
+		}
+
+		decisions++
+
+		testutil.AssertEqual(t, "allowed", event["decision"])
+		testutil.AssertEqual(t, true, event["allowed"])
+		testutil.AssertEqual(t, false, event["verified"])
+	}
+
+	if decisions != 2 {
+		t.Errorf("expected one decision event per verification, got %d", decisions)
 	}
 }

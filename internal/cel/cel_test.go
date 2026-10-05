@@ -106,6 +106,7 @@ const (
 	exprTrue             = "true"
 	exprFalse            = "false"
 	exprImageRef         = "image.ref"
+	exprImageRefSize     = "size(image.ref)"
 	msgGHCRSLSA          = "GHCR images must have SLSA provenance"
 	msgVEXMustBeVerified = "VEX must be verified"
 )
@@ -227,7 +228,7 @@ func TestCompileTypeError(t *testing.T) {
 	t.Parallel()
 
 	rules := []celengine.Rule{
-		{Require: exprImageRef},
+		{Require: exprImageRefSize},
 	}
 
 	_, err := celengine.Compile(rules)
@@ -237,6 +238,79 @@ func TestCompileTypeError(t *testing.T) {
 
 	if !errors.Is(err, celengine.ErrNotBool) {
 		t.Errorf("expected ErrNotBool, got: %v", err)
+	}
+}
+
+func TestCompileDynFieldSelection(t *testing.T) {
+	t.Parallel()
+
+	// Variables are maps of dyn: a bare boolean field is accepted at compile
+	// time and evaluated as a boolean.
+	compiled, err := celengine.Compile([]celengine.Rule{{Require: "slsa.verified"}})
+	if err != nil {
+		t.Fatalf("unexpected compile error: %v", err)
+	}
+
+	result := celengine.Evaluate(compiled, defaultVars())
+	if !result.Passed {
+		t.Errorf("expected pass for a verified SLSA result, got: %s", result.Detail)
+	}
+
+	failed := celengine.BuildVars(
+		testImageRef, testRegistry, testRepository, testDigest, testNamespace,
+		map[types.CheckType]*types.CheckResult{
+			types.CheckTypeSLSA: types.FailResult(types.CheckTypeSLSA, "bad", nil),
+		},
+	)
+
+	if celengine.Evaluate(compiled, failed).Passed {
+		t.Error("expected failure for an unverified SLSA result")
+	}
+}
+
+func TestEvaluateDynNonBoolFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	for _, rule := range []celengine.Rule{
+		{Require: exprImageRef},
+		{Match: exprImageRef, Require: exprTrue},
+	} {
+		compiled, err := celengine.Compile([]celengine.Rule{rule})
+		if err != nil {
+			t.Fatalf("unexpected compile error: %v", err)
+		}
+
+		result := celengine.Evaluate(compiled, defaultVars())
+		if result.Passed || result.Status != types.StatusFail {
+			t.Errorf("expected failure for a non-boolean result, got: %+v", result)
+		}
+
+		if !errors.Is(result.Err, celengine.ErrNotBool) {
+			t.Errorf("expected ErrNotBool, got: %v", result.Err)
+		}
+	}
+}
+
+func TestCompileRejectsExpressionsOverCostLimit(t *testing.T) {
+	t.Parallel()
+
+	list := "[" + strings.TrimSuffix(strings.Repeat("1,", 60), ",") + "]"
+
+	// 60^3 iterations always exceed the cost limit.
+	expensive := list + ".map(a, " + list + ".map(b, " + list + ".map(c, a + b + c))).size() > 0"
+
+	_, err := celengine.Compile([]celengine.Rule{{Require: expensive}})
+	if !errors.Is(err, celengine.ErrCostLimitExceeded) {
+		t.Errorf("expected ErrCostLimitExceeded, got: %v", err)
+	}
+
+	// Iterating over variables of unknown size is not rejected.
+	_, err = celengine.Compile([]celengine.Rule{{
+		Require: "sbom.drift.addedPackages.all(p, sbom.drift.addedPackages.all(q, " +
+			"sbom.drift.addedPackages.exists(r, r == p + q)))",
+	}})
+	if err != nil {
+		t.Errorf("unexpected compile error: %v", err)
 	}
 }
 
@@ -680,7 +754,7 @@ func TestCompileMatchTypeError(t *testing.T) {
 	t.Parallel()
 
 	rules := []celengine.Rule{
-		{Match: exprImageRef, Require: exprTrue},
+		{Match: exprImageRefSize, Require: exprTrue},
 	}
 
 	_, err := celengine.Compile(rules)

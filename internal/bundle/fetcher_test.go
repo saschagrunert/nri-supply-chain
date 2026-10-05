@@ -622,3 +622,49 @@ func TestFetcherSignatureVerification(t *testing.T) {
 		t.Errorf("Fetch() count = %d, want 1", len(result))
 	}
 }
+
+// TestFetcherRequireSignatureWithoutKey checks that a required bundle
+// signature is not satisfied by any signature when no key is configured to
+// verify it.
+func TestFetcherRequireSignatureWithoutKey(t *testing.T) {
+	t.Parallel()
+
+	payload := []byte(`{"predicateType":"test","test":"data"}`)
+	digest := blobDigest(payload)
+
+	manifest := &Manifest{ //nolint:exhaustruct_v5 // test data
+		Version:   1,
+		CreatedAt: time.Now().UTC(),
+		Images: map[string]*ImageEntry{
+			testImageDigest: { //nolint:exhaustruct_v5 // test data
+				Attestations: []AttestationEntry{{
+					PredicateType: testPredicateType,
+					BlobDigest:    digest,
+					Size:          int64(len(payload)),
+					SignatureType: testSigType,
+				}},
+			},
+		},
+		Signature: &ManifestSignature{
+			Algorithm: "ecdsa-p256-sha256",
+			Value:     "Zm9yZ2Vk",
+			KeyHint:   "forged",
+		},
+	}
+
+	dir := createTestStore(t, manifest, map[string][]byte{digest: payload})
+
+	store, err := OpenStore(dir)
+	if err != nil {
+		t.Fatalf("OpenStore() error: %v", err)
+	}
+
+	fetcher := NewFetcher(store, passthroughVerifier, WithRequireBundleSignature(true))
+
+	_, err = fetcher.Fetch(
+		context.Background(), "ref", &attestation.FetchOptions{Digest: testImageDigest},
+	)
+	if !errors.Is(err, ErrBundleSignatureKeyRequired) {
+		t.Fatalf("Fetch() error = %v, want %v", err, ErrBundleSignatureKeyRequired)
+	}
+}

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+package daemon
 
 import (
 	"context"
@@ -45,9 +45,9 @@ const (
 	// default; the margin covers slower runtimes and a Configure that applies
 	// an inline configuration.
 	nriConfigureTimeout = 30 * time.Second
-	// defaultNRIDisconnectTimeout is how long the NRI connection may be down
+	// DefaultNRIDisconnectTimeout is how long the NRI connection may be down
 	// before /healthz reports the plugin as unhealthy.
-	defaultNRIDisconnectTimeout = 5 * time.Minute
+	DefaultNRIDisconnectTimeout = 5 * time.Minute
 	// nriMaxAbandonedConnections bounds how many connection attempts stuck
 	// before Configure may be abandoned. The vendored NRI stub keeps a
 	// goroutine blocked for each of them, so the plugin exits (and is
@@ -90,17 +90,22 @@ var (
 	)
 )
 
-// nriSettings holds the NRI connection settings from the command line.
-type nriSettings struct {
-	pluginName string
-	pluginIdx  string
-	socketPath string
-	// disconnectTimeout is how long the connection may be down before
+// Settings holds the NRI connection settings from the command line.
+type Settings struct {
+	// PluginName is the NRI plugin name, used unless the runtime sets
+	// NRI_PLUGIN_NAME.
+	PluginName string
+	// PluginIdx is the NRI plugin index, used unless the runtime sets
+	// NRI_PLUGIN_IDX.
+	PluginIdx string
+	// SocketPath is the NRI runtime socket; empty uses the default socket.
+	SocketPath string
+	// DisconnectTimeout is how long the connection may be down before
 	// /healthz fails. Zero disables the check.
-	disconnectTimeout time.Duration
-	// healthAddr is the address of the dedicated health probe server; empty
+	DisconnectTimeout time.Duration
+	// HealthAddr is the address of the dedicated health probe server; empty
 	// serves the probes only on the metrics address.
-	healthAddr string
+	HealthAddr string
 }
 
 // nriStub is the subset of the NRI stub used by the plugin runtime.
@@ -293,24 +298,24 @@ func newNRIStub(handler nriHandler, opts ...stub.Option) (nriStub, error) {
 // environment: a pre-installed plugin is launched with NRI_PLUGIN_NAME and
 // NRI_PLUGIN_IDX set, and the stub rejects setting them twice.
 func stubOptions(
-	settings nriSettings, getenv func(string) string, onClose func(),
+	settings Settings, getenv func(string) string, onClose func(),
 ) []stub.Option {
 	opts := []stub.Option{stub.WithOnClose(onClose)}
 
 	if env := getenv(api.PluginNameEnvVar); env == "" {
-		opts = append(opts, stub.WithPluginName(settings.pluginName))
+		opts = append(opts, stub.WithPluginName(settings.PluginName))
 	} else {
 		slog.Info("Using NRI plugin name from runtime environment", "name", env)
 	}
 
 	if env := getenv(api.PluginIdxEnvVar); env == "" {
-		opts = append(opts, stub.WithPluginIdx(settings.pluginIdx))
+		opts = append(opts, stub.WithPluginIdx(settings.PluginIdx))
 	} else {
 		slog.Info("Using NRI plugin index from runtime environment", "index", env)
 	}
 
-	if settings.socketPath != "" {
-		opts = append(opts, stub.WithSocketPath(settings.socketPath))
+	if settings.SocketPath != "" {
+		opts = append(opts, stub.WithSocketPath(settings.SocketPath))
 	}
 
 	return opts
@@ -372,7 +377,7 @@ func (d *trackedDialer) close() {
 // (pre-installed, NRI_PLUGIN_SOCKET set) cannot reconnect and returns
 // errNRIConnectionLost instead. Returns nil when ctx is cancelled.
 func runNRI(
-	ctx context.Context, plug *plugin.Plugin, settings nriSettings,
+	ctx context.Context, plug *plugin.Plugin, settings Settings,
 	factory nriStubFactory, getenv func(string) string, policy reconnectPolicy,
 	conn *nriConnection,
 ) error {
@@ -420,7 +425,7 @@ func runNRI(
 // or ctx is cancelled and returns why it ended (runErr). err is only set when
 // the stub cannot be created.
 func connectOnce(
-	ctx context.Context, plug *plugin.Plugin, settings nriSettings,
+	ctx context.Context, plug *plugin.Plugin, settings Settings,
 	factory nriStubFactory, getenv func(string) string, policy reconnectPolicy,
 	conn *nriConnection,
 ) (runErr, err error) {
@@ -438,7 +443,7 @@ func connectOnce(
 	}
 
 	slog.Info("Starting NRI plugin",
-		"name", settings.pluginName, "index", settings.pluginIdx,
+		"name", settings.PluginName, "index", settings.PluginIdx,
 	)
 
 	runErr = runStub(ctx, nriStub, policy.configureTimeout, func() {

@@ -16,6 +16,7 @@
 package glob
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -24,6 +25,10 @@ import (
 )
 
 const maxCachedPatterns = 10000
+
+// ErrInvalidCharClass indicates a '[...]' character class that does not form
+// a valid class (e.g. a reversed range "[z-a]").
+var ErrInvalidCharClass = errors.New("invalid character class")
 
 var (
 	compiledPatterns sync.Map     //nolint:gochecknoglobals // cache compiled regexps
@@ -59,6 +64,11 @@ func compile(pattern string) (*regexp.Regexp, error) {
 		}
 	}
 
+	err := Validate(pattern)
+	if err != nil {
+		return nil, err
+	}
+
 	compiled, err := regexp.Compile("^" + ToRegex(pattern) + "$")
 	if err != nil {
 		return nil, fmt.Errorf("compiling regexp: %w", err)
@@ -73,13 +83,43 @@ func compile(pattern string) (*regexp.Regexp, error) {
 	return compiled, nil
 }
 
+// Validate reports an error if pattern contains a terminated '[...]'
+// character class that does not compile (e.g. "[z-a]" or "[[:alpha:]]").
+// An unterminated '[' is a literal and is accepted.
+func Validate(pattern string) error {
+	runes := []rune(pattern)
+
+	for idx := 0; idx < len(runes); idx++ {
+		switch runes[idx] {
+		case '\\':
+			idx++
+		case '[':
+			end := findBracketEnd(runes, idx)
+			if end < 0 {
+				continue
+			}
+
+			_, err := regexp.Compile(escapeCharClass(runes[idx : end+1]))
+			if err != nil {
+				return fmt.Errorf("%w %q", ErrInvalidCharClass, string(runes[idx:end+1]))
+			}
+
+			idx = end
+		}
+	}
+
+	return nil
+}
+
 // ToRegex converts a glob pattern to a regex string, consistent with
 // path.Match semantics: '*' matches non-'/' characters, '**' matches any
 // characters including '/', '?' matches a single non-'/' character, and
 // '[...]' character classes have backslash escapes consumed to prevent
 // glob/regex semantic divergence (e.g. [\d] in glob matches only 'd', not
 // the regex digit class). Negated classes ('[^...]' or '[!...]') never match
-// '/', so they cannot be used to cross a path segment.
+// '/', so they cannot be used to cross a path segment. An unterminated '['
+// is a literal. A class rejected by Validate is quoted literally so the
+// result always compiles; Match rejects such patterns.
 func ToRegex(pattern string) string {
 	var builder strings.Builder
 

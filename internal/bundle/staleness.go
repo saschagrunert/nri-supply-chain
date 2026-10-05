@@ -16,16 +16,25 @@ package bundle
 
 import "time"
 
+// maxCreatedAtClockSkew is how far in the future a bundle creation time may
+// be, to tolerate clock differences between the creating and verifying hosts.
+const maxCreatedAtClockSkew = 5 * time.Minute
+
 // StalenessResult holds the result of a bundle staleness check.
 type StalenessResult struct {
-	Stale   bool
+	Stale bool
+	// Future is set when the creation time lies in the future beyond the
+	// allowed clock skew. The age of such a bundle is unknown, so it counts
+	// as stale.
+	Future  bool
 	Age     time.Duration
 	MaxAge  time.Duration
 	Allowed bool
 }
 
 // CheckStaleness evaluates whether the bundle has exceeded its maximum age and
-// whether the expiry policy allows continued use.
+// whether the expiry policy allows continued use. A creation time in the
+// future cannot prove freshness and is handled like an exceeded maximum age.
 func CheckStaleness(
 	manifest *Manifest,
 	maxAge time.Duration,
@@ -35,6 +44,7 @@ func CheckStaleness(
 
 	result := &StalenessResult{
 		Stale:   false,
+		Future:  false,
 		Age:     age,
 		MaxAge:  maxAge,
 		Allowed: false,
@@ -42,6 +52,14 @@ func CheckStaleness(
 
 	if maxAge <= 0 {
 		result.Allowed = true
+
+		return result
+	}
+
+	if age < -maxCreatedAtClockSkew {
+		result.Stale = true
+		result.Future = true
+		result.Allowed = policy != ExpiryDeny
 
 		return result
 	}

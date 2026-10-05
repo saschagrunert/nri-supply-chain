@@ -458,11 +458,11 @@ func TestVerifyMultiple(t *testing.T) {
 			wantStatus: types.StatusFail,
 		},
 		{
-			name:       "empty attestation list",
+			name:       "empty attestation list fails",
 			docs:       []testResultDoc{},
 			pol:        &policy.Policy{},
-			wantPassed: true,
-			wantStatus: types.StatusPass,
+			wantPassed: false,
+			wantStatus: types.StatusFail,
 		},
 	}
 
@@ -668,8 +668,8 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		)
 		testutil.AssertNoError(t, err)
 
-		if !result.Passed {
-			t.Errorf("expected pass for nil attestation slice, got: %s", result.Detail)
+		if result.Passed {
+			t.Error("expected failure for nil attestation slice")
 		}
 	})
 

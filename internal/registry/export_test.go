@@ -18,9 +18,11 @@ import (
 	"context"
 	"net/http"
 
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
+	"github.com/saschagrunert/nri-supply-chain/internal/httputil"
 )
 
 // NewACRHelperWithFuncs creates an ACR helper with injected token acquisition
@@ -52,11 +54,11 @@ func (tc *TransportCache) GetCachedTransport(prefix string) (http.RoundTripper, 
 
 // Exported constants for testing.
 const (
-	TransportMaxIdleConns  = transportMaxIdleConns
-	TransportIdlePerHost   = transportIdlePerHost
-	TransportIdleTimeout   = transportIdleTimeout
-	TransportTLSTimeout    = transportTLSTimeout
-	TransportExpectTimeout = transportExpectTimeout
+	TransportMaxIdleConns  = httputil.MaxIdleConns
+	TransportIdlePerHost   = httputil.MaxIdleConnsPerHost
+	TransportIdleTimeout   = httputil.IdleConnTimeout
+	TransportTLSTimeout    = httputil.TLSTimeout
+	TransportExpectTimeout = httputil.ExpectContTimeout
 )
 
 //nolint:gochecknoglobals // test exports
@@ -87,6 +89,11 @@ func ResolveDigest(
 // ResolveIndexDigest exports resolveIndexDigest for testing.
 func ResolveIndexDigest(desc *remote.Descriptor) (string, error) {
 	return resolveIndexDigest(desc)
+}
+
+// SelectPlatformDigest exports selectPlatformDigest for testing.
+func SelectPlatformDigest(manifests []v1.Descriptor, goos, goarch string) (string, error) {
+	return selectPlatformDigest(manifests, goos, goarch)
 }
 
 // PlatformVariant exports platformVariant for testing.

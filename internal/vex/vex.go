@@ -253,7 +253,7 @@ func detectFormat(predicate []byte) documentFormat {
 	}
 
 	switch {
-	case hint.BOMFormat == formatCycloneDX:
+	case strings.EqualFold(hint.BOMFormat, formatCycloneDX):
 		return formatCDX
 	case hint.Context != "" || len(hint.Statements) > 0:
 		return formatOpenVEX

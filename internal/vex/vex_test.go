@@ -52,10 +52,21 @@ func validVEXDoc(status openvex.Status) openvex.VEX {
 				Products: []openvex.Product{
 					{ID: testDigest},
 				},
-				Status: status,
+				Status:        status,
+				Justification: justificationFor(status),
 			},
 		},
 	}
+}
+
+// justificationFor returns the justification a valid statement with the
+// status carries: OpenVEX requires one for not_affected.
+func justificationFor(status openvex.Status) openvex.Justification {
+	if status == openvex.StatusNotAffected {
+		return openvex.ComponentNotPresent
+	}
+
+	return ""
 }
 
 func TestVerify(t *testing.T) {
@@ -461,7 +472,8 @@ func multiStatusVEXDoc(statuses ...openvex.Status) openvex.VEX {
 			Products: []openvex.Product{
 				{ID: testDigest},
 			},
-			Status: status,
+			Status:        status,
+			Justification: justificationFor(status),
 		})
 	}
 
@@ -1400,6 +1412,25 @@ func TestVerifyCycloneDXFormatDetection(t *testing.T) {
 				t.Errorf("expected status %q, got %q", test.wantStatus, result.Status)
 			}
 		})
+	}
+}
+
+func TestVerifyCycloneDXFormatCaseInsensitive(t *testing.T) {
+	t.Parallel()
+
+	bom := cycloneDXBOM(cdx.IASNotAffected)
+	bom.BOMFormat = "cyclonedx"
+
+	result, err := vex.Verify(
+		context.Background(), wrapCycloneDXInToto(t, bom, testDigest),
+		&policy.Policy{}, testImageRef, testDigest, nil,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.Passed || result.Status != types.StatusPass {
+		t.Errorf("expected a lowercase bomFormat to be read as CycloneDX, got %s", result.Detail)
 	}
 }
 

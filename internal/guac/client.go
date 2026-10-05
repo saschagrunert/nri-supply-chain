@@ -37,6 +37,7 @@ import (
 
 	"github.com/saschagrunert/nri-supply-chain/internal/fileutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/httputil"
+	"github.com/saschagrunert/nri-supply-chain/internal/purl"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
@@ -61,6 +62,9 @@ var (
 const (
 	maxResponseSize = 10 << 20 // 10 MiB
 	maxRedirects    = 10
+
+	// purlTypeOCI is the purl type of container images.
+	purlTypeOCI = "oci"
 )
 
 // Client queries a GUAC instance for vulnerability, scorecard, and
@@ -211,7 +215,7 @@ func parseVulnResponse(
 				Package: entry.Package,
 			}
 
-			if entry.Package == digest {
+			if isImagePackage(entry.Package, digest) {
 				direct = append(direct, vuln)
 			} else {
 				transitive = append(transitive, vuln)
@@ -220,6 +224,30 @@ func parseVulnResponse(
 	}
 
 	return direct, transitive, nil
+}
+
+// isImagePackage reports whether a vulnerability's package names the queried
+// image itself rather than one of its dependencies: the digest (with or
+// without its algorithm prefix, in any case) or an OCI purl whose version is
+// the digest. GUAC usually attaches vulnerabilities to the purls of the
+// packages contained in the image, which are reported as transitive.
+func isImagePackage(pkg, digest string) bool {
+	pkg = strings.TrimSpace(pkg)
+	if pkg == "" || digest == "" {
+		return false
+	}
+
+	if strings.EqualFold(pkg, digest) {
+		return true
+	}
+
+	if _, hex, found := strings.Cut(digest, ":"); found && strings.EqualFold(pkg, hex) {
+		return true
+	}
+
+	parsed, err := purl.Parse(pkg)
+
+	return err == nil && parsed.Type == purlTypeOCI && strings.EqualFold(parsed.Version, digest)
 }
 
 // QueryDependencies queries GUAC for the dependency graph of the given
@@ -730,34 +758,7 @@ func (c *Client) postGraphQL(
 
 	req.Header.Set("Content-Type", "application/json")
 
-	err = c.setAuth(req)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrGUACUnavailable, err)
-	}
-
-	defer resp.Body.Close() //nolint:errcheck // response body is fully read below
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize+1))
-	if err != nil {
-		return nil, fmt.Errorf("%w: reading GraphQL response: %w", ErrGUACQueryFailed, err)
-	}
-
-	if int64(len(body)) > maxResponseSize {
-		return nil, fmt.Errorf("%w: GraphQL response exceeds %d bytes",
-			ErrGUACQueryFailed, maxResponseSize)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%w: GraphQL returned %d: %s",
-			ErrGUACQueryFailed, resp.StatusCode, truncateBody(body))
-	}
-
-	return body, nil
+	return c.do(req, "GraphQL response")
 }
 
 func (c *Client) doGet(ctx context.Context, reqURL string) ([]byte, error) {
@@ -766,7 +767,14 @@ func (c *Client) doGet(ctx context.Context, reqURL string) ([]byte, error) {
 		return nil, fmt.Errorf("%w: %w", ErrGUACQueryFailed, err)
 	}
 
-	err = c.setAuth(req)
+	return c.do(req, "response")
+}
+
+// do sends an authenticated request and returns the response body. Bodies
+// larger than maxResponseSize and non-200 statuses are errors; label names
+// the response in error messages.
+func (c *Client) do(req *http.Request, label string) ([]byte, error) {
+	err := c.setAuth(req)
 	if err != nil {
 		return nil, err
 	}
@@ -780,17 +788,17 @@ func (c *Client) doGet(ctx context.Context, reqURL string) ([]byte, error) {
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize+1))
 	if err != nil {
-		return nil, fmt.Errorf("%w: reading response: %w", ErrGUACQueryFailed, err)
+		return nil, fmt.Errorf("%w: reading %s: %w", ErrGUACQueryFailed, label, err)
 	}
 
 	if int64(len(body)) > maxResponseSize {
-		return nil, fmt.Errorf("%w: response exceeds %d bytes",
-			ErrGUACQueryFailed, maxResponseSize)
+		return nil, fmt.Errorf("%w: %s exceeds %d bytes",
+			ErrGUACQueryFailed, label, maxResponseSize)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%w: status %d: %s",
-			ErrGUACQueryFailed, resp.StatusCode, truncateBody(body))
+		return nil, fmt.Errorf("%w: %s status %d: %s",
+			ErrGUACQueryFailed, label, resp.StatusCode, truncateBody(body))
 	}
 
 	return body, nil

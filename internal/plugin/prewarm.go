@@ -16,7 +16,9 @@ package plugin
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -122,15 +124,16 @@ func (p *Plugin) recoverContainerState(
 	p.containers.StoreIfAbsent(
 		ctr.GetId(),
 		&containerState{ //nolint:exhaustruct_v5 // zero-value fields intentional
-			imageRef:           imageRef,
-			digest:             digest,
-			unresolvedDigest:   unresolvedDigest,
-			namespace:          namespace,
-			serviceAccount:     ctr.GetAnnotations()[AnnotationServiceAccountPersist],
-			createdAt:          time.Now(),
-			state:              state,
-			originalResources:  original,
-			recoveredOnRestart: !trusted,
+			imageRef:            imageRef,
+			digest:              digest,
+			unresolvedDigest:    unresolvedDigest,
+			namespace:           namespace,
+			serviceAccount:      ctr.GetAnnotations()[AnnotationServiceAccountPersist],
+			createdAt:           time.Now(),
+			state:               state,
+			originalResources:   original,
+			recoveredOnRestart:  !trusted,
+			awaitingFirstResult: true,
 		},
 	)
 }
@@ -268,7 +271,7 @@ func (p *Plugin) resolveOneDigest(
 
 func deduplicateResults(results []resolveResult) []prewarmImage {
 	resolved := make([]prewarmImage, 0, len(results))
-	seen := make(map[string]struct{})
+	seen := make(map[string]int)
 
 	for idx := range results {
 		res := &results[idx]
@@ -277,13 +280,18 @@ func deduplicateResults(results []resolveResult) []prewarmImage {
 		}
 
 		// Verification results are cached per image reference, digest and
-		// namespace, so only identical triples are redundant.
+		// namespace, so only identical triples are redundant. Their
+		// containers are merged so the result is recorded for all of them.
 		key := res.img.imageRef + "\x00" + res.img.digest + "\x00" + res.img.namespace
-		if _, exists := seen[key]; exists {
+		if existing, exists := seen[key]; exists {
+			resolved[existing].containerIDs = append(
+				slices.Clone(resolved[existing].containerIDs), res.img.containerIDs...,
+			)
+
 			continue
 		}
 
-		seen[key] = struct{}{}
+		seen[key] = len(resolved)
 
 		resolved = append(resolved, res.img)
 	}
@@ -349,13 +357,19 @@ func (p *Plugin) runPrewarmVerifications(
 		go func() {
 			defer sem.Release(1)
 
-			_, verifyErr := p.verifier.Verify(ctx, &types.VerifyRequest{
+			result, verifyErr := p.verifier.Verify(ctx, &types.VerifyRequest{
 				ImageRef:       img.imageRef,
 				Digest:         img.digest,
 				IndexDigest:    img.indexDigest,
 				Namespace:      img.namespace,
 				ServiceAccount: "",
 			})
+
+			// In enforce mode a failed verification comes with its result.
+			if verifyErr == nil || errors.Is(verifyErr, types.ErrVerificationFailed) {
+				p.recordPrewarmResult(ctx, &img, result)
+			}
+
 			if verifyErr != nil {
 				slog.DebugContext(ctx, "Pre-warm verification failed",
 					"image", img.imageRef,
@@ -381,6 +395,71 @@ func (p *Plugin) runPrewarmVerifications(
 	}
 
 	return verified.Load(), false
+}
+
+// recordPrewarmResult records the verification result of a pre-warmed image
+// on the containers registered at Synchronize that run it, like a
+// re-verification would: without a result, CVE feed triggers could not match
+// their packages. Containers that were already tracked keep their state, only
+// containers whose recorded digest is the verified one are updated, and an
+// incomplete result says nothing about the image. With remediation enabled, a
+// verified container whose image fails verification is degraded like the
+// continuous verifier would degrade it. Without remediation the continuous
+// verifier does not run and could never recover the container, so its state
+// is left unchanged; once remediation is enabled, the continuous verifier
+// degrades it with a warning.
+func (p *Plugin) recordPrewarmResult(
+	ctx context.Context, img *prewarmImage, result *types.Result,
+) {
+	if result == nil || result.Incomplete() {
+		return
+	}
+
+	remediate := p.remediationEnabled()
+	purls := extractPURLsFromResult(result)
+	triggerHash := computeTriggerHash(triggerPrewarm, img.digest, nil)
+
+	for _, containerID := range img.containerIDs {
+		p.containers.UpdateState(containerID, func(cState *containerState) {
+			if !cState.awaitingFirstResult || cState.digest != img.digest {
+				return
+			}
+
+			cState.awaitingFirstResult = false
+			cState.lastResult = result
+			cState.purls = purls
+
+			if !remediate || result.Verified || cState.state != StateVerified {
+				return
+			}
+
+			cState.state = StateDegraded
+			cState.lastTriggerHash = triggerHash
+
+			slog.WarnContext(ctx, "Container verification degraded",
+				"container", containerID,
+				"image", img.imageRef,
+				"namespace", img.namespace,
+				"trigger", triggerPrewarm,
+			)
+			p.metrics.RemediationActionsTotal.WithLabelValues("warn", img.namespace).Inc()
+		})
+	}
+}
+
+// prewarmContext returns the context of a pre-warm run. It outlives the
+// request context, so the ttrpc request completing does not interrupt the
+// pre-warm goroutine, but not the plugin: Close cancels it, also when the
+// pre-warm starts during shutdown. The returned cancel function cancels it
+// too.
+func (p *Plugin) prewarmContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	prewarmCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	stop := context.AfterFunc(p.lifetime, cancel)
+
+	return prewarmCtx, func() {
+		stop()
+		cancel()
+	}
 }
 
 func (p *Plugin) observePrewarm(start time.Time, result string) {

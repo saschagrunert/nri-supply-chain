@@ -123,9 +123,17 @@ func VerifyMultiple(
 	return spec.VerifyMultiple(ctx, attestations, pol, imageDigest)
 }
 
+// validatePredicate requires at least one source location and a non-empty
+// uri on every location, since each one is checked against trust.sources.
 func validatePredicate(pred *sourcePredicate) error {
-	if len(pred.SourceLocations) == 0 || strings.TrimSpace(pred.SourceLocations[0].URI) == "" {
+	if len(pred.SourceLocations) == 0 {
 		return errNoSourceLocation
+	}
+
+	for idx := range pred.SourceLocations {
+		if strings.TrimSpace(pred.SourceLocations[idx].URI) == "" {
+			return fmt.Errorf("%w: sourceLocations[%d]", errNoSourceLocation, idx)
+		}
 	}
 
 	return nil
@@ -152,9 +160,13 @@ func checkTrustedSource(pred *sourcePredicate, pol *policy.Policy) string {
 		return ""
 	}
 
-	err := verifySourceRepo(&pred.SourceLocations[0], pol.Trust.Sources)
-	if err != nil {
-		return err.Error()
+	// Every location must be trusted: an untrusted location next to a
+	// trusted one means the attested source includes untrusted code.
+	for idx := range pred.SourceLocations {
+		err := verifySourceRepo(&pred.SourceLocations[idx], pol.Trust.Sources)
+		if err != nil {
+			return err.Error()
+		}
 	}
 
 	return ""

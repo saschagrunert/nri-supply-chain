@@ -95,6 +95,11 @@ func decodePolicy(data []byte, source string) (*Policy, error) {
 		)
 	}
 
+	err = checkDuplicateKeys(data)
+	if err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", source, err)
+	}
+
 	err = checkCanonicalFields(data)
 	if err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", source, err)
@@ -312,7 +317,9 @@ func checkPolicyFile(resolvedDir, fullPath string) error {
 // default.json never weakens the mode of other namespaces (the default mode
 // is at least as strict as the global mode). Keyless verifiers of inheriting
 // policies are validated here, on the merged policy, because they may rely on
-// the default policy's trust.issuers.
+// the default policy's trust.issuers. Required and forbidden SCAI attributes
+// and build environment properties are checked here too, because the
+// default policy may require what the namespace forbids.
 func applyInheritance(policies map[string]*Policy) error {
 	defaultPol := policies[""]
 
@@ -336,7 +343,7 @@ func applyInheritance(policies map[string]*Policy) error {
 		}
 
 		if inherits {
-			err := pol.validateKeylessVerifiers()
+			err := errors.Join(pol.validateKeylessVerifiers(), pol.validateOverlaps())
 			if err != nil {
 				errs = append(errs, fmt.Errorf(
 					"invalid policy for namespace %q: %w", namespace, err,

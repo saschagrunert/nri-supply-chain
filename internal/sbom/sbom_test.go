@@ -1666,9 +1666,11 @@ func TestVerifyCVSSNilScoreSeverityOnly(t *testing.T) {
 		t.Errorf("expected detail to mention severity, got %q", result.Detail)
 	}
 
+	// Without a score, cvssMax reports the lowest score of the severity so
+	// CEL rules on cvssMax cannot be bypassed by omitting scores.
 	cvssMax, ok := result.Metadata["cvssMax"].(float64)
-	if !ok || cvssMax != 0 {
-		t.Errorf("expected cvssMax 0 for nil-score rating, got %v", cvssMax)
+	if !ok || cvssMax != 7 {
+		t.Errorf("expected cvssMax 7 for nil-score high rating, got %v", cvssMax)
 	}
 }
 

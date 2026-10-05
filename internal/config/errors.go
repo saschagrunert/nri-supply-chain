@@ -112,6 +112,10 @@ var (
 	// ErrRegistryCACertNotFound indicates a registry CA cert file does not exist.
 	ErrRegistryCACertNotFound = errors.New("registry ca_cert file not found")
 
+	// ErrRegistryCACertNotRegularFile indicates a registry CA cert path is not a
+	// regular file.
+	ErrRegistryCACertNotRegularFile = errors.New("registry ca_cert is not a regular file")
+
 	// ErrDuplicateRegistryPrefix indicates multiple registries share the same prefix.
 	ErrDuplicateRegistryPrefix = errors.New("duplicate registry prefix")
 
@@ -160,6 +164,10 @@ var (
 	// ErrPolicySANPatternEmpty indicates an empty string in the san_patterns list.
 	ErrPolicySANPatternEmpty = errors.New("policy.san_patterns entries must not be empty")
 
+	// ErrPolicySANPatternInvalid indicates a san_patterns entry is not a valid
+	// glob pattern.
+	ErrPolicySANPatternInvalid = errors.New("policy.san_patterns entry is not a valid pattern")
+
 	// ErrPolicySignatureKeyNotAbsolute indicates a policy key path is not absolute.
 	ErrPolicySignatureKeyNotAbsolute = errors.New(
 		"policy.keys path must be absolute",
@@ -199,6 +207,9 @@ var (
 
 	// ErrPolicyKeyNotRegularFile indicates a policy key path is not a regular file.
 	ErrPolicyKeyNotRegularFile = errors.New("policy.keys path is not a regular file")
+
+	// ErrPolicyKeyNotFound indicates a policy key file cannot be accessed.
+	ErrPolicyKeyNotFound = errors.New("policy.keys file not found")
 
 	// ErrConfigFileTooLarge indicates the config file exceeds the size limit.
 	ErrConfigFileTooLarge = errors.New("config file exceeds maximum size")

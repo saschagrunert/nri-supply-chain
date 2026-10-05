@@ -15,6 +15,7 @@ internal limits, and security considerations.
 - [Monitoring and Alerting](#monitoring-and-alerting)
 - [Internal Limits](#internal-limits)
 - [Security Considerations](#security-considerations)
+- [Upgrade Notes](#upgrade-notes)
 
 <!-- /toc -->
 
@@ -23,48 +24,48 @@ internal limits, and security considerations.
 The plugin exposes Prometheus metrics at the configured
 [`metrics_addr`](config.md):
 
-| Metric                                               | Type      | Labels                        | Description                                                                                                                        |
-| ---------------------------------------------------- | --------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `nri_supply_chain_verification_total`                | Counter   | `type`, `result`, `namespace` | Total verification attempts. `result`: `pass`, `warn`, `fail`                                                                      |
-| `nri_supply_chain_verification_duration_seconds`     | Histogram | `type`                        | Verification latency                                                                                                               |
-| `nri_supply_chain_cache_hits_total`                  | Counter   |                               | Cache hits                                                                                                                         |
-| `nri_supply_chain_cache_misses_total`                | Counter   |                               | Cache misses                                                                                                                       |
-| `nri_supply_chain_cache_entries`                     | Gauge     |                               | Current number of cached entries                                                                                                   |
-| `nri_supply_chain_cache_evictions_total`             | Counter   | `reason`                      | Cache entry evictions. `reason`: `expired`, `capacity`                                                                             |
-| `nri_supply_chain_verification_skipped_total`        | Counter   | `reason`, `namespace`         | Containers allowed without verification. `reason`: `allowlisted`, `excluded`, `missing_annotations`, `not_included`                |
-| `nri_supply_chain_fetch_duration_seconds`            | Histogram | `registry`                    | Attestation fetch latency per registry                                                                                             |
-| `nri_supply_chain_fetch_errors_total`                | Counter   | `type`, `registry`            | Attestation fetch errors                                                                                                           |
-| `nri_supply_chain_inflight_dedup_total`              | Counter   |                               | Deduplicated inflight verifications                                                                                                |
-| `nri_supply_chain_circuit_breaker_trips_total`       | Counter   | `registry`                    | Circuit breaker open events                                                                                                        |
-| `nri_supply_chain_trusted_root_fallback_total`       | Counter   |                               | Trusted root fallback events (stale cache or pre-seeded root)                                                                      |
-| `nri_supply_chain_cache_failure_hits_total`          | Counter   |                               | Cache hits returning a cached failure                                                                                              |
-| `nri_supply_chain_build_info`                        | Gauge     | `version`, `goversion`        | Build metadata (set once at startup)                                                                                               |
-| `nri_supply_chain_config_reloads_total`              | Counter   |                               | Successful config reloads                                                                                                          |
-| `nri_supply_chain_verification_interrupted_total`    | Counter   |                               | Verifications interrupted by context cancellation or internal errors                                                               |
-| `nri_supply_chain_config_reload_errors_total`        | Counter   |                               | Failed config reload attempts                                                                                                      |
-| `nri_supply_chain_prewarm_duration_seconds`          | Histogram | `result`                      | Cache prewarm latency (buckets: 1, 5, 10, 30, 60, 120, 300)                                                                        |
-| `nri_supply_chain_mirror_fallback_total`             | Counter   | `registry`, `type`            | Mirror fallback events. `type`: `digest`, `attestation`                                                                            |
-| `nri_supply_chain_container_lifetime_seconds`        | Histogram | `namespace`                   | Duration containers run before removal (buckets: exponential 0.5s \* 2^n, n=0..20)                                                 |
-| `nri_supply_chain_cel_evaluation_duration_seconds`   | Histogram |                               | CEL rule evaluation latency                                                                                                        |
-| `nri_supply_chain_policy_reloads_total`              | Counter   |                               | OCI policy update events (poller-driven reloads)                                                                                   |
-| `nri_supply_chain_guac_query_duration_seconds`       | Histogram | `type`                        | GUAC API query latency                                                                                                             |
-| `nri_supply_chain_bundle_staleness_total`            | Counter   | `policy`                      | Bundle staleness events. `policy`: `allow`, `warn`, `deny`                                                                         |
-| `nri_supply_chain_bundle_verifications_total`        | Counter   | `result`                      | Bundle verification attempts. `result`: `success`, `error`                                                                         |
-| `nri_supply_chain_bundle_age_seconds`                | Gauge     |                               | Current age of the active attestation bundle in seconds                                                                            |
-| `nri_supply_chain_bundle_image_count`                | Gauge     |                               | Number of images in the active attestation bundle                                                                                  |
-| `nri_supply_chain_reverification_total`              | Counter   | `namespace`, `result`         | Re-verification attempts. `result`: `pass`, `degraded`, `incomplete`, `error`                                                      |
-| `nri_supply_chain_reverification_duration_seconds`   | Histogram | `namespace`                   | Single container re-verification latency                                                                                           |
-| `nri_supply_chain_tracked_containers`                | Gauge     | `state`                       | Number of containers by verification state (`verified`, `skipped`, `degraded`, `throttled`)                                        |
-| `nri_supply_chain_remediation_actions_total`         | Counter   | `action`, `namespace`         | Remediation actions taken. `action`: `warn`, `throttle`, `rollback`, `recover`                                                     |
-| `nri_supply_chain_remediation_errors_total`          | Counter   | `action`                      | Failed remediation UpdateContainers calls. `action`: `update`, `partial`                                                           |
-| `nri_supply_chain_feed_files_processed_total`        | Counter   | `result`                      | Vulnerability feed files processed. `result`: `success`, `error`                                                                   |
-| `nri_supply_chain_continuous_verifier_last_run`      | Gauge     |                               | Unix timestamp of the last completed continuous verification cycle                                                                 |
-| `nri_supply_chain_host_sem_overflow_total`           | Counter   |                               | Per-host semaphore map overflow events (map at capacity, new host evicts oldest)                                                   |
-| `nri_supply_chain_create_container_duration_seconds` | Histogram | `namespace`, `result`         | End-to-end latency of the NRI `CreateContainer` hook. `result`: `success`, `error`. Compare with the runtime's NRI request timeout |
-| `nri_supply_chain_nri_connected`                     | Gauge     |                               | `1` while the plugin is connected to the NRI runtime, `0` otherwise                                                                |
-| `nri_supply_chain_policy_oci_staleness_seconds`      | Gauge     |                               | Seconds since the last successful OCI policy registry check (`policy.source = "oci"` only)                                         |
-| `nri_supply_chain_runtime_config_apply_failed`       | Gauge     |                               | `1` while the configuration passed by the runtime failed to apply and is being retried, `0` otherwise                              |
-| `nri_supply_chain_reverify_incomplete_containers`    | Gauge     |                               | Containers whose last 3 or more re-verifications could not complete; their state is kept (see below)                               |
+| Metric                                               | Type      | Labels                        | Description                                                                                                                                     |
+| ---------------------------------------------------- | --------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `nri_supply_chain_verification_total`                | Counter   | `type`, `result`, `namespace` | Total verification attempts. `result`: `pass`, `warn`, `fail`                                                                                   |
+| `nri_supply_chain_verification_duration_seconds`     | Histogram | `type`                        | Verification latency                                                                                                                            |
+| `nri_supply_chain_cache_hits_total`                  | Counter   |                               | Cache hits                                                                                                                                      |
+| `nri_supply_chain_cache_misses_total`                | Counter   |                               | Cache misses                                                                                                                                    |
+| `nri_supply_chain_cache_entries`                     | Gauge     |                               | Current number of cached entries                                                                                                                |
+| `nri_supply_chain_cache_evictions_total`             | Counter   | `reason`                      | Cache entry evictions. `reason`: `expired`, `capacity`                                                                                          |
+| `nri_supply_chain_verification_skipped_total`        | Counter   | `reason`, `namespace`         | Containers allowed without verification. `reason`: `allowlisted`, `digest_resolution_failed`, `excluded`, `missing_annotations`, `not_included` |
+| `nri_supply_chain_fetch_duration_seconds`            | Histogram | `registry`                    | Attestation fetch latency per registry                                                                                                          |
+| `nri_supply_chain_fetch_errors_total`                | Counter   | `type`, `registry`            | Attestation fetch errors                                                                                                                        |
+| `nri_supply_chain_inflight_dedup_total`              | Counter   |                               | Deduplicated inflight verifications                                                                                                             |
+| `nri_supply_chain_circuit_breaker_trips_total`       | Counter   | `registry`                    | Circuit breaker open events                                                                                                                     |
+| `nri_supply_chain_trusted_root_fallback_total`       | Counter   |                               | Trusted root fallback events (stale cache or pre-seeded root)                                                                                   |
+| `nri_supply_chain_cache_failure_hits_total`          | Counter   |                               | Cache hits returning a cached failure                                                                                                           |
+| `nri_supply_chain_build_info`                        | Gauge     | `version`, `goversion`        | Build metadata (set once at startup)                                                                                                            |
+| `nri_supply_chain_config_reloads_total`              | Counter   |                               | Successful config reloads                                                                                                                       |
+| `nri_supply_chain_verification_interrupted_total`    | Counter   |                               | Verifications interrupted by context cancellation or internal errors                                                                            |
+| `nri_supply_chain_config_reload_errors_total`        | Counter   |                               | Failed config reload attempts                                                                                                                   |
+| `nri_supply_chain_prewarm_duration_seconds`          | Histogram | `result`                      | Cache prewarm latency (buckets: 1, 5, 10, 30, 60, 120, 300)                                                                                     |
+| `nri_supply_chain_mirror_fallback_total`             | Counter   | `registry`, `type`            | Mirror fallback events. `type`: `digest`, `attestation`                                                                                         |
+| `nri_supply_chain_container_lifetime_seconds`        | Histogram | `namespace`                   | Duration containers run before they stop or are removed (buckets: exponential 0.5s \* 2^n, n=0..20)                                             |
+| `nri_supply_chain_cel_evaluation_duration_seconds`   | Histogram |                               | CEL rule evaluation latency                                                                                                                     |
+| `nri_supply_chain_policy_reloads_total`              | Counter   |                               | OCI policy update events (poller-driven reloads)                                                                                                |
+| `nri_supply_chain_guac_query_duration_seconds`       | Histogram | `type`                        | GUAC API query latency                                                                                                                          |
+| `nri_supply_chain_bundle_staleness_total`            | Counter   | `policy`                      | Bundle staleness events. `policy`: `allow`, `warn`, `deny`                                                                                      |
+| `nri_supply_chain_bundle_verifications_total`        | Counter   | `result`                      | Bundle verification attempts. `result`: `success`, `error`                                                                                      |
+| `nri_supply_chain_bundle_age_seconds`                | Gauge     |                               | Current age of the active attestation bundle in seconds                                                                                         |
+| `nri_supply_chain_bundle_image_count`                | Gauge     |                               | Number of images in the active attestation bundle                                                                                               |
+| `nri_supply_chain_reverification_total`              | Counter   | `namespace`, `result`         | Re-verification attempts. `result`: `pass`, `degraded`, `incomplete`, `error`                                                                   |
+| `nri_supply_chain_reverification_duration_seconds`   | Histogram | `namespace`                   | Single container re-verification latency                                                                                                        |
+| `nri_supply_chain_tracked_containers`                | Gauge     | `state`                       | Number of containers by verification state (`verified`, `skipped`, `degraded`, `throttled`)                                                     |
+| `nri_supply_chain_remediation_actions_total`         | Counter   | `action`, `namespace`         | Remediation actions taken. `action`: `warn`, `throttle`, `rollback`, `recover`                                                                  |
+| `nri_supply_chain_remediation_errors_total`          | Counter   | `action`                      | Failed remediation UpdateContainers calls. `action`: `update`, `partial`                                                                        |
+| `nri_supply_chain_feed_files_processed_total`        | Counter   | `result`                      | Vulnerability feed files processed. `result`: `success`, `error`                                                                                |
+| `nri_supply_chain_continuous_verifier_last_run`      | Gauge     |                               | Unix timestamp of the last completed continuous verification cycle                                                                              |
+| `nri_supply_chain_host_sem_overflow_total`           | Counter   |                               | Per-host semaphore map overflow events (map at capacity, new host evicts oldest)                                                                |
+| `nri_supply_chain_create_container_duration_seconds` | Histogram | `namespace`, `result`         | End-to-end latency of the NRI `CreateContainer` hook. `result`: `success`, `error`. Compare with the runtime's NRI request timeout              |
+| `nri_supply_chain_nri_connected`                     | Gauge     |                               | `1` while the plugin is connected to the NRI runtime, `0` otherwise                                                                             |
+| `nri_supply_chain_policy_oci_staleness_seconds`      | Gauge     |                               | Seconds since the last successful OCI policy registry check (`policy.source = "oci"` only)                                                      |
+| `nri_supply_chain_runtime_config_apply_failed`       | Gauge     |                               | `1` while the configuration passed by the runtime failed to apply and is being retried, `0` otherwise                                           |
+| `nri_supply_chain_reverify_incomplete_containers`    | Gauge     |                               | Containers whose last 3 or more re-verifications could not complete; their state is kept (see below)                                            |
 
 An incomplete re-verification (for example attestations that cannot be fetched
 during a registry outage) says nothing about the image, so the continuous
@@ -225,27 +226,29 @@ detailed verification traces.
 ### Audit Logging
 
 Every verification decision emits a structured log entry with the message
-`"Supply chain audit"`. Filter for this message to build an audit trail of
-all container verification outcomes. When `audit_log` is set in the config,
-these entries are written as JSON to a dedicated file instead of the
-application logger (see [config.md](config.md)).
+`"Supply chain audit"`, written once the verification mode was applied.
+Filter for this message to build an audit trail of all container verification
+outcomes. When `audit_log` is set in the config, these entries are written as
+JSON to a dedicated file instead of the application logger (see
+[config.md](config.md)).
 
-| Field               | Description                                                      |
-| ------------------- | ---------------------------------------------------------------- |
-| `schemaVersion`     | Audit schema version (currently `"1"`)                           |
-| `image`             | Full image reference                                             |
-| `digest`            | Image digest                                                     |
-| `namespace`         | Kubernetes namespace                                             |
-| `allowed`           | Whether the container was allowed                                |
-| `check`             | Check type (e.g. `slsa`, `vex`, `vsa`), present for check events |
-| `status`            | Check result status                                              |
-| `detail`            | Human-readable check detail                                      |
-| `decision`          | `allowed` or `denied`, present for decision events               |
-| `reason`            | Human-readable decision reason                                   |
-| `policyHash`        | SHA-256 hash of the effective policy used for verification       |
-| `nodeName`          | Node where the container was scheduled                           |
-| `podServiceAccount` | Kubernetes service account of the pod                            |
-| `verificationMode`  | Effective verification mode (`warn`, `enforce`)                  |
+| Field               | Description                                                                                                                                       |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schemaVersion`     | Audit schema version (currently `"1"`)                                                                                                            |
+| `image`             | Full image reference                                                                                                                              |
+| `digest`            | Image digest                                                                                                                                      |
+| `namespace`         | Kubernetes namespace                                                                                                                              |
+| `allowed`           | Whether the container was admitted (after applying the verification mode)                                                                         |
+| `check`             | Check type (e.g. `slsa`, `vex`, `vsa`), present for check events                                                                                  |
+| `status`            | Check result status                                                                                                                               |
+| `detail`            | Human-readable check detail                                                                                                                       |
+| `decision`          | `allowed` or `denied`, present for decision events                                                                                                |
+| `verified`          | Whether verification passed and ran to completion, present for decision events; a failure admitted in `warn` mode is `allowed` but not `verified` |
+| `reason`            | Human-readable decision reason                                                                                                                    |
+| `policyHash`        | SHA-256 hash of the effective policy used for verification                                                                                        |
+| `nodeName`          | Node where the container was scheduled                                                                                                            |
+| `podServiceAccount` | Kubernetes service account of the pod                                                                                                             |
+| `verificationMode`  | Effective verification mode (`warn`, `enforce`)                                                                                                   |
 
 ## Troubleshooting
 
@@ -506,7 +509,9 @@ attestation to the image digest, so forged annotation values would fail
 signature verification. The primary risk is not annotation injection but
 annotation absence: a runtime version that does not set the expected annotations
 causes the plugin to skip verification in `warn` mode (logged and counted via
-the `missing_annotations` metric) or reject the container in `enforce` mode.
+the `missing_annotations` metric) or reject the container in `enforce` mode. An
+image digest that cannot be resolved from the registry is handled the same way
+and counted as `digest_resolution_failed`.
 
 **Digest resolution TOCTOU.** When the container runtime does not provide an
 image digest in annotations (common with containerd), the plugin resolves the
@@ -540,3 +545,42 @@ references, namespace labels, and verification outcomes, which could aid
 reconnaissance. The plugin logs a warning at startup when `metrics_addr` is not
 a loopback address. Use a NetworkPolicy or firewall rule to restrict access when
 exposing the metrics endpoint to a Prometheus scraper on another host.
+
+## Upgrade Notes
+
+The following behavior changes can break existing setups after an upgrade.
+Validate policies and configuration with `nri-supply-chain validate` and run
+`nri-supply-chain preview` against the deployed images before rolling out.
+
+- **Stricter policy loading.** Policies now fail to load when they contain
+  duplicate JSON keys, glob character classes that do not compile, empty
+  `include` or `exclude` entries, attributes or properties that are both
+  required and forbidden (SCAI attributes, `buildEnv` properties, also when
+  combined through inheritance), or SBOM component entries that are not valid
+  package URLs.
+- **OpenVEX `not_affected`.** Statements without a `justification` or
+  `impact_statement` are ignored, so the vulnerability counts as affected.
+- **SBOM component matching.** Component allow and deny lists match parsed,
+  normalized package URLs on whole path segments instead of string prefixes
+  (`pkg:npm/lodash` no longer matches `pkg:npm/lodash-es`), with exact version
+  and qualifier matching. A component package URL that cannot be parsed fails
+  the check while a list is set. See [policy.md](policy.md).
+- **SBOM drift.** A version bump of a component counts as modified instead of
+  as one removal and one addition.
+- **CLI exit codes.** `preview`, `bundle verify` and `bundle import` return the
+  documented [exit codes](config.md#exit-codes): 1 for a denial or a failed
+  bundle check, 2 for errors.
+- **Audit log.** `allowed` and `decision` reflect the admission decision after
+  the verification mode is applied, so a failure admitted in `warn` mode is
+  `allowed`. The new `verified` field records the verification outcome.
+- **Skip reasons.** Containers whose image digest cannot be resolved are counted
+  with the new `digest_resolution_failed` reason of
+  `nri_supply_chain_verification_skipped_total`.
+- **Bundle signature key.** In `offline` and `prefer-bundle` modes,
+  `offline.bundle_signature_key` is validated whenever it is set, not only with
+  `require_bundle_signature`.
+- **Notation.** Images referenced by tag or short name are verified against
+  their normalized `registry/repository@digest` reference, and trust policy
+  registry scopes are normalized the same way (Docker Hub as `docker.io`, with
+  official images under `library/`). Such images now select a trust policy
+  instead of failing, so review which trust policy applies to them.

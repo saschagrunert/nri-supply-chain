@@ -70,6 +70,8 @@ func Inspect(storePath string) (*InspectResult, error) {
 		return nil, fmt.Errorf("opening bundle: %w", err)
 	}
 
+	defer func() { _ = store.Close() }()
+
 	manifest := store.Manifest()
 
 	result := &InspectResult{

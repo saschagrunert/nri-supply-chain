@@ -72,7 +72,6 @@ var (
 	errNoTrustedMaterial     = errors.New("no trusted keys or issuers configured")
 	errAllBundlesFailed      = errors.New("all bundle verifications failed")
 	errNoIssuers             = errors.New("at least one issuer is required")
-	errNoPEMBlock            = errors.New("no PEM block found")
 	errNoTrustedRoot         = errors.New("no Sigstore trusted root available")
 	errRootOutOfScope        = errors.New("trusted root is out of scope")
 	errMissingPredicateType  = errors.New("signed statement has no predicate type")
@@ -258,6 +257,14 @@ type VerifiedAttestation struct {
 }
 
 // Fetcher discovers and verifies attestations for a container image.
+//
+// When the error wraps ErrVerificationFailed but not
+// ErrIncompleteAttestationSet, the Sigstore attestations failed verification
+// and the returned slice may still hold the material that does not depend on
+// them: Notation signatures (verified later by the Notation check) and
+// baseline SBOMs. Callers that ignore such failures must evaluate that
+// material instead of treating it as absent. With any other error the slice
+// is nil.
 type Fetcher interface {
 	Fetch(
 		ctx context.Context, imageRef string, opts *FetchOptions,

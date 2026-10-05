@@ -226,12 +226,23 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      # go test -fuzz keeps the generated corpus in $(go env GOCACHE)/fuzz;
+      # testdata/fuzz only holds the committed seeds and new crashers.
+      - id: fuzz-cache
+        run: echo "dir=$(go env GOCACHE)/fuzz" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ matrix.fuzz.package }}testdata/fuzz
+          path: ${{ steps.fuzz-cache.outputs.dir }}
           key: fuzz-corpus-${{ matrix.fuzz.name }}-${{ github.sha }}
           restore-keys: fuzz-corpus-${{ matrix.fuzz.name }}-
       - run: go test -fuzz=${{ matrix.fuzz.target }} -fuzztime=30s ${{ matrix.fuzz.package }}
+      - name: Upload failing inputs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-failures-${{ matrix.fuzz.name }}
+          path: ${{ matrix.fuzz.package }}testdata/fuzz
+          if-no-files-found: ignore
 
   govulncheck:
     runs-on: ubuntu-latest
@@ -263,7 +274,6 @@ jobs:
       - uses: crate-ci/typos@00f422f3b19c57bc6338715ebfe3316d38768461 # v1.50.3
 
   snapshot:
-    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -321,7 +331,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: DavidAnson/markdownlint-cli2-action@21c1be1b93ad9ed58fa840aacc3f279cde2a72ff # v24.2.0
+      - run: make verify-markdownlint
 
   jsonschema:
     runs-on: ubuntu-latest
@@ -351,7 +361,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - run: go mod verify
+      - run: make verify-mod
 
   vendor:
     runs-on: ubuntu-latest

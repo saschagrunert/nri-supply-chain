@@ -859,11 +859,29 @@ func TestPolicyValidateSBOM(t *testing.T) {
 			wantErr: policy.ErrInvalidComponentPURL,
 		},
 		{
-			name: "pkg:type without name rejected",
+			// Entries the SBOM check cannot parse fail at policy load.
+			name: "unparsable component entry rejected",
 			policy: sbomPolicy(&policy.SBOMPolicy{
-				Component: &policy.SBOMComponentPolicy{Deny: []string{"pkg:npm"}},
+				Component: &policy.SBOMComponentPolicy{Deny: []string{"pkg:npm/lodash@1.0%zz"}},
 			}),
 			wantErr: policy.ErrInvalidComponentPURL,
+		},
+		{
+			name: "component entry with an invalid type rejected",
+			policy: sbomPolicy(&policy.SBOMPolicy{
+				Component: &policy.SBOMComponentPolicy{Allow: []string{"pkg:n%20pm/lodash"}},
+			}),
+			wantErr: policy.ErrInvalidComponentPURL,
+		},
+		{
+			// Type and namespace entries cover every package below them.
+			name: "type and namespace component entries accepted",
+			policy: sbomPolicy(&policy.SBOMPolicy{
+				Component: &policy.SBOMComponentPolicy{
+					Deny:  []string{"pkg:npm", "pkg:pypi/"},
+					Allow: []string{"pkg:maven/org.example"},
+				},
+			}),
 		},
 		{
 			name: "valid allow lists",
@@ -1617,94 +1635,94 @@ func TestValidateRuntime(t *testing.T) {
 	}
 }
 
-func TestMissingPolicyAccessors(t *testing.T) {
+func TestMissingPolicyFor(t *testing.T) {
 	t.Parallel()
 
 	accessors := []struct {
-		section string
-		get     func(*policy.Policy) types.Action
-		with    func(missing types.Action) *policy.Policy
+		section   string
+		checkType types.CheckType
+		with      func(missing types.Action) *policy.Policy
 	}{
 		{
-			section: "slsa",
-			get:     (*policy.Policy).SLSAMissingPolicy,
+			section:   "slsa",
+			checkType: types.CheckTypeSLSA,
 			with: func(missing types.Action) *policy.Policy {
 				return &policy.Policy{SLSA: &policy.SLSAPolicy{MissingPolicy: missing}}
 			},
 		},
 		{
-			section: "vex",
-			get:     (*policy.Policy).VEXMissingPolicy,
+			section:   "vex",
+			checkType: types.CheckTypeVEX,
 			with: func(missing types.Action) *policy.Policy {
 				return &policy.Policy{VEX: &policy.VEXPolicy{MissingPolicy: missing}}
 			},
 		},
 		{
-			section: "vsa",
-			get:     (*policy.Policy).VSAMissingPolicy,
+			section:   "vsa",
+			checkType: types.CheckTypeVSA,
 			with: func(missing types.Action) *policy.Policy {
 				return &policy.Policy{VSA: &policy.VSAPolicy{MissingPolicy: missing}}
 			},
 		},
 		{
-			section: "notation",
-			get:     (*policy.Policy).NotationMissingPolicy,
+			section:   "notation",
+			checkType: types.CheckTypeNotation,
 			with: func(missing types.Action) *policy.Policy {
 				return &policy.Policy{Notation: &policy.NotationPolicy{MissingPolicy: missing}}
 			},
 		},
 		{
-			section: "sbom",
-			get:     (*policy.Policy).SBOMMissingPolicy,
+			section:   "sbom",
+			checkType: types.CheckTypeSBOM,
 			with: func(missing types.Action) *policy.Policy {
 				return &policy.Policy{SBOM: &policy.SBOMPolicy{MissingPolicy: missing}}
 			},
 		},
 		{
-			section: "scai",
-			get:     (*policy.Policy).SCAIMissingPolicy,
+			section:   "scai",
+			checkType: types.CheckTypeSCAI,
 			with: func(missing types.Action) *policy.Policy {
 				return &policy.Policy{SCAI: &policy.SCAIPolicy{MissingPolicy: missing}}
 			},
 		},
 		{
-			section: "source",
-			get:     (*policy.Policy).SourceMissingPolicy,
+			section:   "source",
+			checkType: types.CheckTypeSource,
 			with: func(missing types.Action) *policy.Policy {
 				return &policy.Policy{Source: &policy.SourcePolicy{MissingPolicy: missing}}
 			},
 		},
 		{
-			section: "buildEnv",
-			get:     (*policy.Policy).BuildEnvMissingPolicy,
+			section:   "buildEnv",
+			checkType: types.CheckTypeBuildEnv,
 			with: func(missing types.Action) *policy.Policy {
 				return &policy.Policy{BuildEnv: &policy.BuildEnvPolicy{MissingPolicy: missing}}
 			},
 		},
 		{
-			section: "vulnScan",
-			get:     (*policy.Policy).VulnScanMissingPolicy,
+			section:   "vulnScan",
+			checkType: types.CheckTypeVulnScan,
 			with: func(missing types.Action) *policy.Policy {
 				return &policy.Policy{VulnScan: &policy.VulnScanPolicy{MissingPolicy: missing}}
 			},
 		},
 		{
-			section: "testResult",
-			get:     (*policy.Policy).TestResultMissingPolicy,
+			section:   "testResult",
+			checkType: types.CheckTypeTestResult,
 			with: func(missing types.Action) *policy.Policy {
 				return &policy.Policy{TestResult: &policy.TestResultPolicy{MissingPolicy: missing}}
 			},
 		},
 		{
-			section: "release",
-			get:     (*policy.Policy).ReleaseMissingPolicy,
+			section:   "release",
+			checkType: types.CheckTypeRelease,
 			with: func(missing types.Action) *policy.Policy {
 				return &policy.Policy{Release: &policy.ReleasePolicy{MissingPolicy: missing}}
 			},
 		},
 		{
-			section: "runtimeTrace",
-			get:     (*policy.Policy).RuntimeTraceMissingPolicy,
+			section:   "runtimeTrace",
+			checkType: types.CheckTypeRuntimeTrace,
 			with: func(missing types.Action) *policy.Policy {
 				return &policy.Policy{
 					RuntimeTrace: &policy.RuntimeTracePolicy{MissingPolicy: missing},
@@ -1712,8 +1730,8 @@ func TestMissingPolicyAccessors(t *testing.T) {
 			},
 		},
 		{
-			section: "scorecard",
-			get:     (*policy.Policy).ScorecardMissingPolicy,
+			section:   "scorecard",
+			checkType: types.CheckTypeScorecard,
 			with: func(missing types.Action) *policy.Policy {
 				return &policy.Policy{Scorecard: &policy.ScorecardPolicy{MissingPolicy: missing}}
 			},
@@ -1762,7 +1780,11 @@ func TestMissingPolicyAccessors(t *testing.T) {
 				t.Run(test.name, func(t *testing.T) {
 					t.Parallel()
 
-					testutil.AssertEqual(t, test.want, accessor.get(test.policy))
+					testutil.AssertEqual(
+						t,
+						test.want,
+						test.policy.MissingPolicyFor(accessor.checkType),
+					)
 				})
 			}
 		})

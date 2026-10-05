@@ -1,0 +1,18 @@
+{
+  "trust": {
+    "issuers": ["https://token.actions.githubusercontent.com"],
+    "sanPatterns": [
+      "https://github.com/saschagrunert/nri-supply-chain/**",
+      "https://github.com/slsa-framework/slsa-github-generator/**"
+    ],
+    "sources": ["https://github.com/saschagrunert/*"]
+  },
+  "slsa": { "missingPolicy": "deny" },
+  "vex": { "missingPolicy": "deny" },
+  "sbom": { "missingPolicy": "deny" },
+  "vulnScan": { "missingPolicy": "warn" },
+  "testResult": { "missingPolicy": "warn" },
+  "source": { "missingPolicy": "warn" },
+  "buildEnv": { "missingPolicy": "warn" },
+  "release": { "missingPolicy": "warn" }
+}

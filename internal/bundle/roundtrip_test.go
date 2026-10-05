@@ -33,7 +33,7 @@ const roundTripDigest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef
 func offlineVerifier(
 	ctx context.Context, bundleBytes []byte, opts *attestation.FetchOptions,
 ) (*attestation.VerifiedBundle, error) {
-	verified, err := attestation.VerifyBundle(ctx, bundleBytes, opts, nil)
+	verified, err := attestation.VerifyBundleWithStaticRoots(ctx, bundleBytes, opts, nil)
 	if err != nil {
 		return nil, fmt.Errorf("offline verification: %w", err)
 	}

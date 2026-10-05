@@ -112,34 +112,19 @@ func StatContained(path string) (os.FileInfo, error) {
 	return info, nil
 }
 
-// ResolveContained returns the path to open for path. A path that is not a
-// symbolic link is returned unchanged. A symbolic link is resolved and
-// returned only if its target stays inside the directory containing path;
-// otherwise ErrSymlink is returned. Prefer ReadLimited or StatContained,
-// which do not race with the file system between resolving and opening.
-func ResolveContained(path string) (string, error) {
-	path = filepath.Clean(path)
-
-	info, err := os.Lstat(path)
+// StatRegular is StatContained for paths that must be regular files: it
+// returns ErrNotRegularFile for directories, devices and other special files.
+func StatRegular(path string) (os.FileInfo, error) {
+	info, err := StatContained(path)
 	if err != nil {
-		return "", fmt.Errorf("stat %q: %w", path, err)
+		return nil, err
 	}
 
-	if info.Mode()&os.ModeSymlink == 0 {
-		return path, nil
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: %q", ErrNotRegularFile, path)
 	}
 
-	_, err = StatContained(path)
-	if err != nil {
-		return "", err
-	}
-
-	target, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return "", fmt.Errorf("resolving symlink %q: %w", path, err)
-	}
-
-	return target, nil
+	return info, nil
 }
 
 func openContained(path string) (*os.File, error) {

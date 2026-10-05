@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
+	"github.com/saschagrunert/nri-supply-chain/internal/checker"
 	"github.com/saschagrunert/nri-supply-chain/internal/glob"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
@@ -950,30 +951,20 @@ func warnEmptyTrust(ctx context.Context, pol *policy.Policy) {
 }
 
 func verifyFreshness(buildStarted *time.Time, pol *policy.Policy) error {
-	maxAgeConfigured := pol.SLSA != nil && pol.SLSA.MaxAge != ""
+	freshness := &checker.Freshness[time.Time]{
+		Timestamp: func(started *time.Time) *time.Time { return started },
+		MaxAge: func(pol *policy.Policy) *time.Duration {
+			if pol.SLSA == nil || pol.SLSA.MaxAge == "" {
+				return nil
+			}
 
-	// A zero time (as emitted for an unset Go time.Time) carries no
-	// information and is treated as absent.
-	if buildStarted == nil || buildStarted.IsZero() {
-		if maxAgeConfigured {
-			return fmt.Errorf("%w: no build timestamp in provenance", ErrStaleProvenance)
-		}
-
-		return nil
+			return &pol.SLSA.MaxAgeDuration
+		},
+		Label:     "built",
+		ErrStale:  ErrStaleProvenance,
+		ErrFuture: ErrFutureTimestamp,
 	}
 
-	var maxAge *time.Duration
-	if maxAgeConfigured {
-		maxAge = &pol.SLSA.MaxAgeDuration
-	}
-
-	//nolint:wrapcheck // VerifyFreshness wraps the caller's sentinel errors
-	return types.VerifyFreshness(
-		*buildStarted,
-		maxAge,
-		"built",
-		ErrFutureTimestamp,
-		ErrStaleProvenance,
-		ErrStaleProvenance,
-	)
+	//nolint:wrapcheck // Check wraps the caller's sentinel errors
+	return freshness.Check(buildStarted, pol)
 }

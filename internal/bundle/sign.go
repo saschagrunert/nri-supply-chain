@@ -17,16 +17,14 @@ package bundle
 import (
 	"bytes"
 	"crypto"
-	"crypto/sha256"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/pem"
 	"fmt"
 
 	"github.com/sigstore/sigstore/pkg/cryptoutils"
 	"github.com/sigstore/sigstore/pkg/signature"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/fileutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
@@ -103,7 +101,7 @@ func VerifyManifestSignature(manifest *Manifest, keyPath string) error {
 		return ErrBundleSignatureRequired
 	}
 
-	pubKey, err := loadPublicKey(keyPath)
+	pubKey, err := attestation.LoadPublicKey(keyPath)
 	if err != nil {
 		return fmt.Errorf("loading verification key: %w", err)
 	}
@@ -136,34 +134,15 @@ func VerifyManifestSignature(manifest *Manifest, keyPath string) error {
 	return nil
 }
 
-func loadPublicKey(path string) (crypto.PublicKey, error) {
-	data, err := fileutil.ReadLimited(path, fileutil.MaxCredentialFileSize)
-	if err != nil {
-		return nil, fmt.Errorf("reading public key file: %w", err)
-	}
-
-	block, _ := pem.Decode(data)
-	if block == nil {
-		return nil, fmt.Errorf("%w: %s", ErrInvalidPEMBlock, path)
-	}
-
-	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		return nil, fmt.Errorf("parsing public key: %w", err)
-	}
-
-	return pub, nil
-}
-
+// computePublicKeyHint returns the manifest key hint of pubKey: the hex
+// encoded public key digest.
 func computePublicKeyHint(pubKey crypto.PublicKey) (string, error) {
-	derBytes, err := x509.MarshalPKIXPublicKey(pubKey)
+	sum, err := attestation.PublicKeyDigest(pubKey)
 	if err != nil {
-		return "", fmt.Errorf("marshaling public key: %w", err)
+		return "", fmt.Errorf("computing public key digest: %w", err)
 	}
 
-	h := sha256.Sum256(derBytes)
-
-	return hex.EncodeToString(h[:]), nil
+	return hex.EncodeToString(sum[:]), nil
 }
 
 const algorithmSHA256 = "sha256"

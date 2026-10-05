@@ -24,27 +24,25 @@ import (
 
 	"github.com/containerd/nri/pkg/api"
 	"github.com/spf13/cobra"
+
+	"github.com/saschagrunert/nri-supply-chain/internal/daemon"
 )
 
 var version = "v0.6.0"
-
-var logLevelVar slog.LevelVar //nolint:gochecknoglobals // shared between initLogging and reload
 
 const (
 	exitSuccess = 0
 	exitDenied  = 1
 	exitError   = 2
 
-	logLevelDebug = "debug"
-	logLevelInfo  = "info"
-	logLevelWarn  = "warn"
-	logLevelError = "error"
+	logLevelDebug = daemon.LogLevelDebug
+	logLevelInfo  = daemon.LogLevelInfo
 
 	outputFormatTable = "table"
 	outputFormatJSON  = "json"
 	outputFormatQuiet = "quiet"
 
-	defaultConfigPath = "/etc/nri-supply-chain/config.toml"
+	defaultConfigPath = daemon.DefaultConfigPath
 
 	cmdVersion    = "version"
 	cmdVerify     = "verify"
@@ -116,7 +114,7 @@ func newRootCmd() *cobra.Command { //nolint:funlen // cobra command setup
 	var (
 		configPath string
 		logLevel   string
-		settings   nriSettings
+		settings   daemon.Settings
 	)
 
 	root := &cobra.Command{
@@ -148,7 +146,12 @@ func newRootCmd() *cobra.Command { //nolint:funlen // cobra command setup
 				slog.Info("No config file, using the configuration passed by the runtime")
 			}
 
-			return exitWith(startPlugin(servePath, settings, cfg))
+			err = daemon.Run(version, servePath, settings, cfg)
+			if err != nil {
+				return errExitNonZero
+			}
+
+			return nil
 		},
 	}
 
@@ -164,17 +167,17 @@ func newRootCmd() *cobra.Command { //nolint:funlen // cobra command setup
 	root.PersistentFlags().StringVarP(&logLevel, "log-level", "l", "",
 		"log level: debug, info, warn, error (default: info)")
 
-	root.Flags().StringVar(&settings.pluginName, "plugin-name", "supply-chain",
+	root.Flags().StringVar(&settings.PluginName, "plugin-name", "supply-chain",
 		"NRI plugin name (ignored when the runtime sets NRI_PLUGIN_NAME)")
-	root.Flags().StringVar(&settings.pluginIdx, "plugin-idx", "10",
+	root.Flags().StringVar(&settings.PluginIdx, "plugin-idx", "10",
 		"NRI plugin index (ignored when the runtime sets NRI_PLUGIN_IDX)")
-	root.Flags().StringVar(&settings.socketPath, "nri-socket", "",
+	root.Flags().StringVar(&settings.SocketPath, "nri-socket", "",
 		"path to the NRI runtime socket (default: "+api.DefaultSocketPath+")")
-	root.Flags().DurationVar(&settings.disconnectTimeout, "nri-disconnect-timeout",
-		defaultNRIDisconnectTimeout,
+	root.Flags().DurationVar(&settings.DisconnectTimeout, "nri-disconnect-timeout",
+		daemon.DefaultNRIDisconnectTimeout,
 		"report unhealthy on /healthz after the NRI connection has been down this long "+
 			"while the NRI socket exists (0 disables)")
-	root.Flags().StringVar(&settings.healthAddr, "health-addr", "",
+	root.Flags().StringVar(&settings.HealthAddr, "health-addr", "",
 		"address of a dedicated server for /healthz, /readyz and /status, so probes do not "+
 			"depend on the metrics port (empty: serve them only on metrics_addr)")
 

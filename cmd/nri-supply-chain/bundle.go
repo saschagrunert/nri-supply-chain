@@ -207,6 +207,9 @@ func newBundleVerifyCmd(logLevel *string) *cobra.Command {
 	return cmd
 }
 
+// runBundleVerify verifies a bundle store. It returns exitDenied when the
+// bundle fails a check (blob integrity, signature or age) and exitError when
+// a check cannot be performed (unreadable store or key, invalid --max-age).
 func runBundleVerify(storePath, keyPath, maxAge string) int {
 	store, err := bundle.OpenStore(storePath)
 	if err != nil {
@@ -214,6 +217,8 @@ func runBundleVerify(storePath, keyPath, maxAge string) int {
 
 		return exitError
 	}
+
+	defer func() { _ = store.Close() }()
 
 	manifest := store.Manifest()
 
@@ -223,22 +228,39 @@ func runBundleVerify(storePath, keyPath, maxAge string) int {
 	if integrityErr != nil {
 		slog.Error("Blob integrity check failed", "error", integrityErr)
 
-		return exitError
+		return exitCodeForBundleError(integrityErr)
 	}
 
 	_, _ = fmt.Fprintln(os.Stdout, "Blob integrity: OK")
 
-	if verifySignature(manifest, keyPath) != exitSuccess {
-		return exitError
+	if code := verifySignature(manifest, keyPath); code != exitSuccess {
+		return code
 	}
 
-	if verifyExpiry(manifest, maxAge) != exitSuccess {
-		return exitError
+	if code := verifyExpiry(manifest, maxAge); code != exitSuccess {
+		return code
 	}
 
 	_, _ = fmt.Fprintln(os.Stdout, "\nBundle verification passed.")
 
 	return exitSuccess
+}
+
+// exitCodeForBundleError returns exitDenied when a bundle fails verification
+// (a blob is missing or does not match the manifest, or the signature is
+// missing or invalid) and exitError when it could not be verified.
+func exitCodeForBundleError(err error) int {
+	for _, target := range []error{
+		bundle.ErrBlobMissing, bundle.ErrBlobNotRegular,
+		bundle.ErrBlobSizeMismatch, bundle.ErrBlobDigestMismatch,
+		bundle.ErrBundleSignatureInvalid, bundle.ErrBundleSignatureRequired,
+	} {
+		if errors.Is(err, target) {
+			return exitDenied
+		}
+	}
+
+	return exitError
 }
 
 func printBundleSummary(manifest *bundle.Manifest) {
@@ -273,14 +295,14 @@ func verifySignature(manifest *bundle.Manifest, keyPath string) int {
 	if manifest.Signature == nil {
 		slog.Error("Bundle is not signed but --key was provided")
 
-		return exitError
+		return exitDenied
 	}
 
 	sigErr := bundle.VerifyManifestSignature(manifest, keyPath)
 	if sigErr != nil {
 		slog.Error("Signature verification failed", "error", sigErr)
 
-		return exitError
+		return exitCodeForBundleError(sigErr)
 	}
 
 	_, _ = fmt.Fprintln(os.Stdout, "Signature: OK")
@@ -320,7 +342,7 @@ func verifyExpiry(manifest *bundle.Manifest, maxAge string) int {
 			"maxAge", staleness.MaxAge,
 		)
 
-		return exitError
+		return exitDenied
 	}
 
 	return exitSuccess
@@ -345,7 +367,7 @@ func newBundleImportCmd(logLevel *string) *cobra.Command {
 			if importErr != nil {
 				slog.Error("Import failed", "error", importErr)
 
-				return errExitNonZero
+				return exitWith(exitCodeForBundleError(importErr))
 			}
 
 			if keyPath != "" {
@@ -428,8 +450,6 @@ func buildCreateOptions(
 		return nil, fmt.Errorf("loading trust config from policy: %w", err)
 	}
 
-	authOpt := registry.AuthOption()
-
 	return &bundle.CreateOptions{
 		Images:         images,
 		OutputPath:     outputPath,
@@ -437,10 +457,14 @@ func buildCreateOptions(
 		FetchOptions:   fetchOpts,
 		TrustedRoots:   trustedRoots,
 		SigningKeyPath: signKey,
+		// Resolve digests like verify and inspect do, so registry mirrors,
+		// CA certificates and insecure registries from the config apply.
 		ResolveDigest: func(
 			ctx context.Context, imageRef string,
 		) (string, string, error) {
-			return registry.ResolveImageDigest(ctx, imageRef, authOpt)
+			resolved, resolveErr := resolveDigest(ctx, imageRef, cfg.FetchTimeout.Duration, cache)
+
+			return resolved.digest, resolved.indexDigest, resolveErr
 		},
 		RevocationData: revData,
 	}, nil

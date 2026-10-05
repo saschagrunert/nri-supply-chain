@@ -44,8 +44,19 @@ func statementAt(status openvexlib.Status, timestamp time.Time) openvexlib.State
 		Vulnerability: openvexlib.Vulnerability{Name: testCVE},
 		Products:      []openvexlib.Product{{ID: testDigest}},
 		Status:        status,
+		Justification: justificationFor(status),
 		Timestamp:     &timestamp,
 	}
+}
+
+// justificationFor returns the justification a valid statement with the
+// status carries: OpenVEX requires one for not_affected.
+func justificationFor(status openvexlib.Status) openvexlib.Justification {
+	if status == openvexlib.StatusNotAffected {
+		return openvexlib.ComponentNotPresent
+	}
+
+	return ""
 }
 
 func validDoc(status openvexlib.Status) openvexlib.VEX {
@@ -60,7 +71,8 @@ func validDoc(status openvexlib.Status) openvexlib.VEX {
 				Products: []openvexlib.Product{
 					{ID: testDigest},
 				},
-				Status: status,
+				Status:        status,
+				Justification: justificationFor(status),
 			},
 		},
 	}
@@ -217,7 +229,8 @@ func TestVerifyMultipleStatementsMixedStatuses(t *testing.T) {
 				Products: []openvexlib.Product{
 					{ID: testDigest},
 				},
-				Status: openvexlib.StatusNotAffected,
+				Status:        openvexlib.StatusNotAffected,
+				Justification: openvexlib.ComponentNotPresent,
 			},
 			{
 				Vulnerability: openvexlib.Vulnerability{Name: "CVE-2024-0003"},
@@ -373,6 +386,7 @@ func TestVerifyProductIdentityMatching(t *testing.T) {
 					Vulnerability: openvexlib.Vulnerability{Name: testCVE},
 					Products:      []openvexlib.Product{{Component: test.component}},
 					Status:        test.status,
+					Justification: justificationFor(test.status),
 				}},
 			}
 
@@ -496,7 +510,8 @@ func TestEvaluateAcrossDocumentsUsesDocumentTimestamp(t *testing.T) {
 				Products: []openvexlib.Product{
 					{ID: testDigest},
 				},
-				Status: status,
+				Status:        status,
+				Justification: justificationFor(status),
 			}},
 		}
 
@@ -590,6 +605,7 @@ func productStatement(
 		Vulnerability: openvexlib.Vulnerability{Name: testCVE},
 		Products:      []openvexlib.Product{{ID: productID}},
 		Status:        status,
+		Justification: justificationFor(status),
 		Timestamp:     timestamp,
 	}
 }
@@ -736,5 +752,79 @@ func TestEvaluateUndatedDocumentTiesWithDatedDocument(t *testing.T) {
 
 	if len(result.AffectedNames) != 1 {
 		t.Errorf("expected undated affected to tie and win, got %+v", result)
+	}
+}
+
+func TestEvaluateIgnoresUnjustifiedNotAffected(t *testing.T) {
+	t.Parallel()
+
+	older := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	newer := older.Add(time.Hour)
+
+	unjustified := statementAt(openvexlib.StatusNotAffected, newer)
+	unjustified.Justification = ""
+
+	withImpact := unjustified
+	withImpact.ImpactStatement = "the vulnerable function is never called"
+
+	tests := []struct {
+		name         string
+		statements   []openvexlib.Statement
+		wantAffected bool
+		wantMatched  int
+	}{
+		{
+			name: "unjustified not_affected does not override affected",
+			statements: []openvexlib.Statement{
+				statementAt(openvexlib.StatusAffected, older),
+				unjustified,
+			},
+			wantAffected: true,
+			wantMatched:  1,
+		},
+		{
+			name:         "unjustified not_affected alone is ignored",
+			statements:   []openvexlib.Statement{unjustified},
+			wantAffected: false,
+			wantMatched:  0,
+		},
+		{
+			name: "impact statement justifies not_affected",
+			statements: []openvexlib.Statement{
+				statementAt(openvexlib.StatusAffected, older),
+				withImpact,
+			},
+			wantAffected: false,
+			wantMatched:  1,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			doc := openvexlib.VEX{
+				Context:    testVEXContext,
+				ID:         testDocID,
+				Statements: test.statements,
+			}
+
+			result, err := openvex.Verify(
+				context.Background(),
+				testutil.MustMarshal(t, doc),
+				testImage(),
+			)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if got := len(result.AffectedNames) > 0; got != test.wantAffected {
+				t.Errorf("affected = %v, want %v (%+v)", got, test.wantAffected, result)
+			}
+
+			if result.MatchedStatements != test.wantMatched {
+				t.Errorf("matched = %d, want %d", result.MatchedStatements, test.wantMatched)
+			}
+		})
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
@@ -65,7 +66,7 @@ func (f *FallbackFetcher) Fetch(
 	}
 
 	if err != nil && !isRecoverableError(err) {
-		return nil, fmt.Errorf("primary fetcher: %w", err)
+		return result, fmt.Errorf("primary fetcher: %w", err)
 	}
 
 	reason := "no verified attestations in bundle"
@@ -81,10 +82,26 @@ func (f *FallbackFetcher) Fetch(
 
 	fallbackResult, fallbackErr := f.fallback.Fetch(ctx, imageRef, opts)
 	if fallbackErr != nil {
-		return nil, fmt.Errorf("fallback fetcher: %w", fallbackErr)
+		// The fallback may return Notation signatures and baseline SBOMs
+		// alongside a verification failure, which still have to be evaluated.
+		return fallbackResult, fmt.Errorf("fallback fetcher: %w", fallbackErr)
 	}
 
 	return fallbackResult, nil
+}
+
+// Close closes the primary and fallback fetchers that hold resources (a
+// bundle store), waiting for their running fetches to finish.
+func (f *FallbackFetcher) Close() error {
+	var errs []error
+
+	for _, fetcher := range []attestation.Fetcher{f.primary, f.fallback} {
+		if closer, ok := fetcher.(io.Closer); ok {
+			errs = append(errs, closer.Close())
+		}
+	}
+
+	return errors.Join(errs...)
 }
 
 // OCIFetcher returns the inner OCIFetcher if the fallback is one, or nil.

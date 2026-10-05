@@ -22,18 +22,16 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
-	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
-	"github.com/saschagrunert/nri-supply-chain/internal/plugin"
+	"github.com/saschagrunert/nri-supply-chain/internal/daemon"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	sctypes "github.com/saschagrunert/nri-supply-chain/internal/types"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
-//nolint:paralleltest // modifies package-level logLevelVar
+//nolint:paralleltest // modifies the process log level
 func TestNewLogger(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -42,14 +40,14 @@ func TestNewLogger(t *testing.T) {
 	}{
 		{name: logLevelDebug, level: logLevelDebug, want: slog.LevelDebug},
 		{name: logLevelInfo, level: logLevelInfo, want: slog.LevelInfo},
-		{name: logLevelWarn, level: logLevelWarn, want: slog.LevelWarn},
-		{name: logLevelError, level: logLevelError, want: slog.LevelError},
+		{name: daemon.LogLevelWarn, level: daemon.LogLevelWarn, want: slog.LevelWarn},
+		{name: daemon.LogLevelError, level: daemon.LogLevelError, want: slog.LevelError},
 		{name: "unrecognized defaults to info", level: testBogusLevel, want: slog.LevelInfo},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			updateLogLevel(test.level)
+			daemon.SetLogLevel(test.level)
 
 			logger := newLogger(false)
 			handler := logger.Handler()
@@ -68,9 +66,9 @@ func TestNewLogger(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // modifies package-level logLevelVar
+//nolint:paralleltest // modifies the process log level
 func TestNewLoggerCLIMode(t *testing.T) {
-	updateLogLevel(logLevelInfo)
+	daemon.SetLogLevel(logLevelInfo)
 
 	pluginLogger := newLogger(false)
 	cliLogger := newLogger(true)
@@ -130,64 +128,6 @@ func writeTestConfig(t *testing.T, path, policyDir, mode string) {
 	if err != nil {
 		t.Fatalf("writing config: %v", err)
 	}
-}
-
-func newDisabledPlugin(t *testing.T) *plugin.Plugin {
-	t.Helper()
-
-	cfg := config.DefaultConfig()
-	met := metrics.New()
-
-	v, err := verifier.New(t.Context(), cfg, met, nil)
-	if err != nil {
-		t.Fatalf("creating verifier: %v", err)
-	}
-
-	return plugin.New(v, met, "", 30*time.Second, 5*time.Second, nil)
-}
-
-func TestShouldUseConfigFile(t *testing.T) {
-	t.Parallel()
-
-	t.Run("empty path", func(t *testing.T) {
-		t.Parallel()
-
-		if shouldUseConfigFile("") {
-			t.Error("expected false for empty path")
-		}
-	})
-
-	t.Run("non-default path", func(t *testing.T) {
-		t.Parallel()
-
-		if !shouldUseConfigFile("/custom/config.toml") {
-			t.Error("expected true for non-default path")
-		}
-	})
-
-	t.Run("default path missing", func(t *testing.T) {
-		t.Parallel()
-
-		if shouldUseConfigFile(defaultConfigPath) {
-			t.Error("expected false when default config file does not exist")
-		}
-	})
-
-	t.Run("default path exists", func(t *testing.T) {
-		t.Parallel()
-
-		dir := t.TempDir()
-		configPath := filepath.Join(dir, "config.toml")
-
-		err := os.WriteFile(configPath, []byte(""), 0o600)
-		if err != nil {
-			t.Fatalf("writing config: %v", err)
-		}
-
-		if !shouldUseConfigFile(configPath) {
-			t.Error("expected true when config file exists")
-		}
-	})
 }
 
 func TestLoadConfig(t *testing.T) {
@@ -538,12 +478,12 @@ func writeValidationPolicy(t *testing.T, dir, filename, content string) {
 	}
 }
 
-//nolint:paralleltest // modifies package-level logLevelVar
+//nolint:paralleltest // modifies the process log level
 func TestInitLogging(t *testing.T) {
 	initLogging(logLevelDebug, false)
 
-	if logLevelVar.Level() != slog.LevelDebug {
-		t.Errorf("expected debug level, got %v", logLevelVar.Level())
+	if daemon.LogLevel.Level() != slog.LevelDebug {
+		t.Errorf("expected debug level, got %v", daemon.LogLevel.Level())
 	}
 
 	initLogging(testBogusLevel, true)
@@ -915,34 +855,9 @@ func TestOCIFetcherWithRateLimit(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // modifies package-level logLevelVar
-func TestUpdateLogLevel(t *testing.T) {
-	tests := []struct {
-		name  string
-		level string
-		want  slog.Level
-	}{
-		{name: logLevelDebug, level: logLevelDebug, want: slog.LevelDebug},
-		{name: logLevelInfo, level: logLevelInfo, want: slog.LevelInfo},
-		{name: logLevelWarn, level: logLevelWarn, want: slog.LevelWarn},
-		{name: logLevelError, level: logLevelError, want: slog.LevelError},
-		{name: "unrecognized defaults to info", level: testBogusLevel, want: slog.LevelInfo},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			updateLogLevel(test.level)
-
-			if logLevelVar.Level() != test.want {
-				t.Errorf("expected level %v, got %v", test.want, logLevelVar.Level())
-			}
-		})
-	}
-}
-
-//nolint:paralleltest // modifies package-level logLevelVar
+//nolint:paralleltest // modifies the process log level
 func TestLogLevelDynamic(t *testing.T) {
-	updateLogLevel(logLevelInfo)
+	daemon.SetLogLevel(logLevelInfo)
 
 	logger := newLogger(false)
 	handler := logger.Handler()
@@ -958,7 +873,7 @@ func TestLogLevelDynamic(t *testing.T) {
 	}
 
 	// Change to debug level dynamically.
-	updateLogLevel(logLevelDebug)
+	daemon.SetLogLevel(logLevelDebug)
 
 	// The same handler should now reflect the new level.
 	if !handler.Enabled(context.Background(), slog.LevelDebug) {
@@ -1017,21 +932,21 @@ func TestEffectiveLogLevel(t *testing.T) {
 		{
 			name:        "flag overrides config",
 			flagLevel:   logLevelDebug,
-			configLevel: logLevelError,
+			configLevel: daemon.LogLevelError,
 			want:        logLevelDebug,
 		},
 		{
 			name:        "config used when flag empty",
 			flagLevel:   "",
-			configLevel: logLevelWarn,
-			want:        logLevelWarn,
+			configLevel: daemon.LogLevelWarn,
+			want:        daemon.LogLevelWarn,
 		},
 		{name: "default when both empty", flagLevel: "", configLevel: "", want: logLevelInfo},
 		{
 			name:        "flag used when config empty",
-			flagLevel:   logLevelError,
+			flagLevel:   daemon.LogLevelError,
 			configLevel: "",
-			want:        logLevelError,
+			want:        daemon.LogLevelError,
 		},
 	}
 

@@ -30,7 +30,6 @@ import (
 	ociV1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
-	"github.com/sigstore/sigstore-go/pkg/root"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 
@@ -154,35 +153,6 @@ func (f *OCIFetcher) SetMaxAttestationSize(size int64) {
 // trusted root sources (via NewOCIFetcherWithMultipleRoots).
 func (f *OCIFetcher) IsMultiRoot() bool {
 	return len(f.rootCaches) > 0
-}
-
-// CachedTrustedRoot returns the currently cached trusted root without
-// triggering a network fetch. Returns nil if no root has been cached yet
-// (call Warm first). For multi-root fetchers, returns the first cached root.
-func (f *OCIFetcher) CachedTrustedRoot() *root.TrustedRoot {
-	if f.rootCache != nil {
-		f.rootCache.mu.RLock()
-		tr, ok := f.rootCache.cachedHit()
-		f.rootCache.mu.RUnlock()
-
-		if ok {
-			return tr
-		}
-
-		return nil
-	}
-
-	for _, c := range f.rootCaches {
-		c.mu.RLock()
-		tr, ok := c.cachedHit()
-		c.mu.RUnlock()
-
-		if ok {
-			return tr
-		}
-	}
-
-	return nil
 }
 
 // CachedTrustedRoots returns every currently cached trusted root with its
@@ -312,16 +282,12 @@ func (f *OCIFetcher) buildFetchOptions(
 	ctx context.Context, imageRef string,
 ) (string, []remote.Option, *registry.FallbackInfo, error) {
 	effectiveRef := imageRef
-
-	remoteOpts := []remote.Option{
-		registry.AuthOption(),
-		remote.WithContext(ctx),
-	}
+	roundTripper := remote.DefaultTransport
 
 	var fallback *registry.FallbackInfo
 
 	if cache := f.transportCache.Load(); cache != nil {
-		rewritten, transportOpt, regFallback, regErr := registry.OptionsForRegistries(
+		rewritten, regTransport, regFallback, regErr := registry.TransportForRegistries(
 			cache, imageRef,
 		)
 		if regErr != nil {
@@ -331,9 +297,15 @@ func (f *OCIFetcher) buildFetchOptions(
 		effectiveRef = rewritten
 		fallback = regFallback
 
-		if transportOpt != nil {
-			remoteOpts = append(remoteOpts, transportOpt)
+		if regTransport != nil {
+			roundTripper = regTransport
 		}
+	}
+
+	remoteOpts := []remote.Option{
+		registry.AuthOption(),
+		remote.WithContext(ctx),
+		remote.WithTransport(newBudgetTransport(roundTripper)),
 	}
 
 	return effectiveRef, remoteOpts, fallback, nil
@@ -364,10 +336,7 @@ func (f *OCIFetcher) fetchWithFallback(
 	fallbackOpts := []remote.Option{
 		registry.AuthOption(),
 		remote.WithContext(ctx),
-	}
-
-	if fallback.TransportOpt != nil {
-		fallbackOpts = append(fallbackOpts, fallback.TransportOpt)
+		remote.WithTransport(newBudgetTransport(fallback.RoundTripper())),
 	}
 
 	fallbackRef, err := parseDigestRef(fallback.OriginalRef, opts.Digest, opts.ParsedRef)
@@ -377,7 +346,7 @@ func (f *OCIFetcher) fetchWithFallback(
 
 	result, fallbackErr := f.fetchWithRetry(ctx, fallbackRef, opts.Digest, fallbackOpts, opts)
 	if fallbackErr != nil {
-		return nil, fmt.Errorf(
+		return result, fmt.Errorf(
 			"fallback to %s: %w (mirror %s: %w)",
 			fallback.OriginalRef, fallbackErr, mirrorRef, mirrorErr,
 		)
@@ -437,6 +406,10 @@ func (f *OCIFetcher) fetchWithRetry(
 
 		finalErr := finalFetchError(ctx, err)
 		if finalErr != nil {
+			if errors.Is(finalErr, ErrVerificationFailed) {
+				return attestations, finalErr
+			}
+
 			return nil, finalErr
 		}
 
@@ -478,6 +451,10 @@ func (f *OCIFetcher) fetchOnce(
 ) ([]VerifiedAttestation, error) {
 	ctx = withDownloadBudget(ctx, f.effectiveDownloadLimit())
 
+	// Registry requests carry the download budget of this pass, so the
+	// budget transport charges the manifests and listings they read.
+	remoteOpts = append(slices.Clip(remoteOpts), remote.WithContext(ctx))
+
 	idx, err := f.referrers(ref, remoteOpts...)
 	if err != nil {
 		return nil, referrersError("listing referrers", err)
@@ -502,14 +479,24 @@ func (f *OCIFetcher) fetchOnce(
 		ctx, &selection, ref, digest, remoteOpts, fetchOpts,
 	)
 	if err != nil {
-		return nil, err
+		// When the Sigstore attestations merely failed verification, the
+		// Notation signatures and baseline SBOMs still apply; see Fetcher.
+		return append(slices.Clip(notationSigs), baselineSBOMs...), err
+	}
+
+	// Notation signatures are verified later by the Notation check, so they
+	// do not count as attestations: unverified signatures pushed to the
+	// registry must not suppress the cosign tag fallback.
+	if len(attestations) == 0 && len(baselineSBOMs) == 0 {
+		tagAtts, tagErr := f.cosignTagFallback(ctx, ref, digest, remoteOpts, fetchOpts)
+		if tagErr != nil {
+			return nil, tagErr
+		}
+
+		return append(tagAtts, notationSigs...), nil
 	}
 
 	attestations = append(attestations, notationSigs...)
-
-	if len(attestations) == 0 && len(baselineSBOMs) == 0 {
-		return f.cosignTagFallback(ctx, ref, digest, remoteOpts, fetchOpts)
-	}
 
 	return append(attestations, baselineSBOMs...), nil
 }
@@ -520,58 +507,6 @@ func (f *OCIFetcher) effectiveDownloadLimit() int64 {
 	}
 
 	return maxTotalDownloadSize
-}
-
-// downloadBudget counts the bytes downloaded during one fetch pass, so junk
-// referrers cannot make the plugin download without bound.
-type downloadBudget struct {
-	used  atomic.Int64
-	limit int64
-}
-
-type downloadBudgetKey struct{}
-
-func withDownloadBudget(ctx context.Context, limit int64) context.Context {
-	return context.WithValue(
-		ctx,
-		downloadBudgetKey{},
-		&downloadBudget{used: atomic.Int64{}, limit: limit},
-	)
-}
-
-// reserveDownload checks that size more bytes fit the download budget of the
-// fetch in ctx before they are downloaded.
-func reserveDownload(ctx context.Context, size int64) error {
-	budget, ok := ctx.Value(downloadBudgetKey{}).(*downloadBudget)
-	if !ok {
-		return nil
-	}
-
-	if used := budget.used.Load(); used+size > budget.limit {
-		return fmt.Errorf(
-			"%w: %d bytes already downloaded, %d more exceed %d",
-			errDownloadLimitExceeded, used, size, budget.limit,
-		)
-	}
-
-	return nil
-}
-
-// chargeDownload records size downloaded bytes against the download budget of
-// the fetch in ctx.
-func chargeDownload(ctx context.Context, size int64) error {
-	budget, ok := ctx.Value(downloadBudgetKey{}).(*downloadBudget)
-	if !ok {
-		return nil
-	}
-
-	if used := budget.used.Add(size); used > budget.limit {
-		return fmt.Errorf(
-			"%w: %d bytes downloaded, limit %d", errDownloadLimitExceeded, used, budget.limit,
-		)
-	}
-
-	return nil
 }
 
 // collectSelection fetches and verifies the selected referrers. The bundle,
@@ -618,11 +553,22 @@ func (f *OCIFetcher) collectSelection(
 	// the group.
 	_ = group.Wait()
 
-	err = evaluateCollection(
-		len(attestations)+len(notationSigs), bundleStats, notationStats, baselineStats,
-	)
+	// Only verified Sigstore attestations count. Notation signatures are not
+	// verified yet, so junk Notation referrers cannot turn a set of referrers
+	// that all failed verification into an empty attestation set.
+	err = evaluateCollection(len(attestations), bundleStats, notationStats, baselineStats)
 	if errors.Is(err, ErrVerificationFailed) {
-		return nil, nil, nil, err
+		if errors.Is(err, ErrIncompleteAttestationSet) {
+			return nil, nil, nil, err
+		}
+
+		// The set is complete, only the Sigstore referrers failed
+		// verification. The Notation signatures are verified by the
+		// Notation check and baseline SBOMs need no signature, so both are
+		// returned with the error: dropping them would turn an untrusted
+		// Notation signature into a missing one, and a trusted one next to a
+		// foreign cosign referrer into a missing one as well.
+		return nil, notationSigs, baselineSBOMs, err
 	}
 
 	ctxErr := ctx.Err()

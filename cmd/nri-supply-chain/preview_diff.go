@@ -53,7 +53,7 @@ func runPreviewDiff(
 	images []string, namespace, outputFormat, comparePolicyDir string,
 	cfg *config.Config,
 ) int {
-	return withVerifier(writer, outputFormat, cfg, func(
+	return withVerifier(writer, outputFormat, previewOutputFormats, cfg, func(
 		ctx context.Context, w io.Writer,
 		currentVerif *verifier.Verifier, cache *registry.TransportCache,
 	) int {
@@ -64,13 +64,17 @@ func runPreviewDiff(
 	})
 }
 
+// executeDiff previews images against the current and the proposed policy
+// set and writes the differences. The exit code reflects the proposed policy
+// set: exitDenied when it denies any image, exitError when any image could not
+// be verified against either policy set.
 func executeDiff(
 	ctx context.Context, writer io.Writer,
 	images []string, namespace, outputFormat, comparePolicyDir string,
 	cfg *config.Config, currentVerif *verifier.Verifier,
 	cache *registry.TransportCache,
 ) int {
-	currentResults := previewImages(ctx, images, namespace, cfg, currentVerif, cache)
+	currentResults, currentCode := previewImages(ctx, images, namespace, cfg, currentVerif, cache)
 
 	if ctx.Err() != nil {
 		slog.Error("Context cancelled before proposed policy preview", "error", ctx.Err())
@@ -78,7 +82,7 @@ func executeDiff(
 		return exitError
 	}
 
-	proposedResults, err := runProposedPreview(
+	proposedResults, proposedCode, err := runProposedPreview(
 		ctx, images, namespace, comparePolicyDir, cfg, cache,
 	)
 	if err != nil {
@@ -102,26 +106,32 @@ func executeDiff(
 		return exitError
 	}
 
-	return exitSuccess
+	if currentCode == exitError {
+		return exitError
+	}
+
+	return proposedCode
 }
 
 func runProposedPreview(
 	ctx context.Context,
 	images []string, namespace, comparePolicyDir string,
 	cfg *config.Config, cache *registry.TransportCache,
-) ([]*verifyOutput, error) {
+) ([]*verifyOutput, int, error) {
 	proposedCfg := *cfg
-	proposedCfg.PolicyDir = comparePolicyDir
 	proposedCfg.Registries = slices.Clone(cfg.Registries)
+	usePreviewPolicyDir(&proposedCfg, comparePolicyDir)
 
 	proposedVerif, err := newVerifier(ctx, &proposedCfg, cache)
 	if err != nil {
-		return nil, fmt.Errorf("creating proposed verifier: %w", err)
+		return nil, exitError, fmt.Errorf("creating proposed verifier: %w", err)
 	}
 
 	defer proposedVerif.StopContext(ctx)
 
-	return previewImages(ctx, images, namespace, &proposedCfg, proposedVerif, cache), nil
+	results, code := previewImages(ctx, images, namespace, &proposedCfg, proposedVerif, cache)
+
+	return results, code, nil
 }
 
 func buildDiffOutput(

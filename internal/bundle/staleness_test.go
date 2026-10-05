@@ -15,8 +15,12 @@
 package bundle //nolint:testpackage // tests use internal test helpers
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
+
+	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 )
 
 func TestCheckStalenessNoMaxAge(t *testing.T) {
@@ -101,5 +105,87 @@ func TestCheckStalenessExpiredDeny(t *testing.T) {
 
 	if result.Allowed {
 		t.Error("should not be allowed with ExpiryDeny policy")
+	}
+}
+
+func TestCheckStalenessFutureCreatedAt(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		createdAt   time.Duration
+		policy      ExpiryPolicy
+		wantStale   bool
+		wantFuture  bool
+		wantAllowed bool
+	}{
+		{
+			name:        "within clock skew",
+			createdAt:   time.Minute,
+			policy:      ExpiryDeny,
+			wantStale:   false,
+			wantFuture:  false,
+			wantAllowed: true,
+		},
+		{
+			name:        "far future with deny policy",
+			createdAt:   365 * 24 * time.Hour,
+			policy:      ExpiryDeny,
+			wantStale:   true,
+			wantFuture:  true,
+			wantAllowed: false,
+		},
+		{
+			name:        "far future with warn policy",
+			createdAt:   365 * 24 * time.Hour,
+			policy:      ExpiryWarn,
+			wantStale:   true,
+			wantFuture:  true,
+			wantAllowed: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			manifest := &Manifest{ //nolint:exhaustruct_v5 // test data
+				CreatedAt: time.Now().Add(tt.createdAt),
+			}
+			result := CheckStaleness(manifest, 24*time.Hour, tt.policy)
+
+			if result.Stale != tt.wantStale || result.Future != tt.wantFuture ||
+				result.Allowed != tt.wantAllowed {
+				t.Errorf("CheckStaleness() = %+v, want stale=%v future=%v allowed=%v",
+					result, tt.wantStale, tt.wantFuture, tt.wantAllowed)
+			}
+		})
+	}
+}
+
+func TestFetcherFutureBundleDenied(t *testing.T) {
+	t.Parallel()
+
+	manifest := &Manifest{ //nolint:exhaustruct_v5 // test data
+		Version:   1,
+		CreatedAt: time.Now().UTC().Add(365 * 24 * time.Hour),
+		Images:    map[string]*ImageEntry{},
+	}
+
+	store, err := OpenStore(createTestStore(t, manifest, nil))
+	if err != nil {
+		t.Fatalf("OpenStore() error: %v", err)
+	}
+
+	fetcher := NewFetcher(store, passthroughVerifier,
+		WithMaxAge(24*time.Hour), WithExpiryPolicy(ExpiryDeny),
+	)
+
+	_, err = fetcher.Fetch(
+		context.Background(), testExampleRef,
+		&attestation.FetchOptions{Digest: testImageDigest},
+	)
+	if !errors.Is(err, ErrBundleExpired) {
+		t.Fatalf("Fetch() error = %v, want %v", err, ErrBundleExpired)
 	}
 }

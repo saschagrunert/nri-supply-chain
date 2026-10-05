@@ -1634,8 +1634,8 @@ func TestFetchWithFallbackCallsCallback(t *testing.T) {
 	})
 
 	fallback := &registry.FallbackInfo{
-		OriginalRef:  "ghcr.io/owner/repo:v1",
-		TransportOpt: nil,
+		OriginalRef: "ghcr.io/owner/repo:v1",
+		Transport:   nil,
 	}
 
 	_, _ = fetcher.ExportFetchWithFallback(
@@ -1668,8 +1668,8 @@ func TestFetchWithFallbackInvalidRef(t *testing.T) {
 	)
 
 	fallback := &registry.FallbackInfo{
-		OriginalRef:  "not valid ref %%",
-		TransportOpt: nil,
+		OriginalRef: "not valid ref %%",
+		Transport:   nil,
 	}
 
 	_, err := fetcher.ExportFetchWithFallback(

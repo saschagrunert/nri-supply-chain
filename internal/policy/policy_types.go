@@ -81,6 +81,10 @@ var (
 	// known field when compared case-insensitively (e.g. "MissingPolicy").
 	ErrNonCanonicalField = errors.New("policy field name does not use the documented spelling")
 
+	// ErrDuplicateField indicates a policy document repeats a key within one
+	// JSON object.
+	ErrDuplicateField = errors.New("duplicate policy field")
+
 	// ErrEmptyValue indicates a list contains an empty string.
 	ErrEmptyValue = errors.New("empty value")
 

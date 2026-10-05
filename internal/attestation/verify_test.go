@@ -740,26 +740,6 @@ func TestExtractBundlePayloadInvalidJSON(t *testing.T) {
 	}
 }
 
-func TestVerifyBundleWithCacheNilCanceledCtx(t *testing.T) {
-	t.Parallel()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err := attestation.ExportDefaultVerifyBundle(
-		ctx,
-		[]byte(`{}`),
-		&attestation.FetchOptions{},
-	)
-	if err == nil {
-		t.Fatal("expected error for canceled context")
-	}
-
-	if !strings.Contains(err.Error(), "context canceled") {
-		t.Errorf("expected context canceled error, got: %v", err)
-	}
-}
-
 func TestNewOCIFetcherWithCacheVerifyBundleCanceledCtx(t *testing.T) {
 	t.Parallel()
 
@@ -1108,18 +1088,18 @@ func TestExtractBundlePayloadWrongPayloadType(t *testing.T) {
 	}
 }
 
-func TestCachedTrustedRootNoCacheReturnsNil(t *testing.T) {
+func TestCachedTrustedRootsNoCache(t *testing.T) {
 	t.Parallel()
 
 	fetcher := attestation.NewTestOCIFetcher(nil, nil)
 
-	got := fetcher.CachedTrustedRoot()
-	if got != nil {
-		t.Error("expected nil from fetcher with no root cache")
+	got := fetcher.CachedTrustedRoots()
+	if len(got) != 0 {
+		t.Error("expected no roots from fetcher with no root cache")
 	}
 }
 
-func TestCachedTrustedRootWithWarmedCache(t *testing.T) {
+func TestCachedTrustedRootsWithWarmedCache(t *testing.T) {
 	t.Parallel()
 
 	expected := fakeTrustedRoot()
@@ -1133,99 +1113,19 @@ func TestCachedTrustedRootWithWarmedCache(t *testing.T) {
 		t.Fatalf("Warm() error: %v", warmErr)
 	}
 
-	got := fetcher.CachedTrustedRoot()
-	if got == nil {
-		t.Fatal("expected non-nil root after warming")
+	got := fetcher.CachedTrustedRoots()
+	if len(got) != 1 || got[0].Root == nil {
+		t.Fatal("expected the root after warming")
 	}
 }
 
-func TestCachedTrustedRootMultiRootNoCacheReturnsNil(t *testing.T) {
+func TestCachedTrustedRootsMultiRootNoCache(t *testing.T) {
 	t.Parallel()
 
 	fetcher := attestation.NewOCIFetcherWithMultipleRoots(nil)
 
-	got := fetcher.CachedTrustedRoot()
-	if got != nil {
-		t.Errorf("expected nil trusted root, got %v", got)
-	}
-}
-
-func TestFetchTrustedRootWithContext(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name      string
-		ctx       func() context.Context
-		cache     *attestation.TrustedRootCacheForTest
-		wantErr   bool
-		wantInErr string
-	}{
-		{
-			name: "cache hit returns cached root",
-			ctx:  context.Background,
-			cache: attestation.NewTestTrustedRootCacheWithRoot(
-				func() (*root.TrustedRoot, error) {
-					return fakeTrustedRoot(), nil
-				},
-				fakeTrustedRoot(),
-				time.Now(),
-			),
-			wantErr:   false,
-			wantInErr: "",
-		},
-		{
-			name: "cache miss fetches fresh root",
-			ctx:  context.Background,
-			cache: attestation.NewTestTrustedRootCache(func() (*root.TrustedRoot, error) {
-				return fakeTrustedRoot(), nil
-			}),
-			wantErr:   false,
-			wantInErr: "",
-		},
-		{
-			name: "cache fetch error propagates",
-			ctx:  context.Background,
-			cache: attestation.NewTestTrustedRootCache(func() (*root.TrustedRoot, error) {
-				return nil, errRootFetchFailed
-			}),
-			wantErr:   true,
-			wantInErr: wantRootFetchFailed,
-		},
-		{
-			name: "nil cache with canceled context returns early",
-			ctx: func() context.Context {
-				ctx, cancel := context.WithCancel(context.Background())
-				cancel()
-
-				return ctx
-			},
-			cache:     nil,
-			wantErr:   true,
-			wantInErr: "context canceled before fetching trusted root",
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			_, err := attestation.ExportFetchTrustedRootWithContext(test.ctx(), test.cache)
-
-			if test.wantErr {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-
-				if test.wantInErr != "" && !strings.Contains(err.Error(), test.wantInErr) {
-					t.Errorf("expected error containing %q, got: %v", test.wantInErr, err)
-				}
-
-				return
-			}
-
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-		})
+	got := fetcher.CachedTrustedRoots()
+	if len(got) != 0 {
+		t.Errorf("expected no trusted roots, got %v", got)
 	}
 }

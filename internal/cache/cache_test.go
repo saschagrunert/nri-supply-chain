@@ -742,3 +742,49 @@ func TestDeleteAllRemovesSuffixedKeys(t *testing.T) {
 		t.Error("expected no entries removed for unknown namespace")
 	}
 }
+
+func TestStoppedCacheLeavesGaugeToReplacement(t *testing.T) {
+	t.Parallel()
+
+	testGauge := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "test_cache_replaced",
+		Help: testGaugeHelp,
+	})
+
+	result := &types.Result{
+		Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
+	}
+
+	previous := cache.NewWithGauge(time.Hour, 0, testGauge, nil)
+	previous.Set(testDigest, "default", result)
+
+	replacement := cache.NewWithGauge(time.Hour, 0, testGauge, nil)
+	t.Cleanup(replacement.Stop)
+
+	// The previous cache is still in use until it is stopped.
+	previous.Set(testDigest, "other", result)
+
+	previous.Stop()
+	replacement.ReportSize()
+
+	if val := testutil.ToFloat64(testGauge); val != 0 {
+		t.Fatalf("expected the gauge to report the replacement cache, got %f", val)
+	}
+
+	previous.Set(testDigest, "late", result)
+	previous.Delete(testDigest, "default")
+
+	if val := testutil.ToFloat64(testGauge); val != 0 {
+		t.Errorf("expected a stopped cache to leave the gauge alone, got %f", val)
+	}
+
+	replacement.Set(testDigest, "default", result)
+
+	if val := testutil.ToFloat64(testGauge); val != 1 {
+		t.Errorf("expected the replacement cache to update the gauge, got %f", val)
+	}
+
+	if previous.Len() != 2 {
+		t.Errorf("expected a stopped cache to remain usable, got %d entries", previous.Len())
+	}
+}

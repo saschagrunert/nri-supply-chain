@@ -1,7 +1,7 @@
 [Unit]
 Description=NRI Supply Chain Verification Plugin
 Documentation=https://github.com/saschagrunert/nri-supply-chain
-After=crio.service containerd.service
+After=crio.service containerd.service network-online.target
 Wants=network-online.target
 
 [Service]
@@ -10,11 +10,17 @@ ExecStart=/usr/local/bin/nri-supply-chain --config /etc/nri-supply-chain/config.
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5s
-MemoryMax=256M
+MemoryMax=512M
 TasksMax=64
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
+# /var/cache/nri-supply-chain holds the Sigstore TUF cache (under $HOME) and
+# /var/lib/nri-supply-chain the offline attestation store
+# (offline.attestation_store defaults to /var/lib/nri-supply-chain/bundles).
+CacheDirectory=nri-supply-chain
+StateDirectory=nri-supply-chain
+Environment=HOME=/var/cache/nri-supply-chain
 ReadWritePaths=/var/run/nri
 ReadOnlyPaths=/etc/nri-supply-chain
 PrivateTmp=true

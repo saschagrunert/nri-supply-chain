@@ -24,10 +24,12 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 
+	"github.com/google/go-containerregistry/pkg/name"
 	notationlib "github.com/notaryproject/notation-go"
 	"github.com/notaryproject/notation-go/verifier"
 	"github.com/notaryproject/notation-go/verifier/trustpolicy"
@@ -35,6 +37,7 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
+	"github.com/saschagrunert/nri-supply-chain/internal/imageref"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
@@ -61,6 +64,9 @@ const (
 
 	// maxCachedVerifiers bounds the verifier cache; it is cleared when full.
 	maxCachedVerifiers = 64
+
+	// wildcardScope is the trust policy registry scope matching every image.
+	wildcardScope = "*"
 )
 
 var (
@@ -81,32 +87,11 @@ var (
 
 	// ErrNoApplicableTrustPolicy indicates no trust policy rule matches the image.
 	ErrNoApplicableTrustPolicy = errors.New("no applicable notation trust policy")
+
+	// ErrInvalidImageReference indicates the image reference cannot be turned
+	// into the fully qualified artifact reference notation-go requires.
+	ErrInvalidImageReference = errors.New("invalid image reference")
 )
-
-// Verify checks a single Notation signature against the given policy.
-func Verify(
-	ctx context.Context,
-	sig *attestation.VerifiedAttestation,
-	imageRef, digest string,
-	pol *policy.Policy,
-) (*types.CheckResult, error) {
-	notationPolicy := pol.Notation
-	if notationPolicy == nil {
-		return nil, ErrNotationNotConfigured
-	}
-
-	err := checkPolicyRequirements(notationPolicy)
-	if err != nil {
-		return nil, err
-	}
-
-	notationVerifier, trustPolicyName, err := buildVerifierForImage(notationPolicy, imageRef)
-	if err != nil {
-		return nil, err
-	}
-
-	return verifySignatureEntry(ctx, notationVerifier, sig, imageRef, digest, trustPolicyName), nil
-}
 
 // VerifyMultiple checks multiple Notation signatures, accepting if any valid one passes.
 func VerifyMultiple(
@@ -125,12 +110,40 @@ func VerifyMultiple(
 		return nil, err
 	}
 
-	notationVerifier, trustPolicyName, err := buildVerifierForImage(notationPolicy, imageRef)
+	artifactRef, err := artifactReference(imageRef, digest)
 	if err != nil {
 		return nil, err
 	}
 
-	return verifySignatures(ctx, notationVerifier, signatures, imageRef, digest, trustPolicyName)
+	notationVerifier, trustPolicyName, err := buildVerifierForImage(notationPolicy, artifactRef)
+	if err != nil {
+		return nil, err
+	}
+
+	return verifySignatures(ctx, notationVerifier, signatures, artifactRef, digest, trustPolicyName)
+}
+
+// artifactReference builds the fully qualified "registry/repository@digest"
+// reference that notation-go requires to select a trust policy and to verify
+// a signature. The runtime may report a tag ("quay.io/app:v1") or a short
+// name ("nginx"), so the repository is taken from the parsed reference with
+// Docker Hub spelled as docker.io and its official images under library/, and
+// the digest is always the verified image digest.
+func artifactReference(imageRef, digest string) (string, error) {
+	ref, err := name.ParseReference(imageRef)
+	if err != nil {
+		return "", fmt.Errorf("%w %q: %w", ErrInvalidImageReference, imageRef, err)
+	}
+
+	if digest == "" {
+		return "", fmt.Errorf("%w %q: no image digest", ErrInvalidImageReference, imageRef)
+	}
+
+	repo := ref.Context()
+
+	return imageref.NormalizeRegistry(repo.RegistryStr()) + "/" +
+		imageref.NormalizeRepositoryPath(repo.RegistryStr(), repo.RepositoryStr()) +
+		"@" + digest, nil
 }
 
 func checkPolicyRequirements(notationPolicy *policy.NotationPolicy) error {
@@ -149,7 +162,7 @@ func verifySignatures(
 	ctx context.Context,
 	notationVerifier notationlib.Verifier,
 	signatures []attestation.VerifiedAttestation,
-	imageRef, digest, trustPolicyName string,
+	artifactRef, digest, trustPolicyName string,
 ) (*types.CheckResult, error) {
 	var failReasons []string
 
@@ -163,7 +176,7 @@ func verifySignatures(
 			ctx,
 			notationVerifier,
 			&signatures[idx],
-			imageRef,
+			artifactRef,
 			digest,
 			trustPolicyName,
 		)
@@ -209,16 +222,16 @@ func ResetVerifierCache() {
 
 //nolint:ireturn // notation.Verifier is the API type returned by notation-go.
 func buildVerifierForImage(
-	notationPolicy *policy.NotationPolicy, imageRef string,
+	notationPolicy *policy.NotationPolicy, artifactRef string,
 ) (notationlib.Verifier, string, error) {
 	cached, err := verifierForPolicy(notationPolicy)
 	if err != nil {
 		return nil, "", err
 	}
 
-	tp, err := cached.policyDoc.GetApplicableTrustPolicy(imageRef)
+	tp, err := cached.policyDoc.GetApplicableTrustPolicy(artifactRef)
 	if err != nil {
-		return nil, "", fmt.Errorf("%w for %q: %w", ErrNoApplicableTrustPolicy, imageRef, err)
+		return nil, "", fmt.Errorf("%w for %q: %w", ErrNoApplicableTrustPolicy, artifactRef, err)
 	}
 
 	return cached.verifier, tp.Name, nil
@@ -321,7 +334,7 @@ func buildTrustPolicyDocument(notationPolicy *policy.NotationPolicy) *trustpolic
 
 		policies = append(policies, trustpolicy.TrustPolicy{
 			Name:                  rule.Name,
-			RegistryScopes:        rule.RegistryScopes,
+			RegistryScopes:        normalizeScopes(rule.RegistryScopes),
 			SignatureVerification: sigVerification,
 			TrustStores:           rule.TrustStores,
 			TrustedIdentities:     rule.TrustedIdentities,
@@ -332,6 +345,45 @@ func buildTrustPolicyDocument(notationPolicy *policy.NotationPolicy) *trustpolic
 		Version:       trustPolicyDocVersion,
 		TrustPolicies: policies,
 	}
+}
+
+// normalizeScopes spells registry scopes the way artifactReference spells
+// image repositories, so a "docker.io/nginx" or "index.docker.io/library/nginx"
+// scope matches the image "nginx". Scopes that normalize to the same
+// repository are kept once, since notation-go rejects duplicate scopes.
+func normalizeScopes(scopes []string) []string {
+	normalized := make([]string, 0, len(scopes))
+
+	for _, scope := range scopes {
+		if scope != wildcardScope {
+			scope = imageref.NormalizeRepository(scope)
+		}
+
+		if !slices.Contains(normalized, scope) {
+			normalized = append(normalized, scope)
+		}
+	}
+
+	return normalized
+}
+
+// ValidatePolicy checks that the trust policy document built from a Notation
+// policy section is accepted by notation-go. Registry scopes are normalized
+// before notation-go sees them, so two spellings of the same repository in
+// different rules (for example "docker.io/nginx" and
+// "docker.io/library/nginx") are rejected here rather than failing every
+// Notation check of a loaded policy.
+func ValidatePolicy(notationPolicy *policy.NotationPolicy) error {
+	if notationPolicy == nil || len(notationPolicy.TrustPolicy) == 0 {
+		return nil
+	}
+
+	err := buildTrustPolicyDocument(notationPolicy).Validate()
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrBuildTrustPolicy, err)
+	}
+
+	return nil
 }
 
 // revocationOverride returns the Override map for the given revocation mode.
@@ -361,7 +413,7 @@ func verifySignatureEntry(
 	ctx context.Context,
 	notationVerifier notationlib.Verifier,
 	sig *attestation.VerifiedAttestation,
-	imageRef, digest, trustPolicyName string,
+	artifactRef, digest, trustPolicyName string,
 ) *types.CheckResult {
 	desc := ocispec.Descriptor{
 		MediaType: sig.NotationSubjectMediaType,
@@ -389,25 +441,21 @@ func verifySignatureEntry(
 	}
 
 	opts := notationlib.VerifierVerifyOptions{
-		ArtifactReference:  imageRef,
+		ArtifactReference:  artifactRef,
 		SignatureMediaType: sig.NotationMediaType,
 	}
 
 	outcome, err := notationVerifier.Verify(ctx, desc, sig.Payload, opts)
 	if err != nil {
 		slog.DebugContext(ctx, "Notation signature verification failed",
-			"image", imageRef,
-			"digest", digest,
+			"image", artifactRef,
 			"error", err,
 		)
 
 		return check.Fail(fmt.Sprintf("Notation signature verification failed: %s", err))
 	}
 
-	logAttrs := []any{
-		"image", imageRef,
-		"digest", digest,
-	}
+	logAttrs := []any{"image", artifactRef}
 
 	if outcome.EnvelopeContent != nil {
 		logAttrs = append(logAttrs,
@@ -422,7 +470,7 @@ func verifySignatureEntry(
 		"trustPolicy": trustPolicyName,
 	}
 
-	result := resultFromOutcome(ctx, outcome, imageRef)
+	result := resultFromOutcome(ctx, outcome, artifactRef)
 	result.Metadata = meta
 
 	return result

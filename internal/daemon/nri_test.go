@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+package daemon //nolint:testpackage // tests use unexported daemon internals
 
 import (
 	"context"
@@ -146,10 +146,10 @@ func testReconnectPolicy() reconnectPolicy {
 
 func noEnv(string) string { return "" }
 
-func testNRISettings() nriSettings {
-	return nriSettings{
-		pluginName: testPluginName, pluginIdx: "10", socketPath: "", disconnectTimeout: 0,
-		healthAddr: "",
+func testNRISettings() Settings {
+	return Settings{
+		PluginName: testPluginName, PluginIdx: "10", SocketPath: "", DisconnectTimeout: 0,
+		HealthAddr: "",
 	}
 }
 
@@ -532,7 +532,7 @@ func TestStubOptionsPluginIdentity(t *testing.T) {
 	}
 
 	withSocket := settings
-	withSocket.socketPath = "/run/nri/custom.sock"
+	withSocket.SocketPath = "/run/nri/custom.sock"
 
 	if got := len(stubOptions(withSocket, noEnv, func() {})); got != 4 {
 		t.Errorf("expected socket option to be added, got %d options", got)

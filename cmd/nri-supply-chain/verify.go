@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -78,16 +79,14 @@ func newVerifyCmd( //nolint:funlen // cobra command setup
 			slog.Debug("Using config", "path", *configPath)
 
 			if previewPolicy != "" {
-				tmpDir, cleanupErr := setupPreviewPolicyDir(previewPolicy, namespace)
-				if cleanupErr != nil {
-					slog.Error("Failed to set up preview policy", "error", cleanupErr)
+				cleanup, previewErr := applyPreviewPolicy(cfg, previewPolicy, namespace)
+				if previewErr != nil {
+					slog.Error("Failed to set up preview policy", "error", previewErr)
 
 					return errExitNonZero
 				}
 
-				defer func() { _ = os.RemoveAll(tmpDir) }()
-
-				cfg.PolicyDir = tmpDir
+				defer cleanup()
 			}
 
 			if quiet {
@@ -158,68 +157,20 @@ func runVerifyTo(
 	writer io.Writer,
 	imageRef, namespace, outputFormat string, cfg *config.Config, previewPolicy string,
 ) int {
-	return withVerifier(writer, outputFormat, cfg, func(
+	return withVerifier(writer, outputFormat, verifyOutputFormats, cfg, func(
 		ctx context.Context, w io.Writer, v *verifier.Verifier, c *registry.TransportCache,
 	) int {
-		return executeVerify(ctx, w, imageRef, namespace, outputFormat, cfg, v, c, previewPolicy)
-	})
-}
+		code, out := verifySingleImage(ctx, imageRef, namespace, cfg, v, c, previewPolicy)
 
-func executeVerify(
-	ctx context.Context, writer io.Writer,
-	imageRef, namespace, outputFormat string,
-	cfg *config.Config, verif *verifier.Verifier,
-	cache *registry.TransportCache, previewPolicy string,
-) int {
-	policyFile := resolvePolicyFile(cfg.PolicyDir, namespace)
-
-	resolved, err := resolveDigest(ctx, imageRef, cfg.FetchTimeout.Duration, cache)
-	if err != nil {
-		slog.Error("Failed to resolve image digest", "image", imageRef, "error", err)
-
-		return exitError
-	}
-
-	result, err := verif.Verify(ctx, &types.VerifyRequest{
-		ImageRef:       imageRef,
-		Digest:         resolved.digest,
-		IndexDigest:    resolved.indexDigest,
-		Namespace:      namespace,
-		ServiceAccount: "",
-	})
-	out := newVerifyOutput(imageRef, resolved.digest, namespace, policyFile)
-	out.Mode = string(verif.EffectiveModeForNamespace(namespace))
-	out.PreviewPolicy = previewPolicy
-	out.CheckResults = checksFrom(result)
-
-	if err != nil {
-		slog.Error("Verification failed", "image", imageRef, "error", err)
-
-		out.Reason = err.Error()
-
-		outErr := outputVerifyResult(writer, outputFormat, out)
+		outErr := outputVerifyResult(w, outputFormat, out)
 		if outErr != nil {
 			slog.Error("Failed to write output", "error", outErr)
+
+			return exitError
 		}
 
-		return exitCodeForVerifyError(err)
-	}
-
-	out.Allowed = result.Allowed
-	out.Reason = result.Reason
-
-	outErr := outputVerifyResult(writer, outputFormat, out)
-	if outErr != nil {
-		slog.Error("Failed to write output", "error", outErr)
-
-		return exitError
-	}
-
-	if !result.Allowed {
-		return exitDenied
-	}
-
-	return exitSuccess
+		return code
+	})
 }
 
 func runVerifyBatch(
@@ -232,20 +183,29 @@ func runVerifyBatchTo(
 	writer io.Writer,
 	images []string, namespace, outputFormat string, cfg *config.Config, previewPolicy string,
 ) int {
-	return withVerifier(writer, outputFormat, cfg, func(
+	return withVerifier(writer, outputFormat, verifyOutputFormats, cfg, func(
 		ctx context.Context, w io.Writer, v *verifier.Verifier, c *registry.TransportCache,
 	) int {
 		return executeBatchVerify(ctx, w, images, namespace, outputFormat, cfg, v, c, previewPolicy)
 	})
 }
 
+//nolint:gochecknoglobals // immutable lists of supported output formats
+var (
+	// verifyOutputFormats are the output formats of the verify command.
+	verifyOutputFormats = []string{outputFormatTable, outputFormatJSON, outputFormatQuiet}
+	// previewOutputFormats are the output formats of the preview command.
+	previewOutputFormats = []string{outputFormatTable, outputFormatJSON}
+)
+
+// withVerifier validates outputFormat against the formats the command
+// supports, creates a verifier for cfg and runs execute with it.
 func withVerifier(
-	writer io.Writer, outputFormat string, cfg *config.Config,
+	writer io.Writer, outputFormat string, formats []string, cfg *config.Config,
 	execute func(context.Context, io.Writer, *verifier.Verifier, *registry.TransportCache) int,
 ) int {
-	if outputFormat != outputFormatTable && outputFormat != outputFormatJSON &&
-		outputFormat != outputFormatQuiet {
-		slog.Error("Invalid output format, valid options are: table, json, quiet",
+	if !slices.Contains(formats, outputFormat) {
+		slog.Error("Invalid output format, valid options are: "+strings.Join(formats, ", "),
 			"format", outputFormat)
 
 		return exitError
@@ -281,12 +241,39 @@ func withVerifier(
 
 const batchConcurrency = 10
 
-func executeBatchVerify( //nolint:funlen // concurrent batch pattern
+func executeBatchVerify(
 	ctx context.Context, writer io.Writer,
 	images []string, namespace, outputFormat string,
 	cfg *config.Config, verif *verifier.Verifier,
 	cache *registry.TransportCache, previewPolicy string,
 ) int {
+	results, worstCode := verifyImages(ctx, images, namespace, cfg, verif, cache, previewPolicy)
+
+	if ctx.Err() != nil {
+		slog.Error("Batch verification interrupted", "error", ctx.Err())
+
+		return exitError
+	}
+
+	outErr := outputBatchResults(writer, outputFormat, results)
+	if outErr != nil {
+		slog.Error("Failed to write output", "error", outErr)
+
+		return exitError
+	}
+
+	return worstCode
+}
+
+// verifyImages verifies images concurrently, at most batchConcurrency at a
+// time. It returns the results in the order of images and the worst (highest)
+// exit code across them. Images not verified because ctx was cancelled are
+// left out of the results.
+func verifyImages(
+	ctx context.Context, images []string, namespace string,
+	cfg *config.Config, verif *verifier.Verifier,
+	cache *registry.TransportCache, previewPolicy string,
+) (results []*verifyOutput, worstCode int) {
 	type indexedResult struct {
 		index int
 		code  int
@@ -325,24 +312,15 @@ func executeBatchVerify( //nolint:funlen // concurrent batch pattern
 
 	close(resultsCh)
 
-	if ctx.Err() != nil {
-		slog.Error("Batch verification interrupted", "error", ctx.Err())
-
-		return exitError
-	}
-
 	ordered := make([]*verifyOutput, len(images))
-	worstCode := exitSuccess
+	worstCode = exitSuccess
 
 	for r := range resultsCh {
 		ordered[r.index] = r.out
-
-		if r.code > worstCode {
-			worstCode = r.code
-		}
+		worstCode = max(worstCode, r.code)
 	}
 
-	results := make([]*verifyOutput, 0, len(images))
+	results = make([]*verifyOutput, 0, len(images))
 
 	for _, out := range ordered {
 		if out != nil {
@@ -350,14 +328,7 @@ func executeBatchVerify( //nolint:funlen // concurrent batch pattern
 		}
 	}
 
-	outErr := outputBatchResults(writer, outputFormat, results)
-	if outErr != nil {
-		slog.Error("Failed to write output", "error", outErr)
-
-		return exitError
-	}
-
-	return worstCode
+	return results, worstCode
 }
 
 func verifySingleImage(
@@ -660,6 +631,36 @@ func colorMode(mode string) string {
 	}
 
 	return mode
+}
+
+// applyPreviewPolicy makes cfg use the policy file previewPolicy for
+// namespace instead of the configured policies. The returned function removes
+// the temporary policy directory.
+func applyPreviewPolicy(
+	cfg *config.Config, previewPolicy, namespace string,
+) (cleanup func(), err error) {
+	tmpDir, err := setupPreviewPolicyDir(previewPolicy, namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	usePreviewPolicyDir(cfg, tmpDir)
+
+	return func() { _ = os.RemoveAll(tmpDir) }, nil
+}
+
+// usePreviewPolicyDir points cfg at the local policy directory dir holding a
+// preview or proposed policy set. The policy source is forced to local, since
+// a verifier for an OCI policy source ignores the policy directory and would
+// evaluate the configured OCI policies instead.
+func usePreviewPolicyDir(cfg *config.Config, dir string) {
+	if cfg.Policy.Source == config.PolicySourceOCI {
+		slog.Info("Using the local preview policies instead of the configured OCI policies",
+			"policy_dir", dir, "oci_ref", cfg.Policy.OCIRef)
+	}
+
+	cfg.PolicyDir = dir
+	cfg.Policy.Source = config.PolicySourceLocal
 }
 
 func setupPreviewPolicyDir(previewPolicyPath, namespace string) (string, error) {

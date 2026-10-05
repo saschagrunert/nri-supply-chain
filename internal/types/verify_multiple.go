@@ -98,7 +98,8 @@ func VerifyMultipleFirstPassOf[T any](
 // parsed or validated fails the aggregate: dropping it would let a newer
 // report that happens to be malformed be masked by an older valid one.
 // Inconclusive results (Passed=false, Status=warn) yield an inconclusive
-// aggregate unless a hard failure is also present.
+// aggregate unless a hard failure is also present. No attestations fail, as
+// in VerifyMultipleFirstPass: an empty input proves nothing.
 func VerifyMultipleWithMerge(
 	ctx context.Context,
 	checkType CheckType,
@@ -108,6 +109,10 @@ func VerifyMultipleWithMerge(
 	verifyOne func(att []byte) (*CheckResult, error),
 	mergeMeta func(dst, src map[string]any),
 ) (*CheckResult, error) {
+	if len(attestations) == 0 {
+		return FailResult(checkType, "no valid "+label+" attestation found", nil), nil
+	}
+
 	agg := mergeAggregate{mergeMeta: mergeMeta} //nolint:exhaustruct_v5 // accumulators start empty
 
 	for _, att := range attestations {

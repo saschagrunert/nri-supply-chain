@@ -15,6 +15,7 @@
 package bundle //nolint:testpackage // tests access internal store helpers
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -96,6 +97,42 @@ func TestFetcherTamperedBlobIsVerificationFailure(t *testing.T) {
 				replaceBlob(t, blobPath(dir), func(path string) error {
 					return syscall.Mkfifo(path, 0o600)
 				})
+			},
+			want: ErrBlobNotRegular,
+		},
+		{
+			name: "blobs directory replaced by an escaping symlink",
+			tamper: func(t *testing.T, dir string) {
+				t.Helper()
+
+				// The blobs are unchanged, but live outside the store.
+				outside := filepath.Join(t.TempDir(), "blobs")
+
+				err := os.Rename(filepath.Join(dir, "blobs"), outside)
+				if err != nil {
+					t.Fatalf("moving blobs: %v", err)
+				}
+
+				err = os.Symlink(outside, filepath.Join(dir, "blobs"))
+				if err != nil {
+					t.Fatalf("linking blobs: %v", err)
+				}
+			},
+			want: ErrBlobNotRegular,
+		},
+		{
+			name: "blob directory replaced by a file",
+			tamper: func(t *testing.T, dir string) {
+				t.Helper()
+
+				algDir := filepath.Join(dir, "blobs", "sha256")
+
+				err := os.RemoveAll(algDir)
+				if err != nil {
+					t.Fatalf("removing blob directory: %v", err)
+				}
+
+				writeTestFile(t, algDir, payload)
 			},
 			want: ErrBlobNotRegular,
 		},
@@ -285,5 +322,104 @@ func TestFetcherTrustMaterialUnavailable(t *testing.T) {
 
 	if errors.Is(err, attestation.ErrVerificationFailed) {
 		t.Errorf("unavailable trust material must not be a verification failure: %v", err)
+	}
+}
+
+// TestFetchDuringImportReadsPinnedStore checks that a store opened before a
+// bundle import keeps reading the blobs of the manifest it loaded, both while
+// the store path is missing between the two renames of the swap and after the
+// new store is in place, and that a store whose directory was removed by a
+// later import denies the image as an incomplete attestation set.
+func TestFetchDuringImportReadsPinnedStore(t *testing.T) {
+	t.Parallel()
+
+	storeWith := func(t *testing.T, payload []byte) string {
+		t.Helper()
+
+		digest := blobDigest(payload)
+
+		return createTestStore(t, &Manifest{ //nolint:exhaustruct_v5 // test data
+			Version:   1,
+			CreatedAt: time.Now().UTC(),
+			Images: map[string]*ImageEntry{
+				testImageDigest: { //nolint:exhaustruct_v5 // test data
+					Attestations: []AttestationEntry{{
+						PredicateType: testSLSAPredicate,
+						BlobDigest:    digest,
+						Size:          int64(len(payload)),
+						SignatureType: testSigType,
+					}},
+				},
+			},
+		}, map[string][]byte{digest: payload})
+	}
+
+	oldPayload := []byte(`{"predicateType":"` + testSLSAPredicate + `","predicate":{"old":1}}`)
+	storePath := storeWith(t, oldPayload)
+
+	store, err := OpenStore(storePath)
+	if err != nil {
+		t.Fatalf("OpenStore() error: %v", err)
+	}
+
+	fetcher := NewFetcher(store, passthroughVerifier)
+
+	assertOldPayload := func(t *testing.T, step string) {
+		t.Helper()
+
+		atts, fetchErr := fetcher.Fetch(
+			context.Background(), testExampleRef,
+			&attestation.FetchOptions{Digest: testImageDigest},
+		)
+		if fetchErr != nil {
+			t.Fatalf("%s: Fetch() error: %v", step, fetchErr)
+		}
+
+		if len(atts) != 1 || !bytes.Equal(atts[0].Payload, oldPayload) {
+			t.Fatalf("%s: Fetch() = %+v, want the pinned store's attestation", step, atts)
+		}
+	}
+
+	// The store path does not exist between the two renames of an import.
+	err = os.Rename(storePath, storePath+backupSuffix)
+	if err != nil {
+		t.Fatalf("renaming store: %v", err)
+	}
+
+	assertOldPayload(t, "store path missing")
+
+	err = os.Rename(storePath+backupSuffix, storePath)
+	if err != nil {
+		t.Fatalf("restoring store: %v", err)
+	}
+
+	newPayload := []byte(`{"predicateType":"` + testSLSAPredicate + `","predicate":{"new":1}}`)
+
+	err = atomicSwapStore(storeWith(t, newPayload), storePath)
+	if err != nil {
+		t.Fatalf("first swap: %v", err)
+	}
+
+	assertOldPayload(t, "after import")
+
+	// A second import removes the backup the running store pinned.
+	err = atomicSwapStore(storeWith(t, newPayload), storePath)
+	if err != nil {
+		t.Fatalf("second swap: %v", err)
+	}
+
+	_, err = fetcher.Fetch(
+		context.Background(), testExampleRef,
+		&attestation.FetchOptions{Digest: testImageDigest},
+	)
+	if !errors.Is(err, ErrStoreReplaced) {
+		t.Fatalf("Fetch() error = %v, want %v", err, ErrStoreReplaced)
+	}
+
+	// The attestations are gone, so the set cannot be evaluated; it must
+	// deny instead of following the fetch failure policy.
+	if !errors.Is(err, attestation.ErrVerificationFailed) ||
+		!errors.Is(err, attestation.ErrIncompleteAttestationSet) {
+		t.Errorf("Fetch() error = %v, want an incomplete attestation set", err)
 	}
 }

@@ -315,23 +315,3 @@ func TestReadLimitedRejectsDirectory(t *testing.T) {
 		t.Errorf("expected ErrNotRegularFile, got: %v", err)
 	}
 }
-
-func TestResolveContainedRegularFile(t *testing.T) {
-	t.Parallel()
-
-	path := filepath.Join(t.TempDir(), "file.txt")
-
-	writeErr := os.WriteFile(path, []byte("data"), 0o600)
-	if writeErr != nil {
-		t.Fatalf("writing file: %v", writeErr)
-	}
-
-	resolved, err := fileutil.ResolveContained(path)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if resolved != path {
-		t.Errorf("expected %q, got %q", path, resolved)
-	}
-}

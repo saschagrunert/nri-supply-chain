@@ -15,13 +15,17 @@
 package config_test
 
 import (
+	"bytes"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
+	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
@@ -34,8 +38,9 @@ const (
 )
 
 const (
-	testPrefixDockerIO = "docker.io"
-	testPrefixGHCR     = "ghcr.io"
+	testPrefixDockerIO    = "docker.io"
+	testPrefixIndexDocker = "index.docker.io"
+	testPrefixGHCR        = "ghcr.io"
 
 	testDigestSHA256 = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
 )
@@ -905,11 +910,73 @@ func TestNormalizeDockerIOPrefix(t *testing.T) {
 
 	cfg.Normalize()
 
-	if cfg.Registries[0].Prefix != "index.docker.io" {
+	if cfg.Registries[0].Prefix != testPrefixIndexDocker {
 		t.Errorf(
 			"expected prefix normalized to %q, got %q",
-			"index.docker.io", cfg.Registries[0].Prefix,
+			testPrefixIndexDocker, cfg.Registries[0].Prefix,
 		)
+	}
+}
+
+// TestDockerHubPrefixMatchesReferences checks that both spellings of a Docker
+// Hub registry entry match Docker Hub references in the registry transport.
+func TestDockerHubPrefixMatchesReferences(t *testing.T) {
+	t.Parallel()
+
+	for _, prefix := range []string{testPrefixDockerIO, testPrefixIndexDocker, "Docker.IO"} {
+		t.Run(prefix, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := config.DefaultConfig()
+			cfg.Registries = []config.Registry{
+				{Prefix: prefix, Mirror: "mirror.example.com", CACert: "", Insecure: false},
+			}
+
+			testutil.AssertNoError(t, cfg.Validate())
+			cfg.Normalize()
+
+			cache := registry.NewTransportCache(cfg.Registries)
+
+			for _, ref := range []string{
+				"nginx:1.27", "docker.io/library/nginx:1.27", "index.docker.io/library/nginx:1.27",
+			} {
+				rewritten, _, _, err := registry.OptionsForRegistries(cache, ref)
+				testutil.AssertNoError(t, err)
+				testutil.AssertEqual(t, "mirror.example.com/library/nginx:1.27", rewritten)
+			}
+		})
+	}
+}
+
+//nolint:paralleltest // replaces the default logger to capture the warning
+func TestValidateWarnsAboutIgnoredOCIFields(t *testing.T) {
+	var logs bytes.Buffer
+
+	previous := slog.Default()
+
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	cfg := config.DefaultConfig()
+	cfg.Policy.Source = config.PolicySourceLocal
+	cfg.Policy.OCIRef = "ghcr.io/org/policies:v1"
+	cfg.Policy.OCIMaxStaleness = config.Duration{Duration: time.Hour}
+
+	testutil.AssertNoError(t, cfg.Validate())
+	testutil.AssertContains(t, logs.String(), "policy.oci_ref")
+	testutil.AssertContains(t, logs.String(), "policy.oci_max_staleness")
+
+	if strings.Contains(logs.String(), "policy.poll_interval") {
+		t.Errorf("expected no warning for the default poll_interval, got logs:\n%s", logs.String())
+	}
+
+	logs.Reset()
+
+	testutil.AssertNoError(t, config.DefaultConfig().Validate())
+
+	if strings.Contains(logs.String(), "OCI policy fields") {
+		t.Errorf("expected no warning for the default config, got logs:\n%s", logs.String())
 	}
 }
 
@@ -1473,7 +1540,7 @@ func TestConfigValidateRegistries(t *testing.T) {
 				Insecure: false,
 			},
 			{
-				Prefix:   "index.docker.io",
+				Prefix:   testPrefixIndexDocker,
 				Mirror:   "mirror-b.example.com",
 				CACert:   "",
 				Insecure: false,
@@ -2475,6 +2542,17 @@ func TestConfigValidatePolicySignatureFields(t *testing.T) {
 			},
 			wantErr:     true,
 			expectedErr: config.ErrPolicySANPatternEmpty,
+		},
+		{
+			name: "invalid san_pattern character class rejected",
+			modify: func(c *config.Config) {
+				c.Policy.Source = config.PolicySourceOCI
+				c.Policy.OCIRef = testOCIRef
+				c.Policy.Issuers = []string{testIssuerGoogle}
+				c.Policy.SANPatterns = []string{"https://github.com/[z-a]/**"}
+			},
+			wantErr:     true,
+			expectedErr: config.ErrPolicySANPatternInvalid,
 		},
 		{
 			name: "empty key path rejected",
@@ -3895,6 +3973,15 @@ func TestConfigValidateOffline(t *testing.T) {
 			modify: func(c *config.Config) {
 				validOffline(c)
 				c.Offline.RequireBundleSignature = true
+				c.Offline.BundleSignatureKey = "relative/key.pem"
+			},
+			expectedErr: config.ErrBundleSignatureKeyNotAbsolute,
+		},
+		{
+			// The key is used whenever it is set.
+			name: "signature key not absolute without require signature",
+			modify: func(c *config.Config) {
+				validOffline(c)
 				c.Offline.BundleSignatureKey = "relative/key.pem"
 			},
 			expectedErr: config.ErrBundleSignatureKeyNotAbsolute,

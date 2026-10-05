@@ -20,6 +20,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +30,7 @@ import (
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/bundle"
+	"github.com/saschagrunert/nri-supply-chain/internal/config"
 )
 
 const (
@@ -266,8 +269,8 @@ func TestVerifySignature(t *testing.T) {
 		manifest := testBundleManifest(time.Now().UTC())
 
 		code := verifySignature(manifest, "/some/key.pem")
-		if code != exitError {
-			t.Errorf("expected exitError for unsigned manifest, got %d", code)
+		if code != exitDenied {
+			t.Errorf("expected exitDenied for unsigned manifest, got %d", code)
 		}
 	})
 }
@@ -303,8 +306,8 @@ func TestVerifyExpiry(t *testing.T) {
 		manifest := testBundleManifest(time.Now().UTC().Add(-48 * time.Hour))
 
 		code := verifyExpiry(manifest, "24h")
-		if code != exitError {
-			t.Errorf("expected exitError for expired bundle, got %d", code)
+		if code != exitDenied {
+			t.Errorf("expected exitDenied for expired bundle, got %d", code)
 		}
 	})
 
@@ -491,11 +494,126 @@ func TestRunBundleVerify(t *testing.T) {
 		storePath := createBundleTestStore(t)
 		code := runBundleVerify(storePath, "/some/key.pem", "")
 
-		if code != exitError {
-			t.Errorf("expected exitError for unsigned bundle with key, got %d",
+		if code != exitDenied {
+			t.Errorf("expected exitDenied for unsigned bundle with key, got %d",
 				code)
 		}
 	})
+
+	t.Run("expired bundle is denied", func(t *testing.T) {
+		t.Parallel()
+
+		storePath := createBundleTestStore(t)
+
+		// The test store is created now, so any age exceeds 1ns.
+		code := runBundleVerify(storePath, "", "1ns")
+		if code != exitDenied {
+			t.Errorf("expected exitDenied for expired bundle, got %d", code)
+		}
+	})
+
+	t.Run("missing blob is denied", func(t *testing.T) {
+		t.Parallel()
+
+		storePath := createBundleTestStore(t)
+
+		blobs, err := filepath.Glob(filepath.Join(storePath, "blobs", "sha256", "*"))
+		if err != nil || len(blobs) == 0 {
+			t.Fatalf("finding test blobs: %v", err)
+		}
+
+		for _, blob := range blobs {
+			removeErr := os.Remove(blob)
+			if removeErr != nil {
+				t.Fatal(removeErr)
+			}
+		}
+
+		code := runBundleVerify(storePath, "", "")
+		if code != exitDenied {
+			t.Errorf("expected exitDenied for missing blob, got %d", code)
+		}
+	})
+
+	t.Run("invalid max-age is an error", func(t *testing.T) {
+		t.Parallel()
+
+		storePath := createBundleTestStore(t)
+
+		code := runBundleVerify(storePath, "", "not-a-duration")
+		if code != exitError {
+			t.Errorf("expected exitError for invalid max-age, got %d", code)
+		}
+	})
+}
+
+func TestExitCodeForBundleError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{
+			"invalid signature",
+			fmt.Errorf("wrapped: %w", bundle.ErrBundleSignatureInvalid),
+			exitDenied,
+		},
+		{"missing signature", bundle.ErrBundleSignatureRequired, exitDenied},
+		{"missing blob", errors.Join(fmt.Errorf("x: %w", bundle.ErrBlobMissing)), exitDenied},
+		{"digest mismatch", bundle.ErrBlobDigestMismatch, exitDenied},
+		{"size mismatch", bundle.ErrBlobSizeMismatch, exitDenied},
+		{"not a regular file", bundle.ErrBlobNotRegular, exitDenied},
+		{"unreadable key", os.ErrNotExist, exitError},
+		{"corrupt manifest", bundle.ErrManifestCorrupt, exitError},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := exitCodeForBundleError(test.err); got != test.want {
+				t.Errorf("exitCodeForBundleError(%v) = %d, want %d", test.err, got, test.want)
+			}
+		})
+	}
+}
+
+func TestBuildCreateOptionsResolvesWithRegistryMirror(t *testing.T) {
+	t.Parallel()
+
+	mirrorRef := pushTestImage(t, "mirrored/app")
+	mirrorHost, _, _ := strings.Cut(mirrorRef, "/")
+
+	// The image only exists on the mirror: resolving it must apply the
+	// registry configuration instead of contacting the original host.
+	const originalHost = "registry.invalid"
+
+	cfg := config.DefaultConfig()
+	cfg.Registries = []config.Registry{{
+		Prefix:   originalHost,
+		Mirror:   mirrorHost,
+		CACert:   "",
+		Insecure: true,
+	}}
+
+	opts, err := buildCreateOptions(
+		t.Context(), []string{originalHost + "/mirrored/app:latest"},
+		filepath.Join(t.TempDir(), "bundle.tar.gz"), "", cfg, "", nil,
+	)
+	if err != nil {
+		t.Fatalf("building create options: %v", err)
+	}
+
+	digest, _, err := opts.ResolveDigest(t.Context(), originalHost+"/mirrored/app:latest")
+	if err != nil {
+		t.Fatalf("resolving digest through the mirror: %v", err)
+	}
+
+	if !strings.HasPrefix(digest, "sha256:") {
+		t.Errorf("digest = %q, want a sha256 digest", digest)
+	}
 }
 
 func testBundleManifest(createdAt time.Time) *bundle.Manifest {

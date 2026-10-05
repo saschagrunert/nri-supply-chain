@@ -1,12 +1,11 @@
 .git
+.claude
 .github
 build
 dist
 test
 docs
 *.md
-!go.mod
-!go.sum
 LICENSE
 OWNERS
 SECURITY_CONTACTS

@@ -193,6 +193,11 @@ GUAC is enabled when `endpoint` is set (no separate toggle).
 | `checks`           | `["certify_vuln", "certify_scorecard", "is_dependency"]` | Which GUAC query types to run. See [verification.md](verification.md#guac-graph-for-understanding-artifact-composition) for details on each check. |
 | `max_dependencies` | `5`                                                      | Maximum number of dependency PURLs returned from the dependency query (1-20)                                                                       |
 
+`auth_token_path` and `ca_cert` must be regular files. Symbolic links are
+followed while they resolve inside the file's directory, as in Kubernetes
+Secret and ConfigMap volumes; links escaping it are rejected at startup. A
+missing token file is only logged, since token auth is optional.
+
 The GUAC client has its own circuit breaker (separate from the per-registry
 breakers) using the global `circuit_breaker_threshold` and
 `circuit_breaker_cooldown` settings.
@@ -331,7 +336,12 @@ bundle_signature_key = "/etc/nri-supply-chain/bundle-key.pub"
 When `bundle_signature_key` is set, the bundle manifest must carry a valid
 signature from that key, regardless of `require_bundle_signature`. An unsigned
 or stripped manifest is rejected, because otherwise whoever writes the bundle
-could choose the embedded trusted root and the staleness timestamp.
+could choose the embedded trusted root and the staleness timestamp. In
+`offline` and `prefer-bundle` modes the key is therefore validated whenever it
+is set, even if `require_bundle_signature` is false: the path must be absolute
+and name a regular file at startup (symbolic links are followed only while they
+resolve inside the file's directory). In `disabled` mode the `offline` section
+is not validated.
 
 The three modes control how the plugin sources attestation data:
 
@@ -609,6 +619,9 @@ poll_interval = "5m"
 | `policy.poll_interval`     | `5m`             | How often to poll the OCI registry for policy updates (minimum 30s)                                                                                                                                                                                                                                   |
 | `policy.oci_max_staleness` | `0s` (unlimited) | Maximum time since the policies were confirmed current. When exceeded, the plugin reports not ready (`/readyz`) and logs errors; applied policies stay in effect. Must be at least `poll_interval` when set. The `nri_supply_chain_policy_oci_staleness_seconds` gauge reports the current staleness. |
 
+With `source = "local"`, `oci_ref`, `poll_interval` and `oci_max_staleness`
+have no effect, and a warning is logged when they are set.
+
 ### Policy Signature Verification
 
 OCI-distributed policies can be signed with Sigstore to ensure only trusted
@@ -790,6 +803,7 @@ daemon.
 ```text
 nri-supply-chain                         Run the NRI plugin daemon
 nri-supply-chain verify <image> [...]    Verify one or more images
+nri-supply-chain preview [<image>...]    Preview policy impact on a set of images
 nri-supply-chain validate                Validate config and policies
 nri-supply-chain effective-policy        Show effective policy for a namespace
 nri-supply-chain inspect <image>         List attestations attached to an image
@@ -849,6 +863,9 @@ Verify flags:
 ```
 
 The `--quiet` and `--output` flags are mutually exclusive.
+
+With `--preview-policy`, the given policy file replaces the configured policies
+for this run, also when the config sets `policy.source = "oci"`.
 
 The `--verbose` flag enables debug-level logging during verification. This shows
 intermediate steps including registry connectivity, digest resolution, discovered
@@ -914,21 +931,36 @@ nri-supply-chain verify alpine:latest nginx:1.25 --output json
 
 ### Exit Codes
 
-All commands use these exit codes; the verify command uses them to
-distinguish denials from errors in CI/CD integration:
+The commands share these exit codes, so CI/CD pipelines can distinguish
+denials from errors:
 
 | Exit code | Meaning                                                  |
 | --------- | -------------------------------------------------------- |
-| 0         | Verification passed                                      |
-| 1         | Verification denied (policy violation)                   |
+| 0         | Success (verification passed)                            |
+| 1         | Denied (policy violation or failed bundle check)         |
 | 2         | Internal/infrastructure error (config, network, parsing) |
+
+Exit code 1 is specific to the commands that verify something:
+
+| Command                    | 1 (denied)                                                                                                                     | 2 (error)                                                                                  |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| `verify`                   | Any image is denied                                                                                                            | Any image cannot be verified (for example its digest cannot be resolved), or a setup error |
+| `preview`                  | Any image would be denied                                                                                                      | Any image cannot be verified, or a setup error                                             |
+| `preview --compare-policy` | The proposed policy set denies any image                                                                                       | Any image cannot be verified against either policy set, or a setup error                   |
+| `bundle verify`            | A blob is missing or does not match the manifest, the signature is missing or invalid, or the bundle is older than `--max-age` | The bundle or key cannot be read, or `--max-age` is invalid                                |
+| `bundle import`            | A blob is missing or does not match the manifest, or the signature is missing or invalid                                       | Any other import failure                                                                   |
+
+The other commands (`validate`, `effective-policy`, `inspect`, `bundle create`,
+`bundle inspect`, `json-schema` and `version`) exit with 0 on success and 2 on
+any error. In warn mode, images that fail their checks are still allowed, so
+`verify` and `preview` exit with 0 for them.
 
 The plugin daemon exits with 0 after `SIGTERM` or `SIGINT` and with 2 on
 errors.
 
-When verifying multiple images, the exit code is the worst (highest) across all
-images. If any image is denied (exit 1), the overall exit is 1. If any image
-hits an infrastructure error (exit 2), the overall exit is 2.
+When verifying or previewing multiple images, the exit code is the worst
+(highest) across all images. If any image is denied (exit 1), the overall exit
+is 1. If any image hits an infrastructure error (exit 2), the overall exit is 2.
 
 Use `--quiet` in CI pipelines when only the exit code matters:
 
@@ -959,7 +991,12 @@ nri-supply-chain preview --compare-policy /path/to/proposed-policies alpine:late
 ```
 
 The diff mode shows which images would change status (allowed/denied) under the
-proposed policy set.
+proposed policy set. The proposed policies are always read from the given local
+directory, also when the config sets `policy.source = "oci"`.
+
+The exit code follows the [exit codes](#exit-codes) of a batch verify: 1 when
+any image would be denied, 2 when any image cannot be verified. With
+`--compare-policy`, it reflects the proposed policy set.
 
 Preview flags:
 

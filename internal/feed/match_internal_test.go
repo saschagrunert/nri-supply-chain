@@ -14,7 +14,10 @@
 
 package feed
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestUnmappedEcosystemLoggedOnce(t *testing.T) {
 	t.Parallel()
@@ -27,6 +30,118 @@ func TestUnmappedEcosystemLoggedOnce(t *testing.T) {
 
 	if warnUnmappedEcosystem(ecosystem) {
 		t.Error("expected the unmapped ecosystem to be logged only once")
+	}
+}
+
+func introducedEvent(version string) OSVEvent {
+	return OSVEvent{Introduced: version, Fixed: "", LastAffected: "", Limit: ""}
+}
+
+func fixedEvent(version string) OSVEvent {
+	return OSVEvent{Introduced: "", Fixed: version, LastAffected: "", Limit: ""}
+}
+
+func lastAffectedEvent(version string) OSVEvent {
+	return OSVEvent{Introduced: "", Fixed: "", LastAffected: version, Limit: ""}
+}
+
+func TestSemverIntervalsUnsortedEvents(t *testing.T) {
+	t.Parallel()
+
+	const (
+		firstInterval  = ">=1.0.0|<2.0.0"
+		secondInterval = ">=2.0.0|<3.0.0"
+	)
+
+	tests := []struct {
+		name   string
+		events []OSVEvent
+		want   []string
+	}{
+		{
+			name: "interleaved introduced and fixed",
+			events: []OSVEvent{
+				introducedEvent(
+					"1.0",
+				),
+				introducedEvent("2.0"),
+				fixedEvent("1.5"),
+				fixedEvent("2.5"),
+			},
+			want: []string{">=1.0|<1.5", ">=2.0|<2.5"},
+		},
+		{
+			name:   "introduced zero listed last",
+			events: []OSVEvent{fixedEvent("1.2.0"), introducedEvent("0")},
+			want:   []string{"<1.2.0"},
+		},
+		{
+			name: "adjacent intervals listed out of order",
+			events: []OSVEvent{
+				introducedEvent("2.0.0"),
+				fixedEvent("3.0.0"),
+				introducedEvent("1.0.0"),
+				fixedEvent("2.0.0"),
+			},
+			want: []string{firstInterval, secondInterval},
+		},
+		{
+			name: "adjacent intervals in order",
+			events: []OSVEvent{
+				introducedEvent("1.0.0"),
+				fixedEvent("2.0.0"),
+				introducedEvent("2.0.0"),
+				fixedEvent("3.0.0"),
+			},
+			want: []string{firstInterval, secondInterval},
+		},
+		{
+			name: "limit closes before introduced at the same version",
+			events: []OSVEvent{
+				introducedEvent("2.0.0"),
+				{Introduced: "", Fixed: "", LastAffected: "", Limit: "2.0.0"},
+				introducedEvent("1.0.0"),
+			},
+			want: []string{firstInterval, ">=2.0.0"},
+		},
+		{
+			name: "last_affected bound is inclusive",
+			events: []OSVEvent{
+				lastAffectedEvent("1.4.0"),
+				introducedEvent("1.0.0"),
+			},
+			want: []string{">=1.0.0|<=1.4.0"},
+		},
+		{
+			name: "last_affected at the introduced version",
+			events: []OSVEvent{
+				lastAffectedEvent("1.0.0"),
+				introducedEvent("1.0.0"),
+			},
+			want: []string{">=1.0.0|<=1.0.0"},
+		},
+		{
+			name: "last_affected closes before introduced at the same version",
+			events: []OSVEvent{
+				introducedEvent("2.0.0"),
+				fixedEvent("3.0.0"),
+				introducedEvent("1.0.0"),
+				lastAffectedEvent("2.0.0"),
+			},
+			want: []string{">=1.0.0|<=2.0.0", secondInterval},
+		},
+		{
+			name:   "non-semver version matches everything",
+			events: []OSVEvent{introducedEvent("1.0"), fixedEvent("1.5.debian")},
+			want:   []string{versAny},
+		},
+	}
+
+	for _, test := range tests {
+		got := semverIntervals(test.events)
+		if !slices.Equal(got, test.want) {
+			t.Errorf("%s: semverIntervals = %v, want %v", test.name, got, test.want)
+		}
 	}
 }
 
