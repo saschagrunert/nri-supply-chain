@@ -32,6 +32,7 @@ import (
 
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
+	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
 func TestPollerDetectsDigestChange(t *testing.T) {
@@ -100,7 +101,7 @@ func TestPollerDetectsDigestChange(t *testing.T) {
 		}
 
 		pol := policies[""]
-		testutil.AssertEqual(t, "deny", string(pol.SLSAMissingPolicy()))
+		testutil.AssertEqual(t, "deny", string(pol.MissingPolicyFor(types.CheckTypeSLSA)))
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for policy reload")
 	}

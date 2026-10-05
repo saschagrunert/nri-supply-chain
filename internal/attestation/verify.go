@@ -16,12 +16,7 @@ package attestation
 
 import (
 	"context"
-	"crypto"
-	"crypto/sha256"
-	"crypto/x509"
-	"encoding/base64"
 	"encoding/hex"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -37,19 +32,9 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/verify"
 	"github.com/sigstore/sigstore/pkg/signature"
 
-	"github.com/saschagrunert/nri-supply-chain/internal/fileutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/glob"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
-
-var pemKeyCache sync.Map //nolint:gochecknoglobals // per-process key cache
-
-// ResetPEMKeyCache clears cached PEM public keys so that rotated keys on disk
-// are re-read on the next verification cycle. Call this after a config reload
-// when policies have changed.
-func ResetPEMKeyCache() {
-	pemKeyCache.Clear()
-}
 
 // rootSource supplies one Sigstore trusted root together with the OIDC
 // issuers whose certificates that root may vouch for.
@@ -69,22 +54,13 @@ type rootSource struct {
 }
 
 func rootSourceFromCache(cachedRoot *trustedRootCache) rootSource {
-	src := rootSource{
-		name:    "",
-		issuers: nil,
-		get: func(ctx context.Context) (*root.TrustedRoot, error) {
-			return fetchTrustedRootWithContext(ctx, cachedRoot)
-		},
+	return rootSource{
+		name:            cachedRoot.name,
+		issuers:         cachedRoot.issuers,
+		get:             cachedRoot.get,
 		keylessDisabled: false,
 		skipSCTs:        false,
 	}
-
-	if cachedRoot != nil {
-		src.name = cachedRoot.name
-		src.issuers = cachedRoot.issuers
-	}
-
-	return src
 }
 
 func verifyBundleWithCache(
@@ -108,41 +84,6 @@ func verifyBundleWithMultipleRoots(
 	}
 
 	return verifyBundleCommon(ctx, bundleBytes, opts, sources)
-}
-
-// VerifyBundle verifies a sigstore bundle against the given trusted root and
-// returns the verified payload and signer. This is the entry point for offline
-// verification where the caller supplies a pre-loaded TrustedRoot directly.
-// A nil trustedRoot is allowed for key-based bundles verified without a
-// transparency log; keyless bundles and transparency log checks fail closed.
-func VerifyBundle(
-	ctx context.Context,
-	bundleBytes []byte,
-	opts *FetchOptions,
-	trustedRoot *root.TrustedRoot,
-) (*VerifiedBundle, error) {
-	return VerifyBundleWithIssuers(ctx, bundleBytes, opts, trustedRoot, nil)
-}
-
-// VerifyBundleWithIssuers is VerifyBundle with the trusted root restricted to
-// vouch only for certificates of the given OIDC issuers. Empty issuers place
-// no restriction.
-func VerifyBundleWithIssuers(
-	ctx context.Context,
-	bundleBytes []byte,
-	opts *FetchOptions,
-	trustedRoot *root.TrustedRoot,
-	issuers []string,
-) (*VerifiedBundle, error) {
-	var roots []StaticRoot
-
-	if trustedRoot != nil {
-		roots = []StaticRoot{{
-			Name: "bundle", Root: trustedRoot, Issuers: issuers, KeylessDisabled: false,
-		}}
-	}
-
-	return VerifyBundleWithStaticRoots(ctx, bundleBytes, opts, roots)
 }
 
 // StaticRoot is a trusted root supplied directly, for example embedded in an
@@ -641,7 +582,7 @@ func buildKeyMaterial(keys []TrustedKeyRef) (*trustedKeys, error) {
 	byHint := make(map[string]*windowedKey, len(keys))
 
 	for idx := range keys {
-		pubKey, err := loadPublicKeyFromPEM(keys[idx].Path)
+		pubKey, err := LoadPublicKey(keys[idx].Path)
 		if err != nil {
 			return nil, fmt.Errorf(
 				"%w: loading public key %q: %w", ErrTrustMaterialUnavailable, keys[idx].Path, err,
@@ -689,101 +630,6 @@ func buildKeyMaterial(keys []TrustedKeyRef) (*trustedKeys, error) {
 	)
 
 	return &trustedKeys{material: material, byHint: byHint}, nil
-}
-
-func loadPublicKeyFromPEM(path string) (crypto.PublicKey, error) {
-	data, err := fileutil.ReadLimited(path, fileutil.MaxCredentialFileSize)
-	if err != nil {
-		return nil, fmt.Errorf("reading PEM file: %w", err)
-	}
-
-	contentHash := sha256.Sum256(data)
-	cacheKey := path + "\x00" + hex.EncodeToString(contentHash[:])
-
-	if cached, ok := pemKeyCache.Load(cacheKey); ok {
-		key, castOK := cached.(crypto.PublicKey)
-		if !castOK {
-			pemKeyCache.Delete(cacheKey)
-		} else {
-			return key, nil
-		}
-	}
-
-	block, _ := pem.Decode(data)
-	if block == nil {
-		return nil, fmt.Errorf("%w in %q", errNoPEMBlock, path)
-	}
-
-	pub, pkixErr := x509.ParsePKIXPublicKey(block.Bytes)
-	if pkixErr == nil {
-		pemKeyCache.Store(cacheKey, pub)
-
-		return pub, nil
-	}
-
-	rsaKey, rsaErr := x509.ParsePKCS1PublicKey(block.Bytes)
-	if rsaErr == nil {
-		pemKeyCache.Store(cacheKey, rsaKey)
-
-		return rsaKey, nil
-	}
-
-	return nil, fmt.Errorf("parsing public key: %w", pkixErr)
-}
-
-func computeKeyHint(pub crypto.PublicKey) (string, error) {
-	der, err := x509.MarshalPKIXPublicKey(pub)
-	if err != nil {
-		return "", fmt.Errorf("marshaling public key to PKIX: %w", err)
-	}
-
-	sum := sha256.Sum256(der)
-
-	return base64.StdEncoding.EncodeToString(sum[:]), nil
-}
-
-type trustedRootResult struct {
-	root *root.TrustedRoot
-	err  error
-}
-
-// fetchTrustedRootWithContext wraps root.FetchTrustedRoot with context
-// cancellation. On context cancel, the inner goroutine continues until
-// the HTTP request completes (the sigstore library does not accept a
-// context). The goroutine is bounded by HTTP timeouts and the buffered
-// channel prevents it from blocking on send.
-func fetchTrustedRootWithContext(
-	ctx context.Context, cachedRoot *trustedRootCache,
-) (*root.TrustedRoot, error) {
-	if cachedRoot != nil {
-		return cachedRoot.get(ctx)
-	}
-
-	ctxErr := ctx.Err()
-	if ctxErr != nil {
-		return nil, fmt.Errorf(
-			"context canceled before fetching trusted root: %w", ctxErr,
-		)
-	}
-
-	resultCh := make(chan trustedRootResult, 1)
-
-	go func() {
-		r, e := root.FetchTrustedRoot()
-		resultCh <- trustedRootResult{root: r, err: e}
-	}()
-
-	select {
-	case <-ctx.Done():
-		slog.WarnContext(ctx, "Context canceled while trusted root fetch is in progress; "+
-			"background goroutine will complete when the HTTP request finishes")
-
-		return nil, fmt.Errorf(
-			"context canceled during trusted root fetch: %w", ctx.Err(),
-		)
-	case res := <-resultCh:
-		return res.root, res.err
-	}
 }
 
 func buildCertificateIdentity(issuers, sanPatterns []string) (verify.CertificateIdentity, error) {

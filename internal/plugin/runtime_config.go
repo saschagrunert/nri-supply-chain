@@ -176,7 +176,17 @@ func (p *Plugin) applyRuntimeConfig(ctx context.Context, raw string, cfg *config
 
 	firstAttempt := make(chan struct{})
 
-	go p.applyRuntimeConfigWithRetry(context.WithoutCancel(ctx), pending, firstAttempt)
+	// The apply outlives the request, but not the plugin: Close stops the
+	// retries.
+	retryCtx, cancelRetry := context.WithCancel(context.WithoutCancel(ctx))
+	stopRetry := context.AfterFunc(p.lifetime, cancelRetry) //nolint:contextcheck // plugin lifetime
+
+	go func() {
+		defer cancelRetry()
+		defer stopRetry()
+
+		p.applyRuntimeConfigWithRetry(retryCtx, pending, firstAttempt)
+	}()
 
 	wait := runtimeConfigApplyWait
 	if deadline, ok := ctx.Deadline(); ok {
@@ -194,8 +204,8 @@ func (p *Plugin) applyRuntimeConfig(ctx context.Context, raw string, cfg *config
 }
 
 // applyRuntimeConfigWithRetry applies pending until it succeeds, a newer
-// configuration supersedes it, or the apply is canceled. firstAttempt is
-// closed after the first attempt.
+// configuration supersedes it, or ctx is canceled. firstAttempt is closed
+// after the first attempt.
 func (p *Plugin) applyRuntimeConfigWithRetry(
 	ctx context.Context, pending *pendingRuntimeConfig, firstAttempt chan struct{},
 ) {
@@ -224,6 +234,10 @@ func (p *Plugin) applyRuntimeConfigWithRetry(
 		select {
 		case <-timer.C:
 		case <-pending.superseded:
+			timer.Stop()
+
+			return
+		case <-ctx.Done():
 			timer.Stop()
 
 			return
@@ -271,10 +285,6 @@ func (p *Plugin) attemptRuntimeConfig(
 }
 
 func (p *Plugin) setRuntimeConfigApplyFailed(failed bool) {
-	if p.metrics == nil {
-		return
-	}
-
 	if failed {
 		p.metrics.RuntimeConfigApplyFailed.Set(1)
 	} else {

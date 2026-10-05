@@ -35,8 +35,8 @@ func FuzzVerify(f *testing.F) {
 		`"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"}}],` +
 		`"predicateType":"https://in-toto.io/attestation/scai/v0.3",` +
 		`"predicate":{"attributes":[` +
-		`{"attribute":"PASSED_CODE_REVIEW","evidence":{"url":"https://review.example.com/1"}},` +
-		`{"attribute":"PASSED_TESTS","evidence":{"url":"https://ci.example.com/2"}}` +
+		`{"attribute":"PASSED_CODE_REVIEW","evidence":{"uri":"https://review.example.com/1"}},` +
+		`{"attribute":"PASSED_TESTS","evidence":{"uri":"https://ci.example.com/2"}}` +
 		`]}` +
 		`}`))
 

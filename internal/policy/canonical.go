@@ -23,6 +23,76 @@ import (
 	"strings"
 )
 
+// checkDuplicateKeys rejects policy documents that repeat a key within one
+// JSON object, at any depth. encoding/json merges repeated objects field by
+// field while the explicit field tracking and the canonical name checks only
+// see the last occurrence, so an override in an earlier occurrence would be
+// decoded but dropped by merges.
+func checkDuplicateKeys(data []byte) error {
+	return checkDuplicateValue(json.NewDecoder(bytes.NewReader(data)), "")
+}
+
+// checkDuplicateValue consumes one JSON value from dec and checks the keys
+// of every object in it.
+func checkDuplicateValue(dec *json.Decoder, path string) error {
+	token, err := dec.Token()
+	if err != nil {
+		return fmt.Errorf("reading policy value: %w", err)
+	}
+
+	switch token {
+	case json.Delim('{'):
+		return checkDuplicateObject(dec, path)
+	case json.Delim('['):
+		for idx := 0; dec.More(); idx++ {
+			err = checkDuplicateValue(dec, fmt.Sprintf("%s[%d]", path, idx))
+			if err != nil {
+				return err
+			}
+		}
+
+		return consumeDelim(dec)
+	}
+
+	return nil
+}
+
+func checkDuplicateObject(dec *json.Decoder, path string) error {
+	seen := make(map[string]bool)
+
+	for dec.More() {
+		token, err := dec.Token()
+		if err != nil {
+			return fmt.Errorf("reading policy key: %w", err)
+		}
+
+		// The decoder only returns string tokens for object keys.
+		key, _ := token.(string)
+		if seen[key] {
+			return fmt.Errorf("%w: %q", ErrDuplicateField, joinFieldPath(path, key))
+		}
+
+		seen[key] = true
+
+		err = checkDuplicateValue(dec, joinFieldPath(path, key))
+		if err != nil {
+			return err
+		}
+	}
+
+	return consumeDelim(dec)
+}
+
+// consumeDelim reads the closing delimiter of an object or array.
+func consumeDelim(dec *json.Decoder) error {
+	_, err := dec.Token()
+	if err != nil {
+		return fmt.Errorf("reading policy delimiter: %w", err)
+	}
+
+	return nil
+}
+
 // checkCanonicalFields rejects policy documents that spell a field name
 // differently from its JSON tag. encoding/json matches field names
 // case-insensitively, so "MissingPolicy" would decode into missingPolicy

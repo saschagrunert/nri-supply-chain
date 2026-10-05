@@ -15,16 +15,12 @@
 package main
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
-	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
-	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
 func TestServeConfigPath(t *testing.T) {
@@ -83,54 +79,4 @@ func TestSetupServeConfigWithoutFile(t *testing.T) {
 	// The other subcommands keep rejecting an empty config path.
 	_, err = setupConfig("")
 	testutil.AssertError(t, err)
-}
-
-// mockRuntimeConfigPlugin records the plugin-side settings applied from a
-// configuration passed by the runtime.
-type mockRuntimeConfigPlugin struct {
-	mockPluginReloader
-
-	continuousInterval time.Duration
-}
-
-func (m *mockRuntimeConfigPlugin) StartContinuousVerifier(
-	_ context.Context, interval time.Duration,
-) {
-	m.continuousInterval = interval
-}
-
-//nolint:paralleltest // modifies package-level logLevelVar
-func TestRuntimeConfigApplierAppliesPluginSettings(t *testing.T) {
-	policyDir := t.TempDir()
-	testutil.WritePolicy(t, policyDir, "default.json", `{}`)
-
-	startup := config.DefaultConfig()
-	met := metrics.New()
-
-	verif, err := verifier.New(t.Context(), startup, met, &mockAttestationFetcher{})
-	testutil.AssertNoError(t, err)
-	t.Cleanup(verif.Stop)
-
-	cfg, err := config.LoadFromString(`verification = "warn"
-policy_dir = "` + policyDir + `"
-fetch_timeout = "7s"
-digest_resolve_timeout = "2s"
-
-[remediation]
-mode = "warn"
-interval = "5m"
-`)
-	testutil.AssertNoError(t, err)
-
-	mock := &mockRuntimeConfigPlugin{} //nolint:exhaustruct_v5 // zero-value mock
-
-	applier := runtimeConfigApplier(t.Context(), startup, verif, met, mock)
-	testutil.AssertNoError(t, applier(t.Context(), cfg))
-
-	testutil.AssertEqual(t, verif.CurrentConfig().Verification, config.ModeWarn)
-	testutil.AssertEqual(t, mock.fetchTimeout, 7*time.Second)
-	testutil.AssertEqual(t, mock.digestResolveTimeout, 2*time.Second)
-	testutil.AssertEqual(t, mock.remediationMode, config.RemediationModeWarn)
-	testutil.AssertEqual(t, mock.continuousInterval, 5*time.Minute)
-	testutil.AssertEqual(t, mock.prewarmAfterReloadCalled, true)
 }

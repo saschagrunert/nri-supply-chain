@@ -22,9 +22,6 @@ import (
 // VerifyBlobIntegrity checks that all blobs referenced by the manifest exist
 // in the OCI layout and match their declared digest and size.
 func VerifyBlobIntegrity(store *Store) error {
-	store.mu.RLock()
-	defer store.mu.RUnlock()
-
 	var errs []error
 
 	for digest, entry := range store.manifest.Images {

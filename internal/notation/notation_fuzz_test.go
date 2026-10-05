@@ -49,7 +49,7 @@ func FuzzVerify(f *testing.F) {
 			},
 		}
 
-		sig := &attestation.VerifiedAttestation{
+		sig := attestation.VerifiedAttestation{
 			PredicateType:     attestation.NotationSignatureMediaType,
 			Payload:           envelope,
 			Digest:            "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
@@ -57,9 +57,9 @@ func FuzzVerify(f *testing.F) {
 			NotationMediaType: mediaType,
 		}
 
-		notation.Verify(
+		_, _ = notation.VerifyMultiple(
 			context.Background(),
-			sig,
+			[]attestation.VerifiedAttestation{sig},
 			"example.com/img:latest",
 			"sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
 			pol,

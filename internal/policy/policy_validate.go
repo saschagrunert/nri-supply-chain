@@ -22,6 +22,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/fileutil"
@@ -73,6 +74,7 @@ func (p *Policy) Validate() error {
 
 	errs = append(errs, p.validateInclude(), p.validateExclude())
 	errs = append(errs, p.validateSections()...)
+	errs = append(errs, p.validateOverlaps())
 
 	err := p.validateRules()
 	if err != nil {
@@ -207,19 +209,17 @@ func (s *Sections) validateRuntime(prefix string) []error {
 // Kubernetes Secret and ConfigMap volumes), matching what fileutil.ReadLimited
 // reads later; a symlink escaping that directory is rejected.
 func checkRegularFile(path string) error {
-	info, err := fileutil.StatContained(path)
-	if errors.Is(err, fileutil.ErrSymlink) {
+	_, err := fileutil.StatRegular(path)
+
+	switch {
+	case errors.Is(err, fileutil.ErrSymlink):
 		return fmt.Errorf(
 			"%w (symlinks must stay inside the file's directory): %w", ErrNotRegularFile, err,
 		)
-	}
-
-	if err != nil {
-		return fmt.Errorf("stat file: %w", err)
-	}
-
-	if !info.Mode().IsRegular() {
+	case errors.Is(err, fileutil.ErrNotRegularFile):
 		return ErrNotRegularFile
+	case err != nil:
+		return fmt.Errorf("stat file: %w", err)
 	}
 
 	return nil
@@ -594,7 +594,7 @@ func validateGlobPatterns(field string, patterns []string) error {
 	var errs []error
 
 	for idx, pattern := range patterns {
-		_, err := glob.Match(pattern, "")
+		err := glob.Validate(pattern)
 		if err != nil {
 			errs = append(errs, fmt.Errorf(
 				"invalid %s[%d] pattern %q: %w", field, idx, pattern, err,
@@ -634,7 +634,36 @@ func warnEmptyTrust(trust *TrustPolicy) {
 }
 
 func (p *Policy) validateInclude() error {
-	return validateGlobPatterns("include", p.Include)
+	// Image references are matched with a lowercase repository and digest,
+	// so an uppercase character outside the tag never matches anything.
+	for idx, pattern := range p.Include {
+		if hasUppercaseOutsideTag(pattern) {
+			slog.Warn("Include pattern contains uppercase characters outside the tag; "+
+				"image repositories are lowercase, so it never matches",
+				"field", fmt.Sprintf("include[%d]", idx),
+				"pattern", pattern,
+			)
+		}
+	}
+
+	return errors.Join(
+		validateNonEmpty("include", p.Include),
+		validateGlobPatterns("include", p.Include),
+	)
+}
+
+// hasUppercaseOutsideTag reports whether an image pattern has an uppercase
+// character in its repository or digest part. Tags may contain uppercase
+// characters.
+func hasUppercaseOutsideTag(pattern string) bool {
+	base, digest, _ := strings.Cut(pattern, "@")
+
+	lastSlash := strings.LastIndex(base, "/")
+	if colon := strings.LastIndex(base, ":"); colon > lastSlash {
+		base = base[:colon]
+	}
+
+	return strings.ContainsFunc(base+digest, unicode.IsUpper)
 }
 
 func (p *Policy) validateExclude() error {
@@ -645,7 +674,10 @@ func (p *Policy) validateExclude() error {
 		)
 	}
 
-	return validateGlobPatterns("exclude", p.Exclude)
+	return errors.Join(
+		validateNonEmpty("exclude", p.Exclude),
+		validateGlobPatterns("exclude", p.Exclude),
+	)
 }
 
 // tagScopedPatterns returns the image patterns that are scoped to a tag: a

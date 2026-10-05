@@ -180,20 +180,24 @@ func runPreview(
 		return runPreviewDiff(writer, images, namespace, outputFormat, comparePolicy, cfg)
 	}
 
-	return withVerifier(writer, outputFormat, cfg, func(
+	return withVerifier(writer, outputFormat, previewOutputFormats, cfg, func(
 		ctx context.Context, w io.Writer, v *verifier.Verifier, c *registry.TransportCache,
 	) int {
 		return executePreview(ctx, w, images, namespace, outputFormat, cfg, v, c)
 	})
 }
 
+// executePreview verifies images and writes the preview. The exit code is the
+// worst across all images, as for a batch verify: exitDenied when any image
+// would be denied, exitError when any image could not be verified or the
+// preview was interrupted.
 func executePreview(
 	ctx context.Context, writer io.Writer,
 	images []string, namespace, outputFormat string,
 	cfg *config.Config, verif *verifier.Verifier,
 	cache *registry.TransportCache,
 ) int {
-	results := previewImages(ctx, images, namespace, cfg, verif, cache)
+	results, code := previewImages(ctx, images, namespace, cfg, verif, cache)
 	summary := aggregateResults(results)
 	suggestions := generateSuggestions(summary)
 
@@ -210,62 +214,27 @@ func executePreview(
 		return exitError
 	}
 
-	return exitSuccess
+	return code
 }
 
+// previewImages verifies images like a batch verify and returns the results
+// with the worst exit code. An interrupted preview returns the partial
+// results with exitError.
 func previewImages(
 	ctx context.Context,
 	images []string, namespace string,
 	cfg *config.Config, verif *verifier.Verifier,
 	cache *registry.TransportCache,
-) []*verifyOutput {
-	type indexedResult struct {
-		index int
-		out   *verifyOutput
-	}
-
-	resultsCh := make(chan indexedResult, len(images))
-	sem := make(chan struct{}, batchConcurrency)
-
-	for idx, imageRef := range images {
-		sem <- struct{}{}
-
-		go func() {
-			defer func() { <-sem }()
-
-			if ctx.Err() != nil {
-				return
-			}
-
-			_, out := verifySingleImage(ctx, imageRef, namespace, cfg, verif, cache, "")
-			resultsCh <- indexedResult{index: idx, out: out}
-		}()
-	}
-
-	for range cap(sem) {
-		sem <- struct{}{}
-	}
-
-	close(resultsCh)
+) (results []*verifyOutput, code int) {
+	results, code = verifyImages(ctx, images, namespace, cfg, verif, cache, "")
 
 	if ctx.Err() != nil {
 		slog.Error("Preview interrupted", "error", ctx.Err())
+
+		return results, exitError
 	}
 
-	ordered := make([]*verifyOutput, len(images))
-	for r := range resultsCh {
-		ordered[r.index] = r.out
-	}
-
-	results := make([]*verifyOutput, 0, len(images))
-
-	for _, out := range ordered {
-		if out != nil {
-			results = append(results, out)
-		}
-	}
-
-	return results
+	return results, code
 }
 
 type previewOutput struct {

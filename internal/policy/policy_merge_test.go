@@ -183,7 +183,7 @@ func TestMergeWithDefaultInheritsUnsetFields(t *testing.T) {
 		},
 		{
 			name: "slsa missing policy",
-			got:  func(p *policy.Policy) any { return p.SLSAMissingPolicy() },
+			got:  func(p *policy.Policy) any { return p.MissingPolicyFor(types.CheckTypeSLSA) },
 			want: types.ActionDeny,
 		},
 		{
@@ -193,7 +193,7 @@ func TestMergeWithDefaultInheritsUnsetFields(t *testing.T) {
 		},
 		{
 			name: "vex missing policy",
-			got:  func(p *policy.Policy) any { return p.VEXMissingPolicy() },
+			got:  func(p *policy.Policy) any { return p.MissingPolicyFor(types.CheckTypeVEX) },
 			want: types.ActionDeny,
 		},
 		{
@@ -213,7 +213,7 @@ func TestMergeWithDefaultInheritsUnsetFields(t *testing.T) {
 		},
 		{
 			name: "notation missing policy",
-			got:  func(p *policy.Policy) any { return p.NotationMissingPolicy() },
+			got:  func(p *policy.Policy) any { return p.MissingPolicyFor(types.CheckTypeNotation) },
 			want: types.ActionDeny,
 		},
 		{
@@ -243,7 +243,7 @@ func TestMergeWithDefaultInheritsUnsetFields(t *testing.T) {
 		},
 		{
 			name: "sbom missing policy",
-			got:  func(p *policy.Policy) any { return p.SBOMMissingPolicy() },
+			got:  func(p *policy.Policy) any { return p.MissingPolicyFor(types.CheckTypeSBOM) },
 			want: types.ActionDeny,
 		},
 		{
@@ -268,7 +268,7 @@ func TestMergeWithDefaultInheritsUnsetFields(t *testing.T) {
 		},
 		{
 			name: "scai missing policy",
-			got:  func(p *policy.Policy) any { return p.SCAIMissingPolicy() },
+			got:  func(p *policy.Policy) any { return p.MissingPolicyFor(types.CheckTypeSCAI) },
 			want: types.ActionDeny,
 		},
 		{
@@ -394,7 +394,7 @@ func TestMergeWithDefaultNamespaceOverrides(t *testing.T) {
 				},
 				{
 					name: "slsa preserved",
-					got:  func(p *policy.Policy) any { return p.SLSAMissingPolicy() },
+					got:  func(p *policy.Policy) any { return p.MissingPolicyFor(types.CheckTypeSLSA) },
 					want: types.ActionDeny,
 				},
 			},
@@ -427,7 +427,7 @@ func TestMergeWithDefaultNamespaceOverrides(t *testing.T) {
 			checks: []fieldCheck{
 				{
 					name: "slsa from namespace",
-					got:  func(p *policy.Policy) any { return p.SLSAMissingPolicy() },
+					got:  func(p *policy.Policy) any { return p.MissingPolicyFor(types.CheckTypeSLSA) },
 					want: types.ActionAllow,
 				},
 			},
@@ -438,7 +438,7 @@ func TestMergeWithDefaultNamespaceOverrides(t *testing.T) {
 			checks: []fieldCheck{
 				{
 					name: "vex from namespace",
-					got:  func(p *policy.Policy) any { return p.VEXMissingPolicy() },
+					got:  func(p *policy.Policy) any { return p.MissingPolicyFor(types.CheckTypeVEX) },
 					want: types.ActionWarn,
 				},
 			},
@@ -478,7 +478,7 @@ func TestMergeWithDefaultNamespaceOverrides(t *testing.T) {
 			checks: []fieldCheck{
 				{
 					name: "sbom from namespace",
-					got:  func(p *policy.Policy) any { return p.SBOMMissingPolicy() },
+					got:  func(p *policy.Policy) any { return p.MissingPolicyFor(types.CheckTypeSBOM) },
 					want: types.ActionWarn,
 				},
 				{
@@ -497,7 +497,7 @@ func TestMergeWithDefaultNamespaceOverrides(t *testing.T) {
 			checks: []fieldCheck{
 				{
 					name: "scai",
-					got:  func(p *policy.Policy) any { return p.SCAIMissingPolicy() },
+					got:  func(p *policy.Policy) any { return p.MissingPolicyFor(types.CheckTypeSCAI) },
 					want: types.ActionWarn,
 				},
 				{
@@ -527,7 +527,7 @@ func TestMergeWithDefaultNamespaceOverrides(t *testing.T) {
 				},
 				{
 					name: "slsa inherited",
-					got:  func(p *policy.Policy) any { return p.SLSAMissingPolicy() },
+					got:  func(p *policy.Policy) any { return p.MissingPolicyFor(types.CheckTypeSLSA) },
 					want: types.ActionDeny,
 				},
 			},
@@ -595,14 +595,14 @@ func TestMergeWithDefaultNamespaceOverrides(t *testing.T) {
 			checks: []fieldCheck{
 				{
 					name: "slsa overridden",
-					got:  func(p *policy.Policy) any { return p.SLSAMissingPolicy() },
+					got:  func(p *policy.Policy) any { return p.MissingPolicyFor(types.CheckTypeSLSA) },
 					want: types.ActionWarn,
 				},
 				{
 					name: "notation kept",
 					got: func(p *policy.Policy) any {
 						return string(
-							p.NotationMissingPolicy(),
+							p.MissingPolicyFor(types.CheckTypeNotation),
 						) + "|" + p.Notation.VerificationLevel +
 							"|" + p.Notation.TrustStores[0].Name
 					},
@@ -618,7 +618,11 @@ func TestMergeWithDefaultNamespaceOverrides(t *testing.T) {
 				{
 					name: "sbom kept",
 					got: func(p *policy.Policy) any {
-						return string(p.SBOMMissingPolicy()) + "|" + joined(p.SBOM.Formats)
+						return string(
+							p.MissingPolicyFor(types.CheckTypeSBOM),
+						) + "|" + joined(
+							p.SBOM.Formats,
+						)
 					},
 					want: string(
 						types.ActionDeny,
@@ -974,7 +978,7 @@ func TestApplyRule(t *testing.T) {
 
 	slsaAllowed := fieldCheck{
 		name: "base slsa kept",
-		got:  func(p *policy.Policy) any { return p.SLSAMissingPolicy() },
+		got:  func(p *policy.Policy) any { return p.MissingPolicyFor(types.CheckTypeSLSA) },
 		want: types.ActionAllow,
 	}
 
@@ -1006,12 +1010,12 @@ func TestApplyRule(t *testing.T) {
 			checks: []fieldCheck{
 				{
 					name: "slsa from rule",
-					got:  func(p *policy.Policy) any { return p.SLSAMissingPolicy() },
+					got:  func(p *policy.Policy) any { return p.MissingPolicyFor(types.CheckTypeSLSA) },
 					want: types.ActionDeny,
 				},
 				{
 					name: "vex from base",
-					got:  func(p *policy.Policy) any { return p.VEXMissingPolicy() },
+					got:  func(p *policy.Policy) any { return p.MissingPolicyFor(types.CheckTypeVEX) },
 					want: types.ActionAllow,
 				},
 				{
@@ -1033,7 +1037,11 @@ func TestApplyRule(t *testing.T) {
 			verify: func(t *testing.T, base *policy.Policy, _ *policy.ImageRule, _ *policy.Policy) {
 				t.Helper()
 
-				testutil.AssertEqual(t, types.ActionAllow, base.SLSAMissingPolicy())
+				testutil.AssertEqual(
+					t,
+					types.ActionAllow,
+					base.MissingPolicyFor(types.CheckTypeSLSA),
+				)
 			},
 		},
 		{
@@ -1195,7 +1203,7 @@ func TestApplyRule(t *testing.T) {
 			checks: []fieldCheck{
 				{
 					name: "sbom from rule",
-					got:  func(p *policy.Policy) any { return p.SBOMMissingPolicy() },
+					got:  func(p *policy.Policy) any { return p.MissingPolicyFor(types.CheckTypeSBOM) },
 					want: types.ActionDeny,
 				},
 				{
@@ -1224,7 +1232,7 @@ func TestApplyRule(t *testing.T) {
 			checks: []fieldCheck{
 				{
 					name: "notation from rule",
-					got:  func(p *policy.Policy) any { return p.NotationMissingPolicy() },
+					got:  func(p *policy.Policy) any { return p.MissingPolicyFor(types.CheckTypeNotation) },
 					want: types.ActionDeny,
 				},
 			},
@@ -1275,7 +1283,7 @@ func TestApplyRule(t *testing.T) {
 				},
 				{
 					name: "slsa from rule",
-					got:  func(p *policy.Policy) any { return p.SLSAMissingPolicy() },
+					got:  func(p *policy.Policy) any { return p.MissingPolicyFor(types.CheckTypeSLSA) },
 					want: types.ActionDeny,
 				},
 			},

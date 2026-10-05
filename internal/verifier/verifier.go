@@ -66,6 +66,10 @@ const (
 	// stopGracePeriod bounds how long Stop waits for in-flight
 	// verifications before releasing resources.
 	stopGracePeriod = 10 * time.Second
+
+	// stopCancelGracePeriod bounds how long Stop waits for in-flight
+	// verifications to return after cancelling them.
+	stopCancelGracePeriod = time.Second
 )
 
 // Verifier performs supply chain attestation verification on container images.
@@ -86,6 +90,11 @@ type Verifier struct {
 	// flightStarts maps singleflight keys to the start time of the running
 	// verification, so admissions can avoid joining slow verifications.
 	flightStarts sync.Map
+	// stopCtx is cancelled by Stop to cancel in-flight verifications that
+	// outlive the grace period. They are otherwise independent of the
+	// request that started them.
+	stopCtx    context.Context //nolint:containedctx // lifetime of the verifier
+	stopCancel context.CancelFunc
 	// reloadPrepared is a test hook called after a reload prepared its plan.
 	reloadPrepared func()
 }
@@ -133,8 +142,12 @@ func New(
 		WarnWarnModeDefaults(ctx, &cfgCopy, loaded.policies)
 	}
 
+	stopCtx, stopCancel := context.WithCancel(context.Background())
+
 	verif := &Verifier{ //nolint:exhaustruct_v5 // zero-value fields are intentional
-		nodeName: resolveNodeName(),
+		nodeName:   resolveNodeName(),
+		stopCtx:    stopCtx,
+		stopCancel: stopCancel,
 	}
 
 	trust := computeTrustFingerprint(&cfgCopy, loaded.policies)
@@ -149,6 +162,8 @@ func New(
 		metrics:      met,
 	})
 	if err != nil {
+		stopCancel()
+
 		return nil, err
 	}
 
@@ -210,7 +225,8 @@ func policyHashForNamespace(hashes map[string]string, namespace string) string {
 // Stop releases resources held by the verifier, including the cache's
 // background eviction goroutine and the OCI policy poller. It waits up to
 // a short grace period for in-flight verifications so they can write their
-// results; use StopContext to control the wait.
+// results, then cancels the remaining ones; use StopContext to control the
+// wait.
 func (v *Verifier) Stop() {
 	done := make(chan struct{})
 
@@ -221,8 +237,8 @@ func (v *Verifier) Stop() {
 }
 
 // StopContext is like Stop but waits for in-flight verifications only until
-// ctx is done. Verifications requested after StopContext was called fail
-// with ErrVerifierStopped.
+// ctx is done before cancelling them. Verifications requested after
+// StopContext was called fail with ErrVerifierStopped.
 func (v *Verifier) StopContext(ctx context.Context) {
 	v.stop(ctx.Done())
 }
@@ -433,7 +449,7 @@ func (v *Verifier) Verify( //nolint:funlen // early-return branches inflate line
 	pol := policyForNamespace(state.policies, namespace)
 	if pol == nil {
 		result, err := handleMissingPolicy(ctx, state.config, imageRef, namespace)
-		logResult(ctx, state.auditLogger, imageRef, digest, namespace, result, info)
+		logVerification(ctx, state, req, result, err, info)
 		recordMetrics(state.metrics, result, namespace)
 
 		return result, err
@@ -468,27 +484,47 @@ func (v *Verifier) Verify( //nolint:funlen // early-return branches inflate line
 
 	cacheNS := cacheNamespaceKey(namespace, imageRef, ruleIdx)
 
-	result, err := v.handleCacheHit(
-		ctx, state, effectiveMode, imageRef, digest, namespace, cacheNS, info,
-	)
-	if result != nil || err != nil {
-		return result, err
+	var err error
+
+	result := cachedResult(state, digest, namespace, cacheNS)
+	if result == nil {
+		result, err = v.verifyOnce(ctx, state, resolvedPol, effectiveMode, req, cacheNS)
 	}
 
-	result, err = v.verifyOnce(ctx, state, resolvedPol, effectiveMode, req, cacheNS, info)
 	if err != nil {
-		return handleVerifyError(ctx, state, effectiveMode, imageRef, digest, namespace, err, info)
+		result, err = handleVerifyError(ctx, state, effectiveMode, imageRef, err)
+	} else {
+		result, err = applyEnforcement(ctx, effectiveMode, result, imageRef)
 	}
 
-	return applyEnforcement(ctx, effectiveMode, result, imageRef)
+	// The audit entry records the admission decision, so it is written once
+	// the mode was applied.
+	logVerification(ctx, state, req, result, err, info)
+
+	return result, err
 }
 
 func (v *Verifier) stop(done <-chan struct{}) {
 	v.stopPoller()
 
 	if !v.flights.wait(done, true) {
-		slog.Warn("Stopping verifier while verifications are still in flight")
+		slog.Warn("Cancelling verifications that are still in flight")
+
+		// Cancelled verifications return promptly; wait briefly for them
+		// before releasing the cache and the audit log they use.
+		v.stopCancel()
+
+		expired := make(chan struct{})
+		timer := time.AfterFunc(stopCancelGracePeriod, func() { close(expired) })
+
+		if !v.flights.wait(expired, false) {
+			slog.Warn("Stopping verifier while verifications are still in flight")
+		}
+
+		timer.Stop()
 	}
+
+	v.stopCancel()
 
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -500,6 +536,8 @@ func (v *Verifier) stop(done <-chan struct{}) {
 	if snap.guacClient != nil {
 		snap.guacClient.Close()
 	}
+
+	closeFetcher(snap.fetcher)
 }
 
 // skipResult builds the result for an image that is admitted without
@@ -508,11 +546,11 @@ func skipResult(
 	ctx context.Context, state *snapshot, req *types.VerifyRequest,
 	mode config.VerificationMode, reason string, info *auditInfo,
 ) *types.Result {
-	result := allowResult(
-		ctx, state.auditLogger, req.ImageRef, req.Digest, req.Namespace, reason, info,
-	)
+	result := allowResult(reason)
 	result.Verified = true
 	result.Mode = string(mode)
+
+	logResult(ctx, state.auditLogger, req.ImageRef, req.Digest, req.Namespace, result, info)
 
 	return result
 }
@@ -531,13 +569,19 @@ func cacheNamespaceKey(namespace, imageRef string, ruleIdx int) string {
 	return key + "\x00r" + strconv.Itoa(ruleIdx)
 }
 
+// handleVerifyError applies the mode to a verification that ended with an
+// error: enforce mode denies the image, other modes admit it unverified.
 func handleVerifyError(
 	ctx context.Context, state *snapshot,
 	mode config.VerificationMode,
-	imageRef, digest, namespace string, err error,
-	info *auditInfo,
+	imageRef string, err error,
 ) (*types.Result, error) {
-	state.metrics.VerificationInterruptedTotal.Inc()
+	// Only a request that ended before its verification was interrupted;
+	// other errors (a stopping verifier, a slow verification an admission
+	// does not join) never started waiting for one.
+	if ctx.Err() != nil {
+		state.metrics.VerificationInterruptedTotal.Inc()
+	}
 
 	if mode != config.ModeEnforce {
 		slog.WarnContext(
@@ -547,10 +591,7 @@ func handleVerifyError(
 			"error", err,
 		)
 
-		result := allowResult(
-			ctx, state.auditLogger, imageRef, digest,
-			namespace, fmt.Sprintf("verification error: %s", err), info,
-		)
+		result := allowResult(fmt.Sprintf("verification error: %s", err))
 		result.Verified = false
 		result.Mode = string(mode)
 		//nolint:exhaustruct_v5 // zero-value fields intentional
@@ -567,17 +608,14 @@ func handleVerifyError(
 	return nil, fmt.Errorf("verification: %w", err)
 }
 
-func (v *Verifier) handleCacheHit(
-	ctx context.Context, state *snapshot,
-	mode config.VerificationMode,
-	imageRef, digest, namespace, cacheNS string,
-	info *auditInfo,
-) (*types.Result, error) {
+// cachedResult returns a copy of the cached result for a request, or nil on
+// a cache miss.
+func cachedResult(state *snapshot, digest, namespace, cacheNS string) *types.Result {
 	cached := state.cache.Get(digest, cacheNS)
 	if cached == nil {
 		state.metrics.CacheMissesTotal.Inc()
 
-		return nil, nil //nolint:nilnil // nil,nil signals cache miss to the caller
+		return nil
 	}
 
 	state.metrics.CacheHitsTotal.Inc()
@@ -588,20 +626,19 @@ func (v *Verifier) handleCacheHit(
 
 	result := cached.Clone()
 
-	logResult(ctx, state.auditLogger, imageRef, digest, namespace, &result, info)
 	recordMetrics(state.metrics, &result, namespace)
 
-	return applyEnforcement(ctx, mode, &result, imageRef)
+	return &result
 }
 
 // verifyOnce runs the checks for a cache miss, deduplicating concurrent
 // requests for the same image, namespace, rule and snapshot generation. The
 // verification continues in the background when ctx is done first (e.g. the
-// admission deadline expired) so its result still fills the cache.
+// admission deadline expired) so its result still fills the cache; only Stop
+// cancels it.
 func (v *Verifier) verifyOnce(
 	ctx context.Context, state *snapshot, pol *policy.Policy,
 	mode config.VerificationMode, req *types.VerifyRequest, cacheNS string,
-	info *auditInfo,
 ) (*types.Result, error) {
 	flightKey := strconv.FormatUint(state.generation, 10) + "\x00" + req.Digest + "\x00" + cacheNS
 
@@ -626,13 +663,23 @@ func (v *Verifier) verifyOnce(
 		// Use context.WithoutCancel so the verification completes even if
 		// the triggering request is cancelled. Other waiters on DoChan
 		// should not inherit this caller's cancellation. A hard timeout
-		// bounds resource usage when a registry is unresponsive.
+		// bounds resource usage when a registry is unresponsive, and Stop
+		// cancels the verification.
 		checkCtx, checkCancel := context.WithTimeout(
 			context.WithoutCancel(ctx), state.config.VerificationTimeout.Duration,
 		)
 		defer checkCancel()
 
+		//nolint:contextcheck // Stop cancels the verification
+		stopCheck := context.AfterFunc(v.stopCtx, checkCancel)
+		defer stopCheck()
+
 		result, cacheTTL := runChecks(checkCtx, state, pol, mode, req)
+
+		// A cancelled verification did not evaluate the image.
+		if v.stopCtx.Err() != nil {
+			return nil, ErrVerifierStopped
+		}
 
 		if cacheTTL > 0 {
 			state.cache.SetWithTTL(req.Digest, cacheNS, result, cacheTTL)
@@ -645,7 +692,7 @@ func (v *Verifier) verifyOnce(
 	case <-ctx.Done():
 		return nil, fmt.Errorf("verification interrupted: %w", ctx.Err())
 	case res := <-flightCh:
-		return handleFlightResult(ctx, state, res, req.ImageRef, req.Digest, req.Namespace, info)
+		return handleFlightResult(state, res, req.Namespace)
 	}
 }
 
@@ -685,10 +732,7 @@ func (v *Verifier) checkJoinable(ctx context.Context, state *snapshot, flightKey
 }
 
 func handleFlightResult(
-	ctx context.Context, state *snapshot,
-	res singleflight.Result,
-	imageRef, digest, namespace string,
-	info *auditInfo,
+	state *snapshot, res singleflight.Result, namespace string,
 ) (*types.Result, error) {
 	if res.Shared {
 		state.metrics.InflightDedupTotal.Inc()
@@ -705,7 +749,6 @@ func handleFlightResult(
 
 	result := shared.Clone()
 
-	logResult(ctx, state.auditLogger, imageRef, digest, namespace, &result, info)
 	recordMetrics(state.metrics, &result, namespace)
 
 	return &result, nil

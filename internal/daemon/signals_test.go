@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+package daemon //nolint:testpackage // tests use unexported daemon internals
 
 import (
 	"bytes"
@@ -261,6 +261,39 @@ func TestSetupSignals(t *testing.T) {
 
 	cleanup := setupSignals(ctx, cancel, "", verif, met, cfg, nil)
 	cleanup()
+}
+
+func TestSetupSignalsCleanupClosesPlugin(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	met := metrics.New()
+
+	verif, err := verifier.New(t.Context(), cfg, met, nil)
+	if err != nil {
+		t.Fatalf("creating verifier: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mock := &mockPluginReloader{
+		closeCalled:                  false,
+		prewarmAfterReloadCalled:     false,
+		transportCache:               nil,
+		fetchTimeout:                 0,
+		digestResolveTimeout:         0,
+		remediationMode:              "",
+		triggerReverifyCalled:        false,
+		triggerFeedReverifyCalled:    false,
+		triggerFeedReverifyLastPURLs: nil,
+	}
+	cleanup := setupSignals(ctx, cancel, "", verif, met, cfg, mock)
+	cleanup()
+
+	if !mock.closeCalled {
+		t.Error("cleanup did not close the plugin")
+	}
 }
 
 func TestSetupSignalsWithConfig(t *testing.T) {
@@ -584,7 +617,7 @@ func TestRunFileWatchErrorChannel(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // modifies package-level logLevelVar
+//nolint:paralleltest // modifies package-level LogLevel
 func TestHandleReloadLogLevel(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.toml")
@@ -596,7 +629,7 @@ func TestHandleReloadLogLevel(t *testing.T) {
 	}
 
 	// Start with info level.
-	updateLogLevel(logLevelInfo)
+	SetLogLevel(LogLevelInfo)
 
 	// Write config with debug log level.
 	data := "verification = \"warn\"\npolicy_dir = \"" + policyDir + "\"\nlog_level = \"debug\"\n"
@@ -620,12 +653,12 @@ func TestHandleReloadLogLevel(t *testing.T) {
 
 	handleReload(context.Background(), configPath, verif, met, nil, nil, &atomic.Value{})
 
-	if logLevelVar.Level() != slog.LevelDebug {
-		t.Errorf("expected log level DEBUG after reload, got %v", logLevelVar.Level())
+	if LogLevel.Level() != slog.LevelDebug {
+		t.Errorf("expected log level DEBUG after reload, got %v", LogLevel.Level())
 	}
 }
 
-//nolint:paralleltest // modifies package-level logLevelVar
+//nolint:paralleltest // modifies package-level LogLevel
 func TestHandleReloadNoLogLevel(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.toml")
@@ -637,7 +670,7 @@ func TestHandleReloadNoLogLevel(t *testing.T) {
 	}
 
 	// Set an explicit debug level.
-	updateLogLevel(logLevelDebug)
+	SetLogLevel(LogLevelDebug)
 
 	// Write config without log_level field.
 	writeTestConfig(t, configPath, policyDir, "warn")
@@ -657,12 +690,12 @@ func TestHandleReloadNoLogLevel(t *testing.T) {
 	handleReload(context.Background(), configPath, verif, met, nil, nil, &atomic.Value{})
 
 	// Without log_level in config, the level should remain unchanged.
-	if logLevelVar.Level() != slog.LevelDebug {
-		t.Errorf("expected log level to remain DEBUG, got %v", logLevelVar.Level())
+	if LogLevel.Level() != slog.LevelDebug {
+		t.Errorf("expected log level to remain DEBUG, got %v", LogLevel.Level())
 	}
 }
 
-//nolint:paralleltest // modifies package-level logLevelVar
+//nolint:paralleltest // modifies package-level LogLevel
 func TestHandleReloadUpdatesPluginRegistries(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.toml")
@@ -688,7 +721,7 @@ func TestHandleReloadUpdatesPluginRegistries(t *testing.T) {
 	}
 
 	mock := &mockPluginReloader{
-		cancelPrewarmCalled:          false,
+		closeCalled:                  false,
 		prewarmAfterReloadCalled:     false,
 		transportCache:               nil,
 		fetchTimeout:                 0,
@@ -719,7 +752,7 @@ func TestHandleReloadUpdatesPluginRegistries(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // modifies package-level logLevelVar
+//nolint:paralleltest // modifies package-level LogLevel
 func TestHandleReloadUpdatesPluginRegistriesNonEmpty(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.toml")
@@ -761,7 +794,7 @@ func TestHandleReloadUpdatesPluginRegistriesNonEmpty(t *testing.T) {
 }
 
 type mockPluginReloader struct {
-	cancelPrewarmCalled          bool
+	closeCalled                  bool
 	prewarmAfterReloadCalled     bool
 	transportCache               *registry.TransportCache
 	fetchTimeout                 time.Duration
@@ -772,8 +805,8 @@ type mockPluginReloader struct {
 	triggerFeedReverifyLastPURLs []string
 }
 
-func (m *mockPluginReloader) CancelPrewarm() {
-	m.cancelPrewarmCalled = true
+func (m *mockPluginReloader) Close() {
+	m.closeCalled = true
 }
 
 func (m *mockPluginReloader) PrewarmAfterReload(_ context.Context) {
@@ -1483,7 +1516,7 @@ func TestHandleFileEventFeedDebounceReplacement(t *testing.T) {
 	newFeedTimer.Stop()
 }
 
-//nolint:paralleltest // modifies package-level logLevelVar
+//nolint:paralleltest // modifies package-level LogLevel
 func TestHandleReloadPanicRecovery(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.toml")

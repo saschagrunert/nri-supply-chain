@@ -24,6 +24,7 @@ import (
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/bundle"
+	"github.com/saschagrunert/nri-supply-chain/internal/cache"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/guac"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
@@ -121,19 +122,15 @@ func ExportLogResult(
 // ExportLogAuditDecision exposes logAuditDecision for external tests.
 func ExportLogAuditDecision(
 	ctx context.Context, logger *slog.Logger,
-	imageRef, digest, namespace, decision, reason string,
+	imageRef, digest, namespace, decision, reason string, verified bool,
 	info *ExportAuditInfo,
 ) {
-	logAuditDecision(ctx, logger, imageRef, digest, namespace, decision, reason, info)
+	logAuditDecision(ctx, logger, imageRef, digest, namespace, decision, reason, verified, info)
 }
 
 // ExportAllowResult exposes allowResult for external tests.
-func ExportAllowResult(
-	ctx context.Context, logger *slog.Logger,
-	imageRef, digest, namespace, reason string,
-	info *ExportAuditInfo,
-) *types.Result {
-	return allowResult(ctx, logger, imageRef, digest, namespace, reason, info)
+func ExportAllowResult(reason string) *types.Result {
+	return allowResult(reason)
 }
 
 // ExportWaitInflight waits for all in-flight singleflight verifications
@@ -145,6 +142,11 @@ func (v *Verifier) ExportWaitInflight() {
 // ExportCacheNamespaceKey exposes cacheNamespaceKey for external tests.
 func ExportCacheNamespaceKey(namespace, imageRef string, ruleIdx int) string {
 	return cacheNamespaceKey(namespace, imageRef, ruleIdx)
+}
+
+// ExportResultCache returns the result cache of the current snapshot.
+func (v *Verifier) ExportResultCache() *cache.Cache {
+	return v.state.Load().cache
 }
 
 // ExportGeneration returns the result cache generation of the current snapshot.
@@ -163,9 +165,9 @@ func (v *Verifier) ExportFlightsEnd() {
 	v.flights.end()
 }
 
-// ExportIsTransportFailure exposes isTransportFailure for external tests.
-func ExportIsTransportFailure(ctx context.Context, err error) bool {
-	return isTransportFailure(ctx, err)
+// ExportIsFetchTransportFailure exposes isFetchTransportFailure for external tests.
+func ExportIsFetchTransportFailure(ctx context.Context, err error) bool {
+	return isFetchTransportFailure(ctx, err)
 }
 
 // ExportCheckVSAOutcome evaluates VSA attestations and reports whether a

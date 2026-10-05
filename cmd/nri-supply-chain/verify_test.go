@@ -170,6 +170,42 @@ func captureVerifyOutput(
 	return parsed
 }
 
+// pushTestImage pushes an empty image named repo with tag latest to a new
+// in-process registry and returns its reference.
+func pushTestImage(t *testing.T, repo string) string {
+	t.Helper()
+
+	server := httptest.NewServer(registry.New())
+
+	t.Cleanup(server.Close)
+
+	imgRef := strings.TrimPrefix(server.URL, "http://") + "/" + repo + ":latest"
+
+	img, err := mutate.ConfigFile(empty.Image, nil)
+	if err != nil {
+		t.Fatalf("creating test image: %v", err)
+	}
+
+	err = crane.Push(img, imgRef, crane.Insecure)
+	if err != nil {
+		t.Fatalf("pushing test image: %v", err)
+	}
+
+	return imgRef
+}
+
+// unreachableImageRef returns an image reference on a registry that refuses
+// connections, so resolving its digest fails without network access.
+func unreachableImageRef(t *testing.T) string {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
+	addr := server.Listener.Addr().String()
+	server.Close()
+
+	return addr + "/unreachable:latest"
+}
+
 func TestResolveDigestInvalidRef(t *testing.T) {
 	t.Parallel()
 
@@ -513,9 +549,145 @@ func TestRunVerifyResolveDigestFails(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 	cfg.PolicyDir = dir
 
-	code := runVerify(":::invalid-ref", policy.DefaultPolicyLabel, outputFormatJSON, cfg, "")
+	var buf bytes.Buffer
+
+	code := runVerifyTo(
+		&buf, ":::invalid-ref", policy.DefaultPolicyLabel, outputFormatJSON, cfg, "",
+	)
 	if code != exitError {
 		t.Errorf("exit code = %d, want %d", code, exitError)
+	}
+
+	// A single image reports the failure in its JSON output like a batch.
+	var out verifyOutput
+
+	err = json.Unmarshal(buf.Bytes(), &out)
+	if err != nil {
+		t.Fatalf("invalid JSON: %v\nraw: %q", err, buf.String())
+	}
+
+	if out.Image != ":::invalid-ref" || out.Allowed || out.Digest != "" {
+		t.Errorf("unexpected output %+v", out)
+	}
+
+	if !strings.Contains(out.Reason, "resolving digest") {
+		t.Errorf("Reason = %q, want the digest resolution error", out.Reason)
+	}
+}
+
+func TestRunVerifyQuietOutputOnResolveFailure(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeValidationPolicy(t, dir, "default.json", `{}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+
+	var buf bytes.Buffer
+
+	code := runVerifyTo(&buf, unreachableImageRef(t), policy.DefaultPolicyLabel,
+		outputFormatQuiet, cfg, "")
+	if code != exitError {
+		t.Errorf("exit code = %d, want %d", code, exitError)
+	}
+
+	if buf.Len() != 0 {
+		t.Errorf("unexpected output in quiet mode: %s", buf.String())
+	}
+}
+
+// ociPolicySourceConfig returns an enforce mode config whose policies come
+// from an unreachable OCI registry.
+func ociPolicySourceConfig(t *testing.T) *config.Config {
+	t.Helper()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+	cfg.Policy.Source = config.PolicySourceOCI
+	cfg.Policy.OCIRef = strings.TrimSuffix(unreachableImageRef(t), ":latest") + "-policies:v1"
+	cfg.PolicyDir = ""
+
+	return cfg
+}
+
+func TestUsePreviewPolicyDir(t *testing.T) {
+	t.Parallel()
+
+	for _, source := range []config.PolicySource{"", config.PolicySourceLocal, config.PolicySourceOCI} {
+		cfg := config.DefaultConfig()
+		cfg.Policy.Source = source
+
+		usePreviewPolicyDir(cfg, "/tmp/preview")
+
+		if cfg.PolicyDir != "/tmp/preview" {
+			t.Errorf("source %q: PolicyDir = %q, want /tmp/preview", source, cfg.PolicyDir)
+		}
+
+		if cfg.Policy.Source != config.PolicySourceLocal {
+			t.Errorf("source %q: Policy.Source = %q, want %q",
+				source, cfg.Policy.Source, config.PolicySourceLocal)
+		}
+	}
+}
+
+func TestRunVerifyPreviewPolicyIgnoresOCIPolicySource(t *testing.T) {
+	t.Parallel()
+
+	previewPolicy := filepath.Join(t.TempDir(), "preview.json")
+
+	err := os.WriteFile(previewPolicy, []byte(`{"slsa": {"missingPolicy": "warn"}}`), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := ociPolicySourceConfig(t)
+
+	cleanup, err := applyPreviewPolicy(cfg, previewPolicy, policy.DefaultPolicyLabel)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(cleanup)
+
+	if cfg.Policy.Source != config.PolicySourceLocal {
+		t.Errorf("Policy.Source = %q, want %q", cfg.Policy.Source, config.PolicySourceLocal)
+	}
+
+	_, err = os.Stat(filepath.Join(cfg.PolicyDir, "default.json"))
+	if err != nil {
+		t.Fatalf("expected the preview policy in the policy directory: %v", err)
+	}
+
+	var buf bytes.Buffer
+
+	code := runVerifyTo(&buf, pushTestImage(t, "preview-oci"), policy.DefaultPolicyLabel,
+		outputFormatJSON, cfg, previewPolicy)
+	// The configured OCI policies are unreachable, so only the preview
+	// policy can allow the image.
+	if code != exitSuccess {
+		t.Errorf("exit code = %d, want %d (the preview policy allows)\noutput: %s",
+			code, exitSuccess, buf.String())
+	}
+
+	var out verifyOutput
+
+	err = json.Unmarshal(buf.Bytes(), &out)
+	if err != nil {
+		t.Fatalf("invalid JSON: %v\nraw: %q", err, buf.String())
+	}
+
+	if !out.Allowed {
+		t.Errorf("Allowed = false, want true: %s", out.Reason)
+	}
+
+	if out.PreviewPolicy != previewPolicy {
+		t.Errorf("PreviewPolicy = %q, want %q", out.PreviewPolicy, previewPolicy)
+	}
+
+	if len(out.CheckResults) == 0 {
+		t.Error("expected check results from the preview policy")
 	}
 }
 

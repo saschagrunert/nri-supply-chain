@@ -21,6 +21,7 @@ import (
 	"log/slog"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
+	"github.com/saschagrunert/nri-supply-chain/internal/notation"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
@@ -149,9 +150,25 @@ func validatePoliciesRuntime(policies map[string]*policy.Policy) error {
 	var errs []error
 
 	for namespace, pol := range policies {
-		err := pol.ValidateRuntime()
+		err := errors.Join(pol.ValidateRuntime(), validateNotationTrustPolicies(pol))
 		if err != nil {
 			errs = append(errs, fmt.Errorf("policy %q: %w", policyLabel(namespace), err))
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+// validateNotationTrustPolicies checks that notation-go accepts the trust
+// policy built for the policy and for every rule merged onto it, so an invalid
+// document fails at load time instead of failing every Notation check.
+func validateNotationTrustPolicies(pol *policy.Policy) error {
+	errs := []error{notation.ValidatePolicy(pol.Notation)}
+
+	for idx := range pol.Rules {
+		err := notation.ValidatePolicy(policy.ApplyRule(pol, &pol.Rules[idx]).Notation)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("rules[%d]: %w", idx, err))
 		}
 	}
 

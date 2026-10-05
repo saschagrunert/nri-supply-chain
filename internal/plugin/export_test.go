@@ -137,6 +137,9 @@ func (p *Plugin) ExportLoadContainerTime(containerID string) (time.Time, bool) {
 	return cs.createdAt, true
 }
 
+// ExportTriggerPrewarm is the trigger recorded for pre-warm results.
+const ExportTriggerPrewarm = triggerPrewarm
+
 // ExportComputeTriggerHash exposes computeTriggerHash for external tests.
 func ExportComputeTriggerHash(trigger, digest string, feedPURLs []string) string {
 	return computeTriggerHash(trigger, digest, feedPURLs)
@@ -207,6 +210,8 @@ type ExportContainerState struct {
 	PURLs              []string
 	State              VerificationState
 	HasOriginals       bool
+	HasLastResult      bool
+	LastTriggerHash    string
 }
 
 // ExportGetContainerState returns exported container state fields for testing.
@@ -223,6 +228,8 @@ func (p *Plugin) ExportGetContainerState(containerID string) (ExportContainerSta
 			PURLs:              cs.purls,
 			State:              cs.state,
 			HasOriginals:       cs.originalResources != nil,
+			HasLastResult:      cs.lastResult != nil,
+			LastTriggerHash:    cs.lastTriggerHash,
 		}
 	})
 

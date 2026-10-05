@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"github.com/fatih/color"
+
+	"github.com/saschagrunert/nri-supply-chain/internal/daemon"
 )
 
 type cliHandler struct {
@@ -116,49 +118,20 @@ func effectiveLogLevel(flagLevel, configLevel string) string {
 }
 
 func initLogging(level string, cliMode bool) {
-	updateLogLevel(level)
+	daemon.SetLogLevel(level)
 	slog.SetDefault(newLogger(cliMode))
 
-	if parseLogLevel(level) == nil {
+	if daemon.ParseLogLevel(level) == nil {
 		slog.Warn("Unrecognized log level, defaulting to info", "level", level)
 	}
 }
 
-func updateLogLevel(level string) {
-	logLevel := slog.LevelInfo
-
-	if parsed := parseLogLevel(level); parsed != nil {
-		logLevel = *parsed
-	}
-
-	logLevelVar.Set(logLevel)
-}
-
-func parseLogLevel(level string) *slog.Level {
-	var parsed slog.Level
-
-	switch level {
-	case logLevelDebug:
-		parsed = slog.LevelDebug
-	case logLevelInfo:
-		parsed = slog.LevelInfo
-	case logLevelWarn:
-		parsed = slog.LevelWarn
-	case logLevelError:
-		parsed = slog.LevelError
-	default:
-		return nil
-	}
-
-	return &parsed
-}
-
 func newLogger(cliMode bool) *slog.Logger {
 	if cliMode {
-		return slog.New(newCLIHandler(os.Stderr, &logLevelVar))
+		return slog.New(newCLIHandler(os.Stderr, &daemon.LogLevel))
 	}
 
 	return slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
-		Level: &logLevelVar,
+		Level: &daemon.LogLevel,
 	}))
 }

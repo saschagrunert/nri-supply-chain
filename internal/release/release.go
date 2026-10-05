@@ -24,6 +24,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/checker"
 	"github.com/saschagrunert/nri-supply-chain/internal/glob"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
+	"github.com/saschagrunert/nri-supply-chain/internal/purl"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
@@ -39,6 +40,10 @@ var (
 
 	errMissingPURL = errors.New("purl is required")
 )
+
+// qualifierRepositoryURL is the purl qualifier naming the repository a
+// package was published to.
+const qualifierRepositoryURL = "repository_url"
 
 type releasePredicate struct {
 	PURL      string `json:"purl"`
@@ -104,18 +109,83 @@ func checkTrustedRegistry(pred *releasePredicate, pol *policy.Policy) string {
 		return ""
 	}
 
-	for _, pattern := range pol.Release.TrustedRegistries {
-		matched, err := glob.Match(pattern, pred.PURL)
-		if err != nil {
-			return fmt.Sprintf("invalid registry pattern %q: %s", pattern, err)
-		}
+	parsed, err := purl.Parse(pred.PURL)
+	if err != nil {
+		return fmt.Sprintf("%s: %q is not a valid package URL", ErrUntrustedRegistry, pred.PURL)
+	}
 
-		if matched {
-			return ""
+	candidates := registryCandidates(&parsed)
+
+	for _, pattern := range pol.Release.TrustedRegistries {
+		for _, candidate := range candidates {
+			matched, err := glob.Match(pattern, candidate)
+			if err != nil {
+				return fmt.Sprintf("invalid registry pattern %q: %s", pattern, err)
+			}
+
+			if matched {
+				return ""
+			}
 		}
 	}
 
 	return fmt.Sprintf("%s: %q", ErrUntrustedRegistry, pred.PURL)
+}
+
+// registryCandidates returns the strings trustedRegistries patterns are
+// matched against, all built from the parsed and percent-decoded purl so
+// that encoding and qualifier order cannot change the result: the package
+// identity "pkg:type/namespace/name", the same with "@version", and for a
+// purl with a repository_url qualifier (as the OCI purl specification
+// requires) the location "pkg:type/<repository_url>" with the package name
+// appended when the URL does not already end with it, again with and without
+// "@version". Qualifiers other than repository_url and the subpath are never
+// matched.
+func registryCandidates(parsed *purl.PURL) []string {
+	prefix := "pkg:" + parsed.Type + "/"
+
+	identity := parsed.Name
+	if parsed.Namespace != "" {
+		identity = parsed.Namespace + "/" + parsed.Name
+	}
+
+	paths := []string{identity}
+
+	if location := repositoryLocation(parsed); location != "" {
+		paths = append(paths, location)
+	}
+
+	candidates := make([]string, 0, 2*len(paths)) //nolint:mnd // with and without version
+
+	for _, path := range paths {
+		candidates = append(candidates, prefix+path)
+
+		if parsed.Version != "" {
+			candidates = append(candidates, prefix+path+"@"+parsed.Version)
+		}
+	}
+
+	return candidates
+}
+
+// repositoryLocation returns the repository_url qualifier without URL scheme
+// and trailing slashes, ending with the package name.
+func repositoryLocation(parsed *purl.PURL) string {
+	location := strings.TrimSpace(parsed.Qualifiers[qualifierRepositoryURL])
+	if _, rest, found := strings.Cut(location, "://"); found {
+		location = rest
+	}
+
+	location = strings.TrimRight(location, "/")
+	if location == "" {
+		return ""
+	}
+
+	if location == parsed.Name || strings.HasSuffix(location, "/"+parsed.Name) {
+		return location
+	}
+
+	return location + "/" + parsed.Name
 }
 
 func checkPackageID(pred *releasePredicate, pol *policy.Policy) string {

@@ -18,31 +18,48 @@ package httputil
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"net"
 	"net/http"
 	"time"
 )
 
-// Transport tuning constants shared across GUAC and ACR HTTP clients.
+// Transport tuning constants shared by the registry, GUAC and ACR HTTP clients.
 const (
-	MaxIdleConns      = 100
-	IdleConnTimeout   = 90 * time.Second
-	TLSTimeout        = 10 * time.Second
-	ExpectContTimeout = 1 * time.Second
+	MaxIdleConns        = 100
+	MaxIdleConnsPerHost = 20
+	IdleConnTimeout     = 90 * time.Second
+	TLSTimeout          = 10 * time.Second
+	ExpectContTimeout   = 1 * time.Second
+	DialTimeout         = 30 * time.Second
+	DialKeepAlive       = 30 * time.Second
 )
+
+// NewTransport creates an HTTP transport with the shared connection settings
+// and the given TLS configuration.
+func NewTransport(tlsCfg *tls.Config) *http.Transport {
+	dialer := &net.Dialer{ //nolint:exhaustruct_v5 // only setting relevant fields
+		Timeout:   DialTimeout,
+		KeepAlive: DialKeepAlive,
+	}
+
+	return &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           dialer.DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          MaxIdleConns,
+		MaxIdleConnsPerHost:   MaxIdleConnsPerHost,
+		IdleConnTimeout:       IdleConnTimeout,
+		TLSHandshakeTimeout:   TLSTimeout,
+		ExpectContinueTimeout: ExpectContTimeout,
+		TLSClientConfig:       tlsCfg,
+	}
+}
 
 // NewTLSTransport creates an HTTP transport with TLS 1.2 minimum and the
 // given root CA pool. Pass nil for pool to use system defaults.
 func NewTLSTransport(pool *x509.CertPool) *http.Transport {
-	return &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          MaxIdleConns,
-		IdleConnTimeout:       IdleConnTimeout,
-		TLSHandshakeTimeout:   TLSTimeout,
-		ExpectContinueTimeout: ExpectContTimeout,
-		TLSClientConfig: &tls.Config{
-			RootCAs:    pool,
-			MinVersion: tls.VersionTLS12,
-		},
-	}
+	return NewTransport(&tls.Config{
+		RootCAs:    pool,
+		MinVersion: tls.VersionTLS12,
+	})
 }

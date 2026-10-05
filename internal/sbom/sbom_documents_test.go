@@ -195,12 +195,35 @@ func TestVerifyMultipleVulnerabilityOnlyAloneExceedingCVSSFails(t *testing.T) {
 	}
 }
 
+func TestVerifyMultipleVulnerabilityOnlyUnjustifiedNotAffectedFails(t *testing.T) {
+	t.Parallel()
+
+	result, err := sbom.VerifyMultiple(
+		context.Background(),
+		[][]byte{wrapRaw(t, vdrCycloneDX("not_affected", 9.8))},
+		cvssPolicy(7), testDigest,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Passed {
+		t.Error("expected a not_affected critical CVE without justification to fail the check")
+	}
+}
+
 func TestVerifyMultipleVulnerabilityOnlyWithinCVSSIsNotAnSBOM(t *testing.T) {
 	t.Parallel()
 
 	// Resolved findings and findings within the thresholds leave nothing to
 	// fail, and a document without components is still not an SBOM.
-	for _, predicate := range []string{vdrCycloneDX("", 5.0), vdrCycloneDX("not_affected", 9.8)} {
+	justified := `{"bomFormat":"CycloneDX","vulnerabilities":[{"id":"CVE-2024-9",` +
+		`"ratings":[{"score":9.8,"severity":"critical"}],` +
+		`"analysis":{"state":"not_affected","justification":"code_not_present"}}]}`
+
+	for _, predicate := range []string{
+		vdrCycloneDX("", 5.0), vdrCycloneDX("resolved", 9.8), vdrCycloneDX("false_positive", 9.8), justified,
+	} {
 		_, err := sbom.VerifyMultiple(
 			context.Background(), [][]byte{wrapRaw(t, predicate)}, cvssPolicy(7), testDigest,
 		)

@@ -432,6 +432,6 @@ func TestVerifyZeroStartedOnTreatedAsAbsent(t *testing.T) {
 		result, verifyErr := slsa.Verify(context.Background(), payload, pol, testDigest)
 		testutil.AssertNoError(t, verifyErr)
 		testutil.AssertEqual(t, false, result.Passed)
-		testutil.AssertContains(t, result.Detail, "no build timestamp")
+		testutil.AssertContains(t, result.Detail, "no built timestamp")
 	})
 }

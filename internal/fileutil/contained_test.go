@@ -187,4 +187,19 @@ func TestStatContained(t *testing.T) {
 	if info.Mode().IsRegular() {
 		t.Error("expected a directory, got a regular file")
 	}
+
+	_, err = fileutil.StatRegular(filepath.Join(mount, "key.pub"))
+	if err != nil {
+		t.Errorf("unexpected error for contained symlink to a regular file: %v", err)
+	}
+
+	_, err = fileutil.StatRegular(filepath.Join(mount, "subdir"))
+	if !errors.Is(err, fileutil.ErrNotRegularFile) {
+		t.Errorf("expected ErrNotRegularFile for directory, got: %v", err)
+	}
+
+	_, err = fileutil.StatRegular(filepath.Join(mount, "escape"))
+	if !errors.Is(err, fileutil.ErrSymlink) {
+		t.Errorf("expected ErrSymlink for escaping symlink, got: %v", err)
+	}
 }

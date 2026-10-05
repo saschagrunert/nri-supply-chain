@@ -18,6 +18,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	godigest "github.com/opencontainers/go-digest"
 )
 
 const (
@@ -101,7 +103,8 @@ type ManifestSignature struct {
 	KeyHint   string `json:"keyHint"`
 }
 
-// ParseManifest parses a Manifest from JSON bytes.
+// ParseManifest parses a Manifest from JSON bytes. Image entries must be keyed
+// by digest and must not be null.
 func ParseManifest(data []byte) (*Manifest, error) {
 	var manifest Manifest
 
@@ -119,6 +122,16 @@ func ParseManifest(data []byte) (*Manifest, error) {
 
 	if manifest.Images == nil {
 		manifest.Images = make(map[string]*ImageEntry)
+	}
+
+	for digest, entry := range manifest.Images {
+		if !godigest.DigestRegexpAnchored.MatchString(digest) {
+			return nil, fmt.Errorf("%w: image key %q is not a digest", ErrManifestCorrupt, digest)
+		}
+
+		if entry == nil {
+			return nil, fmt.Errorf("%w: image %s has no entry", ErrManifestCorrupt, digest)
+		}
 	}
 
 	return &manifest, nil

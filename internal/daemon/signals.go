@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+package daemon
 
 import (
 	"context"
@@ -74,7 +74,7 @@ func setupSignals(
 		signal.Stop(sigterm)
 
 		if plug != nil {
-			plug.CancelPrewarm()
+			plug.Close()
 		}
 
 		close(done)
@@ -83,7 +83,7 @@ func setupSignals(
 }
 
 type pluginReloader interface {
-	CancelPrewarm()
+	Close()
 	PrewarmAfterReload(ctx context.Context)
 	SetFetchTimeout(d time.Duration)
 	SetDigestResolveTimeout(d time.Duration)
@@ -134,7 +134,7 @@ func handleReload(
 
 	slog.Info("Reloading config")
 
-	if !shouldUseConfigFile(configPath) {
+	if !ShouldUseConfigFile(configPath) {
 		slog.Warn("No config file specified, skipping reload")
 
 		return
@@ -229,23 +229,6 @@ func warnNonReloadableChanges(current, proposed *config.Config) {
 			"current", current.Remediation.Interval.Duration,
 			"proposed", proposed.Remediation.Interval.Duration,
 		)
-	}
-}
-
-func applyLogLevel(level string) {
-	if level == "" {
-		return
-	}
-
-	parsed := parseLogLevel(level)
-	if parsed == nil {
-		return
-	}
-
-	current := logLevelVar.Level()
-	if current != *parsed {
-		logLevelVar.Set(*parsed)
-		slog.Info("Log level changed", "from", current, "to", *parsed)
 	}
 }
 
@@ -353,7 +336,7 @@ func setupFileWatch(
 ) (cleanup func(), watcher *fsnotify.Watcher, feedDirVal *atomic.Value) {
 	feedDirVal = &atomic.Value{}
 
-	if !shouldUseConfigFile(configPath) {
+	if !ShouldUseConfigFile(configPath) {
 		return func() {}, nil, feedDirVal
 	}
 
@@ -640,7 +623,7 @@ func handleShutdown(
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("Recovered panic in shutdown handler", "error", r)
-				os.Exit(exitError)
+				os.Exit(forcedExitCode)
 			}
 		}()
 
@@ -657,7 +640,7 @@ func handleShutdown(
 		case <-done:
 		case <-sigCh:
 			slog.Warn("Received second signal, forcing exit")
-			os.Exit(exitError)
+			os.Exit(forcedExitCode)
 		}
 	}()
 }

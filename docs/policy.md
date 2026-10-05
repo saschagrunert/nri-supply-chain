@@ -1027,7 +1027,9 @@ non-`/` sequence, `**` matches any characters including `/`. If both
 `include` and `exclude` are set, `exclude` takes precedence. Because images
 that match no pattern skip verification, matching is broad (see
 [Pattern Matching](#pattern-matching)) and a warning is logged when `include`
-is used in `enforce` mode.
+is used in `enforce` mode. Image repositories are lowercase, so a warning is
+also logged for patterns with uppercase characters outside the tag, which
+never match.
 
 ### `exclude` (array of strings)
 
@@ -1167,13 +1169,35 @@ any allow list.
 
 #### `sbom.component` (object)
 
-| Field   | Type  | Default | Description                                                                   |
-| ------- | ----- | ------- | ----------------------------------------------------------------------------- |
-| `deny`  | array | (none)  | PURLs to deny (prefix match, e.g. `pkg:npm/event-stream@3.3.6`)               |
-| `allow` | array | (none)  | PURLs to allow (prefix match). When non-empty, unlisted components are denied |
+| Field   | Type  | Default | Description                                                                 |
+| ------- | ----- | ------- | --------------------------------------------------------------------------- |
+| `deny`  | array | (none)  | PURLs to deny (e.g. `pkg:npm/event-stream@3.3.6`)                           |
+| `allow` | array | (none)  | PURLs to allow. When non-empty, components not matching an entry are denied |
 
 When both `deny` and `allow` are set, deny takes precedence: a component
 matching a deny entry is denied even if it also matches an allow entry.
+
+Entries and component PURLs are parsed and compared by their decoded, normalized
+identity (type, namespace, and name, case-insensitively, with PyPI names
+normalized), not as strings. An entry matches the package it names
+(`pkg:npm/lodash` matches `pkg:NPM/%6Codash@4.17.20` but not
+`pkg:npm/lodash-es`) and, when it names a namespace, every package below it on
+whole path segments (`pkg:maven/org.example` covers `pkg:maven/org.example/lib`,
+`pkg:npm/@myorg` covers `pkg:npm/%40myorg/app`). `pkg:npm/` names every package
+of a type. Without a version, an entry matches any version. A version in an
+entry matches the component version exactly or as a prefix that ends at a
+version segment boundary, meaning the next character of the component version is
+`.`, `-`, or `+`: `pkg:npm/event-stream@3.3` matches `3.3`, `3.3.6`, `3.3-rc1`,
+and `3.3+build1`, but not `3.30`, and `pkg:npm/lodash@4.17.20` does not match
+`4.17.201`. Qualifiers or a subpath in an entry must match exactly. An entry
+that is not a valid PURL fails the check. A component PURL that cannot be parsed
+is logged and compared conservatively against `deny`: lowercased and
+percent-decoded where possible, it is denied when it starts with the canonical
+form of an entry (`pkg:type/namespace/name@version`, ignoring qualifiers and
+subpath) followed by a segment boundary, so a malformed PURL cannot evade the
+deny list but does not fail a deny-only check otherwise. With `allow` set, a
+component PURL that cannot be parsed fails the check, since it cannot be shown
+to be allowed.
 
 When `allow` is set, package components without a PURL fail the check because
 they cannot be matched against the allow list. Components that are not packages
@@ -1204,14 +1228,35 @@ CVSS vulnerability scoring thresholds. Only evaluated for CycloneDX SBOMs
 exceeds `maxScore` or meets/exceeds `minSeverity` (OR logic). Ignored CVEs
 still contribute to aggregate statistics for visibility in CEL rules.
 
+Each vulnerability is rated by its highest valid score (0.0 to 10.0) and its
+most severe rating. A score without severity is ranked by its CVSS range (9.0
+and above is critical), and a severity without score is compared against
+`maxScore` with the lowest score of its range (critical counts as 9.0, high as
+7.0, medium as 4.0, low as 0.1), which is also what `cvssMax` reports for it.
+The scanner aliases `info`/`informational` (none), `negligible` (low),
+`moderate` (medium), and `important` (high) are accepted. A rating without score
+whose severity is `unknown` or `none` (in any case, including its aliases), as
+scanners such as Trivy and Grype emit for unscored findings, counts as no
+rating. When a threshold is configured, a vulnerability whose ratings carry
+neither a valid score nor a recognized severity (for example only an
+unrecognized severity string or an out-of-range score) fails closed; list it in
+`ignoreCVEs` to accept it. Vulnerabilities without ratings and vulnerabilities
+resolved by their analysis state (`false_positive`, `resolved`,
+`resolved_with_pedigree`, or `not_affected` with a non-empty
+`analysis.justification`) are not evaluated and do not count in the `cvss*`
+statistics, in SBOMs and vulnerability-only documents alike. A `not_affected`
+state without a justification is an unsupported claim (like an OpenVEX
+`not_affected` statement without justification) and the vulnerability is
+evaluated as unresolved.
+
 CycloneDX documents without components and without `metadata.component`
 (vulnerability disclosure reports or VEX documents) are not SBOMs, but their
 unresolved rated vulnerabilities (analysis state `exploitable`, `in_triage`,
-or none) are still evaluated against these thresholds, so moving findings into
-a separate document cannot hide them. Such a document fails the SBOM check
-when a finding exceeds the thresholds; otherwise it only contributes to the
-`cvss*` statistics and does not count as an SBOM for `missingPolicy`,
-`componentCount`, or `format`.
+`not_affected` without justification, or none) are still evaluated against these
+thresholds, so moving findings into a separate document cannot hide them. Such a
+document fails the SBOM check when a finding exceeds the thresholds; otherwise
+it only contributes to the `cvss*` statistics and does not count as an SBOM for
+`missingPolicy`, `componentCount`, or `format`.
 
 | Field         | Type   | Default | Description                                                                       |
 | ------------- | ------ | ------- | --------------------------------------------------------------------------------- |
@@ -1229,13 +1274,17 @@ baseline SBOM stored as an OCI artifact (artifact type
 `application/vnd.nri-supply-chain.sbom-baseline.v1+json`). Drift detection
 flags unexpected package additions, removals, version changes, checksum
 mismatches, and license changes that signature verification alone cannot catch.
-Packages are matched by PURL; packages without a PURL are ignored.
+Packages are matched by their versionless PURL identity (type, namespace, and
+name), so a version bump counts as a modified package rather than an addition
+and a removal. When several versions of a package are present, unchanged
+PURLs are paired first and the remaining versions are paired as modified.
+Packages without a PURL are ignored.
 
 | Field         | Type   | Default | Description                                                                                  |
 | ------------- | ------ | ------- | -------------------------------------------------------------------------------------------- |
 | `maxAdded`    | int    | (none)  | Maximum number of added packages allowed before failing                                      |
 | `maxRemoved`  | int    | (none)  | Maximum number of removed packages allowed before failing                                    |
-| `maxModified` | int    | (none)  | Maximum number of modified packages allowed before failing                                   |
+| `maxModified` | int    | (none)  | Maximum number of modified packages, including version bumps, before failing                 |
 | `maxScore`    | number | (none)  | Maximum drift score allowed. Computed as `(added*3 + modified*2 + removed) / baseline_count` |
 
 When any threshold is set, a baseline is mandatory: the check fails when no
@@ -1243,6 +1292,15 @@ baseline SBOM referrer is found or when any baseline SBOM cannot be parsed.
 Without thresholds, drift is computed for information only (exposed in
 metadata and CEL) and missing or unparsable baselines are skipped. All
 thresholds must be non-negative.
+
+Note: earlier releases matched packages by their full PURL including the
+version, so a version bump counted as one added and one removed package (drift
+score contribution 4) and was caught by `maxAdded` or `maxRemoved`. A version
+bump now counts as one modified package (contribution 2) and no longer affects
+`maxAdded` or `maxRemoved`. Policies that relied on `maxAdded: 0` or
+`maxRemoved: 0` to reject version changes must set `maxModified` (for example
+`maxModified: 0`), and `maxScore` thresholds tuned to the old scoring may need
+to be lowered.
 
 ### `scai` (object)
 
@@ -1256,7 +1314,7 @@ attribute report attestations attached to container images.
 | `missingPolicy`       | string | `allow` | Behavior when no SCAI attestation is found: `allow`, `warn`, `deny`   |
 | `requiredAttributes`  | array  | (none)  | Attribute names that must be present in the report (case-insensitive) |
 | `forbiddenAttributes` | array  | (none)  | Attribute names that must not appear in the report (case-insensitive) |
-| `requireEvidence`     | bool   | `false` | Require that every attribute includes non-empty evidence              |
+| `requireEvidence`     | bool   | `false` | Require that every attribute includes evidence (see below)            |
 
 ### `source` (object)
 
@@ -1271,7 +1329,7 @@ container images.
 | `minimumLevel`  | int    | 0       | Minimum SLSA source level required (0-3)                                  |
 | `maxAge`        | string | (none)  | Maximum age of the attestation (e.g. `24h`, `168h`); older ones are stale |
 
-The source verification checks that the source repository listed in the
+The source verification checks that every source repository listed in the
 attestation matches one of the trusted `trust.sources` glob patterns configured
 in the policy.
 
@@ -1290,7 +1348,10 @@ attached to container images.
 | `forbiddenProperties` | array  | (none)  | Property names that must not appear in the environment (case-insensitive) |
 
 The `requiredProperties` and `forbiddenProperties` lists must not overlap; the
-policy is rejected at load time if they do.
+policy is rejected at load time if they do. The same applies to the SCAI
+`requiredAttributes` and `forbiddenAttributes`. Both are checked on the
+effective policy, so a rule or an inheriting namespace policy that forbids
+what the base policy requires (or the other way around) is rejected as well.
 
 ### `vulnScan` (object)
 
@@ -1336,11 +1397,11 @@ Release attestation verification settings. When configured, the plugin verifies
 attestations (predicate type `https://in-toto.io/attestation/release/v0.1`)
 attached to container images.
 
-| Field               | Type    | Default | Description                                                             |
-| ------------------- | ------- | ------- | ----------------------------------------------------------------------- |
-| `missingPolicy`     | string  | `allow` | Behavior when no release attestation is found: `allow`, `warn`, `deny`  |
-| `trustedRegistries` | array   | (none)  | Glob patterns for trusted package registries (matched against the purl) |
-| `requirePackageId`  | boolean | `false` | Require a non-empty `packageId` in the release attestation              |
+| Field               | Type    | Default | Description                                                            |
+| ------------------- | ------- | ------- | ---------------------------------------------------------------------- |
+| `missingPolicy`     | string  | `allow` | Behavior when no release attestation is found: `allow`, `warn`, `deny` |
+| `trustedRegistries` | array   | (none)  | Glob patterns for trusted package registries (see below)               |
+| `requirePackageId`  | boolean | `false` | Require a non-empty `packageId` in the release attestation             |
 
 When multiple release attestations exist, any single valid one is sufficient
 (any-pass semantics).
@@ -1477,6 +1538,13 @@ Each rule is an object with:
 | `require` | string | yes      | CEL expression that must evaluate to `true` for the check to pass.                                                                    |
 | `message` | string | no       | Human-readable message shown when `require` evaluates to `false`.                                                                     |
 
+Both expressions must produce a boolean. Variable fields are typed
+dynamically, so a bare field such as `"require": "slsa.verified"` is
+accepted. An expression whose type is known not to be a boolean (for example
+`size(image.ref)`) is rejected when the policy is loaded. A dynamically typed
+expression that yields another type at evaluation (for example `image.ref`)
+fails the CEL check.
+
 **Missing attestations:** every attestation variable (all variables except
 `image` and `guac`) provides `present` and `verified`. When no attestation of
 the type was found, `present` and `verified` are both `false`, even if the
@@ -1517,7 +1585,7 @@ require the attestation with `vulnscan.present == true`.
 | `sbom.format`                  | string | SBOM formats, comma separated (`cyclonedx,spdx`)  |
 | `sbom.componentCount`          | int    | Number of components in the SBOM                  |
 | `sbom.licenseCount`            | int    | Number of licenses in the SBOM                    |
-| `sbom.cvssMax`                 | float  | Highest CVSS score across all vulnerabilities     |
+| `sbom.cvssMax`                 | float  | Highest CVSS score (or severity minimum) found    |
 | `sbom.cvssCriticalCount`       | int    | Number of critical-severity vulnerabilities       |
 | `sbom.cvssHighCount`           | int    | Number of high-severity vulnerabilities           |
 | `sbom.cvssMediumCount`         | int    | Number of medium-severity vulnerabilities         |
@@ -1564,7 +1632,7 @@ require the attestation with `vulnscan.present == true`.
 | `runtimetrace.fileAccessCount` | int    | Number of file access entries                     |
 | `runtimetrace.fileNames`       | string | Comma-separated file names from file accesses     |
 | `guac.available`               | bool   | Whether all enabled GUAC queries succeeded        |
-| `guac.vulnerabilities`         | list   | Direct vulnerabilities (id, package)              |
+| `guac.vulnerabilities`         | list   | Vulnerabilities of the image itself (id, package) |
 | `guac.transitive_vulns`        | list   | Transitive vulnerabilities (same fields)          |
 | `guac.scorecard.aggregate`     | float  | OpenSSF Scorecard aggregate score                 |
 | `guac.scorecard.checks`        | map    | Individual Scorecard check scores                 |
@@ -1600,6 +1668,13 @@ than can be queried, `guac.scorecard.truncated` is `true`, the aggregate is
 `guac.scorecard.source == "" || guac.scorecard.aggregate >= 7.0` does not
 mistake a truncated result for an image without a linked repository.
 
+`guac.vulnerabilities` only holds vulnerabilities GUAC attaches to the image
+itself (its digest, or an OCI PURL whose version is the digest). GUAC usually
+attaches vulnerabilities to the PURLs of the packages contained in the image,
+which are reported in `guac.transitive_vulns`. A rule that should reject
+vulnerable images must therefore check both lists, for example
+`guac.vulnerabilities.size() == 0 && guac.transitive_vulns.size() == 0`.
+
 The CEL built-in string functions `startsWith`, `endsWith`, `contains`, and
 `matches` are available, as well as the `ext.Strings()` extension library
 (for example `lowerAscii`, `split`, `replace`, and `trim`).
@@ -1608,7 +1683,10 @@ The CEL built-in string functions `startsWith`, `endsWith`, `contains`, and
 
 - Maximum expression size: 4096 bytes
 - Maximum number of rules: 64
-- Runtime cost limit: 100,000 (protects against expensive expressions)
+- Runtime cost limit: 100,000 (protects against expensive expressions).
+  An expression whose estimated minimum cost already exceeds the limit (for
+  example nested comprehensions over large list literals) is rejected when
+  the policy is loaded, because it would fail every evaluation.
 
 Example:
 
@@ -1764,7 +1842,10 @@ invalid VEX document. The same policy settings apply to both formats.
 
 **OpenVEX status handling:**
 
-- `not_affected` or `fixed`: pass
+- `not_affected` or `fixed`: pass. A `not_affected` statement must carry a
+  `justification` or an `impact_statement`, as the OpenVEX specification
+  requires; without both it is invalid and ignored, so it cannot override
+  another statement.
 - `affected`: fail
 - `under_investigation`: controlled by `underInvestigationPolicy` (default:
   allow)
@@ -2025,7 +2106,8 @@ Checks performed:
 - **License allow list**: When `sbom.license.allow` is set and non-empty,
   any license not in the allow list causes failure.
 - **Component deny list**: Each package/component PURL is checked against
-  `sbom.component.deny` using prefix matching. Any match causes failure.
+  `sbom.component.deny` by normalized package identity (see
+  [`sbom.component`](#sbomcomponent-object)). Any match causes failure.
 - **Component allow list**: When `sbom.component.allow` is set and non-empty,
   any component not matching an allow entry causes failure.
 - **Deny over allow**: If a license or component appears in both the deny and
@@ -2034,6 +2116,9 @@ Checks performed:
   vulnerabilities in CycloneDX BOMs are checked against score and severity
   thresholds. A vulnerability is flagged if its highest rating score exceeds
   `maxScore` or its highest severity meets or exceeds `minSeverity` (OR logic).
+  Scores and severities are derived from each other when a rating carries only
+  one, and ratings without a valid score or known severity fail closed (see
+  [`sbom.cvss`](#sbomcvss-object)).
   CVEs listed in `ignoreCVEs` are excluded from threshold checks but still
   contribute to aggregate statistics (cvssMax, cvssCriticalCount, cvssHighCount,
   cvssMediumCount) exposed as CEL variables. SPDX documents do not carry
@@ -2041,8 +2126,8 @@ Checks performed:
 
 - **Drift detection**: When a baseline SBOM is attached as an OCI referrer
   (artifact type `application/vnd.nri-supply-chain.sbom-baseline.v1+json`),
-  the current SBOM is compared against it using PURL as the package identity
-  key. Added, removed, and modified packages are counted and a weighted drift
+  the current SBOM is compared against it using the versionless PURL as the
+  package identity key. Added, removed, and modified packages are counted and a weighted drift
   score is computed. When `sbom.drift` thresholds are configured, exceeding
   any threshold causes failure. Drift results are always exposed as CEL
   variables (`sbom.drift.*`) regardless of whether thresholds are set. With
@@ -2141,8 +2226,10 @@ Checks performed:
   of the listed attribute names may appear in the report (case-insensitive
   match).
 - **Evidence requirement**: If `scai.requireEvidence` is true, every attribute
-  in the report must include non-empty evidence (`null`, `{}`, and absent
-  evidence all count as missing).
+  in the report must include evidence: a resource descriptor object with a
+  non-empty `uri`, `digest` value, `content`, or `name`. Absent evidence,
+  `null`, scalars (`""`, `false`, `0`), arrays, and descriptors without any of
+  these fields count as missing.
 
 When multiple SCAI attestations exist, any policy violation in any document
 causes failure. Metadata from passing attestations is merged: attribute counts
@@ -2177,10 +2264,10 @@ build the image.
 Checks performed:
 
 - **Subject digest**: The in-toto `subject[].digest` must match the image digest.
-- **Required fields**: The first `sourceLocations` entry must have a non-empty
-  `uri`.
-- **Trusted source**: The source repository in the attestation must match one of
-  the `trust.sources` glob patterns. Patterns are interpreted as for SLSA
+- **Required fields**: `sourceLocations` must not be empty and every entry
+  must have a non-empty `uri`.
+- **Trusted source**: Every source repository in `sourceLocations` must match
+  one of the `trust.sources` glob patterns. Patterns are interpreted as for SLSA
   provenance: the `git+` prefix is optional, a ref embedded in the source URI
   is not part of the repository, and a ref-pinned pattern is matched against
   `branch` (or the embedded ref when `branch` is empty). A short branch name
@@ -2385,7 +2472,17 @@ Checks performed:
 - **Subject digest**: The in-toto `subject[].digest` must match the image digest.
 - **Required fields**: `purl` must be non-empty.
 - **Trusted registries**: If `release.trustedRegistries` is configured, the
-  `purl` field must match at least one glob pattern.
+  `purl` must be a valid PURL and match at least one glob pattern. Patterns are
+  matched against forms built from the parsed, percent-decoded PURL, never
+  against the raw string: the package identity `pkg:<type>/<namespace>/<name>`
+  (for example `pkg:npm/@myorg/app` for `pkg:npm/%40myorg/app@1.0.0`), and for
+  a PURL with a `repository_url` qualifier (as OCI PURLs carry the registry)
+  the location `pkg:<type>/<repository_url>`, with the package name appended
+  when the URL does not end with it and any `https://` scheme removed (for
+  example `pkg:oci/ghcr.io/myorg/app` for
+  `pkg:oci/app@sha256%3A...?repository_url=ghcr.io/myorg/app`). Each form is
+  also matched with `@<version>` appended. Other qualifiers and the subpath are
+  never matched, so patterns that spell out qualifiers do not match.
 - **Package ID**: If `release.requirePackageId` is `true`, the `packageId`
   field must be non-empty.
 
@@ -2398,7 +2495,7 @@ Example configuration:
 {
   "release": {
     "missingPolicy": "deny",
-    "trustedRegistries": ["pkg:oci/ghcr.io/*", "pkg:npm/@myorg/*"],
+    "trustedRegistries": ["pkg:oci/ghcr.io/myorg/*", "pkg:npm/@myorg/*"],
     "requirePackageId": true
   }
 }
@@ -2519,6 +2616,10 @@ These fields support glob patterns with the same syntax as `sanPatterns`:
 
 - `[!abc]` and `[^abc]` match any character not in the set, except `/`
 
+A character class that is not valid (for example the reversed range `[z-a]`
+or the POSIX class `[[:alpha:]]`) is rejected when the policy is loaded, and
+so are empty patterns. A `[` without a closing `]` matches literally.
+
 `include` and `exclude` patterns are matched against the full image reference as
 received from the container runtime, including registry and path components. For
 example, `registry.io/org/*` matches `registry.io/org/repo` but not
@@ -2622,6 +2723,9 @@ Sections set in both policies are merged field by field:
   otherwise case-insensitive, so a policy spelling a field differently (for
   example `MissingPolicy`) is rejected instead of being silently ignored by the
   merge.
+- A key may appear only once per JSON object. A policy repeating a key (for
+  example two `slsa` sections) is rejected, because the merge would only see
+  the last occurrence.
 
 This is useful for:
 

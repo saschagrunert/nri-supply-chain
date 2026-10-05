@@ -435,7 +435,7 @@ func TestVerifyMultipleFailureAndInvalidDocuments(t *testing.T) {
 		}
 	})
 
-	t.Run("empty list passes for missing-policy handler", func(t *testing.T) {
+	t.Run("empty list fails", func(t *testing.T) {
 		t.Parallel()
 
 		result, err := scorecard.VerifyMultiple(
@@ -443,8 +443,8 @@ func TestVerifyMultipleFailureAndInvalidDocuments(t *testing.T) {
 		)
 		testutil.AssertNoError(t, err)
 
-		if !result.Passed {
-			t.Errorf("expected pass, got %q", result.Detail)
+		if result.Passed {
+			t.Error("expected failure for an empty attestation list")
 		}
 	})
 }

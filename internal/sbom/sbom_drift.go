@@ -21,8 +21,14 @@ import (
 	"strings"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
+	"github.com/saschagrunert/nri-supply-chain/internal/purl"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
+
+// unparsedIdentityPrefix keys packages whose purl cannot be parsed. Identity
+// keys never contain a colon before their first slash, so the keys of parsed
+// and unparsed purls cannot collide.
+const unparsedIdentityPrefix = "unparsed:"
 
 const (
 	driftWeightAdded    = 3
@@ -41,27 +47,21 @@ type driftResult struct {
 }
 
 func computeDrift(baseline, current []sbomPackage) driftResult {
-	baselineMap := indexByPURL(baseline)
-	currentMap := indexByPURL(current)
+	baselineIndex, baselineCount := indexByIdentity(baseline)
+	currentIndex, _ := indexByIdentity(current)
 
 	var result driftResult
 
-	for purl, cur := range currentMap {
-		base, exists := baselineMap[purl]
-		if !exists {
-			result.Added = append(result.Added, cur)
-
-			continue
-		}
-
-		if packageModified(&base, &cur) {
-			result.Modified = append(result.Modified, cur)
-		}
+	for identity, cur := range currentIndex {
+		added, removed, modified := diffIdentity(baselineIndex[identity], cur)
+		result.Added = append(result.Added, added...)
+		result.Removed = append(result.Removed, removed...)
+		result.Modified = append(result.Modified, modified...)
 	}
 
-	for purl, base := range baselineMap {
-		if _, exists := currentMap[purl]; !exists {
-			result.Removed = append(result.Removed, base)
+	for identity, base := range baselineIndex {
+		if _, exists := currentIndex[identity]; !exists {
+			result.Removed = append(result.Removed, base...)
 		}
 	}
 
@@ -73,26 +73,74 @@ func computeDrift(baseline, current []sbomPackage) driftResult {
 	result.RemovedCount = len(result.Removed)
 	result.ModifiedCount = len(result.Modified)
 
-	if len(baselineMap) > 0 {
+	if baselineCount > 0 {
 		numerator := float64(
 			result.AddedCount*driftWeightAdded +
 				result.ModifiedCount*driftWeightModified +
 				result.RemovedCount*driftWeightRemoved,
 		)
-		result.Score = numerator / float64(len(baselineMap))
+		result.Score = numerator / float64(baselineCount)
 	}
 
 	return result
 }
 
-func indexByPURL(pkgs []sbomPackage) map[string]sbomPackage {
-	index := make(map[string]sbomPackage, len(pkgs))
+// diffIdentity compares the baseline and current packages sharing one
+// versionless identity. Packages with the same purl are compared directly;
+// the remaining ones are paired in purl order as modified (for example a
+// version bump), and any surplus counts as added or removed.
+func diffIdentity(baseline, current []sbomPackage) (added, removed, modified []sbomPackage) {
+	var unmatchedBase, unmatchedCur []sbomPackage
+
+	baseByPURL := make(map[string]*sbomPackage, len(baseline))
+	for idx := range baseline {
+		baseByPURL[baseline[idx].PURL] = &baseline[idx]
+	}
+
+	curByPURL := make(map[string]struct{}, len(current))
+
+	for idx := range current {
+		curByPURL[current[idx].PURL] = struct{}{}
+
+		base, found := baseByPURL[current[idx].PURL]
+		if !found {
+			unmatchedCur = append(unmatchedCur, current[idx])
+
+			continue
+		}
+
+		if packageModified(base, &current[idx]) {
+			modified = append(modified, current[idx])
+		}
+	}
+
+	for idx := range baseline {
+		if _, found := curByPURL[baseline[idx].PURL]; !found {
+			unmatchedBase = append(unmatchedBase, baseline[idx])
+		}
+	}
+
+	paired := min(len(unmatchedBase), len(unmatchedCur))
+	modified = append(modified, unmatchedCur[:paired]...)
+	added = unmatchedCur[paired:]
+	removed = unmatchedBase[paired:]
+
+	return added, removed, modified
+}
+
+// indexByIdentity groups packages by their versionless purl identity
+// (purl.PURL.Key), so a version change is detected as a modification rather
+// than an addition and a removal. Packages with an unparsable purl are keyed
+// by the purl itself. Duplicate purls are counted once. The second return
+// value is the number of distinct purls.
+func indexByIdentity(pkgs []sbomPackage) (index map[string][]sbomPackage, count int) {
+	byPURL := make(map[string]sbomPackage, len(pkgs))
 
 	skipped := 0
 
 	for idx := range pkgs {
 		if pkgs[idx].PURL != "" {
-			index[pkgs[idx].PURL] = pkgs[idx]
+			byPURL[pkgs[idx].PURL] = pkgs[idx]
 		} else {
 			skipped++
 		}
@@ -103,7 +151,24 @@ func indexByPURL(pkgs []sbomPackage) map[string]sbomPackage {
 			"skipped", skipped, "total", len(pkgs))
 	}
 
-	return index
+	index = make(map[string][]sbomPackage, len(byPURL))
+
+	for purlValue, pkg := range byPURL {
+		identity := unparsedIdentityPrefix + purlValue
+
+		parsed, err := purl.Parse(purlValue)
+		if err == nil {
+			identity = parsed.Key()
+		}
+
+		index[identity] = append(index[identity], pkg)
+	}
+
+	for identity := range index {
+		slices.SortFunc(index[identity], cmpByPURL)
+	}
+
+	return index, len(byPURL)
 }
 
 //nolint:gocritic // required by slices.SortFunc signature

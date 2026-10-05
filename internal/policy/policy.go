@@ -54,57 +54,8 @@ func (p *Policy) MissingPolicyFor(ct types.CheckType) types.Action {
 // SLSAMissingPolicy returns the effective SLSA missing policy.
 func (p *Policy) SLSAMissingPolicy() types.Action { return p.MissingPolicyFor(types.CheckTypeSLSA) }
 
-// VEXMissingPolicy returns the effective VEX missing policy.
-func (p *Policy) VEXMissingPolicy() types.Action { return p.MissingPolicyFor(types.CheckTypeVEX) }
-
 // VSAMissingPolicy returns the effective VSA missing policy.
 func (p *Policy) VSAMissingPolicy() types.Action { return p.MissingPolicyFor(types.CheckTypeVSA) }
-
-// NotationMissingPolicy returns the effective Notation missing policy.
-func (p *Policy) NotationMissingPolicy() types.Action {
-	return p.MissingPolicyFor(types.CheckTypeNotation)
-}
-
-// SBOMMissingPolicy returns the effective SBOM missing policy.
-func (p *Policy) SBOMMissingPolicy() types.Action { return p.MissingPolicyFor(types.CheckTypeSBOM) }
-
-// SCAIMissingPolicy returns the effective SCAI missing policy.
-func (p *Policy) SCAIMissingPolicy() types.Action { return p.MissingPolicyFor(types.CheckTypeSCAI) }
-
-// SourceMissingPolicy returns the effective source track missing policy.
-func (p *Policy) SourceMissingPolicy() types.Action {
-	return p.MissingPolicyFor(types.CheckTypeSource)
-}
-
-// BuildEnvMissingPolicy returns the effective build environment missing policy.
-func (p *Policy) BuildEnvMissingPolicy() types.Action {
-	return p.MissingPolicyFor(types.CheckTypeBuildEnv)
-}
-
-// VulnScanMissingPolicy returns the effective vulnerability scan missing policy.
-func (p *Policy) VulnScanMissingPolicy() types.Action {
-	return p.MissingPolicyFor(types.CheckTypeVulnScan)
-}
-
-// TestResultMissingPolicy returns the effective test result missing policy.
-func (p *Policy) TestResultMissingPolicy() types.Action {
-	return p.MissingPolicyFor(types.CheckTypeTestResult)
-}
-
-// ReleaseMissingPolicy returns the effective release missing policy.
-func (p *Policy) ReleaseMissingPolicy() types.Action {
-	return p.MissingPolicyFor(types.CheckTypeRelease)
-}
-
-// RuntimeTraceMissingPolicy returns the effective runtime trace missing policy.
-func (p *Policy) RuntimeTraceMissingPolicy() types.Action {
-	return p.MissingPolicyFor(types.CheckTypeRuntimeTrace)
-}
-
-// ScorecardMissingPolicy returns the effective OpenSSF Scorecard missing policy.
-func (p *Policy) ScorecardMissingPolicy() types.Action {
-	return p.MissingPolicyFor(types.CheckTypeScorecard)
-}
 
 // Builders returns the trusted builders list, or nil if trust is not configured.
 func (p *Policy) Builders() []TrustedBuilder {

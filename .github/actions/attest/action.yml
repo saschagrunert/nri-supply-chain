@@ -6,7 +6,7 @@ inputs:
     description: "Image manifest digest (sha256:...)"
     required: true
   policy-ref:
-    description: "Git ref for VSA policy URI (e.g., main or v1.0.0)"
+    description: "Git ref for VSA policy URI (e.g., a commit SHA or v1.0.0)"
     required: true
   verify-binary:
     description: "Path to nri-supply-chain binary. If empty, uses docker run."
@@ -360,30 +360,22 @@ runs:
           --yes \
           "${IMAGE}@${{ inputs.digest }}"
 
+    # The image is verified against the committed policy.json, which the VSA
+    # references by URI and digest. It names this repository, so a fork must
+    # adjust it before it can publish.
     - name: Verify container image
       shell: bash
+      env:
+        POLICY_FILE: ${{ github.action_path }}/policy.json
+        REPOSITORY: ${{ github.repository }}
       run: |
+        if ! jq -e --arg san "https://github.com/${REPOSITORY}/**" \
+          '.trust.sanPatterns | index($san)' "$POLICY_FILE" >/dev/null; then
+          echo "::error::${POLICY_FILE} does not trust ${REPOSITORY}, update it for this repository"
+          exit 1
+        fi
         mkdir -p /tmp/verify-policies
-        cat > /tmp/verify-policies/default.json <<EOF
-        {
-          "trust": {
-            "issuers": ["https://token.actions.githubusercontent.com"],
-            "sanPatterns": [
-              "https://github.com/${{ github.repository }}/**",
-              "https://github.com/slsa-framework/slsa-github-generator/**"
-            ],
-            "sources": ["https://github.com/${{ github.repository_owner }}/*"]
-          },
-          "slsa": { "missingPolicy": "deny" },
-          "vex": { "missingPolicy": "deny" },
-          "sbom": { "missingPolicy": "deny" },
-          "vulnScan": { "missingPolicy": "warn" },
-          "testResult": { "missingPolicy": "warn" },
-          "source": { "missingPolicy": "warn" },
-          "buildEnv": { "missingPolicy": "warn" },
-          "release": { "missingPolicy": "warn" }
-        }
-        EOF
+        cp "$POLICY_FILE" /tmp/verify-policies/default.json
         cat > /tmp/verify-config.toml <<EOF
         verification = "enforce"
         policy_dir = "/tmp/verify-policies"
@@ -406,7 +398,10 @@ runs:
     # independently verifiable per SLSA requirements.
     - name: Attest container image VSA
       shell: bash
+      env:
+        POLICY_FILE: ${{ github.action_path }}/policy.json
       run: |
+        POLICY_DIGEST=$(sha256sum "$POLICY_FILE" | cut -d ' ' -f 1)
         cat > /tmp/vsa-predicate.json <<EOF
         {
           "verifier": {
@@ -415,7 +410,8 @@ runs:
           "timeVerified": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
           "resourceUri": "${IMAGE}@${{ inputs.digest }}",
           "policy": {
-            "uri": "https://github.com/${{ github.repository }}/blob/${{ inputs.policy-ref }}/deploy/examples/policies/default.json"
+            "uri": "https://github.com/${{ github.repository }}/blob/${{ inputs.policy-ref }}/.github/actions/attest/policy.json",
+            "digest": {"sha256": "${POLICY_DIGEST}"}
           },
           "verificationResult": "PASSED",
           "verifiedLevels": ["SLSA_BUILD_LEVEL_3"],

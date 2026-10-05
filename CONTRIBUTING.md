@@ -37,7 +37,8 @@ make verify-all
 ```
 
 This runs lint, shfmt, shellcheck, mdtoc, jsonschema, helm, manifests, tidy,
-vendor, dependencies, govulncheck, prettier, typos, and dashboard checks.
+mod (`go mod verify`), vendor, no-test-deps, dependencies, govulncheck,
+prettier, markdownlint, typos, and dashboard checks.
 `make verify-manifests` schema-validates the raw manifests and the rendered
 Helm chart, validates their embedded config and policies with the plugin
 binary, and fails when the two drift apart.

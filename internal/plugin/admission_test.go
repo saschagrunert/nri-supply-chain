@@ -344,3 +344,44 @@ func TestCreateContainerRecordsOriginalResources(t *testing.T) {
 		t.Errorf("original resources annotation = %q, want %q", got, want)
 	}
 }
+
+func TestCreateContainerRejectsResultThatDoesNotAdmit(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		result *scTypes.Result
+	}{
+		{
+			name: "denied result",
+			result: &scTypes.Result{
+				Allowed: false, Verified: false, Mode: string(config.ModeEnforce),
+				Reason: "attestation missing", CheckResults: nil,
+			},
+		},
+		{name: "no result", result: nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			verif := newDigestTestVerifier(true)
+			verif.result = test.result
+			plug := plugin.New(verif, metrics.New(), "", time.Second, time.Second, nil)
+
+			adj, _, err := plug.CreateContainer(
+				t.Context(), admissionPod(), admissionContainer(testDigest),
+			)
+			if !errors.Is(err, scTypes.ErrVerificationFailed) {
+				t.Fatalf("expected a result that does not admit to be rejected, got %v", err)
+			}
+
+			if adj != nil {
+				t.Error("expected no adjustment for a rejected container")
+			}
+
+			if _, found := plug.ExportGetContainerState("ctr-admission"); found {
+				t.Error("expected a rejected container to not be tracked")
+			}
+		})
+	}
+}

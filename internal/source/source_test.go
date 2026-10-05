@@ -527,6 +527,12 @@ func TestVerifyEmptySourceLocations(t *testing.T) {
 	}{
 		{name: "empty locations", predicate: json.RawMessage(`{"sourceLocations":[]}`)},
 		{name: "empty uri", predicate: json.RawMessage(`{"sourceLocations":[{"uri":""}]}`)},
+		{
+			name: "empty uri after a valid location",
+			predicate: json.RawMessage(
+				`{"sourceLocations":[{"uri":"` + testSourceURI + `"},{"uri":" "}]}`,
+			),
+		},
 		{name: "empty object", predicate: json.RawMessage(`{}`)},
 		{name: "null predicate", predicate: json.RawMessage(`null`)},
 	}
@@ -540,6 +546,44 @@ func TestVerifyEmptySourceLocations(t *testing.T) {
 			_, err := source.Verify(context.Background(), att, &policy.Policy{}, testDigest)
 			if !errors.Is(err, source.ErrInvalidSource) {
 				t.Fatalf("expected ErrInvalidSource, got %v", err)
+			}
+		})
+	}
+}
+
+func TestVerifyEverySourceLocationMustBeTrusted(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{Trust: &policy.TrustPolicy{Sources: []string{testTrustedPattern}}}
+
+	for _, tc := range []struct {
+		name     string
+		second   string
+		wantPass bool
+	}{
+		{name: "untrusted second location fails", second: "https://github.com/evil/repo", wantPass: false},
+		{name: "trusted second location passes", second: "https://github.com/example/other", wantPass: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			pred := validPredicate()
+			pred.SourceLocations = append(pred.SourceLocations, srcLocation{
+				URI: tc.second, Digest: nil, Branch: testSourceBranch,
+			})
+
+			att := testutil.WrapInToto(t, pred, testDigest, testPredicateType)
+
+			result, err := source.Verify(context.Background(), att, pol, testDigest)
+			testutil.AssertNoError(t, err)
+
+			if result.Passed != tc.wantPass {
+				t.Errorf(
+					"passed = %v, want %v (detail %q)",
+					result.Passed,
+					tc.wantPass,
+					result.Detail,
+				)
 			}
 		})
 	}

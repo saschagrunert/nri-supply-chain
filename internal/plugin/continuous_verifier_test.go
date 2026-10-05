@@ -17,6 +17,7 @@ package plugin_test
 import (
 	"context"
 	"errors"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -2173,5 +2174,93 @@ func TestThrottlePercentsClampsUpperBound(t *testing.T) {
 
 	if memPct > 100 {
 		t.Errorf("Memory percent not clamped: got %d, want <= 100", memPct)
+	}
+}
+
+// cachingVerifier caches results per digest and namespace like the real
+// verifier and counts the verifications that missed the cache.
+type cachingVerifier struct {
+	cvTestVerifier
+
+	cached        map[string]struct{}
+	verifications int
+}
+
+func (v *cachingVerifier) Verify(
+	_ context.Context, req *types.VerifyRequest,
+) (*types.Result, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	key := req.Digest + "/" + req.Namespace
+	if _, hit := v.cached[key]; !hit {
+		v.cached[key] = struct{}{}
+		v.verifications++
+	}
+
+	return v.result, nil
+}
+
+func (v *cachingVerifier) InvalidateCache(digest, namespace string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	delete(v.cached, digest+"/"+namespace)
+}
+
+func TestFeedTriggerVerifiesReplicasOfAnImageOnce(t *testing.T) {
+	t.Parallel()
+
+	verif := &cachingVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+		cached: make(map[string]struct{}),
+	}
+	verif.result = &types.Result{
+		Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
+	}
+	plug := newCVTestPlugin(verif)
+	plug.SetRemediationMode(config.RemediationModeWarn)
+	plug.SetRemediationConfig(
+		&config.RemediationConfig{ //nolint:exhaustruct_v5 // zero-value fields intentional
+			Mode:     config.RemediationModeWarn,
+			Triggers: config.TriggerConfig{OnNewCVE: true}, //nolint:exhaustruct_v5 // test
+		},
+	)
+
+	const replicas = 5
+
+	for idx := range replicas {
+		plug.ExportStoreContainerWithPURLs(
+			"ctr-replica-"+strconv.Itoa(idx), []string{testPURLGolangFoo},
+		)
+	}
+
+	plug.ExportSetPrewarmDone(nil)
+	plug.ExportPrewarmCache(context.Background(), nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+
+	go func() {
+		plug.RunContinuousVerifier(ctx, time.Hour)
+		close(done)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	plug.TriggerFeedReverify([]string{testPURLGolangFoo})
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	<-done
+
+	verif.mu.Lock()
+	defer verif.mu.Unlock()
+
+	if verif.calls != 0 {
+		t.Errorf("expected no calls to the embedded verifier, got %d", verif.calls)
+	}
+
+	if verif.verifications != 1 {
+		t.Errorf("expected one verification for %d replicas of an image, got %d",
+			replicas, verif.verifications)
 	}
 }

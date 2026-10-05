@@ -71,12 +71,13 @@ const (
 	// completes. The 5s ceiling allows headroom for runtimes with higher
 	// limits while preventing obviously broken configs.
 	maxDigestResolveTimeout = 5 * time.Second
-	// defaultAdmissionTimeout bounds the whole NRI CreateContainer admission
+	// DefaultAdmissionTimeout bounds the whole NRI CreateContainer admission
 	// (digest resolution plus waiting for the verification result). It must
 	// stay below the runtime's NRI plugin request timeout (2s by default in
 	// containerd and CRI-O): a plugin that misses that deadline is closed by
-	// the runtime and the container is created without a verdict.
-	defaultAdmissionTimeout = 1500 * time.Millisecond
+	// the runtime and the container is created without a verdict. Exported so
+	// internal/plugin, which imports this package, can share the default.
+	DefaultAdmissionTimeout = 1500 * time.Millisecond
 	// maxAdmissionTimeout caps admission_timeout. Runtimes may raise their
 	// NRI request timeout, so values above the 2s default are accepted.
 	maxAdmissionTimeout            = 1 * time.Minute
@@ -565,7 +566,7 @@ func DefaultConfig() *Config { //nolint:funlen // single struct literal with all
 		Verification:               ModeDisabled,
 		FetchTimeout:               Duration{Duration: defaultFetchTimeout},
 		DigestResolveTimeout:       Duration{Duration: defaultDigestResolveTimeout},
-		AdmissionTimeout:           Duration{Duration: defaultAdmissionTimeout},
+		AdmissionTimeout:           Duration{Duration: DefaultAdmissionTimeout},
 		FetchFailurePolicy:         types.ActionWarn,
 		FetchFailurePolicyExplicit: false,
 		CacheTTL:                   Duration{Duration: defaultCacheTTL},

@@ -51,11 +51,11 @@ func validReport() scaiReport {
 		Attributes: []scaiAttribute{
 			{
 				Attribute: testAttrCodeReview,
-				Evidence:  json.RawMessage(`{"url":"https://review.example.com/123"}`),
+				Evidence:  json.RawMessage(`{"uri":"https://review.example.com/123"}`),
 			},
 			{
 				Attribute: testAttrPassedTests,
-				Evidence:  json.RawMessage(`{"url":"https://ci.example.com/456"}`),
+				Evidence:  json.RawMessage(`{"uri":"https://ci.example.com/456"}`),
 			},
 		},
 	}
@@ -323,6 +323,48 @@ func TestVerifyEvidenceEdgeCases(t *testing.T) {
 			t.Error("expected fail: empty object evidence should count as missing")
 		}
 	})
+
+	for _, test := range []struct {
+		evidence string
+		wantPass bool
+	}{
+		{evidence: `""`, wantPass: false},
+		{evidence: `false`, wantPass: false},
+		{evidence: `0`, wantPass: false},
+		{evidence: `"https://ci.example.com/1"`, wantPass: false},
+		{evidence: `[{"uri":"https://ci.example.com/1"}]`, wantPass: false},
+		{evidence: `{"uri":" "}`, wantPass: false},
+		{evidence: `{"digest":{"sha256":""}}`, wantPass: false},
+		{evidence: `{"mediaType":"text/plain"}`, wantPass: false},
+		{evidence: `{"digest":{"sha256":"abc"}}`, wantPass: true},
+		{evidence: `{"name":"test-report.json"}`, wantPass: true},
+		{evidence: `{"uri":"https://ci.example.com/1"}`, wantPass: true},
+	} {
+		t.Run("evidence "+test.evidence, func(t *testing.T) {
+			t.Parallel()
+
+			doc := scaiReport{
+				Attributes: []scaiAttribute{
+					{Attribute: testAttrPassedTests, Evidence: json.RawMessage(test.evidence)},
+				},
+			}
+			att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
+
+			result, err := scai.Verify(context.Background(), att, &policy.Policy{
+				SCAI: &policy.SCAIPolicy{RequireEvidence: true},
+			}, testDigest)
+			testutil.AssertNoError(t, err)
+
+			if result.Passed != test.wantPass {
+				t.Errorf(
+					"passed = %v, want %v (detail %q)",
+					result.Passed,
+					test.wantPass,
+					result.Detail,
+				)
+			}
+		})
+	}
 }
 
 func TestVerifyMultiple(t *testing.T) {
@@ -354,11 +396,11 @@ func TestVerifyMultiple(t *testing.T) {
 			wantStatus: types.StatusFail,
 		},
 		{
-			name:       "empty attestation list",
+			name:       "empty attestation list fails",
 			docs:       []scaiReport{},
 			pol:        &policy.Policy{},
-			wantPassed: true,
-			wantStatus: types.StatusPass,
+			wantPassed: false,
+			wantStatus: types.StatusFail,
 		},
 	}
 
@@ -394,7 +436,7 @@ func TestVerifyMultipleMergesMetadata(t *testing.T) {
 		Attributes: []scaiAttribute{
 			{
 				Attribute: testAttrCodeReview,
-				Evidence:  json.RawMessage(`{"url":"https://review.example.com/1"}`),
+				Evidence:  json.RawMessage(`{"uri":"https://review.example.com/1"}`),
 			},
 		},
 	}
@@ -402,11 +444,11 @@ func TestVerifyMultipleMergesMetadata(t *testing.T) {
 		Attributes: []scaiAttribute{
 			{
 				Attribute: testAttrPassedTests,
-				Evidence:  json.RawMessage(`{"url":"https://ci.example.com/2"}`),
+				Evidence:  json.RawMessage(`{"uri":"https://ci.example.com/2"}`),
 			},
 			{
 				Attribute: testAttrFuzzTested,
-				Evidence:  json.RawMessage(`{"url":"https://fuzz.example.com/3"}`),
+				Evidence:  json.RawMessage(`{"uri":"https://fuzz.example.com/3"}`),
 			},
 		},
 	}
@@ -464,7 +506,7 @@ func TestVerifyMultipleMergesMetadataEvidenceAND(t *testing.T) {
 		Attributes: []scaiAttribute{
 			{
 				Attribute: testAttrCodeReview,
-				Evidence:  json.RawMessage(`{"url":"https://review.example.com/1"}`),
+				Evidence:  json.RawMessage(`{"uri":"https://review.example.com/1"}`),
 			},
 		},
 	}
@@ -507,8 +549,8 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 		result, err := scai.VerifyMultiple(context.Background(), nil, &policy.Policy{}, testDigest)
 		testutil.AssertNoError(t, err)
 
-		if !result.Passed {
-			t.Errorf("expected pass for nil attestation slice, got: %s", result.Detail)
+		if result.Passed {
+			t.Error("expected failure for nil attestation slice")
 		}
 	})
 

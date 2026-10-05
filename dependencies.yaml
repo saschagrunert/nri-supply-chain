@@ -143,6 +143,12 @@ dependencies:
       - path: Makefile
         match: ^PRETTIER_VERSION
 
+  - name: markdownlint-cli2
+    version: 0.23.2
+    refPaths:
+      - path: Makefile
+        match: ^MARKDOWNLINT_VERSION
+
   - name: dashboard-linter
     version: 0.3.0
     refPaths:

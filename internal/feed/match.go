@@ -17,6 +17,7 @@ package feed
 import (
 	"log/slog"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -244,40 +245,166 @@ func escapePath(path string) string {
 }
 
 // semverIntervals converts OSV events into vers constraints, one per
-// affected interval. Introduced opens an interval (an introduced event while
-// an interval is already open keeps the earlier lower bound); fixed, limit,
-// and last_affected close it.
+// affected interval. OSV does not require events to be ordered, so they are
+// sorted by version first (introduced "0" before everything, and at equal
+// versions closing events before introduced, see sortEvents). Introduced
+// opens an interval (an introduced event while an interval is already open
+// keeps the earlier lower bound); fixed, limit, and last_affected close it.
+// A last_affected event that finds no open interval still closes one opened
+// by an introduced event at the same version, so that introduced X with
+// last_affected X yields the single version X. When an event version is not
+// a semantic version, the events cannot be ordered and the range matches
+// every version.
 func semverIntervals(events []OSVEvent) []string {
-	var (
-		intervals []string
-		lower     string
-		open      bool
-	)
+	sorted, ok := sortEvents(events)
+	if !ok {
+		return []string{versAny}
+	}
+
+	var builder intervalBuilder
+
+	for idx := range sorted {
+		builder.add(&sorted[idx])
+	}
+
+	return builder.finish()
+}
+
+// intervalBuilder collects the affected intervals of sorted OSV events.
+type intervalBuilder struct {
+	intervals []string
+	lower     string
+	open      bool
+	// pendingLast is a last_affected version seen while no interval was
+	// open, to close an interval introduced at the same version.
+	pendingLast string
+}
+
+func (b *intervalBuilder) add(event *OSVEvent) {
+	pendingLast := b.pendingLast
+	b.pendingLast = ""
+
+	if event.Introduced != "" {
+		if b.open {
+			return
+		}
+
+		b.lower = lowerBound(event.Introduced)
+		b.open = true
+
+		if pendingLast != "" && sameVersion(pendingLast, event.Introduced) {
+			b.close("<=" + pendingLast)
+		}
+
+		return
+	}
+
+	upper := eventUpperBound(event)
+
+	switch {
+	case upper == "":
+	case b.open:
+		b.close(upper)
+	case event.Fixed == "" && event.LastAffected != "":
+		b.pendingLast = event.LastAffected
+	}
+}
+
+func (b *intervalBuilder) close(upper string) {
+	b.intervals = append(b.intervals, joinConstraints(b.lower, upper))
+	b.open = false
+}
+
+func (b *intervalBuilder) finish() []string {
+	if b.open {
+		b.close("")
+	}
+
+	return b.intervals
+}
+
+// sortEvents returns the events with a version sorted by it. At equal
+// versions, fixed and limit come first, then last_affected, then introduced,
+// so that the previous interval is closed before a new one opens at the same
+// version (introduced 2.0.0 next to fixed 2.0.0 starts a new interval instead
+// of being swallowed by the open one). The boolean is false when a version
+// other than introduced "0" is not a semantic version.
+func sortEvents(events []OSVEvent) ([]OSVEvent, bool) {
+	sorted := make([]OSVEvent, 0, len(events))
 
 	for idx := range events {
-		event := &events[idx]
-
-		if event.Introduced != "" {
-			if !open {
-				lower = lowerBound(event.Introduced)
-				open = true
-			}
-
+		version := eventVersion(&events[idx])
+		if version == "" {
 			continue
 		}
 
-		upper := eventUpperBound(event)
-		if upper != "" && open {
-			intervals = append(intervals, joinConstraints(lower, upper))
-			open = false
+		if events[idx].Introduced != "0" {
+			if _, _, valid := splitSemver(version); !valid {
+				return nil, false
+			}
 		}
+
+		sorted = append(sorted, events[idx])
 	}
 
-	if open {
-		intervals = append(intervals, joinConstraints(lower, ""))
+	slices.SortStableFunc(sorted, compareEvents)
+
+	return sorted, true
+}
+
+// compareEvents orders events by version, introduced "0" first, and events
+// with equal versions by eventRank.
+func compareEvents(left, right OSVEvent) int {
+	leftZero, rightZero := left.Introduced == "0", right.Introduced == "0"
+
+	switch {
+	case leftZero && rightZero:
+		return 0
+	case leftZero:
+		return -1
+	case rightZero:
+		return 1
 	}
 
-	return intervals
+	cmp, _ := compareSemver(eventVersion(&left), eventVersion(&right))
+	if cmp != 0 {
+		return cmp
+	}
+
+	return eventRank(&left) - eventRank(&right)
+}
+
+// eventRank orders events with equal versions: exclusive upper bounds first,
+// then inclusive ones, then introduced.
+func eventRank(event *OSVEvent) int {
+	switch {
+	case event.Introduced != "":
+		return 2 //nolint:mnd // opens after closing events
+	case event.Fixed == "" && event.LastAffected != "":
+		return 1
+	default:
+		return 0
+	}
+}
+
+// sameVersion reports whether two semantic versions are equal.
+func sameVersion(left, right string) bool {
+	cmp, ok := compareSemver(left, right)
+
+	return ok && cmp == 0
+}
+
+func eventVersion(event *OSVEvent) string {
+	switch {
+	case event.Introduced != "":
+		return event.Introduced
+	case event.Fixed != "":
+		return event.Fixed
+	case event.LastAffected != "":
+		return event.LastAffected
+	default:
+		return event.Limit
+	}
 }
 
 // lowerBound returns the introduced version, or "" for "0", which means the

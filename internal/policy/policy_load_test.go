@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
+	"github.com/saschagrunert/nri-supply-chain/internal/glob"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
@@ -64,7 +65,7 @@ func TestLoad(t *testing.T) {
 				}
 
 				testutil.AssertEqual(t, "https://example.com/builder", pol.Builders()[0].ID)
-				testutil.AssertEqual(t, types.ActionWarn, pol.SLSAMissingPolicy())
+				testutil.AssertEqual(t, types.ActionWarn, pol.MissingPolicyFor(types.CheckTypeSLSA))
 			},
 		},
 		{
@@ -93,7 +94,11 @@ func TestLoad(t *testing.T) {
 				t.Helper()
 
 				resolved := policy.ApplyRule(pol, &pol.Rules[0])
-				testutil.AssertEqual(t, types.ActionDeny, resolved.SLSAMissingPolicy())
+				testutil.AssertEqual(
+					t,
+					types.ActionDeny,
+					resolved.MissingPolicyFor(types.CheckTypeSLSA),
+				)
 				testutil.AssertEqual(t, time.Hour, resolved.SLSA.MaxAgeDuration)
 
 				if resolved.CompiledCEL == nil {
@@ -136,6 +141,78 @@ func TestLoad(t *testing.T) {
 		{
 			name:    "map keys are not field names",
 			content: `{"scorecard": {"checks": {"Code-Review": 5, "code-review": 6}}}`,
+		},
+		{
+			// A repeated section would be decoded as one merged section while
+			// merges only track the fields of the last occurrence.
+			name:    "duplicate section rejected",
+			content: `{"inherits": true, "slsa": {"missingPolicy": "deny"}, "slsa": {"maxAge": "1h"}}`,
+			wantErr: policy.ErrDuplicateField,
+		},
+		{
+			name: "duplicate nested rule field rejected",
+			content: `{"rules": [
+				{"images": ["ghcr.io/org/**"], "slsa": {"maxAge": "1h", "maxAge": "2h"}}
+			]}`,
+			wantErr: policy.ErrDuplicateField,
+		},
+		{
+			name:    "duplicate map key rejected",
+			content: `{"scorecard": {"checks": {"Code-Review": 5, "Code-Review": 6}}}`,
+			wantErr: policy.ErrDuplicateField,
+		},
+		{
+			name:    "same key in sibling objects accepted",
+			content: `{"slsa": {"maxAge": "1h"}, "vsa": {"maxAge": "1h"}}`,
+		},
+		{
+			// Overlaps are checked on the effective policy a rule produces.
+			name: "rule forbids a base required SCAI attribute",
+			content: `{
+				"scai": {"requiredAttributes": ["FUZZ_TESTED"]},
+				"rules": [{"images": ["ghcr.io/org/**"], "scai": {"forbiddenAttributes": ["FUZZ_TESTED"]}}]
+			}`,
+			wantErr: policy.ErrSCAIOverlappingAttributes,
+		},
+		{
+			name: "rule requires a base forbidden buildEnv property",
+			content: `{
+				"buildEnv": {"forbiddenProperties": ["DEBUG"]},
+				"rules": [{"images": ["ghcr.io/org/**"], "buildEnv": {"requiredProperties": ["debug"]}}]
+			}`,
+			wantErr: policy.ErrBuildEnvOverlappingProperties,
+		},
+		{
+			name: "rule replacing the base forbidden list has no overlap",
+			content: `{
+				"scai": {"requiredAttributes": ["A"], "forbiddenAttributes": ["B"]},
+				"rules": [{"images": ["ghcr.io/org/**"], "scai": {"requiredAttributes": ["B"], "forbiddenAttributes": []}}]
+			}`,
+		},
+		{
+			name:    "empty include rejected",
+			content: `{"include": [""]}`,
+			wantErr: policy.ErrEmptyValue,
+		},
+		{
+			name:    "empty exclude rejected",
+			content: `{"exclude": [""]}`,
+			wantErr: policy.ErrEmptyValue,
+		},
+		{
+			name:    "invalid include character class rejected",
+			content: `{"include": ["ghcr.io/[z-a]/**"]}`,
+			wantErr: glob.ErrInvalidCharClass,
+		},
+		{
+			name:    "invalid exclude character class rejected",
+			content: `{"exclude": ["ghcr.io/[[:alpha:]]/**"]}`,
+			wantErr: glob.ErrInvalidCharClass,
+		},
+		{
+			name:    "invalid rule image character class rejected",
+			content: `{"rules": [{"images": ["ghcr.io/[z-a]/**"], "slsa": {"maxAge": "1h"}}]}`,
+			wantErr: glob.ErrInvalidCharClass,
 		},
 		{name: "trailing content rejected", content: `{}{}`, wantErr: policy.ErrTrailingContent},
 		{name: "missing file", wantErr: errAnyError},
@@ -246,6 +323,14 @@ func TestLoadAll(t *testing.T) {
 			wantErr: policy.ErrDefaultCannotInherit,
 		},
 		{
+			name: "inherited required SCAI attribute forbidden by namespace",
+			files: map[string]string{
+				testDefaultJSON:     `{"scai": {"requiredAttributes": ["FUZZ_TESTED"]}}`,
+				testStagingJSONFile: `{"inherits": true, "scai": {"forbiddenAttributes": ["fuzz_tested"]}}`,
+			},
+			wantErr: policy.ErrSCAIOverlappingAttributes,
+		},
+		{
 			name: "inherited keyless verifier uses default issuers",
 			files: map[string]string{
 				testDefaultJSON:     `{"trust": {"issuers": ["https://issuer.example.com"]}}`,
@@ -304,7 +389,11 @@ func TestLoadAll(t *testing.T) {
 				t.Helper()
 
 				staging := policies["staging"]
-				testutil.AssertEqual(t, types.ActionAllow, staging.SLSAMissingPolicy())
+				testutil.AssertEqual(
+					t,
+					types.ActionAllow,
+					staging.MissingPolicyFor(types.CheckTypeSLSA),
+				)
 				testutil.AssertEqual(t, "default-exclude/*", joined(staging.Exclude))
 				testutil.AssertEqual(t, testIncludePattern, joined(staging.Include))
 			},
@@ -326,7 +415,11 @@ func TestLoadAll(t *testing.T) {
 				t.Helper()
 
 				staging := policies["staging"]
-				testutil.AssertEqual(t, types.ActionDeny, staging.SLSAMissingPolicy())
+				testutil.AssertEqual(
+					t,
+					types.ActionDeny,
+					staging.MissingPolicyFor(types.CheckTypeSLSA),
+				)
 				testutil.AssertEqual(t, testMaxAge, staging.SLSA.MaxAge)
 				testutil.AssertEqual(t, 24*time.Hour, staging.SLSA.MaxAgeDuration)
 				testutil.AssertEqual(t, false, staging.Signatures.RequireTransparencyLog)
@@ -366,7 +459,7 @@ func TestLoadAll(t *testing.T) {
 				t.Helper()
 
 				dev := policies["dev"]
-				testutil.AssertEqual(t, types.ActionDeny, dev.SLSAMissingPolicy())
+				testutil.AssertEqual(t, types.ActionDeny, dev.MissingPolicyFor(types.CheckTypeSLSA))
 				testutil.AssertEqual(t, "720h", dev.SLSA.MaxAge)
 				testutil.AssertEqual(t, 720*time.Hour, dev.SLSA.MaxAgeDuration)
 				testutil.AssertEqual(t, true, dev.Signatures.RequireTransparencyLog)
@@ -421,7 +514,11 @@ func TestLoadAll(t *testing.T) {
 				t.Helper()
 
 				testutil.AssertEqual(t, config.ModeEnforce, policies["staging"].Mode)
-				testutil.AssertEqual(t, types.ActionAllow, policies["staging"].SLSAMissingPolicy())
+				testutil.AssertEqual(
+					t,
+					types.ActionAllow,
+					policies["staging"].MissingPolicyFor(types.CheckTypeSLSA),
+				)
 			},
 		},
 		{
@@ -726,7 +823,7 @@ func assertNamespaceSLSA(
 		t.Fatalf("expected policy for namespace %q", namespace)
 	}
 
-	testutil.AssertEqual(t, want, pol.SLSAMissingPolicy())
+	testutil.AssertEqual(t, want, pol.MissingPolicyFor(types.CheckTypeSLSA))
 }
 
 func TestLoadAllTooManyPolicyFiles(t *testing.T) {

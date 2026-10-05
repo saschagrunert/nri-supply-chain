@@ -898,6 +898,48 @@ func TestCreateContainerResolveDigestFailureWarn(t *testing.T) {
 
 	_, _, err := plug.CreateContainer(context.Background(), pod, ctr)
 	testutil.AssertNoError(t, err)
+
+	skipped := plug.ExportMetrics().VerificationSkippedTotal
+
+	if got := promtestutil.ToFloat64(
+		skipped.WithLabelValues("digest_resolution_failed", testNamespace),
+	); got != 1 {
+		t.Errorf("expected the skip to count as digest_resolution_failed, got %v", got)
+	}
+
+	if got := promtestutil.ToFloat64(
+		skipped.WithLabelValues("missing_annotations", testNamespace),
+	); got != 0 {
+		t.Errorf("expected no missing_annotations skip, got %v", got)
+	}
+}
+
+func TestStopContainerStopsTracking(t *testing.T) {
+	t.Parallel()
+
+	plug := newTestPlugin(t, config.ModeWarn, "")
+	plug.ExportStoreContainerTime("ctr-stopped", time.Now())
+
+	pod := &api.PodSandbox{Namespace: testNamespace, Name: testPodName}
+	ctr := &api.Container{Id: "ctr-stopped", Name: testCtrName}
+
+	updates, err := plug.StopContainer(context.Background(), pod, ctr)
+	testutil.AssertNoError(t, err)
+
+	if len(updates) != 0 {
+		t.Errorf("expected no container updates, got %d", len(updates))
+	}
+
+	if _, found := plug.ExportLoadContainerTime("ctr-stopped"); found {
+		t.Error("expected a stopped container to no longer be tracked")
+	}
+
+	if count := promtestutil.CollectAndCount(plug.ExportMetrics().ContainerLifetime); count != 1 {
+		t.Errorf("expected the lifetime to be recorded once, got %d series", count)
+	}
+
+	// RemoveContainer of the stopped container does not record it again.
+	testutil.AssertNoError(t, plug.RemoveContainer(context.Background(), pod, ctr))
 }
 
 func TestCreateContainerSkipsResolveWhenDigestPresent(t *testing.T) {
@@ -1250,6 +1292,94 @@ func TestCancelPrewarm(t *testing.T) {
 
 	plug.CancelPrewarm()
 
+	waitForPrewarm(t, done)
+}
+
+// blockingPrewarmVerifier blocks every verification until its context is
+// cancelled and reports the start of the first one.
+type blockingPrewarmVerifier struct {
+	*cvTestVerifier
+
+	started chan struct{}
+	once    sync.Once
+}
+
+func (v *blockingPrewarmVerifier) Verify(
+	ctx context.Context, _ *scTypes.VerifyRequest,
+) (*scTypes.Result, error) {
+	v.once.Do(func() { close(v.started) })
+
+	<-ctx.Done()
+
+	return nil, errSlowVerification
+}
+
+func newBlockingPrewarmPlugin(
+	t *testing.T,
+) (*plugin.Plugin, *blockingPrewarmVerifier, <-chan struct{}) {
+	t.Helper()
+
+	verif := &blockingPrewarmVerifier{
+		cvTestVerifier: &cvTestVerifier{}, //nolint:exhaustruct_v5 // zero-value fields intentional
+		started:        make(chan struct{}),
+		once:           sync.Once{},
+	}
+	plug := plugin.New(verif, metrics.New(), "", 30*time.Second, time.Second, nil)
+	done := make(chan struct{}, 2)
+
+	plug.ExportSetPrewarmDone(func() { done <- struct{}{} })
+
+	return plug, verif, done
+}
+
+func synchronizePrewarmContainer(t *testing.T, plug *plugin.Plugin) {
+	t.Helper()
+
+	pods := []*api.PodSandbox{{Id: testPodID, Namespace: testNamespace, Name: testPodName}}
+	containers := []*api.Container{{
+		Id:           "ctr-close-prewarm",
+		PodSandboxId: testPodID,
+		Name:         testCtrName,
+		Annotations: map[string]string{
+			plugin.AnnotationImage:    testImage,
+			plugin.AnnotationImageRef: testDigest,
+		},
+	}}
+
+	_, err := plug.Synchronize(context.Background(), pods, containers)
+	testutil.AssertNoError(t, err)
+}
+
+func TestCloseCancelsInFlightPrewarm(t *testing.T) {
+	t.Parallel()
+
+	plug, verif, done := newBlockingPrewarmPlugin(t)
+
+	synchronizePrewarmContainer(t, plug)
+
+	select {
+	case <-verif.started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for prewarm to start")
+	}
+
+	plug.Close()
+
+	waitForPrewarm(t, done)
+}
+
+// A pre-warm started while the plugin shuts down must not outlive it, even
+// though its request context is never cancelled.
+func TestPrewarmStartedAfterCloseIsCancelled(t *testing.T) {
+	t.Parallel()
+
+	plug, _, done := newBlockingPrewarmPlugin(t)
+
+	plug.Close()
+	synchronizePrewarmContainer(t, plug)
+	waitForPrewarm(t, done)
+
+	plug.PrewarmAfterReload(context.Background())
 	waitForPrewarm(t, done)
 }
 

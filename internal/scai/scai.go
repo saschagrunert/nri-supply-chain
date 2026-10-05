@@ -16,6 +16,7 @@
 package scai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -167,11 +168,50 @@ func containsAttribute(attrs []attribute, name string) bool {
 
 func allHaveEvidence(attrs []attribute) bool {
 	for idx := range attrs {
-		evidence := strings.TrimSpace(string(attrs[idx].Evidence))
-		if evidence == "" || evidence == "null" || evidence == "{}" || evidence == "[]" {
+		if !hasEvidence(attrs[idx].Evidence) {
 			return false
 		}
 	}
 
 	return len(attrs) > 0
+}
+
+// evidenceDescriptor is the subset of an in-toto ResourceDescriptor that
+// identifies evidence.
+type evidenceDescriptor struct {
+	Name    string            `json:"name"`
+	URI     string            `json:"uri"`
+	Digest  map[string]string `json:"digest"`
+	Content string            `json:"content"`
+}
+
+// hasEvidence reports whether raw is a ResourceDescriptor object that
+// identifies its evidence by uri, digest, content, or name. Scalars, arrays,
+// and descriptors without any of them do not count as evidence.
+func hasEvidence(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return false
+	}
+
+	var descriptor evidenceDescriptor
+
+	err := json.Unmarshal(trimmed, &descriptor)
+	if err != nil {
+		return false
+	}
+
+	if strings.TrimSpace(descriptor.URI) != "" ||
+		strings.TrimSpace(descriptor.Name) != "" ||
+		strings.TrimSpace(descriptor.Content) != "" {
+		return true
+	}
+
+	for _, value := range descriptor.Digest {
+		if strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+
+	return false
 }

@@ -23,6 +23,7 @@ import (
 	"sync"
 
 	"github.com/google/cel-go/cel"
+	"github.com/google/cel-go/checker"
 	"github.com/google/cel-go/common/ast"
 	"github.com/google/cel-go/ext"
 
@@ -39,6 +40,10 @@ const (
 
 	// costLimit bounds the runtime cost of evaluating a single CEL expression.
 	costLimit = 100_000
+
+	// maxVariableSize is the size hint for variable values in cost
+	// estimation: no value is larger than an attestation (100 MiB at most).
+	maxVariableSize = 100 << 20
 
 	// varVerified is the key used for the "verified" boolean in CEL variable maps.
 	varVerified = "verified"
@@ -242,13 +247,30 @@ func compileExpression(env *cel.Env, expr, label string) (cel.Program, error) {
 		return nil, fmt.Errorf("%s: %w: %w", label, ErrCompileFailed, issues.Err())
 	}
 
-	if checked.OutputType() != cel.BoolType {
-		return nil, fmt.Errorf("%s: %w, got %s", label, ErrNotBool, checked.OutputType())
+	// Variables are maps of dyn, so a bare field selection such as
+	// "slsa.verified" has type dyn. evalBool rejects non-boolean results at
+	// runtime, which fails the check.
+	if outputType := checked.OutputType(); outputType != cel.BoolType && outputType != cel.DynType {
+		return nil, fmt.Errorf("%s: %w, got %s", label, ErrNotBool, outputType)
 	}
 
 	fieldErr := checkFieldSelections(checked.NativeRep().Expr(), nil)
 	if fieldErr != nil {
 		return nil, fmt.Errorf("%s: %w", label, fieldErr)
+	}
+
+	// An expression whose minimum cost exceeds the limit fails on every
+	// evaluation, so it would deny every image it applies to.
+	estimate, err := env.EstimateCost(checked, sizeEstimator{})
+	if err != nil {
+		return nil, fmt.Errorf("%s: estimating cost: %w", label, err)
+	}
+
+	if estimate.Min > costLimit {
+		return nil, fmt.Errorf(
+			"%s: %w: estimated minimum cost %d, limit %d",
+			label, ErrCostLimitExceeded, estimate.Min, costLimit,
+		)
 	}
 
 	prog, err := env.Program(checked, cel.CostLimit(costLimit))
@@ -257,6 +279,24 @@ func compileExpression(env *cel.Env, expr, label string) (cel.Program, error) {
 	}
 
 	return prog, nil
+}
+
+// sizeEstimator provides size hints for compile-time cost estimation. The
+// variables are filled at runtime, so their maps, lists and strings may be
+// empty (the minimum) and are bounded by the attestation size limit (the
+// maximum). Only the minimum cost is enforced, so normal expressions over
+// variables of unknown size are never rejected.
+type sizeEstimator struct{}
+
+func (sizeEstimator) EstimateSize(checker.AstNode) *checker.SizeEstimate {
+	return &checker.SizeEstimate{Min: 0, Max: maxVariableSize}
+}
+
+//nolint:gocritic // the signature is defined by checker.CostEstimator
+func (sizeEstimator) EstimateCallCost(
+	string, string, *checker.AstNode, []checker.AstNode,
+) *checker.CallEstimate {
+	return nil
 }
 
 // Evaluate runs all compiled CEL rules against the provided variables.

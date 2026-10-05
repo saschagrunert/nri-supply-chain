@@ -19,6 +19,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
@@ -214,9 +215,53 @@ func TestLoadPublicKeyInvalidPEM(t *testing.T) {
 		t.Fatal(writeErr)
 	}
 
-	_, err := loadPublicKey(path)
+	manifest := &Manifest{ //nolint:exhaustruct_v5 // test data
+		Version:   1,
+		Signature: &ManifestSignature{Algorithm: algorithmSHA256, Value: "", KeyHint: ""},
+	}
+
+	err := VerifyManifestSignature(manifest, path)
 	if !errors.Is(err, ErrInvalidPEMBlock) {
-		t.Fatalf("loadPublicKey() error = %v, want %v", err, ErrInvalidPEMBlock)
+		t.Fatalf("VerifyManifestSignature() error = %v, want %v", err, ErrInvalidPEMBlock)
+	}
+}
+
+// TestVerifyManifestSignaturePKCS1Key checks that bundle signatures accept the
+// same public key formats as attestation verification, including PKCS #1 RSA
+// public keys.
+func TestVerifyManifestSignaturePKCS1Key(t *testing.T) {
+	t.Parallel()
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	privPath := filepath.Join(dir, "key.pem")
+	pubPath := filepath.Join(dir, "key.pub")
+
+	writeTestFile(t, privPath, pem.EncodeToMemory(&pem.Block{
+		Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key),
+	}))
+	writeTestFile(t, pubPath, pem.EncodeToMemory(&pem.Block{
+		Type: "RSA PUBLIC KEY", Bytes: x509.MarshalPKCS1PublicKey(&key.PublicKey),
+	}))
+
+	manifest := &Manifest{ //nolint:exhaustruct_v5 // test data
+		Version:   1,
+		CreatedAt: time.Now().UTC(),
+		Images:    map[string]*ImageEntry{},
+	}
+
+	err = SignManifest(manifest, privPath)
+	if err != nil {
+		t.Fatalf("SignManifest() error: %v", err)
+	}
+
+	err = VerifyManifestSignature(manifest, pubPath)
+	if err != nil {
+		t.Fatalf("VerifyManifestSignature() error: %v", err)
 	}
 }
 

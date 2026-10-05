@@ -21,16 +21,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
-	"sync"
+	"syscall"
 
 	ociV1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/layout"
 	"github.com/sigstore/sigstore-go/pkg/root"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
-	"github.com/saschagrunert/nri-supply-chain/internal/fileutil"
 )
 
 const (
@@ -46,11 +46,15 @@ type StoredAttestation struct {
 	SignatureType attestation.SignatureType
 }
 
-// Store provides read access to an on-disk attestation bundle backed by an OCI layout.
+// Store provides read access to an on-disk attestation bundle backed by an OCI
+// layout. The store directory is pinned when the store is opened, so blobs are
+// always read from the directory the manifest was loaded from, even after a
+// bundle import replaced the directory at the store path. A Store is
+// immutable and safe for concurrent use.
 type Store struct {
-	layoutPath layout.Path
-	manifest   *Manifest
-	mu         sync.RWMutex
+	dir      string
+	root     *os.Root
+	manifest *Manifest
 }
 
 // OpenStore opens an existing bundle store rooted at dir, validates the OCI
@@ -66,36 +70,44 @@ func OpenStore(dir string) (*Store, error) {
 		return nil, fmt.Errorf("%w: %s", ErrBundleNotFound, absDir)
 	}
 
-	ociLayout, err := layout.FromPath(absDir)
+	_, err = layout.FromPath(absDir)
 	if err != nil {
 		return nil, fmt.Errorf("opening OCI layout at %s: %w", absDir, err)
 	}
 
-	manifest, err := readAndParseManifest(absDir)
+	storeRoot, err := os.OpenRoot(absDir)
 	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrBundleNotFound, err)
+	}
+
+	manifest, err := readAndParseManifest(storeRoot)
+	if err != nil {
+		_ = storeRoot.Close()
+
 		return nil, err
 	}
 
-	return &Store{
-		layoutPath: ociLayout,
-		manifest:   manifest,
-		mu:         sync.RWMutex{},
-	}, nil
+	return &Store{dir: absDir, root: storeRoot, manifest: manifest}, nil
+}
+
+// Close releases the pinned store directory. The store must not be used
+// afterwards.
+func (s *Store) Close() error {
+	err := s.root.Close()
+	if err != nil {
+		return fmt.Errorf("closing bundle store: %w", err)
+	}
+
+	return nil
 }
 
 // Manifest returns the parsed bundle manifest.
 func (s *Store) Manifest() *Manifest {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	return s.manifest
 }
 
 // AttestationsFor returns all stored attestations for the given image digest.
 func (s *Store) AttestationsFor(digest string) ([]StoredAttestation, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	entry, ok := s.manifest.Images[digest]
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrNoAttestationsForDigest, digest)
@@ -120,23 +132,10 @@ func (s *Store) AttestationsFor(digest string) ([]StoredAttestation, error) {
 	return result, nil
 }
 
-// TrustedRoot loads and parses the first trusted root embedded in the bundle.
-func (s *Store) TrustedRoot() (*root.TrustedRoot, error) {
-	roots, err := s.TrustedRoots()
-	if err != nil {
-		return nil, err
-	}
-
-	return roots[0].Root, nil
-}
-
 // TrustedRoots loads and parses every trusted root embedded in the bundle,
 // with the name of the Sigstore root source each came from. Roots written by
 // older releases have no name.
 func (s *Store) TrustedRoots() ([]TrustedRootSource, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	entries := s.manifest.allTrustedRoots()
 	if len(entries) == 0 {
 		return nil, ErrTrustedRootMissing
@@ -167,9 +166,6 @@ func (s *Store) TrustedRoots() ([]TrustedRootSource, error) {
 
 // RevocationData returns all revocation snapshots embedded in the bundle.
 func (s *Store) RevocationData() ([]RevocationSnapshot, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	if len(s.manifest.Revocation) == 0 {
 		return nil, nil
 	}
@@ -197,10 +193,8 @@ type RevocationSnapshot struct {
 	Data []byte
 }
 
-func readAndParseManifest(storeDir string) (*Manifest, error) {
-	manifestPath := filepath.Join(storeDir, manifestFileName)
-
-	manifestFile, err := os.Open(manifestPath) //nolint:gosec // validated store path
+func readAndParseManifest(storeRoot *os.Root) (*Manifest, error) {
+	manifestFile, err := storeRoot.Open(manifestFileName)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrManifestNotFound, err)
 	}
@@ -243,11 +237,14 @@ func (s *Store) readBlob(digestStr string, expectedSize int64) ([]byte, error) {
 	return data, nil
 }
 
-// readBlobData reads a blob from the OCI layout. A blob that is absent or not
-// a regular file (a directory or FIFO swapped in after import) is an
-// integrity failure. Other errors, such as missing permissions or file
-// descriptor exhaustion, are local availability problems. The blob is opened
-// without blocking, so a FIFO cannot stall verification.
+// readBlobData reads a blob from the pinned OCI layout directory. A blob that
+// is absent, not a regular file, or cannot be resolved inside the store (a
+// directory, FIFO, regular file or escaping symbolic link swapped in for the
+// blob or one of its parent directories after import) is an integrity
+// failure, and so is a blob that is gone because the store directory was
+// removed. Only local availability problems, such as missing permissions or
+// file descriptor exhaustion, are reported as plain errors. The blob is
+// opened without blocking, so a FIFO cannot stall verification.
 func (s *Store) readBlobData(digestStr string, expectedSize int64) ([]byte, error) {
 	readLimit, limitErr := blobReadLimit(expectedSize)
 	if limitErr != nil {
@@ -259,43 +256,95 @@ func (s *Store) readBlobData(digestStr string, expectedSize int64) ([]byte, erro
 		return nil, fmt.Errorf("%w: invalid digest %q: %w", ErrBlobMissing, digestStr, err)
 	}
 
-	blobPath := filepath.Join(string(s.layoutPath), "blobs", hash.Algorithm, hash.Hex)
+	blobPath := path.Join("blobs", hash.Algorithm, hash.Hex)
+
+	blobFile, err := s.root.OpenFile(blobPath, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, s.blobOpenError(digestStr, err)
+	}
+
+	defer func() { _ = blobFile.Close() }()
+
+	info, err := blobFile.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("reading blob %s: %w", digestStr, err)
+	}
+
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: %s: mode %s", ErrBlobNotRegular, digestStr, info.Mode().Type())
+	}
 
 	// The limit allows one byte more than declared so a grown blob is
-	// reported as a size mismatch below.
-	data, err := fileutil.ReadLimited(blobPath, readLimit)
+	// reported as a size mismatch.
+	data, err := io.ReadAll(io.LimitReader(blobFile, readLimit+1))
 	if err != nil {
-		return nil, blobReadError(digestStr, expectedSize, err)
+		return nil, fmt.Errorf("reading blob %s: %w", digestStr, err)
 	}
 
-	if expectedSize > 0 && int64(len(data)) != expectedSize {
-		return nil, fmt.Errorf(
-			"%w: %s (expected %d, got %d)",
-			ErrBlobSizeMismatch, digestStr, expectedSize, len(data),
-		)
-	}
-
-	return data, nil
+	return data, checkBlobSize(digestStr, int64(len(data)), readLimit, expectedSize)
 }
 
-// blobReadError classifies an error reading a blob file.
-func blobReadError(digestStr string, expectedSize int64, err error) error {
+// checkBlobSize checks the number of bytes read from a blob against its read
+// limit and declared size.
+func checkBlobSize(digestStr string, size, readLimit, expectedSize int64) error {
 	switch {
-	case errors.Is(err, os.ErrNotExist):
-		return fmt.Errorf("%w: %s: %w", ErrBlobMissing, digestStr, err)
-	case errors.Is(err, fileutil.ErrNotRegularFile), errors.Is(err, fileutil.ErrSymlink):
-		return fmt.Errorf("%w: %s: %w", ErrBlobNotRegular, digestStr, err)
-	case errors.Is(err, fileutil.ErrFileTooLarge) && expectedSize > 0:
+	case size > readLimit && expectedSize > 0:
 		return fmt.Errorf(
 			"%w: %s (expected %d, got more)", ErrBlobSizeMismatch, digestStr, expectedSize,
 		)
-	case errors.Is(err, fileutil.ErrFileTooLarge):
+	case size > readLimit:
 		return fmt.Errorf(
 			"%w: %s exceeds %d byte read limit", ErrBlobTooLarge, digestStr, maxBlobReadSize,
 		)
+	case expectedSize > 0 && size != expectedSize:
+		return fmt.Errorf(
+			"%w: %s (expected %d, got %d)", ErrBlobSizeMismatch, digestStr, expectedSize, size,
+		)
 	default:
-		return fmt.Errorf("reading blob %s: %w", digestStr, err)
+		return nil
 	}
+}
+
+// blobOpenError classifies an error opening a blob file.
+func (s *Store) blobOpenError(digestStr string, err error) error {
+	switch {
+	case errors.Is(err, os.ErrNotExist) && s.replaced():
+		return fmt.Errorf("%w: %s: %w", ErrStoreReplaced, digestStr, err)
+	case errors.Is(err, os.ErrNotExist):
+		return fmt.Errorf("%w: %s: %w", ErrBlobMissing, digestStr, err)
+	case isLocalReadError(err):
+		return fmt.Errorf("reading blob %s: %w", digestStr, err)
+	default:
+		// The blob path exists but cannot be opened inside the store
+		// directory: a symbolic link escaping the store, a symbolic link
+		// loop or a file in place of a parent directory was swapped in.
+		return fmt.Errorf(
+			"%w: %s: cannot be opened inside the store: %w", ErrBlobNotRegular, digestStr, err,
+		)
+	}
+}
+
+// isLocalReadError reports whether err is a local availability problem
+// rather than a change to the store's content.
+func isLocalReadError(err error) bool {
+	return errors.Is(err, os.ErrPermission) ||
+		errors.Is(err, syscall.EMFILE) ||
+		errors.Is(err, syscall.ENFILE) ||
+		errors.Is(err, syscall.ENOMEM)
+}
+
+// replaced reports whether the store path no longer refers to the directory
+// pinned when the store was opened, which happens when a bundle import swaps
+// in a new store.
+func (s *Store) replaced() bool {
+	pinned, err := s.root.Stat(".")
+	if err != nil {
+		return true
+	}
+
+	current, err := os.Stat(s.dir)
+
+	return err != nil || !os.SameFile(pinned, current)
 }
 
 func blobReadLimit(expectedSize int64) (int64, error) {

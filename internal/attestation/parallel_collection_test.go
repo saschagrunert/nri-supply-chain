@@ -221,7 +221,9 @@ func TestConcurrentCollectionMatchesSerialClassification(t *testing.T) {
 			want: collectionClass{verificationFailed: false, incomplete: false, transport: true},
 		},
 		{
-			name: "untrusted bundle with verified notation",
+			// Notation signatures are verified later, so a collected
+			// signature does not hide that the only bundle failed.
+			name: "untrusted bundle with unverified notation",
 			mutate: func(t *testing.T, fixture *collectionFixture) attestation.ImageFetchFunc {
 				t.Helper()
 
@@ -231,7 +233,7 @@ func TestConcurrentCollectionMatchesSerialClassification(t *testing.T) {
 
 				return fixture.serve
 			},
-			want: collectionClass{verificationFailed: false, incomplete: false, transport: false},
+			want: collectionClass{verificationFailed: true, incomplete: false, transport: false},
 		},
 		{
 			name: "oversized notation envelope",

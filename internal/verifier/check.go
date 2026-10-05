@@ -21,7 +21,6 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime/debug"
-	"strings"
 	"sync"
 	"time"
 
@@ -34,11 +33,11 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
-	"github.com/saschagrunert/nri-supply-chain/internal/vsa"
 )
 
-// errEmptyDigest indicates a verification request without an image digest.
-var errEmptyDigest = errors.New("image digest is empty")
+// ErrEmptyDigest indicates an image without a digest: a verification request
+// without one, or a registry that resolved a reference to none.
+var ErrEmptyDigest = errors.New("image digest is empty")
 
 // runChecks fetches and verifies the attestations for a request. It returns
 // the result and how long it may be cached (0 means not cacheable).
@@ -123,8 +122,8 @@ func runChecks(
 func emptyDigestResult(imageRef string) *types.Result {
 	return resultFromCheck(types.FailResult(
 		types.CheckTypeInternal,
-		fmt.Sprintf("cannot verify %s: %s", imageRef, errEmptyDigest),
-		errEmptyDigest,
+		fmt.Sprintf("cannot verify %s: %s", imageRef, ErrEmptyDigest),
+		ErrEmptyDigest,
 	))
 }
 
@@ -282,12 +281,15 @@ func recordBreakerOutcome(
 	}
 }
 
-func isTransportFailure(ctx context.Context, err error) bool {
+// isFetchTransportFailure reports whether an attestation fetch error means
+// that the registry could not be reached, which is what the registry circuit
+// breaker counts.
+func isFetchTransportFailure(ctx context.Context, err error) bool {
 	if err == nil || errors.Is(err, attestation.ErrVerificationFailed) {
 		return false
 	}
 
-	// A cancelled verification (shutdown) is not the registry's fault.
+	// A verification cancelled by Stop is not the registry's fault.
 	if errors.Is(ctx.Err(), context.Canceled) {
 		return false
 	}
@@ -467,7 +469,7 @@ type fetchOutcome struct {
 }
 
 func (o *fetchOutcome) recordTransport(ctx context.Context, err error) {
-	if o.transportErr == nil && isTransportFailure(ctx, err) {
+	if o.transportErr == nil && isFetchTransportFailure(ctx, err) {
 		o.transportErr = err
 	}
 }
@@ -491,6 +493,11 @@ func timedFetchAttestations(
 // outcome, except that an index digest error decides when the platform digest
 // has no attestations, and always unless the index digest's attestations
 // merely failed verification.
+//
+// When attestations merely failed verification, the material the fetcher
+// returns with the error (Notation signatures and baseline SBOMs) is kept and
+// evaluated: an untrusted Notation signature must fail the Notation check
+// rather than count as missing, and a trusted one must still pass it.
 func fetchAttestations(
 	ctx context.Context, state *snapshot, req *types.VerifyRequest,
 	pol *policy.Policy, parsedRef name.Reference,
@@ -498,7 +505,7 @@ func fetchAttestations(
 	timeout := state.config.FetchTimeout.Duration
 	outcome := &fetchOutcome{attestations: nil, digest: req.Digest, err: nil, transportErr: nil}
 
-	indexErr := fetchIndexAttestations(ctx, state, req, pol, parsedRef, outcome)
+	indexPartial, indexErr := fetchIndexAttestations(ctx, state, req, pol, parsedRef, outcome)
 	if len(outcome.attestations) > 0 {
 		return outcome
 	}
@@ -510,17 +517,7 @@ func fetchAttestations(
 	)
 	if err != nil {
 		outcome.recordTransport(ctx, err)
-
-		// Only the platform digest's error is wrapped, so it alone decides
-		// whether this is a verification failure; the index digest's error
-		// is kept for diagnostics.
-		if indexErr != nil {
-			outcome.err = fmt.Errorf(
-				"fetching attestations: %w (index digest: %s)", err, indexErr.Error(),
-			)
-		} else {
-			outcome.err = fmt.Errorf("fetching attestations: %w", err)
-		}
+		outcome.platformError(req, err, attestations, indexErr, indexPartial)
 
 		return outcome
 	}
@@ -531,6 +528,7 @@ func fetchAttestations(
 	// unknown, so the result is incomplete rather than "no attestations".
 	if len(attestations) == 0 && indexErr != nil {
 		outcome.err = indexErr
+		outcome.keepPartial(nil, req.Digest, indexPartial, req.IndexDigest)
 
 		return outcome
 	}
@@ -553,13 +551,15 @@ func fetchAttestations(
 // fetchIndexAttestations fetches the attestations of the index digest when
 // the image resolved from a manifest list, since cosign attaches attestations
 // to the manifest list digest. Found attestations are stored in outcome; the
-// returned error describes a failed index digest fetch.
+// returned error describes a failed index digest fetch. When the index
+// digest's attestations merely failed verification, the material returned
+// with that error is returned as well.
 func fetchIndexAttestations(
 	ctx context.Context, state *snapshot, req *types.VerifyRequest,
 	pol *policy.Policy, parsedRef name.Reference, outcome *fetchOutcome,
-) error {
+) ([]attestation.VerifiedAttestation, error) {
 	if req.IndexDigest == "" {
-		return nil
+		return nil, nil
 	}
 
 	indexOpts := buildFetchOpts(pol, req.IndexDigest, state.config.FetchTimeout.Duration, parsedRef)
@@ -575,7 +575,13 @@ func fetchIndexAttestations(
 			"error", err,
 		)
 
-		return fmt.Errorf("fetching attestations for index digest %s: %w", req.IndexDigest, err)
+		if !isIgnorableVerificationFailure(err) {
+			atts = nil
+		}
+
+		return atts, fmt.Errorf(
+			"fetching attestations for index digest %s: %w", req.IndexDigest, err,
+		)
 	}
 
 	if len(atts) == 0 {
@@ -585,12 +591,57 @@ func fetchIndexAttestations(
 			"platformDigest", req.Digest,
 		)
 
-		return nil
+		return nil, nil
 	}
 
 	outcome.attestations, outcome.digest = atts, req.IndexDigest
 
-	return nil
+	return nil, nil
+}
+
+// platformError records the outcome of a failed platform digest fetch.
+func (o *fetchOutcome) platformError(
+	req *types.VerifyRequest, err error, partial []attestation.VerifiedAttestation,
+	indexErr error, indexPartial []attestation.VerifiedAttestation,
+) {
+	ignorable := isIgnorableVerificationFailure(err)
+
+	// Material that failed verification on the platform digest must not
+	// hide an index digest error that is more than that.
+	if ignorable && indexErr != nil && !isIgnorableVerificationFailure(indexErr) {
+		o.err = indexErr
+
+		return
+	}
+
+	// Only the platform digest's error is wrapped, so it alone decides
+	// whether this is a verification failure; the index digest's error is
+	// kept for diagnostics.
+	if indexErr != nil {
+		o.err = fmt.Errorf(
+			"fetching attestations: %w (index digest: %s)", err, indexErr.Error(),
+		)
+	} else {
+		o.err = fmt.Errorf("fetching attestations: %w", err)
+	}
+
+	if ignorable {
+		o.keepPartial(partial, req.Digest, indexPartial, req.IndexDigest)
+	}
+}
+
+// keepPartial keeps the material returned with a verification failure: the
+// platform digest's when it has any, the index digest's otherwise.
+func (o *fetchOutcome) keepPartial(
+	platform []attestation.VerifiedAttestation, platformDigest string,
+	index []attestation.VerifiedAttestation, indexDigest string,
+) {
+	switch {
+	case len(platform) > 0:
+		o.attestations, o.digest = platform, platformDigest
+	case len(index) > 0:
+		o.attestations, o.digest = index, indexDigest
+	}
 }
 
 func buildFetchOpts(
@@ -669,215 +720,6 @@ func trustedKeyRefs(trust *policy.TrustPolicy) []attestation.TrustedKeyRef {
 	}
 
 	return keys
-}
-
-// scopeBuilderKeys drops attestations signed with a key that is only trusted
-// as a builder key, unless they are SLSA provenance. Builder keys join the
-// trusted key set so provenance can be verified, but a provenance signing key
-// must not be able to vouch for VEX, SBOM or any other attestation type.
-// Verifier keys keep their scope.
-func scopeBuilderKeys(
-	ctx context.Context, attestations []attestation.VerifiedAttestation,
-	pol *policy.Policy, imageRef string,
-) []attestation.VerifiedAttestation {
-	builderOnly := builderOnlyKeys(pol.Trust)
-	if len(builderOnly) == 0 {
-		return attestations
-	}
-
-	scoped := make([]attestation.VerifiedAttestation, 0, len(attestations))
-
-	for idx := range attestations {
-		att := &attestations[idx]
-
-		if signedOnlyWithBuilderKeys(&att.Signer, builderOnly) &&
-			!isProvenancePredicate(att.PredicateType) {
-			slog.WarnContext(ctx, "Ignoring attestation signed with a builder key",
-				"image", imageRef,
-				"predicateType", att.PredicateType,
-				"signer_key", att.Signer.KeyPath,
-			)
-
-			continue
-		}
-
-		scoped = append(scoped, *att)
-	}
-
-	return scoped
-}
-
-// signedOnlyWithBuilderKeys reports whether every configured key path that
-// verified the signature is a builder-only key. The same key material may be
-// configured at several paths, so a signature also verified by a verifier
-// key path keeps the verifier scope.
-func signedOnlyWithBuilderKeys(
-	signer *attestation.SignerIdentity, builderOnly map[string]struct{},
-) bool {
-	paths := signer.KeyPaths
-	if len(paths) == 0 {
-		if signer.KeyPath == "" {
-			return false
-		}
-
-		paths = []string{signer.KeyPath}
-	}
-
-	for _, keyPath := range paths {
-		if _, builderKey := builderOnly[keyPath]; !builderKey {
-			return false
-		}
-	}
-
-	return true
-}
-
-// builderOnlyKeys returns the key paths trusted for builders but not for
-// any verifier.
-func builderOnlyKeys(trust *policy.TrustPolicy) map[string]struct{} {
-	if trust == nil {
-		return nil
-	}
-
-	keys := make(map[string]struct{})
-
-	for idx := range trust.Builders {
-		for _, keyPath := range trust.Builders[idx].Keys {
-			keys[keyPath] = struct{}{}
-		}
-	}
-
-	for idx := range trust.Verifiers {
-		for _, keyPath := range trust.Verifiers[idx].Keys {
-			delete(keys, keyPath)
-		}
-	}
-
-	return keys
-}
-
-func isProvenancePredicate(predicateType string) bool {
-	return predicateType == attestation.PredicateSLSAProvenanceV1 ||
-		predicateType == attestation.PredicateSLSAProvenanceV02
-}
-
-// vsaOutcome is the combined result of all VSA attestations of an image.
-type vsaOutcome struct {
-	// passed is the first PASSED VSA signed by its claimed verifier.
-	passed *types.CheckResult
-	// rejected is set when a VSA signed by its claimed verifier reports
-	// FAILED for this image.
-	rejected *types.Result
-	// failures describes VSAs that were present but not trusted.
-	failures []string
-}
-
-func (o *vsaOutcome) missingDetail(imageRef string) string {
-	if len(o.failures) == 0 {
-		return "no VSA attestation found for image " + imageRef
-	}
-
-	return fmt.Sprintf(
-		"no trusted VSA passed for image %s: %s", imageRef, strings.Join(o.failures, "; "),
-	)
-}
-
-// checkVSA evaluates the VSA attestations of an image. A VSA only counts when
-// the attestation signer is bound to the verifier named in the VSA
-// (trust.verifiers[].keys or identities): the verifier ID is just a claim in
-// the signed payload, and any trusted signer could otherwise issue a VSA in
-// the name of a trusted verifier and skip all other checks.
-func checkVSA(
-	ctx context.Context, vsaAttestations []attestation.VerifiedAttestation,
-	pol *policy.Policy, imageRef, digest string, met *metrics.Metrics,
-	parsedRef name.Reference,
-) *vsaOutcome {
-	outcome := &vsaOutcome{passed: nil, rejected: nil, failures: nil}
-
-	if len(vsaAttestations) == 0 {
-		return outcome
-	}
-
-	start := time.Now()
-
-	defer func() {
-		met.VerificationDuration.WithLabelValues(string(types.CheckTypeVSA)).
-			Observe(time.Since(start).Seconds())
-	}()
-
-	digestRef := digestRefFromParsed(parsedRef, imageRef, digest)
-
-	for idx := range vsaAttestations {
-		if outcome.add(ctx, &vsaAttestations[idx], pol, imageRef, digestRef) {
-			break
-		}
-	}
-
-	return outcome
-}
-
-// add evaluates one VSA attestation and reports whether it rejected the
-// image, which ends the evaluation.
-func (o *vsaOutcome) add(
-	ctx context.Context, att *attestation.VerifiedAttestation,
-	pol *policy.Policy, imageRef, digestRef string,
-) bool {
-	vsaResult, err := vsa.Verify(ctx, att.Payload, pol, digestRef, nil)
-	if err != nil {
-		slog.WarnContext(ctx, "VSA verification error", "error", err)
-		o.failures = append(o.failures, err.Error())
-
-		return false
-	}
-
-	conclusive := vsaResult.HardReject ||
-		(vsaResult.Check.Passed && vsaResult.Check.Status == types.StatusPass)
-	if !conclusive {
-		o.failures = append(o.failures, vsaResult.Check.Detail)
-
-		return false
-	}
-
-	if !signerBoundToVerifiers(&att.Signer, vsaResult.MatchedVerifiers) {
-		slog.WarnContext(ctx, "Ignoring VSA not signed by its claimed verifier",
-			"image", imageRef,
-			"verifier", vsaResult.Check.Metadata["verifierID"],
-			"signer_key", att.Signer.KeyPath,
-			"signer_issuer", att.Signer.Issuer,
-			"signer_san", att.Signer.SAN,
-		)
-
-		o.failures = append(
-			o.failures,
-			"VSA is not signed by a key or identity bound to its verifier",
-		)
-
-		return false
-	}
-
-	if vsaResult.HardReject {
-		o.rejected = resultFromCheck(vsaResult.Check)
-
-		return true
-	}
-
-	if o.passed == nil {
-		o.passed = vsaResult.Check
-	}
-
-	return false
-}
-
-func signerBoundToVerifiers(
-	signer *attestation.SignerIdentity, verifiers []policy.TrustedVerifier,
-) bool {
-	for idx := range verifiers {
-		if signer.MatchesAny(verifiers[idx].MatchesSigner) {
-			return true
-		}
-	}
-
-	return false
 }
 
 func runParallelChecks(

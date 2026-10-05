@@ -19,6 +19,7 @@ import (
 	"os"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
+	"github.com/saschagrunert/nri-supply-chain/internal/daemon"
 )
 
 func setupConfig(configPath string) (*config.Config, error) {
@@ -43,7 +44,7 @@ func setupConfig(configPath string) (*config.Config, error) {
 // configures the plugin. That is the case for an explicit empty --config and
 // when --config was not set and the default file does not exist.
 func serveConfigPath(path string, explicit bool) string {
-	if path == "" || (!explicit && !shouldUseConfigFile(path)) {
+	if path == "" || (!explicit && !daemon.ShouldUseConfigFile(path)) {
 		return ""
 	}
 
@@ -58,20 +59,6 @@ func setupServeConfig(path string) (*config.Config, error) {
 	}
 
 	return setupConfig(path)
-}
-
-func shouldUseConfigFile(path string) bool {
-	if path == "" {
-		return false
-	}
-
-	if path == defaultConfigPath {
-		_, err := os.Stat(path)
-
-		return !os.IsNotExist(err)
-	}
-
-	return true
 }
 
 func loadConfig(path string) (*config.Config, error) {

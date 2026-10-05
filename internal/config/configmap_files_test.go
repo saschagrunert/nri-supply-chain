@@ -87,4 +87,122 @@ func TestValidateRuntimeAcceptsConfigMapProjectedFiles(t *testing.T) {
 
 		testutil.AssertNoError(t, cfg.ValidateRuntime())
 	})
+
+	t.Run("guac ca_cert and auth token", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.PolicyDir = t.TempDir()
+		applyValidGUAC(cfg)
+		cfg.Guac.CACertPath = projectConfigMapFile(t, "ca.crt", "cert")
+		cfg.Guac.AuthTokenPath = projectConfigMapFile(t, "token", "secret")
+
+		testutil.AssertNoError(t, cfg.ValidateRuntime())
+	})
+
+	t.Run("bundle_signature_key", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Verification = config.ModeWarn
+		cfg.PolicyDir = t.TempDir()
+		cfg.Offline.Mode = config.OfflineModeOffline
+		cfg.Offline.AttestationStore = t.TempDir()
+		cfg.Offline.BundleSignatureKey = projectConfigMapFile(t, "bundle.pub", "pubkey")
+
+		testutil.AssertNoError(t, cfg.ValidateRuntime())
+	})
+}
+
+// escapingSymlink returns a symbolic link to a regular file outside the
+// directory containing the link, which the plugin refuses to read.
+func escapingSymlink(t *testing.T) string {
+	t.Helper()
+
+	target := filepath.Join(t.TempDir(), "secret")
+	testutil.AssertNoError(t, os.WriteFile(target, []byte("data"), 0o600))
+
+	link := filepath.Join(t.TempDir(), "link")
+	testutil.AssertNoError(t, os.Symlink(target, link))
+
+	return link
+}
+
+func TestValidateRuntimeRejectsEscapingSymlinks(t *testing.T) {
+	t.Parallel()
+
+	for name, apply := range map[string]func(cfg *config.Config, path string){
+		"guac ca_cert": func(cfg *config.Config, path string) {
+			applyValidGUAC(cfg)
+			cfg.Guac.CACertPath = path
+		},
+		"guac auth_token_path": func(cfg *config.Config, path string) {
+			applyValidGUAC(cfg)
+			cfg.Guac.AuthTokenPath = path
+		},
+		"registry ca_cert": func(cfg *config.Config, path string) {
+			cfg.Registries = []config.Registry{
+				{Prefix: testPrefixGHCR, Mirror: "", CACert: path, Insecure: false},
+			}
+		},
+		"bundle_signature_key without require_bundle_signature": func(
+			cfg *config.Config, path string,
+		) {
+			cfg.Offline.Mode = config.OfflineModeOffline
+			cfg.Offline.AttestationStore = filepath.Dir(path)
+			cfg.Offline.BundleSignatureKey = path
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := config.DefaultConfig()
+			cfg.Verification = config.ModeWarn
+			cfg.PolicyDir = t.TempDir()
+			apply(cfg, escapingSymlink(t))
+
+			testutil.AssertErrorIs(t, cfg.ValidateRuntime(), config.ErrSymlinkNotAllowed)
+		})
+	}
+}
+
+func TestValidateRuntimeFileErrors(t *testing.T) {
+	t.Parallel()
+
+	t.Run("registry ca_cert is a directory", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Registries = []config.Registry{
+			{Prefix: testPrefixGHCR, Mirror: "", CACert: t.TempDir(), Insecure: false},
+		}
+
+		testutil.AssertErrorIs(
+			t, cfg.ValidateRuntime(), config.ErrRegistryCACertNotRegularFile,
+		)
+	})
+
+	t.Run("policy key not found", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.PolicyDir = t.TempDir()
+		cfg.Policy.Keys = []string{filepath.Join(t.TempDir(), "missing.pub")}
+
+		testutil.AssertErrorIs(t, cfg.ValidateRuntime(), config.ErrPolicyKeyNotFound)
+	})
+
+	t.Run("bundle_signature_key not found without require_bundle_signature", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.DefaultConfig()
+		cfg.Offline.Mode = config.OfflineModeOffline
+		cfg.Offline.AttestationStore = t.TempDir()
+		cfg.Offline.BundleSignatureKey = filepath.Join(t.TempDir(), "missing.pub")
+
+		testutil.AssertErrorIs(
+			t, cfg.ValidateRuntime(), config.ErrBundleSignatureKeyNotFound,
+		)
+	})
 }

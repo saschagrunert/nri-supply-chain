@@ -27,7 +27,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -35,6 +34,7 @@ import (
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/fileutil"
+	"github.com/saschagrunert/nri-supply-chain/internal/httputil"
 )
 
 var (
@@ -52,14 +52,6 @@ const (
 	// fallbackTransportKeySuffix distinguishes the cached mirror fallback
 	// transport of a registry prefix from its regular transport.
 	fallbackTransportKeySuffix = "\x00fallback"
-
-	transportDialTimeout   = 30 * time.Second
-	transportTLSTimeout    = 10 * time.Second
-	transportIdleTimeout   = 90 * time.Second
-	transportMaxIdleConns  = 100
-	transportIdlePerHost   = 20
-	transportKeepAlive     = 30 * time.Second
-	transportExpectTimeout = time.Second
 )
 
 // TransportCache builds and caches HTTP transports per registry prefix.
@@ -208,12 +200,12 @@ func buildTransport(caCertPath string, insecure bool) (http.RoundTripper, error)
 		tlsCfg.RootCAs = pool
 	}
 
-	return newHTTPTransport(tlsCfg), nil
+	return httputil.NewTransport(tlsCfg), nil
 }
 
 func getDefaultTransport() *http.Transport {
 	defaultTransportOnce.Do(func() {
-		defaultTransport = newHTTPTransport(newTLSConfig(false))
+		defaultTransport = httputil.NewTransport(newTLSConfig(false))
 	})
 
 	return defaultTransport
@@ -223,25 +215,6 @@ func newTLSConfig(insecure bool) *tls.Config {
 	return &tls.Config{
 		MinVersion:         tls.VersionTLS12,
 		InsecureSkipVerify: insecure, //nolint:gosec // controlled by user config
-	}
-}
-
-func newHTTPTransport(tlsCfg *tls.Config) *http.Transport {
-	dialer := &net.Dialer{ //nolint:exhaustruct_v5 // only setting relevant fields
-		Timeout:   transportDialTimeout,
-		KeepAlive: transportKeepAlive,
-	}
-
-	return &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           dialer.DialContext,
-		TLSClientConfig:       tlsCfg,
-		TLSHandshakeTimeout:   transportTLSTimeout,
-		MaxIdleConns:          transportMaxIdleConns,
-		MaxIdleConnsPerHost:   transportIdlePerHost,
-		IdleConnTimeout:       transportIdleTimeout,
-		ExpectContinueTimeout: transportExpectTimeout,
-		ForceAttemptHTTP2:     true,
 	}
 }
 
@@ -337,8 +310,18 @@ func findMatchingRegistry(
 type FallbackInfo struct {
 	// OriginalRef is the unmodified image reference (before mirror rewrite).
 	OriginalRef string
-	// TransportOpt is the remote.Option for the original registry.
-	TransportOpt remote.Option
+	// Transport is the HTTP transport for the original registry. When nil,
+	// remote.DefaultTransport is used.
+	Transport http.RoundTripper
+}
+
+// RoundTripper returns the HTTP transport for the original registry.
+func (f *FallbackInfo) RoundTripper() http.RoundTripper {
+	if f.Transport == nil {
+		return remote.DefaultTransport
+	}
+
+	return f.Transport
 }
 
 // IsConnectionError reports whether err represents a connection-level failure
@@ -405,6 +388,20 @@ func isNetworkOrTLSError(err error) bool {
 func OptionsForRegistries(
 	cache *TransportCache, imageRef string,
 ) (rewrittenRef string, transportOpt remote.Option, fallback *FallbackInfo, err error) {
+	rewrittenRef, roundTripper, fallback, err := TransportForRegistries(cache, imageRef)
+	if err != nil || roundTripper == nil {
+		return rewrittenRef, nil, fallback, err
+	}
+
+	return rewrittenRef, remote.WithTransport(roundTripper), fallback, nil
+}
+
+// TransportForRegistries is OptionsForRegistries returning the HTTP transport
+// of the matching registry instead of a remote.Option, so callers can wrap
+// it. The transport is nil when no registry matches.
+func TransportForRegistries(
+	cache *TransportCache, imageRef string,
+) (rewrittenRef string, roundTripper http.RoundTripper, fallback *FallbackInfo, err error) {
 	if cache == nil {
 		return imageRef, nil, nil, nil
 	}
@@ -425,12 +422,10 @@ func OptionsForRegistries(
 		rewrittenRef = imageRef
 	}
 
-	roundTripper, transportErr := cache.getTransport(reg.Prefix)
-	if transportErr != nil {
-		return imageRef, nil, nil, transportErr
+	roundTripper, err = cache.getTransport(reg.Prefix)
+	if err != nil {
+		return imageRef, nil, nil, err
 	}
-
-	transportOpt = remote.WithTransport(roundTripper)
 
 	// Build fallback info when a mirror is configured. The fallback to the
 	// original registry always verifies TLS: reusing the mirror transport
@@ -444,12 +439,12 @@ func OptionsForRegistries(
 		}
 
 		fallback = &FallbackInfo{
-			OriginalRef:  imageRef,
-			TransportOpt: remote.WithTransport(fallbackTransport),
+			OriginalRef: imageRef,
+			Transport:   fallbackTransport,
 		}
 	}
 
-	return rewrittenRef, transportOpt, fallback, nil
+	return rewrittenRef, roundTripper, fallback, nil
 }
 
 // ResolveWithRegistries resolves an image reference to its digest using
@@ -488,7 +483,7 @@ func ResolveWithRegistries(
 
 		fallbackOpts := []remote.Option{
 			AuthOption(),
-			fallback.TransportOpt,
+			remote.WithTransport(fallback.RoundTripper()),
 		}
 
 		digest, indexDigest, fallbackErr := resolveDigest(

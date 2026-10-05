@@ -201,7 +201,7 @@ func (s *Spec[P]) Evaluate(pred *P, pol *policy.Policy) *types.CheckResult {
 	}
 
 	if s.Freshness != nil {
-		err := s.Freshness.check(pred, pol)
+		err := s.Freshness.Check(pred, pol)
 		if err != nil {
 			return withMeta(types.FailResult(s.Info.Type, err.Error(), nil), meta)
 		}
@@ -231,7 +231,9 @@ func (s *Spec[P]) mergeMeta(dst, src map[string]any) {
 	}
 }
 
-func (f *Freshness[P]) check(pred *P, pol *policy.Policy) error {
+// Check verifies the predicate timestamp against the configured maximum age
+// and the clock skew tolerance.
+func (f *Freshness[P]) Check(pred *P, pol *policy.Policy) error {
 	var maxAge *time.Duration
 	if f.MaxAge != nil {
 		maxAge = f.MaxAge(pol)

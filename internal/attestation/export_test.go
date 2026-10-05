@@ -38,12 +38,17 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 )
 
-// ExportDefaultVerifyBundle exposes verifyBundleWithCache (nil cache) for external tests.
+// ExportDefaultVerifyBundle exposes verifyBundleWithCache for external tests,
+// with a trusted root cache that cannot fetch a root.
 func ExportDefaultVerifyBundle(
 	ctx context.Context, data []byte,
 	opts *FetchOptions,
 ) (*VerifiedBundle, error) {
-	return verifyBundleWithCache(ctx, data, opts, nil)
+	cache := NewTestTrustedRootCache(func() (*root.TrustedRoot, error) {
+		return nil, errNoTrustedRoot
+	})
+
+	return verifyBundleWithCache(ctx, data, opts, cache)
 }
 
 // ExportVerifyBundleWithRoots verifies a bundle against the given trusted
@@ -139,7 +144,7 @@ func ExportBuildKeyMaterialPaths(keys []TrustedKeyRef) (map[string][]string, err
 
 // ExportLoadPublicKeyFromPEM exposes loadPublicKeyFromPEM for external tests.
 func ExportLoadPublicKeyFromPEM(path string) (crypto.PublicKey, error) {
-	return loadPublicKeyFromPEM(path)
+	return LoadPublicKey(path)
 }
 
 // ExportParseDigestRef exposes parseDigestRef for external tests.
@@ -526,7 +531,7 @@ func (f *OCIFetcher) FetchNotationSignature(
 ) (VerifiedAttestation, bool) {
 	att, outcome, _ := f.fetchNotationSignature(ctx, desc, ref, digest, remoteOpts)
 
-	return att, outcome == outcomeVerified
+	return att, outcome == outcomeUnverified
 }
 
 // ExportReadNotationEnvelope exposes readNotationEnvelope for external tests.
@@ -619,14 +624,23 @@ func (f *OCIFetcher) ExportRootCaches() []*trustedRootCache {
 	return f.rootCaches
 }
 
-// ExportVerifyBundle exposes VerifyBundle for external tests.
+// ExportVerifyBundle verifies a bundle against a single static trusted root
+// for external tests. A nil trustedRoot verifies without a root.
 func ExportVerifyBundle(
 	ctx context.Context,
 	bundleBytes []byte,
 	opts *FetchOptions,
 	trustedRoot *root.TrustedRoot,
 ) (*VerifiedBundle, error) {
-	return VerifyBundle(ctx, bundleBytes, opts, trustedRoot)
+	var roots []StaticRoot
+
+	if trustedRoot != nil {
+		roots = []StaticRoot{{
+			Name: "bundle", Root: trustedRoot, Issuers: nil, KeylessDisabled: false,
+		}}
+	}
+
+	return VerifyBundleWithStaticRoots(ctx, bundleBytes, opts, roots)
 }
 
 // ExportVerifyBundleWithMultipleRoots exposes verifyBundleWithMultipleRoots for external tests.
@@ -637,14 +651,6 @@ func ExportVerifyBundleWithMultipleRoots(
 	rootCaches []*trustedRootCache,
 ) (*VerifiedBundle, error) {
 	return verifyBundleWithMultipleRoots(ctx, bundleBytes, opts, rootCaches)
-}
-
-// ExportFetchTrustedRootWithContext exposes fetchTrustedRootWithContext for external tests.
-func ExportFetchTrustedRootWithContext(
-	ctx context.Context,
-	cachedRoot *trustedRootCache,
-) (*root.TrustedRoot, error) {
-	return fetchTrustedRootWithContext(ctx, cachedRoot)
 }
 
 // ExportFetchWithFallback exposes fetchWithFallback for external tests.
@@ -777,10 +783,15 @@ func (f *OCIFetcher) CollectSelectionSerial(
 		opts,
 	)
 
-	err := evaluateCollection(len(atts)+len(sigs), bundleStats, notationStats, baselineStats)
+	err := evaluateCollection(len(atts), bundleStats, notationStats, baselineStats)
 	if err != nil {
 		return nil, err
 	}
 
 	return append(append(atts, sigs...), baselines...), nil
+}
+
+// ExportIsManifestPath exposes isManifestPath for external tests.
+func ExportIsManifestPath(path string) bool {
+	return isManifestPath(path)
 }

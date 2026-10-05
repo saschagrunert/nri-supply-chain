@@ -161,13 +161,23 @@ When a container is created, the plugin performs verification in this order:
    warning unless `offline.bundle_signature_key` protects the bundle
    manifest. Blob digests and sizes are re-checked on every read; a blob
    that was modified, resized, removed, or replaced by something other than
-   a regular file (a directory or FIFO) after import denies the image as an
-   incomplete attestation set, while a blob the plugin cannot read for local reasons (for
-   example missing permissions) follows `fetch_failure_policy`. The predicate type
+   a regular file (a directory, FIFO, or a symbolic link leading out of the
+   store, also in place of one of its parent directories) after import denies
+   the image as an incomplete attestation set, while a blob the plugin cannot
+   read for local reasons (missing permissions or file descriptor exhaustion)
+   follows `fetch_failure_policy`. The predicate type
    comes from the verified statement rather than the unsigned bundle
    manifest, and bundles created by releases that stored unsigned payloads
    fail verification and must be recreated. Notation signatures are not
-   packaged into bundles.
+   packaged into bundles. Images resolved from a manifest list are bundled
+   under their index digest as well, so a bundle created on one platform
+   covers nodes of other platforms. A running plugin keeps reading the store
+   it loaded while `bundle import` swaps in a new one (the previous store is
+   kept as `<attestation_store>.old` until the next import); if that
+   directory is removed before the plugin switched to the new store, images
+   whose attestations it can no longer read are denied. A bundle created
+   more than 5 minutes in the future counts as stale, and
+   `require_bundle_signature` without a `bundle_signature_key` fails closed.
 
 9. **VSA-first evaluation**: a VSA only counts when its attestation was
    signed by a key or keyless identity bound to the verifier it names
@@ -469,6 +479,13 @@ or authenticity failure (the `audit` verification level) fails the check, the
 revocation, or timestamp failures (the `permissive` level) pass with a warning.
 Verifiers are cached per policy and certificate file state, so rotated
 certificates are picked up without rebuilding the verifier on every request.
+The trust policy is selected for the image repository with the verified
+digest (`registry/repository@digest`), whatever form the runtime reported:
+Docker Hub images are matched as `docker.io/...` (short names under
+`docker.io/library/`), and `registryScopes` are normalized the same way.
+Notation signatures are verified by this check only; they never count as
+verified attestations during discovery, so they cannot replace attestations
+that failed verification or skip the cosign tag fallback.
 See [policy.md](policy.md#notation-notary-v2-signature-verification) for
 the trust store setup, verification levels, and field reference.
 

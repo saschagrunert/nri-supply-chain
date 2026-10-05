@@ -17,12 +17,15 @@ package plugin
 import "github.com/saschagrunert/nri-supply-chain/internal/types"
 
 // Status returns the current operational status of the plugin, combining
-// verifier status with NRI connection state.
+// verifier status with NRI connection state. Ready matches the readiness
+// probe: it is false while a configuration passed by the runtime is pending
+// or failed to apply.
 func (p *Plugin) Status() types.StatusResponse {
 	status := p.verifier.Status()
 	connected := p.Connected()
+	verifierReady, _ := p.VerifierReady()
 	status.NRI = types.NRIStatus{Connected: connected}
-	status.Ready = status.Ready && connected
+	status.Ready = verifierReady && connected
 
 	return status
 }

@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/url"
 	"slices"
@@ -920,17 +921,51 @@ func tokenizeSPDXExpression(expr string) []string {
 func checkComponentPolicy(
 	data *sbomData, compPolicy *policy.SBOMComponentPolicy,
 ) *types.CheckResult {
-	if compPolicy == nil {
+	if compPolicy == nil || (len(compPolicy.Deny) == 0 && len(compPolicy.Allow) == 0) {
 		return nil
 	}
 
-	// Deny takes precedence: check deny list first.
-	denied := checkComponentDenyList(data.purls, compPolicy.Deny)
-	if denied != nil {
-		return denied
+	denyList, err := parseComponentEntries(compPolicy.Deny)
+	if err != nil {
+		return check.Fail(fmt.Sprintf("invalid sbom.component.deny entry: %v", err))
 	}
 
-	if len(compPolicy.Allow) > 0 && len(data.missingPURL) > 0 {
+	allowList, err := parseComponentEntries(compPolicy.Allow)
+	if err != nil {
+		return check.Fail(fmt.Sprintf("invalid sbom.component.allow entry: %v", err))
+	}
+
+	components := parseComponentPURLs(data.purls)
+	if len(components.invalid) > 0 {
+		slog.Warn("SBOM contains component purls that cannot be parsed",
+			"purls", summarizeNames(components.invalid))
+	}
+
+	// Deny takes precedence: check deny list first.
+	if idx := firstListed(components.parsed, denyList, true); idx >= 0 {
+		return check.Fail(fmt.Sprintf(
+			"SBOM contains denied component %q", data.purls[components.parsedIdx[idx]],
+		))
+	}
+
+	if invalid := firstRawDenied(components.invalid, denyList); invalid != "" {
+		return check.Fail(fmt.Sprintf(
+			"SBOM contains component with invalid purl %q matching the component deny list",
+			invalid,
+		))
+	}
+
+	return checkComponentAllowList(data, &components, allowList)
+}
+
+func checkComponentAllowList(
+	data *sbomData, components *componentPURLs, allowList []componentEntry,
+) *types.CheckResult {
+	if len(allowList) == 0 {
+		return nil
+	}
+
+	if len(data.missingPURL) > 0 {
 		return check.Fail(fmt.Sprintf(
 			"SBOM contains %d package components without a purl that cannot be "+
 				"checked against the component allow list: %s",
@@ -938,7 +973,95 @@ func checkComponentPolicy(
 		))
 	}
 
-	return checkComponentAllowList(data.purls, compPolicy.Allow)
+	if len(components.invalid) > 0 {
+		return check.Fail(fmt.Sprintf(
+			"SBOM contains component with invalid purl %q that cannot be "+
+				"checked against the component allow list", components.invalid[0],
+		))
+	}
+
+	if idx := firstListed(components.parsed, allowList, false); idx >= 0 {
+		return check.Fail(fmt.Sprintf(
+			"SBOM contains component %q not in allow list",
+			data.purls[components.parsedIdx[idx]],
+		))
+	}
+
+	return nil
+}
+
+// componentPURLs holds the parsed component purls with their index in the
+// SBOM purl list, and the purls that cannot be parsed.
+type componentPURLs struct {
+	parsed    []purl.PURL
+	parsedIdx []int
+	invalid   []string
+}
+
+func parseComponentPURLs(purls []string) componentPURLs {
+	result := componentPURLs{
+		parsed:    make([]purl.PURL, 0, len(purls)),
+		parsedIdx: make([]int, 0, len(purls)),
+		invalid:   nil,
+	}
+
+	for idx, purlValue := range purls {
+		parsed, err := purl.Parse(purlValue)
+		if err != nil {
+			result.invalid = append(result.invalid, purlValue)
+
+			continue
+		}
+
+		result.parsed = append(result.parsed, parsed)
+		result.parsedIdx = append(result.parsedIdx, idx)
+	}
+
+	return result
+}
+
+// firstListed returns the index of the first component that is (listed
+// true) or is not (listed false) covered by the list, or -1.
+func firstListed(components []purl.PURL, list []componentEntry, listed bool) int {
+	for idx := range components {
+		if componentInList(&components[idx], list) == listed {
+			return idx
+		}
+	}
+
+	return -1
+}
+
+// firstRawDenied returns the first purl that cannot be parsed but matches a
+// deny entry as a string (see componentEntry.matchesRaw), or "". A malformed
+// purl therefore cannot dodge the deny list, but also does not fail the
+// check unless it resembles a denied package.
+func firstRawDenied(invalid []string, denyList []componentEntry) string {
+	for _, raw := range invalid {
+		normalized := normalizeRawPURL(raw)
+
+		for idx := range denyList {
+			if denyList[idx].matchesRaw(normalized) {
+				return raw
+			}
+		}
+	}
+
+	return ""
+}
+
+// normalizeRawPURL lowercases a purl that cannot be parsed, decodes its
+// valid percent escapes (leaving invalid ones as they are), and drops slashes
+// after the scheme, so that it can be compared against the canonical form of
+// a list entry.
+func normalizeRawPURL(raw string) string {
+	normalized := strings.ToLower(lenientUnescape(strings.TrimSpace(raw)))
+
+	if rest, found := strings.CutPrefix(normalized, "pkg:"); found {
+		normalized = "pkg:" + strings.TrimLeft(rest, "/")
+	}
+
+	return normalized
 }
 
 func summarizeNames(names []string) string {
@@ -950,47 +1073,175 @@ func summarizeNames(names []string) string {
 		fmt.Sprintf(" and %d more", len(names)-maxReportedMissingPURL)
 }
 
-func checkComponentDenyList(
-	purls, denyList []string,
-) *types.CheckResult {
-	if len(denyList) == 0 {
-		return nil
+// componentEntry is a parsed sbom.component list entry. It names a purl
+// type ("pkg:npm/"), a namespace ("pkg:maven/org.example"), or a package
+// with an optional version, qualifiers, and subpath.
+type componentEntry struct {
+	typ string
+	// path holds the lowercase namespace segments followed by the
+	// normalized name; it is empty for an entry that names a whole type.
+	path       []string
+	version    string
+	qualifiers map[string]string
+	subpath    string
+}
+
+func parseComponentEntries(entries []string) ([]componentEntry, error) {
+	parsed := make([]componentEntry, 0, len(entries))
+
+	for _, raw := range entries {
+		entry, err := parseComponentEntry(raw)
+		if err != nil {
+			return nil, err
+		}
+
+		parsed = append(parsed, entry)
 	}
 
-	for _, purlValue := range purls {
-		for _, denied := range denyList {
-			if strings.HasPrefix(purlValue, denied) {
-				return check.Fail(fmt.Sprintf(
-					"SBOM contains denied component %q", purlValue,
-				))
+	return parsed, nil
+}
+
+func parseComponentEntry(raw string) (componentEntry, error) {
+	const scheme = "pkg:"
+
+	if len(raw) > len(scheme) && strings.EqualFold(raw[:len(scheme)], scheme) {
+		// "pkg:npm" and "pkg:npm/" name every package of a type.
+		typ := strings.TrimSuffix(strings.TrimLeft(raw[len(scheme):], "/"), "/")
+		if typ != "" && !strings.ContainsAny(typ, "/@?#") {
+			return componentEntry{
+				typ: strings.ToLower(typ), path: nil, version: "", qualifiers: nil, subpath: "",
+			}, nil
+		}
+	}
+
+	parsed, err := purl.Parse(raw)
+	if err != nil {
+		return componentEntry{}, fmt.Errorf("%q: %w", raw, err)
+	}
+
+	return componentEntry{
+		typ:        parsed.Type,
+		path:       componentPath(&parsed),
+		version:    parsed.Version,
+		qualifiers: parsed.Qualifiers,
+		subpath:    parsed.Subpath,
+	}, nil
+}
+
+// componentPath returns the identity of a purl as lowercase namespace
+// segments followed by the normalized name, matching purl.PURL.Key.
+func componentPath(parsed *purl.PURL) []string {
+	var path []string
+
+	for segment := range strings.SplitSeq(strings.ToLower(parsed.Namespace), "/") {
+		if segment != "" {
+			path = append(path, segment)
+		}
+	}
+
+	return append(path, strings.ToLower(purl.NormalizeName(parsed.Type, parsed.Name)))
+}
+
+// matches reports whether a component is covered by the entry. Package
+// identities are compared on whole namespace and name segments after
+// decoding and normalization, so "pkg:npm/lodash" matches neither
+// "pkg:npm/lodash-evil" nor misses "pkg:NPM/%6Codash". An entry that names a
+// namespace covers every package below it. Version, qualifiers, and subpath
+// are only compared when the entry sets them. Qualifiers and subpath must be
+// equal; the version matches as described in versionMatches.
+func (e *componentEntry) matches(component *purl.PURL) bool {
+	if !strings.EqualFold(e.typ, component.Type) {
+		return false
+	}
+
+	path := componentPath(component)
+	if len(e.path) > len(path) || !slices.Equal(e.path, path[:len(e.path)]) {
+		return false
+	}
+
+	if e.version != "" &&
+		(len(e.path) != len(path) || !versionMatches(e.version, component.Version)) {
+		return false
+	}
+
+	for key, value := range e.qualifiers {
+		if component.Qualifiers[key] != value {
+			return false
+		}
+	}
+
+	return e.subpath == "" || e.subpath == component.Subpath
+}
+
+// versionMatches reports whether an entry version covers a component
+// version: either they are equal, or the entry is a prefix that ends at a
+// version segment boundary (the next component character is '.', '-', or
+// '+'). So "3.3" matches "3.3", "3.3.6", "3.3-rc1", and "3.3+build", but not
+// "3.30".
+func versionMatches(entry, component string) bool {
+	rest, found := strings.CutPrefix(component, entry)
+	if !found {
+		return false
+	}
+
+	return rest == "" || strings.ContainsRune(".-+", rune(rest[0]))
+}
+
+// lenientUnescape decodes every valid %XX escape and keeps the others.
+func lenientUnescape(value string) string {
+	const escapeLen = 3
+
+	var builder strings.Builder
+
+	for idx := 0; idx < len(value); idx++ {
+		if value[idx] == '%' && idx+escapeLen <= len(value) {
+			decoded, err := url.PathUnescape(value[idx : idx+escapeLen])
+			if err == nil {
+				builder.WriteString(decoded)
+
+				idx += escapeLen - 1
+
+				continue
 			}
 		}
+
+		builder.WriteByte(value[idx])
 	}
 
-	return nil
+	return builder.String()
 }
 
-func checkComponentAllowList(
-	purls, allowList []string,
-) *types.CheckResult {
-	if len(allowList) == 0 {
-		return nil
+// matchesRaw compares a normalized purl that cannot be parsed against the
+// canonical form of the entry ("pkg:type/namespace/name@version", lowercase,
+// ignoring qualifiers and subpath). The purl must start with it and continue
+// at a segment boundary: a path separator, version, qualifier, or subpath
+// delimiter after the name, or a version segment boundary after the version.
+func (e *componentEntry) matchesRaw(normalized string) bool {
+	canonical := "pkg:" + e.typ
+	if len(e.path) > 0 {
+		canonical += "/" + strings.Join(e.path, "/")
 	}
 
-	for _, purlValue := range purls {
-		if !componentInList(purlValue, allowList) {
-			return check.Fail(fmt.Sprintf(
-				"SBOM contains component %q not in allow list", purlValue,
-			))
-		}
+	// After the name a path, version, qualifier, or subpath may follow,
+	// after a version only a version segment, qualifier, or subpath.
+	boundaries := "/@?#"
+
+	if e.version != "" {
+		canonical += "@" + e.version
+		boundaries = ".-+?#"
 	}
 
-	return nil
+	rest, found := strings.CutPrefix(normalized, strings.ToLower(canonical))
+	if !found {
+		return false
+	}
+
+	return rest == "" || strings.ContainsRune(boundaries, rune(rest[0]))
 }
 
-func componentInList(purlValue string, list []string) bool {
-	for _, entry := range list {
-		if strings.HasPrefix(purlValue, entry) {
+func componentInList(component *purl.PURL, list []componentEntry) bool {
+	for idx := range list {
+		if list[idx].matches(component) {
 			return true
 		}
 	}

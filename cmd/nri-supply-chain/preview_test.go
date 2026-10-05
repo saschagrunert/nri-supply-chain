@@ -23,13 +23,16 @@ import (
 	"testing"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
+	"github.com/saschagrunert/nri-supply-chain/internal/daemon"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
 const (
-	testDigestBBB = "sha256:bbb"
-	testImgV3     = "img:v3"
-	testCheckSLSA = "slsa"
+	testActionWarn = "warn"
+	testActionDeny = "deny"
+	testDigestBBB  = "sha256:bbb"
+	testImgV3      = "img:v3"
+	testCheckSLSA  = "slsa"
 )
 
 func TestLoadImagesFromArgs(t *testing.T) {
@@ -301,12 +304,14 @@ func TestRunPreviewJSONOutput(t *testing.T) {
 	var buf bytes.Buffer
 
 	code := runPreview(
-		&buf, []string{"invalid-image-ref-for-test:latest"},
+		&buf, []string{pushTestImage(t, "preview-json"), unreachableImageRef(t)},
 		testNamespaceDefault, outputFormatJSON, "", cfg,
 	)
 
-	if code != exitSuccess {
-		t.Fatalf("expected exit code %d, got %d", exitSuccess, code)
+	// An image whose digest cannot be resolved is an error for the whole
+	// preview, as for a batch verify.
+	if code != exitError {
+		t.Fatalf("expected exit code %d, got %d", exitError, code)
 	}
 
 	var out previewOutput
@@ -316,8 +321,75 @@ func TestRunPreviewJSONOutput(t *testing.T) {
 		t.Fatalf("invalid JSON: %v\nraw: %s", err, buf.String())
 	}
 
-	if out.Summary.Total != 1 {
-		t.Errorf("Summary.Total = %d, want 1", out.Summary.Total)
+	if out.Summary.Total != 2 || out.Summary.Allowed != 1 || out.Summary.Errors != 1 {
+		t.Errorf("Summary = %+v, want total 2, allowed 1, errors 1", out.Summary)
+	}
+}
+
+func TestRunPreviewExitCodes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		mode          config.VerificationMode
+		missingPolicy string
+		wantCode      int
+	}{
+		{"all allowed", config.ModeWarn, testActionWarn, exitSuccess},
+		{"warn mode does not deny", config.ModeWarn, testActionDeny, exitSuccess},
+		{"any denied", config.ModeEnforce, testActionDeny, exitDenied},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			policyDir := t.TempDir()
+			writeValidationPolicy(t, policyDir, "default.json",
+				`{"slsa": {"missingPolicy": "`+test.missingPolicy+`"}}`)
+
+			cfg := config.DefaultConfig()
+			cfg.Verification = test.mode
+			cfg.PolicyDir = policyDir
+
+			var buf bytes.Buffer
+
+			code := runPreview(&buf, []string{pushTestImage(t, "preview-exit")},
+				testNamespaceDefault, outputFormatJSON, "", cfg)
+			if code != test.wantCode {
+				t.Errorf("exit code = %d, want %d\noutput: %s", code, test.wantCode, buf.String())
+			}
+		})
+	}
+}
+
+func TestRunPreviewRejectsUnsupportedOutputFormats(t *testing.T) {
+	t.Parallel()
+
+	policyDir := t.TempDir()
+	writeValidationPolicy(t, policyDir, "default.json",
+		`{"slsa": {"missingPolicy": "warn"}}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = policyDir
+
+	for _, format := range []string{outputFormatQuiet, "yaml"} {
+		for _, comparePolicy := range []string{"", policyDir} {
+			var buf bytes.Buffer
+
+			code := runPreview(&buf, []string{testImgV1}, testNamespaceDefault,
+				format, comparePolicy, cfg)
+			if code != exitError {
+				t.Errorf("format %q, compare %q: exit code = %d, want %d",
+					format, comparePolicy, code, exitError)
+			}
+
+			if buf.Len() != 0 {
+				t.Errorf("format %q, compare %q: unexpected output: %s",
+					format, comparePolicy, buf.String())
+			}
+		}
 	}
 }
 
@@ -335,7 +407,7 @@ func TestNewPreviewCmdViaRoot(t *testing.T) {
 	cmd.SetArgs([]string{
 		testFlagConfig, configPath,
 		cmdPreview, "--output", outputFormatJSON,
-		"test-image:latest",
+		pushTestImage(t, "preview-root"),
 	})
 
 	err := cmd.Execute()
@@ -554,12 +626,122 @@ func TestRunPreviewDiffViaRoot(t *testing.T) {
 		testFlagConfig, configPath,
 		cmdPreview, "--output", outputFormatJSON,
 		"--compare-policy", proposedDir,
-		"test-image:latest",
+		pushTestImage(t, "preview-diff-root"),
 	})
 
 	err := cmd.Execute()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func pushAllowedImage(t *testing.T) string {
+	t.Helper()
+
+	return pushTestImage(t, "allowed")
+}
+
+func pushDeniedImage(t *testing.T) string {
+	t.Helper()
+
+	return pushTestImage(t, "denied")
+}
+
+func TestRunPreviewDiffExitCodes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		proposed string
+		image    func(t *testing.T) string
+		wantCode int
+	}{
+		{
+			name:     "proposed policy allows all images",
+			proposed: testActionWarn,
+			image:    pushAllowedImage,
+			wantCode: exitSuccess,
+		},
+		{
+			name:     "proposed policy denies an image",
+			proposed: testActionDeny,
+			image:    pushDeniedImage,
+			wantCode: exitDenied,
+		},
+		{
+			name:     "image cannot be verified",
+			proposed: testActionWarn,
+			image:    unreachableImageRef,
+			wantCode: exitError,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			currentDir := t.TempDir()
+			writeValidationPolicy(t, currentDir, "default.json",
+				`{"slsa": {"missingPolicy": "warn"}}`)
+
+			proposedDir := t.TempDir()
+			writeValidationPolicy(t, proposedDir, "default.json",
+				`{"slsa": {"missingPolicy": "`+test.proposed+`"}}`)
+
+			cfg := config.DefaultConfig()
+			cfg.Verification = config.ModeEnforce
+			cfg.PolicyDir = currentDir
+
+			var buf bytes.Buffer
+
+			code := runPreview(&buf, []string{test.image(t)}, testNamespaceDefault,
+				outputFormatJSON, proposedDir, cfg)
+			if code != test.wantCode {
+				t.Errorf("exit code = %d, want %d\noutput: %s", code, test.wantCode, buf.String())
+			}
+
+			var out previewDiffOutput
+
+			err := json.Unmarshal(buf.Bytes(), &out)
+			if err != nil {
+				t.Fatalf("invalid JSON: %v\nraw: %s", err, buf.String())
+			}
+
+			if out.Summary.Total != 1 {
+				t.Errorf("Summary.Total = %d, want 1", out.Summary.Total)
+			}
+		})
+	}
+}
+
+func TestRunProposedPreviewIgnoresOCIPolicySource(t *testing.T) {
+	t.Parallel()
+
+	proposedDir := t.TempDir()
+	writeValidationPolicy(t, proposedDir, "default.json",
+		`{"slsa": {"missingPolicy": "warn"}}`)
+
+	cfg := ociPolicySourceConfig(t)
+
+	results, code, err := runProposedPreview(t.Context(),
+		[]string{pushTestImage(t, "proposed-oci")}, testNamespaceDefault,
+		proposedDir, cfg, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The configured OCI policies are unreachable, so only the proposed
+	// policy can allow the image.
+	if code != exitSuccess {
+		t.Errorf("exit code = %d, want %d (the proposed policy allows)", code, exitSuccess)
+	}
+
+	if len(results) != 1 || !results[0].Allowed {
+		t.Fatalf("expected the proposed policy to allow the image, got %+v", results)
+	}
+
+	if cfg.Policy.Source != config.PolicySourceOCI {
+		t.Error("the proposed policy must not change the current config")
 	}
 }
 
@@ -644,7 +826,7 @@ func TestOutputPreviewTableBasic(t *testing.T) {
 				Digest:       "sha256:aaa",
 				Namespace:    testNamespaceDefault,
 				PolicyFile:   "/etc/policies/default.json",
-				Mode:         logLevelWarn,
+				Mode:         daemon.LogLevelWarn,
 				Allowed:      true,
 				Reason:       "",
 				CheckResults: nil,

@@ -30,8 +30,10 @@ import (
 	"slices"
 	"time"
 
+	"github.com/google/go-containerregistry/pkg/name"
 	ociV1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/layout"
+	godigest "github.com/opencontainers/go-digest"
 	"github.com/sigstore/sigstore-go/pkg/root"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
@@ -145,6 +147,10 @@ func buildManifest(
 	return manifest, nil
 }
 
+// bundleAllImages bundles the attestations of every image. An image that
+// resolves from a manifest list is bundled under its index digest as well, so
+// a bundle created on one platform also covers nodes of other platforms,
+// which look up the index digest the image was pulled from.
 func bundleAllImages(
 	ctx context.Context,
 	ociLayout layout.Path,
@@ -158,55 +164,100 @@ func bundleAllImages(
 			return fmt.Errorf("context canceled: %w", ctxErr)
 		}
 
-		digest, err := resolveImageDigest(ctx, opts, imageRef)
+		digest, indexDigest, err := resolveImageDigest(ctx, opts, imageRef)
 		if err != nil {
 			return err
 		}
 
-		if existing, ok := manifest.Images[digest]; ok {
-			if digest != imageRef {
-				existing.Refs = append(existing.Refs, imageRef)
-			}
+		err = bundleDigest(ctx, ociLayout, opts, manifest, imageRef, digest, now)
+		if err != nil {
+			return err
+		}
 
+		if indexDigest == "" || indexDigest == digest {
 			continue
 		}
 
-		entry, err := bundleImageAttestations(
-			ctx, ociLayout, opts, imageRef, digest, now,
-		)
+		err = bundleDigest(ctx, ociLayout, opts, manifest, imageRef, indexDigest, now)
 		if err != nil {
 			return err
 		}
-
-		if digest != imageRef {
-			entry.Refs = append(entry.Refs, imageRef)
-		}
-
-		manifest.Images[digest] = entry
 	}
 
 	return nil
 }
 
+// bundleDigest adds the attestations of digest to the manifest, or only the
+// reference when the digest is bundled already.
+func bundleDigest(
+	ctx context.Context,
+	ociLayout layout.Path,
+	opts *CreateOptions,
+	manifest *Manifest,
+	imageRef, digest string,
+	now time.Time,
+) error {
+	if existing, ok := manifest.Images[digest]; ok {
+		if digest != imageRef && !slices.Contains(existing.Refs, imageRef) {
+			existing.Refs = append(existing.Refs, imageRef)
+		}
+
+		return nil
+	}
+
+	entry, err := bundleImageAttestations(ctx, ociLayout, opts, imageRef, digest, now)
+	if err != nil {
+		return err
+	}
+
+	if digest != imageRef {
+		entry.Refs = append(entry.Refs, imageRef)
+	}
+
+	manifest.Images[digest] = entry
+
+	return nil
+}
+
+// resolveImageDigest returns the digest an image is bundled under. The bundle
+// manifest is keyed by digest, so an image whose digest cannot be determined
+// is an error: a reference used as the key would make the bundle unreadable.
 func resolveImageDigest(
 	ctx context.Context, opts *CreateOptions, imageRef string,
-) (string, error) {
-	if opts.ResolveDigest == nil {
-		return imageRef, nil
+) (digest, indexDigest string, err error) {
+	if opts.ResolveDigest != nil {
+		digest, indexDigest, err = opts.ResolveDigest(ctx, imageRef)
+		if err != nil {
+			return "", "", fmt.Errorf("resolving digest for %s: %w", imageRef, err)
+		}
+
+		if digest != "" {
+			if !godigest.DigestRegexpAnchored.MatchString(digest) {
+				return "", "", fmt.Errorf(
+					"%w: %s resolved to %q", ErrDigestUnresolved, imageRef, digest,
+				)
+			}
+
+			slog.InfoContext(ctx, "Resolved image digest",
+				"image", imageRef, "digest", digest, "indexDigest", indexDigest,
+			)
+
+			return digest, indexDigest, nil
+		}
 	}
 
-	digest, _, err := opts.ResolveDigest(ctx, imageRef)
-	if err != nil {
-		return "", fmt.Errorf("resolving digest for %s: %w", imageRef, err)
+	// Without a resolved digest, only a digest or a digest reference names
+	// the image unambiguously.
+	if godigest.DigestRegexpAnchored.MatchString(imageRef) {
+		return imageRef, "", nil
 	}
 
-	if digest != "" {
-		slog.InfoContext(ctx, "Resolved image digest", "image", imageRef, "digest", digest)
-
-		return digest, nil
+	ref, parseErr := name.NewDigest(imageRef)
+	if parseErr != nil {
+		return "", "", fmt.Errorf("%w: %s", ErrDigestUnresolved, imageRef)
 	}
 
-	return imageRef, nil
+	return ref.DigestStr(), "", nil
 }
 
 func bundleTrustMaterial(

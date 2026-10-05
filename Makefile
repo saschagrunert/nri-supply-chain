@@ -10,6 +10,7 @@ COSIGN_VERSION = 3.1.3
 CRANE_VERSION = 0.21.9
 GOVULNCHECK_VERSION = v1.7.0
 PRETTIER_VERSION = 3.9.6
+MARKDOWNLINT_VERSION = 0.23.2
 DASHBOARD_LINTER_VERSION = 0.3.0
 HELM_VERSION = 3.21.4
 KUBECONFORM_VERSION = 0.8.0
@@ -187,11 +188,7 @@ fuzz: ## Run all fuzz tests (use FUZZTIME to adjust, default 30s)
 bench: ## Run benchmark tests
 	$(GO) test -bench=. -benchmem -count=1 -run=^$$ ./...
 
-##@ Release
-
-.PHONY: snapshot
-snapshot: $(GORELEASER) ## Run goreleaser snapshot build
-	$(GORELEASER) release --snapshot --skip=sign --clean
+##@ Test
 
 .PHONY: integration
 integration: build ## Run bats integration tests
@@ -201,10 +198,16 @@ integration: build ## Run bats integration tests
 e2e: build $(KUBERNIX) $(COSIGN) $(CRANE) $(HELM) ## Run bats e2e tests (requires root and Nix)
 	bats test/e2e/
 
+##@ Release
+
+.PHONY: snapshot
+snapshot: $(GORELEASER) ## Run goreleaser snapshot build
+	$(GORELEASER) release --snapshot --skip=sign --clean
+
 ##@ Verification
 
 .PHONY: verify-all
-verify-all: lint verify-shfmt verify-shellcheck verify-mdtoc verify-jsonschema verify-helm verify-manifests verify-tidy verify-vendor verify-no-test-deps verify-dependencies govulncheck verify-prettier verify-typos verify-dashboard ## Run all verification targets
+verify-all: lint verify-shfmt verify-shellcheck verify-mdtoc verify-jsonschema verify-helm verify-manifests verify-tidy verify-mod verify-vendor verify-no-test-deps verify-dependencies govulncheck verify-prettier verify-markdownlint verify-typos verify-dashboard ## Run all verification targets
 
 .PHONY: lint
 lint: $(GOLANGCI_LINT) ## Run golangci-lint
@@ -272,6 +275,10 @@ verify-tidy: ## Verify go.mod is tidy
 	$(GO) mod tidy
 	git diff --exit-code go.mod go.sum
 
+.PHONY: verify-mod
+verify-mod: ## Verify module dependencies match go.sum
+	$(GO) mod verify
+
 .PHONY: vendor
 vendor: ## Update vendor directory
 	$(GO) mod vendor
@@ -304,6 +311,10 @@ verify-typos: ## Check for typos in source files
 .PHONY: verify-prettier
 verify-prettier: ## Verify file formatting with prettier
 	npx prettier@$(PRETTIER_VERSION) --check .
+
+.PHONY: verify-markdownlint
+verify-markdownlint: ## Lint Markdown files with markdownlint-cli2
+	npx markdownlint-cli2@$(MARKDOWNLINT_VERSION) "**/*.md" "#vendor" "#build" "#dist" "#node_modules" "#.claude"
 
 .PHONY: verify-dashboard
 verify-dashboard: $(DASHBOARD_LINTER) ## Lint Grafana dashboard JSON
@@ -405,5 +416,5 @@ tidy: ## Run go mod tidy
 	$(GO) mod tidy
 
 .PHONY: clean
-clean: ## Remove build artifacts
-	rm -rf $(BUILD_DIR)
+clean: ## Remove build and release artifacts
+	rm -rf $(BUILD_DIR) dist

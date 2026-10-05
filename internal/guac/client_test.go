@@ -35,6 +35,8 @@ const (
 	testCVE1234     = "CVE-2024-1234"
 	testCVE5678     = "CVE-2024-5678"
 	testCheckName   = "Code-Review"
+	testShortDigest = "sha256:abc123"
+	testLodashPURL  = "pkg:npm/lodash@4.17.20"
 )
 
 func newTestClient(t *testing.T, url, authTokenPath string, timeout time.Duration) *Client {
@@ -101,7 +103,7 @@ func TestQueryVulnerabilities(t *testing.T) {
 	t.Run("direct and transitive vulns", func(t *testing.T) {
 		t.Parallel()
 
-		digest := "sha256:abc123"
+		digest := testShortDigest
 
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != "/query/vulnerabilities" {
@@ -122,7 +124,7 @@ func TestQueryVulnerabilities(t *testing.T) {
 						},
 					},
 					{
-						Package: "pkg:npm/lodash@4.17.20",
+						Package: testLodashPURL,
 						Vulnerability: restVulnDetails{
 							Type:             testVulnTypeOSV,
 							VulnerabilityIDs: []string{testCVE5678},
@@ -214,7 +216,7 @@ func TestQueryVulnerabilities(t *testing.T) {
 func TestQueryVulnerabilitiesPackageMismatch(t *testing.T) {
 	t.Parallel()
 
-	digest := "sha256:abc123"
+	digest := testShortDigest
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		resp := restVulnResponse{
@@ -227,7 +229,7 @@ func TestQueryVulnerabilitiesPackageMismatch(t *testing.T) {
 					},
 				},
 				{
-					Package: "pkg:npm/lodash@4.17.20",
+					Package: testLodashPURL,
 					Vulnerability: restVulnDetails{
 						Type:             testVulnTypeOSV,
 						VulnerabilityIDs: []string{testCVE5678},
@@ -252,12 +254,59 @@ func TestQueryVulnerabilitiesPackageMismatch(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(direct) != 0 {
-		t.Errorf("expected 0 direct vulns when package field differs, got %d", len(direct))
+	if len(direct) != 1 || direct[0].ID != testCVE1234 {
+		t.Errorf("expected the image purl vuln to be direct, got %+v", direct)
 	}
 
-	if len(transitive) != 2 {
-		t.Errorf("expected 2 transitive vulns, got %d", len(transitive))
+	if len(transitive) != 1 || transitive[0].ID != testCVE5678 {
+		t.Errorf("expected the package vuln to be transitive, got %+v", transitive)
+	}
+}
+
+func TestParseVulnResponseDirectMatching(t *testing.T) {
+	t.Parallel()
+
+	const digest = "sha256:ABC123"
+
+	tests := []struct {
+		pkg        string
+		wantDirect bool
+	}{
+		{pkg: digest, wantDirect: true},
+		{pkg: testShortDigest, wantDirect: true},
+		{pkg: "abc123", wantDirect: true},
+		{
+			pkg:        "pkg:oci/myimage@sha256%3Aabc123?repository_url=ghcr.io/org/myimage",
+			wantDirect: true,
+		},
+		{pkg: "pkg:oci/myimage@sha256:abc123", wantDirect: true},
+		{pkg: "pkg:oci/myimage@sha256:def456", wantDirect: false},
+		{pkg: "pkg:npm/lodash@sha256:abc123", wantDirect: false},
+		{pkg: testLodashPURL, wantDirect: false},
+		{pkg: "", wantDirect: false},
+	}
+
+	for _, test := range tests {
+		body, err := json.Marshal(restVulnResponse{Vulnerabilities: []restVulnEntry{{
+			Metadata: restScanMetadata{ScannerURI: "", ScannerVersion: "", Origin: ""},
+			Package:  test.pkg,
+			Vulnerability: restVulnDetails{
+				Type: testVulnTypeOSV, VulnerabilityIDs: []string{testCVE1234},
+			},
+		}}})
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+
+		direct, transitive, err := parseVulnResponse(body, digest)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if gotDirect := len(direct) == 1 && len(transitive) == 0; gotDirect != test.wantDirect {
+			t.Errorf("package %q: direct=%v transitive=%v, want direct %v",
+				test.pkg, direct, transitive, test.wantDirect)
+		}
 	}
 }
 

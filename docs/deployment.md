@@ -159,6 +159,19 @@ helm upgrade --install nri-supply-chain deploy/helm/nri-supply-chain \
   --set-file policies.default\\.json=./default.json
 ```
 
+Each release also publishes the chart as an OCI artifact, signed keylessly by
+the release workflow like the image. Verify the signature and install a
+released version (replace `X.Y.Z`):
+
+```console
+cosign verify ghcr.io/saschagrunert/charts/nri-supply-chain:X.Y.Z \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/saschagrunert/nri-supply-chain/'
+helm upgrade --install nri-supply-chain \
+  oci://ghcr.io/saschagrunert/charts/nri-supply-chain --version X.Y.Z \
+  --namespace nri-supply-chain --create-namespace
+```
+
 It exposes operational configuration, local or OCI policy sources, registry
 mirrors, resource settings, node selectors, tolerations, NetworkPolicy, and
 optional Prometheus Operator resources. The chart renders the same hardened
@@ -192,6 +205,13 @@ cp deploy/systemd/nri-supply-chain.service /usr/lib/systemd/system/
 systemctl daemon-reload
 systemctl enable --now nri-supply-chain
 ```
+
+The unit runs with a read-only file system. systemd creates the only writable
+directories besides the NRI socket directory: `/var/cache/nri-supply-chain`
+(the service's `HOME`, which holds the Sigstore TUF cache) and
+`/var/lib/nri-supply-chain` (the default offline attestation store
+`/var/lib/nri-supply-chain/bundles`). The memory limit (`MemoryMax=512M`) matches
+the Kubernetes manifests.
 
 Reload configuration without restarting (see
 [operations.md](operations.md#config-reload) for reload behavior details):

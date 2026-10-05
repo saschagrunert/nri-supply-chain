@@ -37,6 +37,7 @@ import (
 
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
+	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
 const (
@@ -79,14 +80,14 @@ func TestFetchFromOCIWithMockRegistry(t *testing.T) {
 		t.Fatal("expected default policy")
 	}
 
-	testutil.AssertEqual(t, "warn", string(defaultPol.SLSAMissingPolicy()))
+	testutil.AssertEqual(t, "warn", string(defaultPol.MissingPolicyFor(types.CheckTypeSLSA)))
 
 	prodPol, ok := result.Policies["production"]
 	if !ok {
 		t.Fatal("expected production policy")
 	}
 
-	testutil.AssertEqual(t, "deny", string(prodPol.SLSAMissingPolicy()))
+	testutil.AssertEqual(t, "deny", string(prodPol.MissingPolicyFor(types.CheckTypeSLSA)))
 }
 
 func TestCheckDigest(t *testing.T) {
@@ -226,7 +227,7 @@ func TestFetchFromOCIInheritance(t *testing.T) {
 	}
 
 	// But override SLSA.
-	testutil.AssertEqual(t, "warn", string(devPol.SLSAMissingPolicy()))
+	testutil.AssertEqual(t, "warn", string(devPol.MissingPolicyFor(types.CheckTypeSLSA)))
 }
 
 // buildPolicyImage creates an OCI image with policy JSON files as layers.
@@ -526,7 +527,7 @@ func TestFetchFromOCIWithCustomFetchFunc(t *testing.T) {
 		t.Fatal("expected default policy")
 	}
 
-	testutil.AssertEqual(t, "deny", string(pol.SLSAMissingPolicy()))
+	testutil.AssertEqual(t, "deny", string(pol.MissingPolicyFor(types.CheckTypeSLSA)))
 }
 
 const testOCIRef = "example.com/test/policies:v1"

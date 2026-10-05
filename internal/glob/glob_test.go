@@ -15,6 +15,7 @@
 package glob_test
 
 import (
+	"errors"
 	"regexp"
 	"testing"
 
@@ -345,6 +346,48 @@ func TestHasBangNegation(t *testing.T) {
 
 			if got := glob.HasBangNegation(test.pattern); got != test.want {
 				t.Errorf("HasBangNegation(%q) = %v, want %v", test.pattern, got, test.want)
+			}
+		})
+	}
+}
+
+func TestValidate(t *testing.T) {
+	t.Parallel()
+
+	//nolint:exhaustruct_v5 // table cases only set the fields they assert
+	tests := []struct {
+		pattern string
+		wantErr bool
+	}{
+		{pattern: "ghcr.io/org/*"},
+		{pattern: "[a-z]"},
+		{pattern: "[!a-z]"},
+		{pattern: "[xyz"},
+		{pattern: "bar["},
+		{pattern: `\[z-a]`},
+		{pattern: "[z-a]", wantErr: true},
+		{pattern: "[[:alpha:]]", wantErr: true},
+		{pattern: "ghcr.io/[a-z]/[z-a]", wantErr: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.pattern, func(t *testing.T) {
+			t.Parallel()
+
+			err := glob.Validate(test.pattern)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("Validate(%q) error = %v, wantErr %v", test.pattern, err, test.wantErr)
+			}
+
+			if test.wantErr && !errors.Is(err, glob.ErrInvalidCharClass) {
+				t.Errorf("Validate(%q) error = %v, want ErrInvalidCharClass", test.pattern, err)
+			}
+
+			// Match rejects the patterns Validate rejects instead of matching
+			// them literally.
+			matched, err := glob.Match(test.pattern, test.pattern)
+			if test.wantErr && (err == nil || matched) {
+				t.Errorf("Match(%q) = %v, %v, want an error", test.pattern, matched, err)
 			}
 		})
 	}

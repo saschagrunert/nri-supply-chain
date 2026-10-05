@@ -278,8 +278,9 @@ func TestVerifyMultipleWithMergeEmpty(t *testing.T) {
 	)
 
 	testutil.AssertNoError(t, err)
-	testutil.AssertTrue(t, result.Passed)
-	testutil.AssertEqual(t, testPassDetail, result.Detail)
+	testutil.AssertEqual(t, false, result.Passed)
+	testutil.AssertEqual(t, types.StatusFail, result.Status)
+	testutil.AssertContains(t, result.Detail, "no valid test attestation found")
 }
 
 func TestVerifyMultipleWithMergeErrorAndPassFails(t *testing.T) {

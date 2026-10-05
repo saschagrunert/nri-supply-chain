@@ -532,8 +532,8 @@ func TestIsTransportFailure(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := verifier.ExportIsTransportFailure(test.ctx, test.err); got != test.want {
-				t.Errorf("isTransportFailure = %v, want %v", got, test.want)
+			if got := verifier.ExportIsFetchTransportFailure(test.ctx, test.err); got != test.want {
+				t.Errorf("isFetchTransportFailure = %v, want %v", got, test.want)
 			}
 		})
 	}
@@ -808,5 +808,146 @@ func TestFetchOptionsForPolicyBoundsBuilderKeySharedWithVerifier(t *testing.T) {
 	if len(opts.TrustedKeys) != 1 || !opts.TrustedKeys[0].NotAfter.Equal(revoked) {
 		t.Errorf("expected the shared key only with the verifier window ending %s, got %+v",
 			revoked, opts.TrustedKeys)
+	}
+}
+
+func TestCacheEntriesGaugeReportsCurrentCacheAfterReload(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+
+	verif, met := newHardeningVerifier(t, cfg, newScriptedFetcher(nil), map[string]string{
+		testDefaultPolicy: `{}`,
+	})
+
+	_, err := verif.Verify(
+		context.Background(),
+		newRequest(testHardeningImage, testFetchDigest, "", testHardeningNS, ""),
+	)
+	testutil.AssertNoError(t, err)
+
+	if got := promtestutil.ToFloat64(met.CacheEntriesTotal); got != 1 {
+		t.Fatalf("expected one cached entry, got %v", got)
+	}
+
+	previous := verif.ExportResultCache()
+
+	testutil.WritePolicy(t, verif.CurrentConfig().PolicyDir, testDefaultPolicy,
+		`{"slsa": {"missingPolicy": "warn"}}`)
+
+	reloadCfg := *verif.CurrentConfig()
+	testutil.AssertNoError(t, verif.Reload(context.Background(), &reloadCfg))
+
+	if verif.ExportResultCache() == previous {
+		t.Fatal("expected the policy change to replace the result cache")
+	}
+
+	if got := promtestutil.ToFloat64(met.CacheEntriesTotal); got != 0 {
+		t.Errorf("expected the gauge to report the new empty cache, got %v", got)
+	}
+
+	// A verification still holding the previous snapshot stores its result
+	// in the replaced cache, which must not report to the gauge anymore.
+	previous.Set("sha256:other", testHardeningNS, &types.Result{
+		Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
+	})
+
+	if got := promtestutil.ToFloat64(met.CacheEntriesTotal); got != 0 {
+		t.Errorf("expected the replaced cache to leave the gauge alone, got %v", got)
+	}
+}
+
+func TestStopDoesNotCountAsInterruptedVerification(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+
+	verif, met := newHardeningVerifier(t, cfg, newScriptedFetcher(nil), map[string]string{
+		testDefaultPolicy: `{}`,
+	})
+
+	verif.Stop()
+
+	result, err := verif.Verify(
+		context.Background(),
+		newRequest(testHardeningImage, testFetchDigest, "", testHardeningNS, ""),
+	)
+	testutil.AssertNoError(t, err)
+
+	if result.Verified {
+		t.Error("expected a verification after Stop to be unverified")
+	}
+
+	if got := promtestutil.ToFloat64(met.VerificationInterruptedTotal); got != 0 {
+		t.Errorf("expected a stopped verifier to not count as interrupted, got %v", got)
+	}
+}
+
+// cancelAwaitingFetcher blocks until its context is cancelled.
+type cancelAwaitingFetcher struct {
+	started   chan struct{}
+	cancelled atomic.Bool
+}
+
+func (f *cancelAwaitingFetcher) Fetch(
+	ctx context.Context, _ string, _ *attestation.FetchOptions,
+) ([]attestation.VerifiedAttestation, error) {
+	close(f.started)
+
+	<-ctx.Done()
+
+	f.cancelled.Store(errors.Is(ctx.Err(), context.Canceled))
+
+	return nil, fmt.Errorf("fetching: %w", ctx.Err())
+}
+
+func TestStopCancelsInFlightVerifications(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+	cfg.VerificationTimeout = config.Duration{Duration: time.Hour}
+
+	fetcher := &cancelAwaitingFetcher{started: make(chan struct{}), cancelled: atomic.Bool{}}
+	verif, _ := newHardeningVerifier(t, cfg, fetcher, map[string]string{
+		testDefaultPolicy: `{}`,
+	})
+
+	verified := make(chan error, 1)
+
+	go func() {
+		_, err := verif.Verify(
+			context.Background(),
+			newRequest(testHardeningImage, testFetchDigest, "", testHardeningNS, ""),
+		)
+		verified <- err
+	}()
+
+	<-fetcher.started
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+
+	verif.StopContext(ctx)
+
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("expected Stop to cancel the verification, took %s", elapsed)
+	}
+
+	select {
+	case err := <-verified:
+		if !errors.Is(err, verifier.ErrVerifierStopped) {
+			t.Errorf("expected the cancelled verification to deny, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("expected the in-flight verification to return after Stop")
+	}
+
+	if !fetcher.cancelled.Load() {
+		t.Error("expected Stop to cancel the attestation fetch")
 	}
 }

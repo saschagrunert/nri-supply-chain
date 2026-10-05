@@ -324,3 +324,69 @@ func TestConfigureSkipsUnchangedRuntimeConfig(t *testing.T) {
 
 	testutil.AssertEqual(t, applier.count(), 1)
 }
+
+func TestStatusNotReadyWhileRuntimeConfigPending(t *testing.T) {
+	t.Parallel()
+
+	verif := newDigestTestVerifier(true)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, time.Second, nil)
+
+	applier := &blockingApplier{
+		release: make(chan struct{}), err: nil, mu: sync.Mutex{}, applied: nil,
+	}
+	plug.SetConfigApplier(applier.apply)
+
+	_, err := plug.Configure(t.Context(), `verification = "enforce"`+"\n"+
+		`policy_dir = "`+t.TempDir()+`"`+"\n", "fake", "0.0.0")
+	testutil.AssertNoError(t, err)
+
+	waitForReady(t, plug, false)
+
+	if plug.Status().Ready {
+		t.Error("expected status not ready while the runtime configuration is pending")
+	}
+
+	close(applier.release)
+	waitForReady(t, plug, true)
+
+	if !plug.Status().Ready {
+		t.Error("expected status ready once the runtime configuration is applied")
+	}
+}
+
+func TestCloseStopsRuntimeConfigRetries(t *testing.T) {
+	t.Parallel()
+
+	verif := newDigestTestVerifier(true)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, time.Second, nil)
+	plug.ExportSetRuntimeConfigRetry(5*time.Millisecond, 5*time.Millisecond)
+
+	applier := &failingThenApplier{failures: 1 << 30, mu: sync.Mutex{}, applied: 0}
+	plug.SetConfigApplier(applier.apply)
+
+	_, err := plug.Configure(t.Context(), `verification = "enforce"`+"\n"+
+		`policy_dir = "`+t.TempDir()+`"`+"\n", "fake", "0.0.0")
+	testutil.AssertNoError(t, err)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for applier.count() < 2 {
+		if time.Now().After(deadline) {
+			t.Fatal("expected the failed runtime configuration to be retried")
+		}
+
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	plug.Close()
+
+	// An attempt that was already running may still finish.
+	time.Sleep(20 * time.Millisecond)
+
+	stopped := applier.count()
+
+	time.Sleep(100 * time.Millisecond)
+
+	if got := applier.count(); got != stopped {
+		t.Errorf("expected no retries after Close, got %d more", got-stopped)
+	}
+}
