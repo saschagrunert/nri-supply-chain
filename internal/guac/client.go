@@ -57,6 +57,10 @@ var (
 
 	// ErrTooManyRedirects indicates the HTTP client followed too many redirects.
 	ErrTooManyRedirects = errors.New("stopped after 10 redirects")
+
+	// errNullResponse indicates a REST response body that is JSON null, which
+	// must not be mistaken for empty results.
+	errNullResponse = errors.New("response is null")
 )
 
 const (
@@ -197,13 +201,17 @@ func (c *Client) QueryVulnerabilities(
 func parseVulnResponse(
 	body []byte, digest string,
 ) (direct, transitive []Vulnerability, err error) {
-	var resp restVulnResponse
+	var resp *restVulnResponse
 
 	err = json.Unmarshal(body, &resp)
 	if err != nil {
 		return nil, nil, fmt.Errorf(
 			"%w: parsing vulnerability response: %w", ErrGUACQueryFailed, err,
 		)
+	}
+
+	if resp == nil {
+		return nil, nil, fmt.Errorf("%w: vulnerability %w", ErrGUACQueryFailed, errNullResponse)
 	}
 
 	for idx := range resp.Vulnerabilities {
@@ -270,13 +278,17 @@ func (c *Client) QueryDependencies(
 }
 
 func parseDepsResponse(body []byte, maxDeps int) (*DependencyInfo, error) {
-	var resp restDepsResponse
+	var resp *restDepsResponse
 
 	err := json.Unmarshal(body, &resp)
 	if err != nil {
 		return nil, fmt.Errorf(
 			"%w: parsing dependency response: %w", ErrGUACQueryFailed, err,
 		)
+	}
+
+	if resp == nil {
+		return nil, fmt.Errorf("%w: dependency %w", ErrGUACQueryFailed, errNullResponse)
 	}
 
 	deps := resp.PURLs
@@ -737,6 +749,13 @@ func decodeGraphQL(body []byte) (*graphQLResponse, error) {
 
 	if len(gqlResp.Errors) > 0 {
 		return nil, fmt.Errorf("%w: %s", ErrGUACQueryFailed, gqlResp.Errors[0].Message)
+	}
+
+	// A response without errors must carry data. Treating a missing or null
+	// data field as empty results would report an artifact without linked
+	// sources instead of a failed query.
+	if gqlResp.Data == nil {
+		return nil, fmt.Errorf("%w: GraphQL response has no data", ErrGUACQueryFailed)
 	}
 
 	return &gqlResp, nil

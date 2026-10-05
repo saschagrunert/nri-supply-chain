@@ -158,7 +158,7 @@ func checkAttributePolicy(report *attributeReport, pol *policy.Policy) string {
 
 func containsAttribute(attrs []attribute, name string) bool {
 	for idx := range attrs {
-		if strings.EqualFold(attrs[idx].Attribute, name) {
+		if strings.EqualFold(strings.TrimSpace(attrs[idx].Attribute), strings.TrimSpace(name)) {
 			return true
 		}
 	}
@@ -179,15 +179,16 @@ func allHaveEvidence(attrs []attribute) bool {
 // evidenceDescriptor is the subset of an in-toto ResourceDescriptor that
 // identifies evidence.
 type evidenceDescriptor struct {
-	Name    string            `json:"name"`
 	URI     string            `json:"uri"`
 	Digest  map[string]string `json:"digest"`
 	Content string            `json:"content"`
 }
 
 // hasEvidence reports whether raw is a ResourceDescriptor object that
-// identifies its evidence by uri, digest, content, or name. Scalars, arrays,
-// and descriptors without any of them do not count as evidence.
+// identifies its evidence by uri, digest, or content, of which the in-toto
+// ResourceDescriptor specification requires at least one. Scalars, arrays,
+// and descriptors without any of them, such as a descriptor with only a
+// name, do not count as evidence.
 func hasEvidence(raw json.RawMessage) bool {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || trimmed[0] != '{' {
@@ -202,7 +203,6 @@ func hasEvidence(raw json.RawMessage) bool {
 	}
 
 	if strings.TrimSpace(descriptor.URI) != "" ||
-		strings.TrimSpace(descriptor.Name) != "" ||
 		strings.TrimSpace(descriptor.Content) != "" {
 		return true
 	}

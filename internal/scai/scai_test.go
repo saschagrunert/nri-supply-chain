@@ -123,6 +123,22 @@ func TestVerify(t *testing.T) {
 			wantStatus: types.StatusFail,
 		},
 		{
+			name: "forbidden attribute padded with whitespace fails",
+			doc: scaiReport{
+				Attributes: []scaiAttribute{{
+					Attribute: " " + testAttrPassedTests + "\t",
+					Evidence:  json.RawMessage(`{"uri":"https://ci.example.com/456"}`),
+				}},
+			},
+			pol: &policy.Policy{
+				SCAI: &policy.SCAIPolicy{
+					ForbiddenAttributes: []string{testAttrPassedTests + " "},
+				},
+			},
+			wantPassed: false,
+			wantStatus: types.StatusFail,
+		},
+		{
 			name: "require evidence passes when all have evidence",
 			doc:  validReport(),
 			pol: &policy.Policy{
@@ -337,7 +353,8 @@ func TestVerifyEvidenceEdgeCases(t *testing.T) {
 		{evidence: `{"digest":{"sha256":""}}`, wantPass: false},
 		{evidence: `{"mediaType":"text/plain"}`, wantPass: false},
 		{evidence: `{"digest":{"sha256":"abc"}}`, wantPass: true},
-		{evidence: `{"name":"test-report.json"}`, wantPass: true},
+		{evidence: `{"name":"test-report.json"}`, wantPass: false},
+		{evidence: `{"name":"test-report.json","content":"cGFzcw=="}`, wantPass: true},
 		{evidence: `{"uri":"https://ci.example.com/1"}`, wantPass: true},
 	} {
 		t.Run("evidence "+test.evidence, func(t *testing.T) {

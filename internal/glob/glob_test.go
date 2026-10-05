@@ -169,6 +169,20 @@ func TestToRegex(t *testing.T) {
 			match:   "https://github.com/org/repo/.github/workflows/release.yml",
 			noMatch: "https://github.com/org/repo/.github/workflows/ci.yml",
 		},
+		{
+			// The leading '-' is a literal, not the start of a range from
+			// the inserted '/' to '~'.
+			name:    "bang negation with leading hyphen",
+			pattern: "[!-~]x",
+			match:   "ax",
+			noMatch: "~x",
+		},
+		{
+			name:    "caret negation with leading hyphen",
+			pattern: "[^-a]x",
+			match:   "0x",
+			noMatch: "-x",
+		},
 	}
 
 	for _, test := range tests {
@@ -365,6 +379,7 @@ func TestValidate(t *testing.T) {
 		{pattern: "[xyz"},
 		{pattern: "bar["},
 		{pattern: `\[z-a]`},
+		{pattern: "[!-+]"},
 		{pattern: "[z-a]", wantErr: true},
 		{pattern: "[[:alpha:]]", wantErr: true},
 		{pattern: "ghcr.io/[a-z]/[z-a]", wantErr: true},

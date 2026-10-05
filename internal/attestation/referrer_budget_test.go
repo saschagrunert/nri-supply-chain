@@ -36,6 +36,9 @@ import (
 
 var errUntrustedBundle = errors.New("untrusted bundle")
 
+// testPaddingAnnotation inflates manifests and listings beyond size limits.
+const testPaddingAnnotation = "padding"
+
 func notationDescriptor(seed string) ociV1.Descriptor {
 	sum := sha256.Sum256([]byte(seed))
 
@@ -231,7 +234,7 @@ func TestManifestDownloadChargesActualBytes(t *testing.T) {
 			Digest:    layerDigest,
 			Size:      int64(len(layer)),
 		}},
-		Annotations: map[string]string{"padding": strings.Repeat("x", 64<<10)},
+		Annotations: map[string]string{testPaddingAnnotation: strings.Repeat("x", 64<<10)},
 	})
 	manifestDigest := digestOf(manifest)
 
@@ -282,7 +285,9 @@ func TestManifestDownloadChargesActualBytes(t *testing.T) {
 }
 
 // TestOversizedReferrersListingIsDenied checks that the referrers listing is
-// bounded by the bytes read, instead of go-containerregistry's 100 MiB limit.
+// bounded by the bytes read, instead of go-containerregistry's 100 MiB limit,
+// and that an oversized listing makes the attestation set incomplete instead
+// of a verification failure that is ignored like absent attestations.
 func TestOversizedReferrersListingIsDenied(t *testing.T) {
 	t.Parallel()
 
@@ -290,7 +295,7 @@ func TestOversizedReferrersListingIsDenied(t *testing.T) {
 		SchemaVersion: 2,
 		MediaType:     types.OCIImageIndex,
 		Manifests:     []ociV1.Descriptor{},
-		Annotations:   map[string]string{"padding": strings.Repeat("x", 5<<20)},
+		Annotations:   map[string]string{testPaddingAnnotation: strings.Repeat("x", 5<<20)},
 	})
 
 	server := httptest.NewServer(&registryStub{
@@ -311,8 +316,95 @@ func TestOversizedReferrersListingIsDenied(t *testing.T) {
 		strings.TrimPrefix(server.URL, "http://")+"/app:v1",
 		&attestation.FetchOptions{Digest: testFetchDigest},
 	)
-	if !errors.Is(err, attestation.ErrVerificationFailed) {
-		t.Fatalf("Fetch() error = %v, want %v", err, attestation.ErrVerificationFailed)
+	if !errors.Is(err, attestation.ErrVerificationFailed) ||
+		!errors.Is(err, attestation.ErrIncompleteAttestationSet) {
+		t.Fatalf("Fetch() error = %v, want an incomplete attestation set", err)
+	}
+}
+
+// TestOversizedCosignTagManifestIsDenied checks that a cosign attestation tag
+// whose manifest exceeds the response size limit makes the attestation set
+// incomplete.
+func TestOversizedCosignTagManifestIsDenied(t *testing.T) {
+	t.Parallel()
+
+	manifest := mustJSON(t, &ociV1.Manifest{
+		SchemaVersion: 2,
+		MediaType:     types.OCIManifestSchema1,
+		Config: ociV1.Descriptor{
+			MediaType: types.MediaType(attestation.ExportOCIEmptyMediaType),
+			Digest:    digestOf([]byte("{}")),
+			Size:      2,
+		},
+		Layers:      []ociV1.Descriptor{},
+		Annotations: map[string]string{testPaddingAnnotation: strings.Repeat("x", 5<<20)},
+	})
+
+	listing := mustJSON(t, &ociV1.IndexManifest{
+		SchemaVersion: 2,
+		MediaType:     types.OCIImageIndex,
+		Manifests:     []ociV1.Descriptor{},
+	})
+
+	server := httptest.NewServer(&registryStub{
+		listing:   listing,
+		manifests: map[string][]byte{cosignAttestationTagFor(testFetchDigest): manifest},
+		blobs:     map[string][]byte{},
+	})
+	t.Cleanup(server.Close)
+
+	fetcher := attestation.NewOCIFetcherWithVerifier(
+		func(context.Context, []byte, *attestation.FetchOptions) ([]byte, error) {
+			return []byte(slsaStatementJSON), nil
+		},
+	)
+
+	_, err := fetcher.Fetch(
+		context.Background(),
+		strings.TrimPrefix(server.URL, "http://")+"/app:v1",
+		&attestation.FetchOptions{Digest: testFetchDigest},
+	)
+	if !errors.Is(err, attestation.ErrVerificationFailed) ||
+		!errors.Is(err, attestation.ErrIncompleteAttestationSet) {
+		t.Fatalf("Fetch() error = %v, want an incomplete attestation set", err)
+	}
+}
+
+// TestNotationSignaturesSurviveFailedCosignTag checks that Notation
+// signatures are returned with the error when the cosign attestation tag
+// fails verification, so an untrusted Notation signature is still evaluated
+// instead of being treated as missing.
+func TestNotationSignaturesSurviveFailedCosignTag(t *testing.T) {
+	t.Parallel()
+
+	notationDesc := notationDescriptor("signature")
+
+	fetcher := attestation.NewTestOCIFetcherFull(
+		func(context.Context, []byte, *attestation.FetchOptions) ([]byte, error) {
+			return nil, errUntrustedBundle
+		},
+		func(ref name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+			if strings.HasSuffix(ref.Identifier(), ".att") {
+				return fakeImageWithPayload([]byte(sigstoreBundleJSON)), nil
+			}
+
+			return junkNotationImage(), nil
+		},
+		func(name.Digest, ...remote.Option) (ociV1.ImageIndex, error) {
+			return &fakeImageIndex{manifests: []ociV1.Descriptor{notationDesc}, err: nil}, nil
+		},
+	)
+
+	atts, err := fetcher.Fetch(
+		context.Background(), testFetchImageRef, &attestation.FetchOptions{Digest: testFetchDigest},
+	)
+	if !errors.Is(err, attestation.ErrVerificationFailed) ||
+		errors.Is(err, attestation.ErrIncompleteAttestationSet) {
+		t.Fatalf("Fetch() error = %v, want a complete set that failed verification", err)
+	}
+
+	if len(atts) != 1 || atts[0].SignatureType != attestation.SignatureTypeNotation {
+		t.Fatalf("Fetch() attestations = %+v, want the Notation signature", atts)
 	}
 }
 

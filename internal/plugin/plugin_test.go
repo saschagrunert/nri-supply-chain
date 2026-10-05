@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -815,8 +816,7 @@ func TestPrewarmCacheDirectCancel(t *testing.T) {
 	}
 
 	// Cancel context immediately so sem.Acquire fails inside prewarmCache,
-	// covering the "Pre-warm cache cancelled" and "Pre-warm cache wait
-	// cancelled" error paths.
+	// covering the "Pre-warm cache cancelled" path.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -1366,6 +1366,65 @@ func TestCloseCancelsInFlightPrewarm(t *testing.T) {
 	plug.Close()
 
 	waitForPrewarm(t, done)
+}
+
+// lingeringPrewarmVerifier returns a while after its context is cancelled.
+type lingeringPrewarmVerifier struct {
+	*blockingPrewarmVerifier
+
+	returned atomic.Bool
+}
+
+func (v *lingeringPrewarmVerifier) Verify(
+	ctx context.Context, req *scTypes.VerifyRequest,
+) (*scTypes.Result, error) {
+	result, err := v.blockingPrewarmVerifier.Verify(ctx, req)
+
+	time.Sleep(50 * time.Millisecond)
+	v.returned.Store(true)
+
+	return result, err
+}
+
+// A cancelled pre-warm completes only after its in-flight verifications
+// returned, so it records no results afterwards.
+func TestCancelledPrewarmWaitsForInFlightVerifications(t *testing.T) {
+	t.Parallel()
+
+	verif := &lingeringPrewarmVerifier{
+		blockingPrewarmVerifier: &blockingPrewarmVerifier{
+			cvTestVerifier: &cvTestVerifier{}, //nolint:exhaustruct_v5 // zero-value fields intentional
+			started:        make(chan struct{}),
+			once:           sync.Once{},
+		},
+		returned: atomic.Bool{},
+	}
+	plug := plugin.New(verif, metrics.New(), "", 30*time.Second, time.Second, nil)
+
+	var returnedAtDone atomic.Bool
+
+	done := make(chan struct{}, 1)
+
+	plug.ExportSetPrewarmDone(func() {
+		returnedAtDone.Store(verif.returned.Load())
+
+		done <- struct{}{}
+	})
+
+	synchronizePrewarmContainer(t, plug)
+
+	select {
+	case <-verif.started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for prewarm to start")
+	}
+
+	plug.CancelPrewarm()
+	waitForPrewarm(t, done)
+
+	if !returnedAtDone.Load() {
+		t.Error("expected the pre-warm to complete after its verification returned")
+	}
 }
 
 // A pre-warm started while the plugin shuts down must not outlive it, even

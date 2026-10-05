@@ -241,13 +241,27 @@ Multi-arch container images (amd64, arm64) are published to
 `ghcr.io/saschagrunert/nri-supply-chain`. Images are signed with cosign and
 built on distroless for a minimal attack surface.
 
-- **Tagged releases** (`v1.0.0`, etc.) are published by the release workflow
-- **`latest`** is built on every merge to main and tagged only after the image
-  was scanned, attested, and verified by the release workflow
+- **Tagged releases** are published by the release workflow under the version
+  without the `v` prefix of the Git tag (`1.0.0` for `v1.0.0`)
+- **`latest`** points to the tagged release with the highest version, and only
+  moves after that release image was scanned, attested, and verified by the
+  release workflow. Prereleases (such as `v1.0.0-rc.1`) and patch releases of
+  an older release line do not move it
+- **`main`** points to the most recent verified build of the main branch: the
+  tag only moves after the image was scanned, attested, and verified, and only
+  if its commit is still the head of main at that point, so a slower build of
+  an older commit never moves it backwards (builds are also tagged with their
+  short commit SHA)
 
 ```console
 docker pull ghcr.io/saschagrunert/nri-supply-chain:latest
 ```
+
+The version tag is pushed before the release workflow has attested and
+verified the image, and the GitHub release stays a draft until that is done.
+Verify the image signature and its VSA before using an image (see
+[Verifying Releases](../README.md#verifying-releases)), and pin the verified
+digest in production.
 
 GitHub releases also include Kubernetes manifests, systemd service files, and
 example configurations as downloadable assets.

@@ -338,23 +338,29 @@ func (p *Plugin) prewarmCache(ctx context.Context, images []prewarmImage) {
 	)
 }
 
+// runPrewarmVerifications verifies the images and returns how many verified
+// and whether ctx was cancelled first. It returns only after all started
+// verifications returned. A run is cancelled without waiting for it when a
+// reload or Synchronize starts the next one, so verifications still in flight
+// may return while the next run records its results; recordPrewarmResult
+// drops their results once ctx is done.
 func (p *Plugin) runPrewarmVerifications(
 	ctx context.Context, images []prewarmImage, total int,
 ) (int32, bool) {
 	sem := semaphore.NewWeighted(prewarmConcurrency)
 	verified := atomic.Int32{}
 
+	var waitGroup sync.WaitGroup
+
 	for idx := range images {
 		img := images[idx]
 
-		err := sem.Acquire(ctx, 1)
-		if err != nil {
-			slog.WarnContext(ctx, "Pre-warm cache cancelled", "error", err)
-
-			return verified.Load(), true
+		// Acquire only fails once ctx is done, which is reported below.
+		if sem.Acquire(ctx, 1) != nil {
+			break
 		}
 
-		go func() {
+		waitGroup.Go(func() {
 			defer sem.Release(1)
 
 			result, verifyErr := p.verifier.Verify(ctx, &types.VerifyRequest{
@@ -384,12 +390,14 @@ func (p *Plugin) runPrewarmVerifications(
 				"verified", count,
 				"total", total,
 			)
-		}()
+		})
 	}
 
-	err := sem.Acquire(ctx, prewarmConcurrency)
+	waitGroup.Wait()
+
+	err := ctx.Err()
 	if err != nil {
-		slog.WarnContext(ctx, "Pre-warm cache wait cancelled", "error", err)
+		slog.WarnContext(ctx, "Pre-warm cache cancelled", "error", err)
 
 		return verified.Load(), true
 	}
@@ -407,7 +415,11 @@ func (p *Plugin) runPrewarmVerifications(
 // continuous verifier would degrade it. Without remediation the continuous
 // verifier does not run and could never recover the container, so its state
 // is left unchanged; once remediation is enabled, the continuous verifier
-// degrades it with a warning.
+// degrades it with a warning. Nothing is recorded once ctx is done: the run
+// was cancelled, for example by a reload that started a new run, and a result
+// of the old policy must not become the first result of a container, which
+// the new run could then no longer replace. ctx is checked under the
+// container lock, so a run cancelled before the update records nothing.
 func (p *Plugin) recordPrewarmResult(
 	ctx context.Context, img *prewarmImage, result *types.Result,
 ) {
@@ -421,7 +433,7 @@ func (p *Plugin) recordPrewarmResult(
 
 	for _, containerID := range img.containerIDs {
 		p.containers.UpdateState(containerID, func(cState *containerState) {
-			if !cState.awaitingFirstResult || cState.digest != img.digest {
+			if ctx.Err() != nil || !cState.awaitingFirstResult || cState.digest != img.digest {
 				return
 			}
 

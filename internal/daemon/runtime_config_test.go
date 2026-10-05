@@ -15,7 +15,6 @@
 package daemon //nolint:testpackage // tests use unexported daemon internals
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -24,20 +23,6 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
-
-// mockRuntimeConfigPlugin records the plugin-side settings applied from a
-// configuration passed by the runtime.
-type mockRuntimeConfigPlugin struct {
-	mockPluginReloader
-
-	continuousInterval time.Duration
-}
-
-func (m *mockRuntimeConfigPlugin) StartContinuousVerifier(
-	_ context.Context, interval time.Duration,
-) {
-	m.continuousInterval = interval
-}
 
 //nolint:paralleltest // modifies package-level LogLevel
 func TestRuntimeConfigApplierAppliesPluginSettings(t *testing.T) {
@@ -62,7 +47,7 @@ interval = "5m"
 `)
 	testutil.AssertNoError(t, err)
 
-	mock := &mockRuntimeConfigPlugin{} //nolint:exhaustruct_v5 // zero-value mock
+	mock := &mockPluginReloader{} //nolint:exhaustruct_v5 // zero-value mock
 
 	applier := runtimeConfigApplier(t.Context(), startup, verif, met, mock)
 	testutil.AssertNoError(t, applier(t.Context(), cfg))

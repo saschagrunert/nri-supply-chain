@@ -404,9 +404,7 @@ func predicateMeta(pred *vulnScanPredicate) map[string]any {
 	for idx := range pred.vulns {
 		vuln := &pred.vulns[idx]
 
-		if vuln.Score != nil && *vuln.Score > maxScore {
-			maxScore = *vuln.Score
-		}
+		maxScore = max(maxScore, vuln.effectiveScore())
 
 		if severityOrder(vuln.Rank) > severityOrder(maxRank) {
 			maxRank = vuln.Rank
@@ -470,32 +468,33 @@ func (v *vulnerability) thresholdViolation(pol *policy.VulnScanPolicy) string {
 		)
 	}
 
-	minRank, minRankSet := types.SeverityRankOf(pol.MinSeverity)
-	if !v.exceedsMaxScore(pol.MaxScore) && (!minRankSet || v.Rank < minRank) {
-		return ""
+	exceeded := pol.MaxScore != nil && v.effectiveScore() > *pol.MaxScore
+
+	if pol.MinSeverity != "" {
+		// Policy validation rejects unknown severities; one that slips
+		// through flags every vulnerability.
+		minRank, known := types.SeverityRankOf(pol.MinSeverity)
+		if !known || v.Rank >= minRank {
+			exceeded = true
+		}
 	}
 
-	score := float64(0)
-	if v.Score != nil {
-		score = *v.Score
+	if !exceeded {
+		return ""
 	}
 
 	return fmt.Sprintf(
 		"vulnerability threshold exceeded: %s (score %.1f, severity %s)",
-		v.ID, score, types.SeverityName(v.Rank),
+		v.ID, v.effectiveScore(), types.SeverityName(v.Rank),
 	)
 }
 
-// exceedsMaxScore compares the score, or for findings without a numeric
-// score the lowest score of their severity, against maxScore.
-func (v *vulnerability) exceedsMaxScore(maxScore *float64) bool {
-	if maxScore == nil {
-		return false
-	}
-
+// effectiveScore returns the score, or for findings without a numeric score
+// the lowest score of their severity.
+func (v *vulnerability) effectiveScore() float64 {
 	if v.Score != nil {
-		return *v.Score > *maxScore
+		return *v.Score
 	}
 
-	return types.SeverityMinimumCVSS(v.Rank) > *maxScore
+	return types.SeverityMinimumCVSS(v.Rank)
 }

@@ -251,13 +251,19 @@ type RootScope struct {
 	Issuers []string
 }
 
+// allRootCaches returns the trusted root caches of the fetcher.
+func (f *OCIFetcher) allRootCaches() []*trustedRootCache {
+	if f.rootCache != nil {
+		return []*trustedRootCache{f.rootCache}
+	}
+
+	return f.rootCaches
+}
+
 // RootScopes returns the trusted root sources of the fetcher with their
 // issuer restrictions.
 func (f *OCIFetcher) RootScopes() []RootScope {
-	caches := f.rootCaches
-	if f.rootCache != nil {
-		caches = []*trustedRootCache{f.rootCache}
-	}
+	caches := f.allRootCaches()
 
 	scopes := make([]RootScope, 0, len(caches))
 
@@ -290,22 +296,28 @@ func newBaseFetcher(verifyFn SignedBundleVerifyFunc) *OCIFetcher {
 	return fetcher
 }
 
-// NewOCIFetcher creates a new OCI-based attestation fetcher.
-func NewOCIFetcher() *OCIFetcher {
-	cachedRoot := &trustedRootCache{
+// newTrustedRootCache creates an empty cache for one trusted root source.
+func newTrustedRootCache(
+	name string, issuers []string, fetchRoot trustedRootFetchFunc, preSeeded *root.TrustedRoot,
+) *trustedRootCache {
+	return &trustedRootCache{
 		mu:           sync.RWMutex{},
 		root:         nil,
 		fetchedAt:    time.Time{},
-		fetchRoot:    root.FetchTrustedRoot,
+		fetchRoot:    fetchRoot,
 		inflight:     singleflight.Group{},
 		onFallback:   nil,
 		lastFetchErr: time.Time{},
 		lastErr:      nil,
-		preSeeded:    nil,
-		name:         "",
-		issuers:      nil,
+		preSeeded:    preSeeded,
+		name:         name,
+		issuers:      issuers,
 	}
+}
 
+// newSingleRootFetcher creates a fetcher that verifies bundles against the
+// trusted root of cachedRoot.
+func newSingleRootFetcher(cachedRoot *trustedRootCache) *OCIFetcher {
 	fetcher := newBaseFetcher(func(
 		ctx context.Context, bundleBytes []byte, opts *FetchOptions,
 	) (*VerifiedBundle, error) {
@@ -314,6 +326,11 @@ func NewOCIFetcher() *OCIFetcher {
 	fetcher.rootCache = cachedRoot
 
 	return fetcher
+}
+
+// NewOCIFetcher creates a new OCI-based attestation fetcher.
+func NewOCIFetcher() *OCIFetcher {
+	return newSingleRootFetcher(newTrustedRootCache("", nil, root.FetchTrustedRoot, nil))
 }
 
 // NewOCIFetcherWithPreSeededRoot creates an OCI-based attestation fetcher
@@ -327,28 +344,7 @@ func NewOCIFetcher() *OCIFetcher {
 // (negativeCacheTTL). This avoids blocking in disconnected environments
 // while still allowing recovery once the window expires.
 func NewOCIFetcherWithPreSeededRoot(preSeeded *root.TrustedRoot) *OCIFetcher {
-	cachedRoot := &trustedRootCache{
-		mu:           sync.RWMutex{},
-		root:         nil,
-		fetchedAt:    time.Time{},
-		fetchRoot:    root.FetchTrustedRoot,
-		inflight:     singleflight.Group{},
-		onFallback:   nil,
-		lastFetchErr: time.Time{},
-		lastErr:      nil,
-		preSeeded:    preSeeded,
-		name:         "",
-		issuers:      nil,
-	}
-
-	fetcher := newBaseFetcher(func(
-		ctx context.Context, bundleBytes []byte, opts *FetchOptions,
-	) (*VerifiedBundle, error) {
-		return verifyBundleWithCache(ctx, bundleBytes, opts, cachedRoot)
-	})
-	fetcher.rootCache = cachedRoot
-
-	return fetcher
+	return newSingleRootFetcher(newTrustedRootCache("", nil, root.FetchTrustedRoot, preSeeded))
 }
 
 // NewOCIFetcherWithVerifier creates a fetcher with a custom payload-only
@@ -392,38 +388,14 @@ func payloadOnlyVerifier(verifier BundleVerifyFunc) SignedBundleVerifyFunc {
 // default public Sigstore root.json is used, treating the mirror as a CDN
 // mirror of the public infrastructure.
 func NewOCIFetcherWithTUFMirror(tufMirror string, tufRootBytes []byte) *OCIFetcher {
-	cachedRoot := &trustedRootCache{
-		mu:        sync.RWMutex{},
-		root:      nil,
-		fetchedAt: time.Time{},
-		fetchRoot: func() (*root.TrustedRoot, error) {
-			opts := tuf.DefaultOptions().
-				WithRepositoryBaseURL(tufMirror).
-				WithDisableLocalCache()
-
-			if len(tufRootBytes) > 0 {
-				opts = opts.WithRoot(tufRootBytes)
-			}
-
-			return root.FetchTrustedRootWithOptions(opts)
-		},
-		inflight:     singleflight.Group{},
-		onFallback:   nil,
-		lastFetchErr: time.Time{},
-		lastErr:      nil,
-		preSeeded:    nil,
-		name:         "",
-		issuers:      nil,
-	}
-
-	fetcher := newBaseFetcher(func(
-		ctx context.Context, bundleBytes []byte, opts *FetchOptions,
-	) (*VerifiedBundle, error) {
-		return verifyBundleWithCache(ctx, bundleBytes, opts, cachedRoot)
+	fetchRoot := buildFetchFunc(&RootSourceConfig{
+		Name:         "",
+		TUFMirror:    tufMirror,
+		TUFRootBytes: tufRootBytes,
+		Issuers:      nil,
 	})
-	fetcher.rootCache = cachedRoot
 
-	return fetcher
+	return newSingleRootFetcher(newTrustedRootCache("", nil, fetchRoot, nil))
 }
 
 // NewOCIFetcherWithMultipleRoots creates an OCI-based attestation fetcher that
@@ -436,21 +408,10 @@ func NewOCIFetcherWithTUFMirror(tufMirror string, tufRootBytes []byte) *OCIFetch
 func NewOCIFetcherWithMultipleRoots(sources []RootSourceConfig) *OCIFetcher {
 	caches := make([]*trustedRootCache, len(sources))
 
-	for i, src := range sources {
-		fetchFn := buildFetchFunc(&sources[i])
-		caches[i] = &trustedRootCache{
-			mu:           sync.RWMutex{},
-			root:         nil,
-			fetchedAt:    time.Time{},
-			fetchRoot:    fetchFn,
-			inflight:     singleflight.Group{},
-			onFallback:   nil,
-			lastFetchErr: time.Time{},
-			lastErr:      nil,
-			preSeeded:    nil,
-			name:         src.Name,
-			issuers:      src.Issuers,
-		}
+	for i := range sources {
+		caches[i] = newTrustedRootCache(
+			sources[i].Name, sources[i].Issuers, buildFetchFunc(&sources[i]), nil,
+		)
 	}
 
 	fetcher := newBaseFetcher(func(

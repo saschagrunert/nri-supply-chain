@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"runtime/debug"
 	"sync"
 	"time"
@@ -50,7 +51,7 @@ func runChecks(
 	imageRef, digest := req.ImageRef, req.Digest
 
 	if state.fetcher == nil {
-		result := runChecksWithoutFetcher(pol, state.metrics, imageRef)
+		result := runChecksWithoutFetcher(pol, imageRef)
 
 		return result, resultCacheTTL(state.config, result)
 	}
@@ -349,7 +350,7 @@ func runVSAAndParallelChecks(
 
 	missingDetail := outcome.missingDetail(imageRef)
 
-	denied := checkVSAMissing(pol, missingDetail, met)
+	denied := checkVSAMissing(pol, missingDetail)
 	if denied != nil {
 		return denied
 	}
@@ -407,14 +408,12 @@ type missingCheck struct {
 	missingPolicy types.Action
 }
 
-func runChecksWithoutFetcher(
-	pol *policy.Policy, met *metrics.Metrics, imageRef string,
-) *types.Result {
+// runChecksWithoutFetcher applies the missing policies when no attestation
+// fetcher is configured. No check runs, so no check duration is observed.
+func runChecksWithoutFetcher(pol *policy.Policy, imageRef string) *types.Result {
 	detail := "no attestation fetcher configured for image " + imageRef
 
 	vsaMissing := pol.MissingPolicyFor(types.CheckTypeVSA)
-
-	met.VerificationDuration.WithLabelValues(string(types.CheckTypeVSA)).Observe(0)
 
 	if vsaMissing != types.ActionAllow && vsaMissing != types.ActionWarn {
 		return resultFromCheck(handleMissingAttestation(vsaMissing, types.CheckTypeVSA, detail))
@@ -440,7 +439,6 @@ func runChecksWithoutFetcher(
 
 	for _, mc := range missingChecks {
 		checkResult := handleMissingAttestation(mc.missingPolicy, mc.checkType, detail)
-		met.VerificationDuration.WithLabelValues(string(mc.checkType)).Observe(0)
 
 		results = append(results, checkResult)
 	}
@@ -691,7 +689,7 @@ func trustedKeyRefs(trust *policy.TrustPolicy) []attestation.TrustedKeyRef {
 
 	for idx := range trust.Verifiers {
 		for _, keyPath := range trust.Verifiers[idx].Keys {
-			verifierKeys[keyPath] = struct{}{}
+			verifierKeys[filepath.Clean(keyPath)] = struct{}{}
 			keys = append(keys, attestation.TrustedKeyRef{
 				Path:      keyPath,
 				NotBefore: trust.Verifiers[idx].NotBeforeTime,
@@ -704,10 +702,11 @@ func trustedKeyRefs(trust *policy.TrustPolicy) []attestation.TrustedKeyRef {
 		for _, keyPath := range trust.Builders[idx].Keys {
 			// Validation rejects a key path shared by a verifier and a
 			// builder, but merging a namespace policy or a rule into its
-			// base can still produce one. An unbounded builder entry would
-			// attribute the path outside the verifier's validity window, so
-			// the verifier entry alone bounds the path wherever it is used.
-			if _, verifierKey := verifierKeys[keyPath]; verifierKey {
+			// base can still produce one, possibly spelled differently. An
+			// unbounded builder entry would attribute the key outside the
+			// verifier's validity window, so the verifier entry alone bounds
+			// the key wherever it is used.
+			if _, verifierKey := verifierKeys[filepath.Clean(keyPath)]; verifierKey {
 				continue
 			}
 

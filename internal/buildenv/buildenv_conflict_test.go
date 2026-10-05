@@ -41,6 +41,7 @@ func TestVerifyConflictingPropertyValuesInDocument(t *testing.T) {
 	for name, second := range map[string]string{
 		"same case":      testPropHermetic,
 		"different case": "hermetic",
+		"whitespace":     " " + testPropHermetic + "\t",
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -77,6 +78,66 @@ func TestVerifyRepeatedPropertySameValueInDocument(t *testing.T) {
 	result, err := buildenv.Verify(context.Background(), att, &policy.Policy{}, testDigest)
 	testutil.AssertNoError(t, err)
 	testutil.AssertTrue(t, result.Passed)
+}
+
+func TestVerifyPropertyValuesTrimNames(t *testing.T) {
+	t.Parallel()
+
+	doc := buildEnvDoc{
+		Environment: []envProperty{
+			{Name: " " + testPropHermetic + " ", Value: testValTrue},
+		},
+	}
+
+	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
+
+	result, err := buildenv.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+	testutil.AssertNoError(t, err)
+	testutil.AssertTrue(t, result.Passed)
+
+	values, ok := result.Metadata[testMetaValues].(map[string]string)
+	if !ok {
+		t.Fatalf("propertyValues has type %T", result.Metadata[testMetaValues])
+	}
+
+	testutil.AssertEqual(t, testValTrue, values[testPropHermetic])
+}
+
+func TestVerifyMultipleConflictingPaddedPropertyNames(t *testing.T) {
+	t.Parallel()
+
+	docA := buildEnvDoc{Environment: []envProperty{{Name: testPropHermetic, Value: testValFalse}}}
+	docB := buildEnvDoc{
+		Environment: []envProperty{{Name: " " + testPropHermetic, Value: testValTrue}},
+	}
+
+	attestations := [][]byte{
+		testutil.WrapInToto(t, docA, testDigest, testPredicateType),
+		testutil.WrapInToto(t, docB, testDigest, testPredicateType),
+	}
+
+	result, err := buildenv.VerifyMultiple(
+		context.Background(), attestations, &policy.Policy{}, testDigest,
+	)
+	testutil.AssertNoError(t, err)
+
+	values, ok := result.Metadata[testMetaValues].(map[string]string)
+	if !ok {
+		t.Fatalf("propertyValues has type %T", result.Metadata[testMetaValues])
+	}
+
+	if len(values) != 0 {
+		t.Errorf("expected the conflicting property to be dropped, got %v", values)
+	}
+
+	conflicting, ok := result.Metadata[testMetaConflicts].([]string)
+	if !ok {
+		t.Fatalf("conflicts has type %T", result.Metadata[testMetaConflicts])
+	}
+
+	if len(conflicting) != 1 || conflicting[0] != testPropHermetic {
+		t.Errorf("expected %s to conflict, got %v", testPropHermetic, conflicting)
+	}
 }
 
 func TestVerifyMultipleConflictingPropertyValues(t *testing.T) {

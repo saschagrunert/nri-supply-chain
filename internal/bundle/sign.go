@@ -103,7 +103,9 @@ func VerifyManifestSignature(manifest *Manifest, keyPath string) error {
 
 	pubKey, err := attestation.LoadPublicKey(keyPath)
 	if err != nil {
-		return fmt.Errorf("loading verification key: %w", err)
+		return fmt.Errorf(
+			"%w: loading verification key: %w", attestation.ErrTrustMaterialUnavailable, err,
+		)
 	}
 
 	hashAlg := types.HashAlgorithmForKey(pubKey)

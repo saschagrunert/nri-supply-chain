@@ -151,7 +151,7 @@ func Evaluate(ctx context.Context, docs []*Document, image *imagematch.Image) (*
 					"status", stmt.Status, "vulnerability", vulnerabilityName(stmt))
 			}
 
-			key := statementKey(stmt, match.scope)
+			key := statementKey(stmt, match.scope, match.subcomponents)
 
 			group, exists := groups[key]
 			if !exists {
@@ -161,7 +161,7 @@ func Evaluate(ctx context.Context, docs []*Document, image *imagematch.Image) (*
 
 			packageKey := ""
 			if match.packageScope != "" {
-				packageKey = statementKey(stmt, match.packageScope)
+				packageKey = statementKey(stmt, match.packageScope, match.packageSubcomponents)
 			}
 
 			group.candidates = append(group.candidates, candidate{
@@ -405,24 +405,30 @@ func statementTime(stmt *openvex.Statement, docTime time.Time) time.Time {
 // statementKey groups statements that talk about the same vulnerability in
 // the same product scope (the image itself or the matched packages) and
 // subcomponent scope of the image.
-func statementKey(stmt *openvex.Statement, productScope string) string {
+func statementKey(stmt *openvex.Statement, productScope, subcomponentScope string) string {
 	vuln := string(stmt.Vulnerability.Name)
 	if vuln == "" {
 		vuln = stmt.Vulnerability.ID
 	}
 
+	return strings.ToLower(vuln) + "\x00" + productScope + "\x00" + subcomponentScope
+}
+
+// subcomponentScope identifies the subcomponents of the given products.
+// Only products that apply to the image are passed, so subcomponents of
+// products naming other images do not split the scope.
+func subcomponentScope(products []*openvex.Product) string {
 	scopes := make([]string, 0)
 
-	for idx := range stmt.Products {
-		for sidx := range stmt.Products[idx].Subcomponents {
-			scopes = append(scopes, subcomponentID(&stmt.Products[idx].Subcomponents[sidx]))
+	for _, product := range products {
+		for sidx := range product.Subcomponents {
+			scopes = append(scopes, subcomponentID(&product.Subcomponents[sidx]))
 		}
 	}
 
 	slices.Sort(scopes)
-	scopes = slices.Compact(scopes)
 
-	return strings.ToLower(vuln) + "\x00" + productScope + "\x00" + strings.Join(scopes, "\x00")
+	return strings.Join(slices.Compact(scopes), "\x00")
 }
 
 func subcomponentID(sub *openvex.Subcomponent) string {
@@ -475,15 +481,18 @@ type statementMatch struct {
 	// packageScope is set for a lenient-only match to the sorted identity keys
 	// of the matched packages, if any.
 	packageScope string
+	// subcomponents is the subcomponent scope of the products that apply to
+	// the image, packageSubcomponents that of the matched packages only.
+	subcomponents        string
+	packageSubcomponents string
 }
 
-//nolint:cyclop // sequential product match classification
 func matchStatement(
 	ctx context.Context, stmt *openvex.Statement, image *imagematch.Image,
 ) statementMatch {
 	match := statementMatch{
 		strength: imagematch.StrengthNone, scope: "", lenientOnly: false, tagConflict: false,
-		packageScope: "",
+		packageScope: "", subcomponents: "", packageSubcomponents: "",
 	}
 
 	if len(stmt.Products) == 0 {
@@ -495,48 +504,67 @@ func matchStatement(
 		return match
 	}
 
-	var (
-		imageMatched, strictImage, lenientWithoutTagConflict bool
-		packages                                             []string
+	products := classifyProducts(stmt, image)
+	match.strength = products.strength
+
+	slices.Sort(products.packages)
+	packageScope := strings.Join(slices.Compact(products.packages), ",")
+	match.subcomponents = subcomponentScope(
+		slices.Concat(products.imageProducts, products.packageProducts),
 	)
 
-	lenient := statusRank(stmt.Status) > rankResolved
-
-	for idx := range stmt.Products {
-		component := componentMatch(&stmt.Products[idx].Component, image, lenient)
-
-		switch component.kind {
-		case imagematch.KindImage:
-			imageMatched = true
-			strictImage = strictImage || !component.lenientOnly
-			lenientWithoutTagConflict = lenientWithoutTagConflict ||
-				(component.lenientOnly && !component.tagConflict)
-		case imagematch.KindPackage:
-			packages = append(packages, component.packageKey)
-		case imagematch.KindOtherImage, imagematch.KindUnrelated:
-			continue
-		}
-
-		match.strength = max(match.strength, component.strength)
-	}
-
-	slices.Sort(packages)
-	packageScope := strings.Join(slices.Compact(packages), ",")
-
 	switch {
-	case imageMatched:
+	case len(products.imageProducts) > 0:
 		match.scope = imageScope
-		match.lenientOnly = !strictImage
-		match.tagConflict = match.lenientOnly && !lenientWithoutTagConflict
+		match.lenientOnly = !products.strictImage
+		match.tagConflict = match.lenientOnly && !products.lenientWithoutTagConflict
 
 		if match.lenientOnly {
 			match.packageScope = packageScope
+			match.packageSubcomponents = subcomponentScope(products.packageProducts)
 		}
-	case len(packages) > 0:
+	case len(products.packages) > 0:
 		match.scope = packageScope
 	}
 
 	return match
+}
+
+// productMatches collects how the products of a statement relate to the
+// image.
+type productMatches struct {
+	strength                               imagematch.Strength
+	strictImage, lenientWithoutTagConflict bool
+	packages                               []string
+	imageProducts, packageProducts         []*openvex.Product
+}
+
+func classifyProducts(stmt *openvex.Statement, image *imagematch.Image) productMatches {
+	var products productMatches
+
+	lenient := statusRank(stmt.Status) > rankResolved
+
+	for idx := range stmt.Products {
+		product := &stmt.Products[idx]
+		component := componentMatch(&product.Component, image, lenient)
+
+		switch component.kind {
+		case imagematch.KindImage:
+			products.strictImage = products.strictImage || !component.lenientOnly
+			products.lenientWithoutTagConflict = products.lenientWithoutTagConflict ||
+				(component.lenientOnly && !component.tagConflict)
+			products.imageProducts = append(products.imageProducts, product)
+		case imagematch.KindPackage:
+			products.packages = append(products.packages, component.packageKey)
+			products.packageProducts = append(products.packageProducts, product)
+		case imagematch.KindOtherImage, imagematch.KindUnrelated:
+			continue
+		}
+
+		products.strength = max(products.strength, component.strength)
+	}
+
+	return products
 }
 
 // componentResult describes how a product component relates to the image.
@@ -558,7 +586,13 @@ type componentResult struct {
 // for KindPackage and includes the package version, so statements about
 // different versions of a package do not override each other. lenient also
 // tries imagematch.Image.MatchLenient for statements that can only raise
-// severity, when strict matching does not identify the image.
+// severity, when strict matching does not identify the image. For resolving
+// statements (lenient unset), a component that names the image but carries a
+// hash of another image (see hashConflicts) refers to that other image, so a
+// not_affected or fixed statement about another build cannot resolve this
+// one. Statements that can only raise severity still apply: the hash may be
+// the platform manifest digest while the runtime reports the index digest (or
+// the other way around), and the image digest alone cannot tell them apart.
 func componentMatch(
 	component *openvex.Component, image *imagematch.Image, lenient bool,
 ) componentResult {
@@ -569,6 +603,23 @@ func componentMatch(
 		}
 	}
 
+	result := identifierMatch(component, image, lenient)
+	if !lenient && result.kind == imagematch.KindImage && hashConflicts(component, image) {
+		return componentResult{
+			kind: imagematch.KindOtherImage, strength: imagematch.StrengthNone,
+			packageKey: "", lenientOnly: false, tagConflict: false,
+		}
+	}
+
+	return result
+}
+
+// identifierMatch classifies a product component by its identifiers, strictly
+// and, when lenient is set and strict matching does not identify the image,
+// with imagematch.Image.MatchLenient.
+func identifierMatch(
+	component *openvex.Component, image *imagematch.Image, lenient bool,
+) componentResult {
 	strict := matchComponentIdentifiers(component, image.Match)
 	if !lenient || strict.kind == imagematch.KindImage {
 		return strict
@@ -615,7 +666,8 @@ func matchComponentIdentifiers(
 		idKind, idStrength := matchIdentifier(identifier)
 
 		switch {
-		case idKind == imagematch.KindImage && idStrength > strength:
+		case idKind == imagematch.KindImage &&
+			(kind != imagematch.KindImage || idStrength > strength):
 			kind, strength, packageKey = idKind, idStrength, ""
 		case idKind == imagematch.KindPackage && kind != imagematch.KindImage:
 			parsed, err := purl.Parse(identifier)
@@ -635,6 +687,18 @@ func matchComponentIdentifiers(
 func hashMatches(component *openvex.Component, image *imagematch.Image) bool {
 	for algorithm, hash := range component.Hashes {
 		if image.MatchesHash(string(algorithm), string(hash)) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// hashConflicts reports whether any product hash uses the algorithm of an
+// image digest without equaling one, so the product identifies another image.
+func hashConflicts(component *openvex.Component, image *imagematch.Image) bool {
+	for algorithm, hash := range component.Hashes {
+		if image.ConflictsByHash(string(algorithm), string(hash)) {
 			return true
 		}
 	}

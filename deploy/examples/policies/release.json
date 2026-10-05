@@ -1,7 +1,7 @@
 {
   "release": {
     "missingPolicy": "warn",
-    "trustedRegistries": ["ghcr.io/myorg/**"],
+    "trustedRegistries": ["pkg:oci/ghcr.io/myorg/**"],
     "requirePackageId": true
   },
   "slsa": {

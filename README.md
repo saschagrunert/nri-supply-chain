@@ -82,13 +82,13 @@ See the [compatibility section](#compatibility) for supported versions.
 
    ```console
    nri-supply-chain --config config.toml \
-     verify ghcr.io/saschagrunert/nri-supply-chain:0.6.0
+     verify ghcr.io/saschagrunert/nri-supply-chain:0.7.0
    ```
 
    The default output is a colored table:
 
    ```text
-   Image: ghcr.io/saschagrunert/nri-supply-chain:0.6.0
+   Image: ghcr.io/saschagrunert/nri-supply-chain:0.7.0
    Digest: sha256:abc123...
    Namespace: default
    Policy: /etc/nri-supply-chain/policies/default.json
@@ -98,23 +98,23 @@ See the [compatibility section](#compatibility) for supported versions.
    TYPE           STATUS   DETAIL
    SLSA           pass     SLSA provenance verified
    VEX            pass     VEX verification passed
-   NOTATION       pass     no Notation signature found for image ghcr.io/saschagrunert/nri-supply-chain:0.6.0
+   NOTATION       pass     no Notation signature found for image ghcr.io/saschagrunert/nri-supply-chain:0.7.0
    SBOM           pass     SBOM verification passed
-   SCAI           pass     no SCAI attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.6.0
+   SCAI           pass     no SCAI attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.7.0
    SOURCE         pass     source verification passed
    BUILDENV       pass     build environment verification passed
    VULNSCAN       pass     vulnerability scan verification passed
    TESTRESULT     pass     test result verification passed
    RELEASE        pass     release verification passed
-   RUNTIMETRACE   pass     no runtime trace attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.6.0
-   SCORECARD      pass     no OpenSSF Scorecard attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.6.0
+   RUNTIMETRACE   pass     no runtime trace attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.7.0
+   SCORECARD      pass     no OpenSSF Scorecard attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.7.0
    ```
 
    Use `--output json` for machine-readable output:
 
    ```json
    {
-     "image": "ghcr.io/saschagrunert/nri-supply-chain:0.6.0",
+     "image": "ghcr.io/saschagrunert/nri-supply-chain:0.7.0",
      "digest": "sha256:abc123...",
      "namespace": "default",
      "allowed": true,
@@ -135,7 +135,7 @@ See the [compatibility section](#compatibility) for supported versions.
          "type": "notation",
          "passed": true,
          "status": "pass",
-         "detail": "no Notation signature found for image ghcr.io/saschagrunert/nri-supply-chain:0.6.0"
+         "detail": "no Notation signature found for image ghcr.io/saschagrunert/nri-supply-chain:0.7.0"
        },
        {
          "type": "sbom",
@@ -147,7 +147,7 @@ See the [compatibility section](#compatibility) for supported versions.
          "type": "scai",
          "passed": true,
          "status": "pass",
-         "detail": "no SCAI attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.6.0"
+         "detail": "no SCAI attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.7.0"
        },
        {
          "type": "source",
@@ -183,13 +183,13 @@ See the [compatibility section](#compatibility) for supported versions.
          "type": "runtimetrace",
          "passed": true,
          "status": "pass",
-         "detail": "no runtime trace attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.6.0"
+         "detail": "no runtime trace attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.7.0"
        },
        {
          "type": "scorecard",
          "passed": true,
          "status": "pass",
-         "detail": "no OpenSSF Scorecard attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.6.0"
+         "detail": "no OpenSSF Scorecard attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.7.0"
        }
      ]
    }
@@ -230,7 +230,7 @@ See the [compatibility section](#compatibility) for supported versions.
    With this policy the default table output becomes:
 
    ```text
-   Image: ghcr.io/saschagrunert/nri-supply-chain:0.6.0
+   Image: ghcr.io/saschagrunert/nri-supply-chain:0.7.0
    Digest: sha256:abc123...
    Namespace: default
    Policy: /etc/nri-supply-chain/policies/default.json
@@ -408,11 +408,17 @@ using [cosign](https://github.com/sigstore/cosign). An SBOM (Software Bill of
 Materials) is generated with [syft](https://github.com/anchore/syft) for each
 release. SLSA provenance for binary artifacts is generated using the
 [slsa-github-generator](https://github.com/slsa-framework/slsa-github-generator)
-and uploaded as a release asset. Both versioned releases and the `latest` tag
-include full attestation coverage: SLSA provenance, VEX, SBOM,
-self-verification, and a
+and uploaded as a release asset. Versioned releases, the `latest` tag (the
+release with the highest version, excluding prereleases) and the `main` tag (the
+most recent verified main branch build) include
+full attestation coverage: SLSA provenance, VEX, SBOM, self-verification, and a
 [VSA](https://slsa.dev/spec/v1.0/verification_summary) recording the
 verification result from the release pipeline.
+
+The GitHub release is created as a draft and only published after the release
+image was verified, and `latest` only moves after that verification.
+The version image tag is pushed before the attestations are added, so verify
+the image signature and VSA (steps 5 and 6) before using an image.
 
 To verify a release:
 

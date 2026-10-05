@@ -15,14 +15,22 @@
 package sbom_test
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
+	"github.com/saschagrunert/nri-supply-chain/internal/sbom"
+	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 )
 
-// emptyNamePURL is a purl without a name, which cannot be parsed.
-const emptyNamePURL = "pkg:npm/"
+const (
+	// emptyNamePURL is a purl without a name, which cannot be parsed.
+	emptyNamePURL = "pkg:npm/"
+	lodashPURL    = "pkg:npm/lodash"
+	fooBarPyPI    = "pkg:pypi/foo-bar"
+)
 
 func cvssThresholdPolicy(maxScore *float64, minSeverity string) *policy.Policy {
 	return &policy.Policy{
@@ -143,6 +151,7 @@ func TestVerifyCVSSIgnoresResolvedVulnerabilitiesInSBOM(t *testing.T) {
 
 	for _, analysis := range []string{
 		`{"state":"not_affected","justification":"code_not_reachable"}`,
+		`{"state":"not_affected","detail":"The vulnerable function is never called."}`,
 		`{"state":"resolved"}`,
 		`{"state":"false_positive"}`,
 		`{"state":"resolved_with_pedigree"}`,
@@ -182,7 +191,11 @@ func TestVerifyCVSSNotAffectedRequiresJustification(t *testing.T) {
 		`{"state":"not_affected"}`,
 		`{"state":"not_affected","justification":""}`,
 		`{"state":"not_affected","justification":"  "}`,
+		`{"state":"not_affected","detail":"  "}`,
 		`{"state":"NOT_AFFECTED"}`,
+		// Analysis states are case-sensitive, like in the VEX check.
+		`{"state":"Not_Affected","justification":"code_not_reachable"}`,
+		`{"state":"RESOLVED"}`,
 	} {
 		vulnerability := `{"id":"CVE-1","ratings":[{"score":9.8,"severity":"critical"}],` +
 			`"analysis":` + analysis + `}`
@@ -201,7 +214,7 @@ func TestVerifyCVSSNotAffectedRequiresJustification(t *testing.T) {
 func TestVerifyComponentDenyListWithInvalidPURL(t *testing.T) {
 	t.Parallel()
 
-	deny := []string{"pkg:npm/lodash"}
+	deny := []string{lodashPURL}
 
 	// An unrelated malformed purl does not hide a denied valid one.
 	passed, _ := verifyRaw(t,
@@ -250,7 +263,7 @@ func TestVerifyComponentListMatching(t *testing.T) {
 	const lodashVersioned = "pkg:npm/lodash@4.17.20"
 
 	var (
-		lodashEntry  = []string{"pkg:npm/lodash"}
+		lodashEntry  = []string{lodashPURL}
 		npmTypeEntry = []string{"pkg:npm"}
 
 		eventStreamEntry = []string{"pkg:npm/event-stream@3.3"}
@@ -375,6 +388,27 @@ func TestVerifyComponentListMatching(t *testing.T) {
 			true,
 		},
 		{"deny whole type matches invalid purl", emptyNamePURL, npmTypeEntry, nil, false},
+		{
+			"deny invalid pypi purl with unnormalized name",
+			"pkg:pypi/Foo_Bar@1.0%zz",
+			[]string{fooBarPyPI},
+			nil,
+			false,
+		},
+		{
+			"deny invalid pypi purl with dotted name",
+			"pkg:pypi/foo.bar@%zz",
+			[]string{fooBarPyPI},
+			nil,
+			false,
+		},
+		{
+			"deny invalid pypi purl needs a segment boundary",
+			"pkg:pypi/foo_bar_baz@%zz",
+			[]string{fooBarPyPI},
+			nil,
+			true,
+		},
 		{"invalid deny entry fails", "pkg:npm/c@3", []string{"pkg:npm/%zz"}, nil, false},
 		{"allow rejects name prefix", "pkg:npm/lodash-evil@1", nil, lodashEntry, false},
 		{"allow matches normalized identity", "pkg:NPM/%6Codash@1", nil, lodashEntry, true},
@@ -412,5 +446,46 @@ func TestVerifyComponentListMatching(t *testing.T) {
 				t.Errorf("passed = %v, want %v (detail %q)", passed, tc.wantPass, detail)
 			}
 		})
+	}
+}
+
+func TestVerifyComponentListDeeplyNestedComponents(t *testing.T) {
+	t.Parallel()
+
+	nested := func(levels int) string {
+		inner := `{"name":"lodash","purl":"pkg:npm/lodash@4.17.20"}`
+		for range levels {
+			inner = `{"name":"x","type":"file","components":[` + inner + `]}`
+		}
+
+		return `{"bomFormat":"CycloneDX","components":[` + inner + `]}`
+	}
+
+	pol := componentListPolicy([]string{lodashPURL}, nil)
+
+	passed, detail := verifyRaw(t, nested(32), pol)
+	if passed || !strings.Contains(detail, "denied component") {
+		t.Errorf("expected the nested denied component to fail, got passed %v, %q", passed, detail)
+	}
+
+	// Deeper nesting must not hide the denied component.
+	att := testutil.WrapInToto(t, json.RawMessage(nested(40)), testDigest, testPredicateType)
+
+	_, err := sbom.Verify(context.Background(), att, pol, testDigest)
+	if err == nil || !strings.Contains(err.Error(), "nested deeper") {
+		t.Errorf("expected a nesting error, got %v", err)
+	}
+}
+
+func TestVerifyComponentListSPDXReferenceTypeCase(t *testing.T) {
+	t.Parallel()
+
+	doc := `{"spdxVersion":"SPDX-2.3","packages":[{"SPDXID":"SPDXRef-a","name":"lodash",` +
+		`"externalRefs":[{"referenceCategory":"PACKAGE-MANAGER","referenceType":"PURL",` +
+		`"referenceLocator":"pkg:npm/lodash@4.17.20"}]}]}`
+
+	passed, detail := verifyRaw(t, doc, componentListPolicy([]string{lodashPURL}, nil))
+	if passed || !strings.Contains(detail, "denied component") {
+		t.Errorf("expected the denied component to fail, got passed %v, %q", passed, detail)
 	}
 }

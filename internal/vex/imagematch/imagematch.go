@@ -284,6 +284,21 @@ func (img *Image) MatchesHash(algorithm, value string) bool {
 	return false
 }
 
+// ConflictsByHash reports whether a hash entry uses the algorithm of an image
+// digest but equals none of the image digests, so it identifies a different
+// image. Hashes using other algorithms never conflict.
+func (img *Image) ConflictsByHash(algorithm, value string) bool {
+	normalized := NormalizeAlgorithm(algorithm)
+
+	for _, candidate := range img.digests {
+		if NormalizeAlgorithm(candidate.algorithm) == normalized {
+			return !img.MatchesHash(algorithm, value)
+		}
+	}
+
+	return false
+}
+
 // NormalizeAlgorithm converts hash algorithm names to a lowercase form without
 // hyphens or underscores so "SHA-256", "sha_256", and "sha256" compare equal.
 func NormalizeAlgorithm(algorithm string) string {
@@ -342,7 +357,7 @@ func (img *Image) nameMatches(parsed *purl.PURL, purlTag string) bool {
 		return false
 	}
 
-	if img.Tag != "" && purlTag != "" && !strings.EqualFold(purlTag, img.Tag) {
+	if img.Tag != "" && purlTag != "" && purlTag != img.Tag {
 		return false
 	}
 
@@ -407,8 +422,8 @@ func explicitTag(ref string) string {
 	base, _, _ := strings.Cut(ref, "@")
 
 	lastSegment := base
-	if idx := strings.LastIndex(base, "/"); idx >= 0 {
-		lastSegment = base[idx+1:]
+	if _, after, found := strings.CutLast(base, "/"); found {
+		lastSegment = after
 	}
 
 	_, tag, found := strings.Cut(lastSegment, ":")

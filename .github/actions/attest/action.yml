@@ -20,6 +20,19 @@ inputs:
 runs:
   using: composite
   steps:
+    # Inputs reach the scripts below only through environment variables, so
+    # they are never expanded into the script source. The digest becomes part
+    # of registry paths and predicates and must be a plain sha256 digest.
+    - name: Validate inputs
+      shell: bash
+      env:
+        DIGEST: ${{ inputs.digest }}
+      run: |
+        if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+          echo "::error::digest input is not a sha256 digest: ${DIGEST}"
+          exit 1
+        fi
+
     # The SLSA generator stores provenance in the cosign .att tag
     # (raw DSSE envelope). Newer cosign versions no longer read .att
     # tags via `cosign download attestation`, so we fetch the tag
@@ -29,14 +42,14 @@ runs:
     - name: Re-attest SLSA provenance
       shell: bash
       env:
+        DIGEST: ${{ inputs.digest }}
         GH_TOKEN: ${{ github.token }}
       run: |
-        DIGEST="${{ inputs.digest }}"
         ATT_TAG="sha256-${DIGEST#sha256:}.att"
         REPO="${IMAGE#ghcr.io/}"
 
         TOKEN=$(curl -sf \
-          -u "${{ github.actor }}:${GH_TOKEN}" \
+          -u "${GITHUB_ACTOR}:${GH_TOKEN}" \
           "https://ghcr.io/token?scope=repository:${REPO}:pull" | jq -r '.token // empty') || true
 
         if [ -z "$TOKEN" ]; then
@@ -92,12 +105,14 @@ runs:
         trivyignores: .trivyignore
         format: json
         output: /tmp/trivy-results.json
-        version: v0.74.0
+        version: v0.75.0
 
     - name: Attest container image VEX
       shell: bash
+      env:
+        DIGEST: ${{ inputs.digest }}
       run: |
-        PRODUCT="pkg:oci/nri-supply-chain@${{ inputs.digest }}"
+        PRODUCT="pkg:oci/nri-supply-chain@${DIGEST}"
         TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
         # Parse .trivyignore for suppressed vulnerability IDs (CVE-*, GO-*, or
@@ -155,8 +170,8 @@ runs:
         cat > /tmp/vex-predicate.json <<EOF
         {
           "@context": "https://openvex.dev/ns/v0.2.0",
-          "@id": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/vex",
-          "author": "https://github.com/${{ github.repository }}/.github/workflows/release.yml",
+          "@id": "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/vex",
+          "author": "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml",
           "timestamp": "${TIMESTAMP}",
           "statements": [
             {
@@ -171,22 +186,28 @@ runs:
         cosign attest --predicate /tmp/vex-predicate.json \
           --type https://openvex.dev/ns \
           --yes \
-          "${IMAGE}@${{ inputs.digest }}"
+          "${IMAGE}@${DIGEST}"
 
     - name: Generate container image SBOM
       shell: bash
-      run: syft "${IMAGE}@${{ inputs.digest }}" -o spdx-json=/tmp/sbom.spdx.json
+      env:
+        DIGEST: ${{ inputs.digest }}
+      run: syft "${IMAGE}@${DIGEST}" -o spdx-json=/tmp/sbom.spdx.json
 
     - name: Attest container image SBOM
       shell: bash
+      env:
+        DIGEST: ${{ inputs.digest }}
       run: |
         cosign attest --predicate /tmp/sbom.spdx.json \
           --type https://spdx.dev/Document \
           --yes \
-          "${IMAGE}@${{ inputs.digest }}"
+          "${IMAGE}@${DIGEST}"
 
     - name: Attest vulnerability scan results
       shell: bash
+      env:
+        DIGEST: ${{ inputs.digest }}
       run: |
         TRIVY_VERSION=$(trivy --version 2>/dev/null | head -1 | awk '{print $2}' || echo "unknown")
         TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -214,7 +235,7 @@ runs:
           --arg uri "https://trivy.dev" \
           --arg version "$TRIVY_VERSION" \
           --arg scanFinishedOn "$TIMESTAMP" \
-          --arg ciRun "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+          --arg ciRun "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
           --argjson vulns "$VULNS" \
           '{
             scanner: {uri: $uri, version: $version, result: $vulns},
@@ -224,15 +245,21 @@ runs:
         cosign attest --predicate /tmp/vulnscan-predicate.json \
           --type https://in-toto.io/attestation/vulns/v0.2 \
           --yes \
-          "${IMAGE}@${{ inputs.digest }}"
+          "${IMAGE}@${DIGEST}"
 
     - name: Attest test results
       shell: bash
       env:
+        DIGEST: ${{ inputs.digest }}
         GH_TOKEN: ${{ github.token }}
         CI_RUN_ID: ${{ inputs.ci-run-id }}
+        WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
       run: |
-        CI_RUN="${CI_RUN_ID:-${{ github.event.workflow_run.id }}}"
+        CI_RUN="${CI_RUN_ID:-${WORKFLOW_RUN_ID}}"
+        if [ -n "$CI_RUN" ] && [[ ! "$CI_RUN" =~ ^[0-9]+$ ]]; then
+          echo "::error::ci-run-id is not a workflow run ID: ${CI_RUN}"
+          exit 1
+        fi
 
         if [ -z "$CI_RUN" ]; then
           echo "No CI run ID available, skipping test result attestation"
@@ -241,10 +268,10 @@ runs:
 
         TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
         GO_VERSION=$(go version 2>/dev/null | awk '{print $3}' || echo "unknown")
-        CI_RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${CI_RUN}"
+        CI_RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN}"
 
         SUITES=$(gh api --paginate \
-          "repos/${{ github.repository }}/actions/runs/${CI_RUN}/jobs" \
+          "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN}/jobs" \
           --jq '.jobs[] | select(.name | test("test|lint|fuzz"; "i")) | {
             name: .name,
             result: (if .conclusion == "success" then "pass" elif .conclusion == "failure" then "fail" else .conclusion end),
@@ -282,7 +309,7 @@ runs:
         cosign attest --predicate /tmp/testresult-predicate.json \
           --type https://in-toto.io/attestation/test-result/v0.1 \
           --yes \
-          "${IMAGE}@${{ inputs.digest }}"
+          "${IMAGE}@${DIGEST}"
 
     # The source attestation records the commit the image was built from. On
     # workflow_run events github.sha is the default branch head at the time
@@ -293,6 +320,7 @@ runs:
     - name: Attest source provenance
       shell: bash
       env:
+        DIGEST: ${{ inputs.digest }}
         SOURCE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         SOURCE_BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
       run: |
@@ -301,7 +329,7 @@ runs:
         {
           "sourceLocations": [
             {
-              "uri": "https://github.com/${{ github.repository }}",
+              "uri": "https://github.com/${GITHUB_REPOSITORY}",
               "branch": "${SOURCE_BRANCH}",
               "digest": {"sha1": "${SOURCE_SHA}"}
             }
@@ -314,21 +342,23 @@ runs:
         cosign attest --predicate /tmp/source-predicate.json \
           --type https://slsa.dev/source/v1 \
           --yes \
-          "${IMAGE}@${{ inputs.digest }}"
+          "${IMAGE}@${DIGEST}"
 
     # Only properties established by the build definition are recorded. The
     # image build pulls base images over the network and its reproducibility
     # is not verified, so no HERMETIC or REPRODUCIBLE claims are made.
     - name: Attest build environment
       shell: bash
+      env:
+        DIGEST: ${{ inputs.digest }}
       run: |
         GO_VERSION=$(go version 2>/dev/null | awk '{print $3}' || echo "unknown")
         cat > /tmp/buildenv-predicate.json <<EOF
         {
           "environment": [
             {"name": "GITHUB_ACTIONS", "value": "true"},
-            {"name": "RUNNER_OS", "value": "${{ runner.os }}"},
-            {"name": "RUNNER_ARCH", "value": "${{ runner.arch }}"},
+            {"name": "RUNNER_OS", "value": "${RUNNER_OS}"},
+            {"name": "RUNNER_ARCH", "value": "${RUNNER_ARCH}"},
             {"name": "GO_VERSION", "value": "${GO_VERSION}"},
             {"name": "CGO_ENABLED", "value": "0"},
             {"name": "GO_FLAGS", "value": "-mod=vendor -trimpath"}
@@ -338,27 +368,31 @@ runs:
         cosign attest --predicate /tmp/buildenv-predicate.json \
           --type https://in-toto.io/attestation/build-env/v1 \
           --yes \
-          "${IMAGE}@${{ inputs.digest }}"
+          "${IMAGE}@${DIGEST}"
 
     - name: Attest release
       shell: bash
+      env:
+        DIGEST: ${{ inputs.digest }}
+        POLICY_REF: ${{ inputs.policy-ref }}
       run: |
+        REPO_NAME="${GITHUB_REPOSITORY#*/}"
         TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
         cat > /tmp/release-predicate.json <<EOF
         {
-          "purl": "pkg:oci/${{ github.event.repository.name }}@${{ inputs.digest }}?repository_url=ghcr.io/${{ github.repository_owner }}",
+          "purl": "pkg:oci/${REPO_NAME}@${DIGEST}?repository_url=ghcr.io/${GITHUB_REPOSITORY_OWNER}",
           "releaseType": "production",
-          "packageId": "${{ github.event.repository.name }}-${{ inputs.policy-ref }}",
+          "packageId": "${REPO_NAME}-${POLICY_REF}",
           "metadata": {
             "publishedOn": "${TIMESTAMP}",
-            "ciRun": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            "ciRun": "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           }
         }
         EOF
         cosign attest --predicate /tmp/release-predicate.json \
           --type https://in-toto.io/attestation/release/v0.1 \
           --yes \
-          "${IMAGE}@${{ inputs.digest }}"
+          "${IMAGE}@${DIGEST}"
 
     # The image is verified against the committed policy.json, which the VSA
     # references by URI and digest. It names this repository, so a fork must
@@ -366,8 +400,10 @@ runs:
     - name: Verify container image
       shell: bash
       env:
+        DIGEST: ${{ inputs.digest }}
         POLICY_FILE: ${{ github.action_path }}/policy.json
         REPOSITORY: ${{ github.repository }}
+        VERIFY_BINARY: ${{ inputs.verify-binary }}
       run: |
         if ! jq -e --arg san "https://github.com/${REPOSITORY}/**" \
           '.trust.sanPatterns | index($san)' "$POLICY_FILE" >/dev/null; then
@@ -380,17 +416,17 @@ runs:
         verification = "enforce"
         policy_dir = "/tmp/verify-policies"
         EOF
-        if [ -n "${{ inputs.verify-binary }}" ]; then
-          ${{ inputs.verify-binary }} \
+        if [ -n "$VERIFY_BINARY" ]; then
+          "$VERIFY_BINARY" \
             --config /tmp/verify-config.toml \
-            verify "${IMAGE}@${{ inputs.digest }}"
+            verify "${IMAGE}@${DIGEST}"
         else
           docker run --rm \
             -v /tmp/verify-policies:/tmp/verify-policies:ro \
             -v /tmp/verify-config.toml:/tmp/verify-config.toml:ro \
-            "${IMAGE}@${{ inputs.digest }}" \
+            "${IMAGE}@${DIGEST}" \
             --config /tmp/verify-config.toml \
-            verify "${IMAGE}@${{ inputs.digest }}"
+            verify "${IMAGE}@${DIGEST}"
         fi
 
     # This self-attestation VSA is for bootstrapping only. Because the same
@@ -399,18 +435,20 @@ runs:
     - name: Attest container image VSA
       shell: bash
       env:
+        DIGEST: ${{ inputs.digest }}
         POLICY_FILE: ${{ github.action_path }}/policy.json
+        POLICY_REF: ${{ inputs.policy-ref }}
       run: |
         POLICY_DIGEST=$(sha256sum "$POLICY_FILE" | cut -d ' ' -f 1)
         cat > /tmp/vsa-predicate.json <<EOF
         {
           "verifier": {
-            "id": "https://github.com/${{ github.repository }}/.github/workflows/release.yml"
+            "id": "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml"
           },
           "timeVerified": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-          "resourceUri": "${IMAGE}@${{ inputs.digest }}",
+          "resourceUri": "${IMAGE}@${DIGEST}",
           "policy": {
-            "uri": "https://github.com/${{ github.repository }}/blob/${{ inputs.policy-ref }}/.github/actions/attest/policy.json",
+            "uri": "https://github.com/${GITHUB_REPOSITORY}/blob/${POLICY_REF}/.github/actions/attest/policy.json",
             "digest": {"sha256": "${POLICY_DIGEST}"}
           },
           "verificationResult": "PASSED",
@@ -421,4 +459,4 @@ runs:
         cosign attest --predicate /tmp/vsa-predicate.json \
           --type https://slsa.dev/verification_summary/v1 \
           --yes \
-          "${IMAGE}@${{ inputs.digest }}"
+          "${IMAGE}@${DIGEST}"

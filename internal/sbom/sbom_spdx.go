@@ -183,7 +183,7 @@ func buildSPDXPackage(pkg *spdxPackage) sbomPackage {
 func findSPDXPURL(refs []spdxExternalRef) string {
 	for idx := range refs {
 		ref := &refs[idx]
-		if ref.ReferenceType == refTypePURL && ref.ReferenceLocator != "" {
+		if strings.EqualFold(ref.ReferenceType, refTypePURL) && ref.ReferenceLocator != "" {
 			return ref.ReferenceLocator
 		}
 	}
@@ -230,7 +230,7 @@ func (d *sbomData) addPURLs(pkg *spdxPackage) {
 	for idx := range pkg.ExternalRefs {
 		ref := &pkg.ExternalRefs[idx]
 
-		if ref.ReferenceType == refTypePURL && ref.ReferenceLocator != "" {
+		if strings.EqualFold(ref.ReferenceType, refTypePURL) && ref.ReferenceLocator != "" {
 			d.purls = append(d.purls, ref.ReferenceLocator)
 		}
 	}

@@ -114,8 +114,8 @@ When a container is created, the plugin performs verification in this order:
      verified; only when every referrer was fetched, none verified and one
      failed verification is the outcome a verification failure (see below). Referrer processing is limited per image to 50
      Sigstore bundles, 10 Notation signatures and 5 baseline SBOMs among the
-     distinct referrer manifests, to referrer manifests of at most 4 MiB, to
-     the configured attestation size, and to 100 MiB downloaded per fetch
+     distinct referrer manifests, to referrer manifests and referrers
+     listings of at most 4 MiB, to the configured attestation size, and to 100 MiB downloaded per fetch
      (referrer manifests and layers, including referrers that turn out to be
      junk). Duplicate referrer manifests and identical bundle blobs are
      counted once. Exceeding any of these limits denies the image as an
@@ -130,9 +130,14 @@ When a container is created, the plugin performs verification in this order:
      repository. Legacy cosign layers (a DSSE envelope with the certificate
      and Rekor bundle in layer annotations) are converted into Sigstore
      bundles and verified the same way; key-signed legacy layers are tried
-     against every trusted key. Only a missing `.att` tag (HTTP 404) means "no
-     attestations"; registry transport errors fail the fetch and a tag that
-     does not hold a readable attestation image is a verification failure.
+     against every trusted key, and are handled like key-signed referrers
+     when a trusted key file cannot be loaded (see below). Only a missing
+     `.att` tag (HTTP 404) means "no attestations"; registry transport errors
+     fail the fetch, a tag whose manifest or layers exceed the size limits
+     denies the image as an incomplete attestation set, and a tag that does
+     not hold a readable attestation image is a verification failure. Notation signatures found
+     among the referrers are evaluated by the Notation check even when the
+     tag fails verification.
    - **prefer-bundle**: Reads attestations from the local bundle store first.
      If no attestations are found for the image digest (or the bundle store is
      missing), falls back to the OCI registry path described above.
@@ -162,10 +167,17 @@ When a container is created, the plugin performs verification in this order:
    manifest. Blob digests and sizes are re-checked on every read; a blob
    that was modified, resized, removed, or replaced by something other than
    a regular file (a directory, FIFO, or a symbolic link leading out of the
-   store, also in place of one of its parent directories) after import denies
-   the image as an incomplete attestation set, while a blob the plugin cannot
-   read for local reasons (missing permissions or file descriptor exhaustion)
-   follows `fetch_failure_policy`. The predicate type
+   store, also in place of one of its parent directories) after import, or
+   that the manifest lists above the 100 MiB read limit or with a digest
+   algorithm other than SHA-256, denies the image as an incomplete
+   attestation set, while a blob the plugin cannot read for local reasons
+   (missing permissions or file descriptor exhaustion) follows
+   `fetch_failure_policy`. A bundle that `bundle_expiry_policy = "deny"`
+   rejects, and a manifest signature that `bundle_signature_key` or
+   `require_bundle_signature` requires but that is missing or invalid, deny
+   the image the same way; a `bundle_signature_key` that cannot be read
+   follows `fetch_failure_policy` and is read again on the next
+   verification. The predicate type
    comes from the verified statement rather than the unsigned bundle
    manifest, and bundles created by releases that stored unsigned payloads
    fail verification and must be recreated. Notation signatures are not
@@ -261,18 +273,26 @@ referrers to an image cannot turn a denial into a lenient fetch failure, a
 foreign signature does not deny an otherwise acceptable image, and junk on one
 image cannot affect other images from the same registry. An incomplete
 attestation set is different: when a referrer count or size limit is exceeded,
-or a stored bundle blob fails its integrity check, the image is denied (a
+a stored bundle blob fails its integrity check, or a bundle fails its manifest
+signature or expiry check, the image is denied (a
 failing `attestation` check result) regardless of `fetch_failure_policy` and
 the missing policies, because a dropped attestation could flip the decision.
 Trust material that cannot be loaded (a Sigstore trusted root that cannot be
 fetched, an unreadable key file) is an availability problem rather than a
-verification failure and follows `fetch_failure_policy`. When several trusted roots are configured, this
-applies as soon as one root in scope for the attestation could not be loaded,
-even if another root loaded and rejected the attestation, because the
-unavailable root might have verified it. A trusted root that cannot be
-fetched and has no cached or pre-seeded fallback is retried at most every 30
-seconds, so verifications in a disconnected environment fail fast instead of
-each waiting for the TUF repository. While the breaker is
+verification failure and follows `fetch_failure_policy`. When several trusted
+roots are configured, this applies as soon as one root in scope for the
+attestation could not be loaded, even if another root loaded and rejected the
+attestation, because the unavailable root might have verified it. A trusted
+root that cannot be fetched and has no cached or pre-seeded fallback is
+retried at most every 30 seconds, so verifications in a disconnected
+environment fail fast instead of each waiting for the TUF repository. A
+key-signed attestation (a referrer, a cosign `.att` tag layer or a bundled
+attestation) that cannot be checked because a trusted key file is unreadable
+is the exception when another Sigstore attestation of the image verified: it
+is then ignored like an attestation that failed verification, because anyone
+with push access can attach one to a registry image and it must not hide the
+verified attestations behind `fetch_failure_policy`. When nothing verified,
+the unreadable key file follows `fetch_failure_policy`. While the breaker is
 half-open, only the single probe request decides whether it closes or opens
 again; requests admitted before the breaker opened cannot release or decide
 the probe.

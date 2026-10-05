@@ -15,6 +15,16 @@ load helpers
 	[[ "$status" -eq 2 ]]
 }
 
+@test "plugin with an explicit missing default config file fails" {
+	if [[ -e /etc/nri-supply-chain/config.toml ]]; then
+		skip "default config file exists on this host"
+	fi
+	run timeout 10 "$BINARY" --config /etc/nri-supply-chain/config.toml \
+		--nri-socket "$TEST_DIR/nri.sock"
+	[[ "$status" -eq 2 ]]
+	[[ "$output" == *"loading config file"* ]]
+}
+
 @test "validate allows missing config file when requested" {
 	if [[ -e /etc/nri-supply-chain/config.toml ]]; then
 		skip "default config file exists on this host"

@@ -357,6 +357,12 @@ func (p *Plugin) ExportStoreContainerWithPURLsFor(containerID string, purls []st
 	})
 }
 
+// ExportContinuousVerifierInterval returns the interval of the running
+// continuous verifier.
+func (p *Plugin) ExportContinuousVerifierInterval() time.Duration {
+	return time.Duration(p.remediation.interval.Load())
+}
+
 // ExportAdmissionContext exposes admissionContext for external tests.
 func (p *Plugin) ExportAdmissionContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	return p.admissionContext(ctx)

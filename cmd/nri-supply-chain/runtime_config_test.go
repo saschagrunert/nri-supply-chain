@@ -80,3 +80,18 @@ func TestSetupServeConfigWithoutFile(t *testing.T) {
 	_, err = setupConfig("")
 	testutil.AssertError(t, err)
 }
+
+func TestSetupServeConfigMissingFile(t *testing.T) {
+	t.Parallel()
+
+	_, err := setupServeConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	testutil.AssertError(t, err)
+
+	// An explicit --config naming the missing default file must fail instead
+	// of serving the built-in defaults, which disable verification.
+	_, statErr := os.Stat(defaultConfigPath)
+	if os.IsNotExist(statErr) {
+		_, err = setupServeConfig(defaultConfigPath)
+		testutil.AssertError(t, err)
+	}
+}

@@ -150,7 +150,7 @@ func TestVerifyReportsVerifiedAndModeInWarn(t *testing.T) {
 	cfg.Verification = config.ModeWarn
 
 	verif, _ := newHardeningVerifier(t, cfg, newScriptedFetcher(nil), map[string]string{
-		testDefaultPolicy: `{"slsa": {"missingPolicy": "deny"}}`,
+		testDefaultPolicy: testSLSADenyPolicy,
 	})
 
 	result, err := verif.Verify(context.Background(),
@@ -440,6 +440,227 @@ func TestReloadKeyRotationInvalidatesCache(t *testing.T) {
 	if got := verif.ExportGeneration(); got == unchanged {
 		t.Error("expected key rotation to invalidate cached results")
 	}
+}
+
+func TestReloadReplacingFetcherInvalidatesCache(t *testing.T) {
+	t.Parallel()
+
+	storePath := createTestBundleStore(t, time.Now().Add(-time.Hour).UTC())
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.Offline.Mode = config.OfflineModeOffline
+	cfg.Offline.AttestationStore = storePath
+
+	fetcher, err := verifier.NewFetcher(t.Context(), cfg, nil)
+	testutil.AssertNoError(t, err)
+
+	verif, _ := newHardeningVerifier(t, cfg, fetcher, map[string]string{
+		testDefaultPolicy: `{}`,
+	})
+
+	reloadCfg := *verif.CurrentConfig()
+	unchanged := verif.ExportGeneration()
+
+	// A replaced bundle store can drop attestations that cached results
+	// were based on.
+	replaced := createTestBundleStore(t, time.Now().UTC())
+	testutil.AssertNoError(t, os.Rename(
+		filepath.Join(replaced, "bundle-manifest.json"),
+		filepath.Join(storePath, "bundle-manifest.json"),
+	))
+
+	testutil.AssertNoError(t, verif.Reload(context.Background(), &reloadCfg))
+
+	if verif.ExportFetcher() == fetcher {
+		t.Fatal("expected the reload to replace the fetcher of the changed bundle store")
+	}
+
+	if got := verif.ExportGeneration(); got == unchanged {
+		t.Error("expected replacing the fetcher to invalidate cached results")
+	}
+}
+
+// TestVerificationDurationSkipsChecksThatDidNotRun checks that VSA checks
+// without VSA attestations, and checks without an attestation fetcher, do
+// not observe a zero duration that would skew the latency percentiles.
+func TestVerificationDurationSkipsChecksThatDidNotRun(t *testing.T) {
+	t.Parallel()
+
+	for name, fetcher := range map[string]attestation.Fetcher{
+		"no attestations": newScriptedFetcher(nil),
+		"no fetcher":      nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := config.DefaultConfig()
+			cfg.Verification = config.ModeWarn
+
+			verif, met := newHardeningVerifier(t, cfg, fetcher, map[string]string{
+				testDefaultPolicy: `{}`,
+			})
+
+			_, err := verif.Verify(
+				context.Background(),
+				newRequest(testHardeningImage, testFetchDigest, "", testHardeningNS, ""),
+			)
+			testutil.AssertNoError(t, err)
+
+			if met.VerificationDuration.DeleteLabelValues(string(types.CheckTypeVSA)) {
+				t.Error("expected no VSA duration without VSA attestations")
+			}
+
+			if fetcher == nil &&
+				met.VerificationDuration.DeleteLabelValues(string(types.CheckTypeSLSA)) {
+				t.Error("expected no check durations without an attestation fetcher")
+			}
+		})
+	}
+}
+
+// gatedFetcher blocks its first fetch until released and fails it with a
+// connection error; later fetches find no attestations.
+type gatedFetcher struct {
+	calls   atomic.Int32
+	started chan struct{}
+	release chan struct{}
+}
+
+func (f *gatedFetcher) Fetch(
+	_ context.Context, _ string, _ *attestation.FetchOptions,
+) ([]attestation.VerifiedAttestation, error) {
+	if f.calls.Add(1) == 1 {
+		close(f.started)
+		<-f.release
+
+		return nil, connectionError()
+	}
+
+	return nil, nil
+}
+
+// TestInvalidateCacheIgnoresRunningVerification checks that a verification
+// after InvalidateCache (a feed or manual re-verification) neither joins a
+// verification of the digest that started before nor sees its result, which
+// is not written back to the cache.
+func TestInvalidateCacheIgnoresRunningVerification(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+
+	fetcher := &gatedFetcher{
+		calls: atomic.Int32{}, started: make(chan struct{}), release: make(chan struct{}),
+	}
+	verif, _ := newHardeningVerifier(t, cfg, fetcher, map[string]string{
+		testDefaultPolicy: testSLSADenyPolicy,
+	})
+
+	req := newRequest(testHardeningImage, testFetchDigest, "", testHardeningNS, "")
+	stale := make(chan *types.Result, 1)
+
+	go func() {
+		result, _ := verif.Verify(context.Background(), req)
+		stale <- result
+	}()
+
+	<-fetcher.started
+
+	verif.InvalidateCache(testFetchDigest, testHardeningNS)
+
+	fresh := make(chan *types.Result, 1)
+
+	go func() {
+		result, _ := verif.Verify(context.Background(), req)
+		fresh <- result
+	}()
+
+	select {
+	case result := <-fresh:
+		if result == nil || result.Incomplete() {
+			t.Errorf("expected a complete result after the invalidation, got %+v", result)
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("expected the verification after the invalidation not to join the running one")
+	}
+
+	close(fetcher.release)
+
+	if result := <-stale; result == nil || !result.Incomplete() {
+		t.Fatalf("expected the running verification to see the outage, got %+v", result)
+	}
+
+	result, err := verif.Verify(context.Background(), req)
+	testutil.AssertNoError(t, err)
+
+	if result.Incomplete() {
+		t.Error("expected the verification started before the invalidation not to be cached")
+	}
+
+	if got := fetcher.calls.Load(); got != 2 {
+		t.Errorf("expected the fresh result to be served from the cache, got %d fetches", got)
+	}
+}
+
+func TestStopWaitsForReloadAndRejectsLaterReloads(t *testing.T) {
+	t.Parallel()
+
+	verif, err := verifier.New(t.Context(), config.DefaultConfig(), metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	prepared := make(chan struct{})
+	release := make(chan struct{})
+
+	verif.ExportSetReloadPreparedHook(func() {
+		close(prepared)
+		<-release
+	})
+
+	reloaded := make(chan error, 1)
+
+	go func() {
+		reloaded <- verif.Reload(context.Background(), config.DefaultConfig())
+	}()
+
+	<-prepared
+
+	stopped := make(chan struct{})
+
+	go func() {
+		verif.Stop()
+		close(stopped)
+	}()
+
+	select {
+	case <-stopped:
+		t.Fatal("expected Stop to wait for the running reload")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// Verifications requested after Stop was called fail, also while it
+	// waits for the reload.
+	if verif.ExportFlightsBegin() {
+		verif.ExportFlightsEnd()
+		t.Error("expected no verification to begin while Stop waits for the reload")
+	}
+
+	close(release)
+	testutil.AssertNoError(t, <-reloaded)
+
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("expected Stop to return after the reload")
+	}
+
+	err = verif.Reload(context.Background(), config.DefaultConfig())
+	if !errors.Is(err, verifier.ErrVerifierStopped) {
+		t.Errorf("expected a reload after Stop to fail with ErrVerifierStopped, got %v", err)
+	}
+
+	// Stopping again is a no-op.
+	verif.Stop()
 }
 
 func TestStopRejectsNewVerifications(t *testing.T) {

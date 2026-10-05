@@ -57,6 +57,9 @@ func TestClassify(t *testing.T) {
 		{"pkg:oci/nginx?repository_url=ghcr.io/evil/nginx", imagematch.KindOtherImage},
 		{"pkg:oci/other", imagematch.KindOtherImage},
 		{"pkg:oci/nginx@latest", imagematch.KindImage},
+		// Tags are case-sensitive.
+		{"pkg:oci/nginx@Latest", imagematch.KindOtherImage},
+		{"pkg:oci/nginx?tag=LATEST", imagematch.KindOtherImage},
 		{"pkg:docker/library/nginx@" + testDigest, imagematch.KindImage},
 		{testPackagePURL, imagematch.KindPackage},
 		{"comp-ref-1", imagematch.KindUnrelated},
@@ -66,6 +69,31 @@ func TestClassify(t *testing.T) {
 	for _, test := range tests {
 		if got := img.Classify(test.identifier); got != test.want {
 			t.Errorf("Classify(%q) = %d, want %d", test.identifier, got, test.want)
+		}
+	}
+}
+
+func TestConflictsByHash(t *testing.T) {
+	t.Parallel()
+
+	img := imagematch.New("nginx:latest", testDigest, nil)
+	otherHex := strings.Repeat("0", 64)
+
+	tests := []struct {
+		algorithm, value string
+		want             bool
+	}{
+		{"sha-256", testHex, false},
+		{"SHA256", "sha256:" + testHex, false},
+		{"sha-256", otherHex, true},
+		{"sha256", "sha256:" + otherHex, true},
+		{"sha-512", otherHex, false},
+	}
+
+	for _, test := range tests {
+		if got := img.ConflictsByHash(test.algorithm, test.value); got != test.want {
+			t.Errorf("ConflictsByHash(%q, %q) = %v, want %v",
+				test.algorithm, test.value, got, test.want)
 		}
 	}
 }

@@ -69,11 +69,6 @@ func BuildPolicyKeyMaterialForTest(keyPaths []string) (*root.TrustedPublicKeyMat
 	return buildPolicyKeyMaterial(keyPaths)
 }
 
-// LoadPEMPublicKeyForTest exposes loadPEMPublicKey for tests.
-func LoadPEMPublicKeyForTest(path string) (crypto.PublicKey, error) {
-	return loadPEMPublicKey(path)
-}
-
 // PolicyKeyHintForTest exposes policyKeyHint for tests.
 func PolicyKeyHintForTest(pub crypto.PublicKey) (string, error) {
 	return policyKeyHint(pub)

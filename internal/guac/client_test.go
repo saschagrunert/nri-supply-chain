@@ -439,7 +439,7 @@ func newGraphQLServerWithSources(
 			t.Errorf("decode request: %v", err)
 		}
 
-		var resp graphQLResponse
+		resp := graphQLResponse{Data: &graphQLData{}, Errors: nil}
 
 		switch {
 		case strings.Contains(req.Query, "IsOccurrence"):
@@ -855,6 +855,46 @@ func TestQueryScorecardGraphQLError(t *testing.T) {
 	_, err := client.QueryScorecard(context.Background(), testArtifactDigest)
 	if !errors.Is(err, ErrGUACQueryFailed) {
 		t.Fatalf("expected ErrGUACQueryFailed, got: %v", err)
+	}
+}
+
+// TestParseResponsesWithoutData verifies that responses without data fail
+// instead of reading as empty results (no linked sources, no
+// vulnerabilities, no dependencies).
+func TestParseResponsesWithoutData(t *testing.T) {
+	t.Parallel()
+
+	for _, body := range []string{`null`, `{}`, `{"data":null}`} {
+		_, _, err := parseSourcesResponse([]byte(body))
+		if !errors.Is(err, ErrGUACQueryFailed) {
+			t.Errorf("sources %s: expected ErrGUACQueryFailed, got: %v", body, err)
+		}
+
+		_, err = parsePackageSourcesResponse([]byte(body))
+		if !errors.Is(err, ErrGUACQueryFailed) {
+			t.Errorf("package sources %s: expected ErrGUACQueryFailed, got: %v", body, err)
+		}
+
+		_, err = parseScorecardResponse([]byte(body), nil)
+		if !errors.Is(err, ErrGUACQueryFailed) {
+			t.Errorf("scorecard %s: expected ErrGUACQueryFailed, got: %v", body, err)
+		}
+	}
+
+	_, _, err := parseVulnResponse([]byte(`null`), testShortDigest)
+	if !errors.Is(err, ErrGUACQueryFailed) {
+		t.Errorf("vulnerabilities: expected ErrGUACQueryFailed, got: %v", err)
+	}
+
+	_, err = parseDepsResponse([]byte(`null`), 0)
+	if !errors.Is(err, ErrGUACQueryFailed) {
+		t.Errorf("dependencies: expected ErrGUACQueryFailed, got: %v", err)
+	}
+
+	sources, packages, err := parseSourcesResponse([]byte(`{"data":{"IsOccurrence":[]}}`))
+	if err != nil || len(sources)+len(packages) != 0 {
+		t.Errorf("empty sources: expected no sources and no error, got %v %v %v",
+			sources, packages, err)
 	}
 }
 

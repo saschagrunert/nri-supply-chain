@@ -104,6 +104,40 @@ func TestReverifyIncompleteResultDoesNotDegrade(t *testing.T) {
 	}
 }
 
+// TestReverifyWithoutResultCountsAsError checks that a verifier returning
+// neither a result nor an error counts as a re-verification error instead of
+// crashing the continuous verifier, and that degrading the container after
+// consecutive errors is counted as a remediation action.
+func TestReverifyWithoutResultCountsAsError(t *testing.T) {
+	t.Parallel()
+
+	verif := &cvTestVerifier{} //nolint:exhaustruct_v5 // zero-value fields intentional
+	stub := &cvTestStub{}      //nolint:exhaustruct_v5 // zero-value fields intentional
+	plug := newRemediationTestPlugin(t, verif, stub, 50)
+
+	plug.ExportStoreContainerState(
+		"ctr-nil", remediationTestDigest, plugin.StateVerified, throttleTestResources(), false,
+	)
+
+	for range 3 {
+		plug.ExportRunVerificationCycle(t.Context(), plugin.ExportTriggerTimer)
+	}
+
+	assertContainerState(t, plug, "ctr-nil", plugin.StateDegraded)
+
+	met := plug.ExportMetrics()
+
+	errors := promtestutil.ToFloat64(met.ReverificationTotal.WithLabelValues("", "error"))
+	if errors != 3 {
+		t.Errorf("expected 3 re-verification errors, got %v", errors)
+	}
+
+	warnings := promtestutil.ToFloat64(met.RemediationActionsTotal.WithLabelValues("warn", ""))
+	if warnings != 1 {
+		t.Errorf("expected the degradation to be counted once, got %v", warnings)
+	}
+}
+
 func TestReverifyIncompleteResultDoesNotRollBack(t *testing.T) {
 	t.Parallel()
 

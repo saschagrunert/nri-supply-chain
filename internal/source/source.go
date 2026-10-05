@@ -140,10 +140,19 @@ func validatePredicate(pred *sourcePredicate) error {
 }
 
 func predicateMeta(pred *sourcePredicate) map[string]any {
+	locations := make([]map[string]string, 0, len(pred.SourceLocations))
+	for idx := range pred.SourceLocations {
+		locations = append(locations, map[string]string{
+			"uri":    pred.SourceLocations[idx].URI,
+			"branch": pred.SourceLocations[idx].Branch,
+		})
+	}
+
 	return map[string]any{
-		"source": pred.SourceLocations[0].URI,
-		"branch": pred.SourceLocations[0].Branch,
-		"level":  int64(sourceLevel(pred)),
+		"source":    pred.SourceLocations[0].URI,
+		"branch":    pred.SourceLocations[0].Branch,
+		"locations": locations,
+		"level":     int64(sourceLevel(pred)),
 	}
 }
 

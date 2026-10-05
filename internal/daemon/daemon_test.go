@@ -21,6 +21,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -379,6 +381,76 @@ func TestCreateVerifierDisabled(t *testing.T) {
 	}
 
 	v.Stop()
+}
+
+// openFilesBelow returns the open file descriptors of the process that refer
+// to dir or a path below it.
+func openFilesBelow(t *testing.T, dir string) []string {
+	t.Helper()
+
+	const fdDir = "/proc/self/fd"
+
+	entries, err := os.ReadDir(fdDir)
+	if err != nil {
+		t.Skipf("cannot list open file descriptors: %v", err)
+	}
+
+	var open []string
+
+	for _, entry := range entries {
+		target, linkErr := os.Readlink(fdDir + "/" + entry.Name())
+		if linkErr == nil && (target == dir || strings.HasPrefix(target, dir+"/")) {
+			open = append(open, target)
+		}
+	}
+
+	return open
+}
+
+// A verifier that fails to start releases the attestation fetcher created
+// for it, including the pinned bundle store directory.
+func TestCreateVerifierFailureClosesFetcher(t *testing.T) {
+	t.Parallel()
+
+	storePath := t.TempDir()
+
+	for name, content := range map[string]string{
+		"oci-layout":           `{"imageLayoutVersion":"1.0.0"}`,
+		"index.json":           `{"schemaVersion":2,"manifests":[]}`,
+		"bundle-manifest.json": `{"version":1,"createdAt":"2026-01-01T00:00:00Z","images":{}}`,
+	} {
+		err := os.WriteFile(filepath.Join(storePath, name), []byte(content), 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	err := os.MkdirAll(filepath.Join(storePath, "blobs", "sha256"), 0o750)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	policyDir := t.TempDir()
+
+	err = os.WriteFile(filepath.Join(policyDir, "default.json"), []byte(`{`), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = policyDir
+	cfg.Offline.Mode = config.OfflineModeOffline
+	cfg.Offline.AttestationStore = storePath
+
+	_, err = createVerifier(t.Context(), cfg, metrics.New(), nil)
+	if err == nil {
+		t.Fatal("expected creating the verifier to fail with an invalid policy")
+	}
+
+	if open := openFilesBelow(t, storePath); len(open) > 0 {
+		t.Errorf("expected the bundle store to be released, still open: %v", open)
+	}
 }
 
 func assertProbeStatus(t *testing.T, addr, path string, wantStatus int) {

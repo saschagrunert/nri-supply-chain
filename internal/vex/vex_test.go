@@ -1314,7 +1314,7 @@ func cycloneDXBOM(state cdx.ImpactAnalysisState) *cdx.BOM {
 	bom.Vulnerabilities = &[]cdx.Vulnerability{
 		{
 			ID:       "CVE-2024-1234",
-			Analysis: &cdx.VulnerabilityAnalysis{State: state},
+			Analysis: cycloneDXAnalysis(state),
 			Affects: &[]cdx.Affects{
 				{Ref: "comp-nginx"},
 			},
@@ -1322,6 +1322,17 @@ func cycloneDXBOM(state cdx.ImpactAnalysisState) *cdx.BOM {
 	}
 
 	return bom
+}
+
+// cycloneDXAnalysis returns the analysis a valid entry with the state
+// carries: not_affected requires a justification.
+func cycloneDXAnalysis(state cdx.ImpactAnalysisState) *cdx.VulnerabilityAnalysis {
+	analysis := &cdx.VulnerabilityAnalysis{State: state}
+	if state == cdx.IASNotAffected {
+		analysis.Justification = cdx.IAJCodeNotReachable
+	}
+
+	return analysis
 }
 
 func wrapCycloneDXInToto(t *testing.T, bom *cdx.BOM, digest string) []byte {

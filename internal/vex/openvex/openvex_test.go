@@ -828,3 +828,183 @@ func TestEvaluateIgnoresUnjustifiedNotAffected(t *testing.T) {
 		})
 	}
 }
+
+func TestEvaluateHashOfOtherManifestRaisesSeverity(t *testing.T) {
+	t.Parallel()
+
+	timestamp := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	imagePURL := "pkg:oci/myimage?tag=v1"
+	indexHex := strings.Repeat("1", 64)
+	platformHex := strings.Repeat("2", 64)
+
+	tests := []struct {
+		name         string
+		imageDigest  string
+		productHash  string
+		status       openvexlib.Status
+		wantAffected bool
+	}{
+		{
+			name:         "affected with platform hash, runtime reports index digest",
+			imageDigest:  "sha256:" + indexHex,
+			productHash:  platformHex,
+			status:       openvexlib.StatusAffected,
+			wantAffected: true,
+		},
+		{
+			name:         "affected with index hash, runtime reports platform digest",
+			imageDigest:  "sha256:" + platformHex,
+			productHash:  indexHex,
+			status:       openvexlib.StatusAffected,
+			wantAffected: true,
+		},
+		{
+			name:         "under_investigation with platform hash, runtime reports index digest",
+			imageDigest:  "sha256:" + indexHex,
+			productHash:  platformHex,
+			status:       openvexlib.StatusUnderInvestigation,
+			wantAffected: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			stmt := productStatement(test.status, imagePURL, &timestamp)
+			stmt.Products[0].Hashes = map[openvexlib.Algorithm]openvexlib.Hash{
+				openvexlib.SHA256: openvexlib.Hash(test.productHash),
+			}
+
+			doc := openvexlib.VEX{
+				Context:    testVEXContext,
+				ID:         testDocID,
+				Statements: []openvexlib.Statement{stmt},
+			}
+
+			result, err := openvex.Verify(
+				context.Background(), testutil.MustMarshal(t, doc),
+				imagematch.New(testImageRef, test.imageDigest, nil),
+			)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			got := len(result.AffectedNames) > 0 || result.HasUnderInvestigation
+			if got != test.wantAffected {
+				t.Errorf("affected = %v, want %v (%+v)", got, test.wantAffected, result)
+			}
+		})
+	}
+}
+
+func TestEvaluateProductClassification(t *testing.T) {
+	t.Parallel()
+
+	older := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	newer := older.Add(time.Hour)
+	imagePURL := "pkg:oci/myimage?tag=v1"
+	packagePURL := "pkg:npm/foo@1.0.0"
+	otherHex := strings.Repeat("0", 64)
+
+	withIdentifier := func(stmt openvexlib.Statement, identifier string) openvexlib.Statement {
+		stmt.Products[0].Identifiers = map[openvexlib.IdentifierType]string{
+			openvexlib.PURL: identifier,
+		}
+
+		return stmt
+	}
+
+	withSubcomponent := func(stmt openvexlib.Statement, subcomponent string) openvexlib.Statement {
+		stmt.Products[0].Subcomponents = []openvexlib.Subcomponent{
+			{ID: subcomponent},
+		}
+
+		return stmt
+	}
+
+	otherImageProduct := openvexlib.Product{
+		ID: "pkg:oci/other@sha256:" + otherHex,
+		Subcomponents: []openvexlib.Subcomponent{
+			{ID: "pkg:npm/unrelated@2.0.0"},
+		},
+	}
+
+	resolvedWithOtherProduct := withSubcomponent(
+		productStatement(openvexlib.StatusNotAffected, testDigest, &newer), packagePURL,
+	)
+	resolvedWithOtherProduct.Products = append(resolvedWithOtherProduct.Products, otherImageProduct)
+
+	conflictingHash := productStatement(openvexlib.StatusNotAffected, imagePURL, &newer)
+	conflictingHash.Products[0].Hashes = map[openvexlib.Algorithm]openvexlib.Hash{
+		openvexlib.SHA256: openvexlib.Hash(otherHex),
+	}
+
+	tests := []struct {
+		name         string
+		statements   []openvexlib.Statement
+		wantAffected bool
+	}{
+		{
+			name: "image identifier wins over package @id",
+			statements: []openvexlib.Statement{
+				productStatement(openvexlib.StatusAffected, imagePURL, &older),
+				withIdentifier(
+					productStatement(openvexlib.StatusNotAffected, packagePURL, &newer), imagePURL,
+				),
+			},
+			wantAffected: false,
+		},
+		{
+			name: "image @id wins over package identifier",
+			statements: []openvexlib.Statement{
+				productStatement(openvexlib.StatusAffected, imagePURL, &older),
+				withIdentifier(
+					productStatement(openvexlib.StatusNotAffected, imagePURL, &newer), packagePURL,
+				),
+			},
+			wantAffected: false,
+		},
+		{
+			name: "subcomponents of products naming other images do not split the scope",
+			statements: []openvexlib.Statement{
+				withSubcomponent(
+					productStatement(openvexlib.StatusAffected, testDigest, &older), packagePURL,
+				),
+				resolvedWithOtherProduct,
+			},
+			wantAffected: false,
+		},
+		{
+			name: "image name with the hash of another image does not resolve",
+			statements: []openvexlib.Statement{
+				productStatement(openvexlib.StatusAffected, imagePURL, &older),
+				conflictingHash,
+			},
+			wantAffected: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			doc := openvexlib.VEX{
+				Context:    testVEXContext,
+				ID:         testDocID,
+				Statements: test.statements,
+			}
+
+			result, err := openvex.Verify(
+				context.Background(), testutil.MustMarshal(t, doc), testImage(),
+			)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if got := len(result.AffectedNames) > 0; got != test.wantAffected {
+				t.Errorf("affected = %v, want %v (%+v)", got, test.wantAffected, result)
+			}
+		})
+	}
+}

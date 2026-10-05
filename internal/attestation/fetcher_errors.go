@@ -47,6 +47,11 @@ const (
 	// outcomeLimitExceeded means the referrer was dropped because a size or
 	// count limit was exceeded, so the attestation set is incomplete.
 	outcomeLimitExceeded
+	// outcomeKeyUnavailable means the referrer is key-signed and could not
+	// be checked because a trusted key file could not be loaded. Unlike
+	// other unavailable trust material it yields to verified attestations;
+	// see evaluateCollection.
+	outcomeKeyUnavailable
 )
 
 // collectStats aggregates referrer outcomes of one collection pass.
@@ -55,6 +60,7 @@ type collectStats struct {
 	verifyFailures int
 	fetchErr       error
 	limitErr       error
+	keyErr         error
 }
 
 func (s *collectStats) record(outcome referrerOutcome, err error) {
@@ -72,6 +78,10 @@ func (s *collectStats) record(outcome referrerOutcome, err error) {
 		if s.limitErr == nil {
 			s.limitErr = err
 		}
+	case outcomeKeyUnavailable:
+		if s.keyErr == nil {
+			s.keyErr = err
+		}
 	case outcomeVerified, outcomeUnverified, outcomeSkipped:
 	}
 }
@@ -86,10 +96,31 @@ func (s *collectStats) merge(other *collectStats) {
 	if s.limitErr == nil {
 		s.limitErr = other.limitErr
 	}
+
+	if s.keyErr == nil {
+		s.keyErr = other.keyErr
+	}
+}
+
+// trustMaterialOutcome classifies a verification error that wraps
+// ErrTrustMaterialUnavailable.
+func trustMaterialOutcome(err error) referrerOutcome {
+	if errors.Is(err, ErrTrustedKeyUnavailable) {
+		return outcomeKeyUnavailable
+	}
+
+	return outcomeFetchFailed
 }
 
 func isContentError(err error) bool {
 	return errors.Is(err, errEmptyAttestation) || errors.Is(err, errInvalidReferrer)
+}
+
+// isLimitError reports whether err means that a layer or registry response
+// exceeded a size limit or the download budget, so the attestation set is
+// incomplete.
+func isLimitError(err error) bool {
+	return errors.Is(err, errAttestationTooLarge) || errors.Is(err, errDownloadLimitExceeded)
 }
 
 // isTransportFailure reports whether err means that the registry could not
@@ -166,7 +197,7 @@ func classifyReferrerError(
 		)
 
 		return outcomeSkipped
-	case errors.Is(err, errAttestationTooLarge), errors.Is(err, errDownloadLimitExceeded):
+	case isLimitError(err):
 		slog.WarnContext(ctx, "Referrer exceeds the attestation size limit",
 			"kind", what,
 			"digest", desc.Digest.String(),
@@ -206,7 +237,7 @@ func isRegistryNotFound(err error) bool {
 // same io.ErrUnexpectedEOF that a dropped connection produces.
 func classifyCosignLayerError(err error) (referrerOutcome, error) {
 	switch {
-	case errors.Is(err, errAttestationTooLarge), errors.Is(err, errDownloadLimitExceeded):
+	case isLimitError(err):
 		return outcomeLimitExceeded, err
 	case isContentError(err):
 		return outcomeVerifyFailed, nil
@@ -217,9 +248,14 @@ func classifyCosignLayerError(err error) (referrerOutcome, error) {
 	}
 }
 
-// tagContentError keeps transport failures as plain fetch errors and marks
-// every other error on the cosign attestation tag as a verification failure.
+// tagContentError keeps transport failures as plain fetch errors, marks a
+// size limit violation as an incomplete attestation set and every other error
+// on the cosign attestation tag as a verification failure.
 func tagContentError(err error) error {
+	if isLimitError(err) {
+		return fmt.Errorf("%w: %w: %w", ErrVerificationFailed, errReferrerLimitExceeded, err)
+	}
+
 	if !isContentError(err) && isTransportFailure(err) {
 		return err
 	}

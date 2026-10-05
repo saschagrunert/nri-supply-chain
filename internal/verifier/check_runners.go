@@ -245,6 +245,16 @@ func runAttestationCheck(
 		)
 	}
 
+	// combineResults skips nil results, so a check that returned nothing for
+	// present attestations would otherwise drop out and admit the image.
+	if result == nil {
+		return types.FailResult(
+			spec.checkType,
+			fmt.Sprintf("%s verification returned no result for %s", spec.label, input.imageRef),
+			nil,
+		)
+	}
+
 	return result
 }
 

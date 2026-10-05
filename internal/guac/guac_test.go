@@ -354,7 +354,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 
 		case "/query":
 			resp := graphQLResponse{
-				Data: graphQLData{
+				Data: &graphQLData{
 					IsOccurrence: []graphQLIsOccurrence{{
 						Subject: graphQLSource{
 							Typename:  "Source",

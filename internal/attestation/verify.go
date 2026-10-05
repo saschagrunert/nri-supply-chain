@@ -585,7 +585,8 @@ func buildKeyMaterial(keys []TrustedKeyRef) (*trustedKeys, error) {
 		pubKey, err := LoadPublicKey(keys[idx].Path)
 		if err != nil {
 			return nil, fmt.Errorf(
-				"%w: loading public key %q: %w", ErrTrustMaterialUnavailable, keys[idx].Path, err,
+				"%w: %w: loading public key %q: %w",
+				ErrTrustMaterialUnavailable, ErrTrustedKeyUnavailable, keys[idx].Path, err,
 			)
 		}
 

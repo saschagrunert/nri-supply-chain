@@ -149,16 +149,25 @@ func TestAggregateResults(t *testing.T) {
 			},
 		},
 		{
-			Image:  testImgV3,
-			Digest: "",
-			Reason: "resolve error",
+			Image:   testImgV3,
+			Digest:  "",
+			Reason:  "resolve error",
+			errored: true,
+		},
+		{
+			// A verification error after the digest was resolved (for
+			// example a timeout in enforce mode) is an error, not a denial.
+			Image:   testImgV1,
+			Digest:  testDigestAAA,
+			Reason:  "verification: context deadline exceeded",
+			errored: true,
 		},
 	}
 
 	summary := aggregateResults(results)
 
-	if summary.Total != 3 {
-		t.Errorf("Total = %d, want 3", summary.Total)
+	if summary.Total != 4 {
+		t.Errorf("Total = %d, want 4", summary.Total)
 	}
 
 	if summary.Allowed != 1 {
@@ -169,8 +178,8 @@ func TestAggregateResults(t *testing.T) {
 		t.Errorf("Denied = %d, want 1", summary.Denied)
 	}
 
-	if summary.Errors != 1 {
-		t.Errorf("Errors = %d, want 1", summary.Errors)
+	if summary.Errors != 2 {
+		t.Errorf("Errors = %d, want 2", summary.Errors)
 	}
 
 	slsaCheck := summary.Checks[testCheckSLSA]

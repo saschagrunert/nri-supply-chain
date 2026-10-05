@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -313,23 +314,14 @@ func Run(version, configPath string, settings Settings, cfg *config.Config) erro
 	return nil
 }
 
-// runtimeConfigPlugin is the plugin API used to apply a configuration passed
-// by the runtime.
-type runtimeConfigPlugin interface {
-	pluginReloader
-	StartContinuousVerifier(ctx context.Context, interval time.Duration)
-}
-
 // runtimeConfigApplier returns how the plugin applies a configuration passed
 // by the runtime in Configure (a plugin started without a config file). It
-// performs the same steps as a config file reload and additionally starts the
-// continuous verifier when remediation is enabled, since without a config
-// file there is no startup configuration that could have started it.
-// metrics_addr only takes effect at startup. ctx is the plugin's lifetime
-// context: the apply runs outside the runtime's request deadline.
+// performs the same steps as a config file reload. metrics_addr only takes
+// effect at startup. ctx is the plugin's lifetime context: the apply runs
+// outside the runtime's request deadline.
 func runtimeConfigApplier(
 	ctx context.Context, startup *config.Config,
-	verif *verifier.Verifier, met *metrics.Metrics, plug runtimeConfigPlugin,
+	verif *verifier.Verifier, met *metrics.Metrics, plug pluginReloader,
 ) plugin.ConfigApplier {
 	return func(_ context.Context, cfg *config.Config) error {
 		applyLogLevel(cfg.LogLevel)
@@ -352,10 +344,6 @@ func runtimeConfigApplier(
 		met.ConfigReloadsTotal.Inc()
 
 		applyPluginSettings(ctx, cfg, verif, plug)
-
-		if cfg.Remediation.Enabled() {
-			plug.StartContinuousVerifier(ctx, cfg.Remediation.Interval.Duration)
-		}
 
 		return nil
 	}
@@ -417,6 +405,12 @@ func createVerifier(
 
 	verif, err := verifier.New(ctx, cfg, met, fetcher)
 	if err != nil {
+		// The fetcher may hold resources (a bundle store pinning its
+		// directory) that the verifier would have released.
+		if closer, ok := fetcher.(io.Closer); ok {
+			_ = closer.Close()
+		}
+
 		return nil, fmt.Errorf("creating verifier: %w", err)
 	}
 

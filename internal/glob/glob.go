@@ -213,7 +213,10 @@ func escapeCharClass(runes []rune) string {
 
 // writeClassOpening writes the opening bracket, translating a leading '!' or
 // '^' into a negation that never matches '/' (mirroring '?'), and escapes a
-// leading literal ']'. It returns the index of the first unprocessed member.
+// leading literal ']'. A '-' leading a negated class is a literal too, so it
+// is escaped: after the inserted '/' it would otherwise start a range ("[!-~]"
+// must not become "[^/-~]"). It returns the index of the first unprocessed
+// member.
 func writeClassOpening(builder *strings.Builder, runes []rune) int {
 	builder.WriteRune(runes[0])
 
@@ -223,6 +226,12 @@ func writeClassOpening(builder *strings.Builder, runes []rune) int {
 		builder.WriteString("^/")
 
 		start = 2
+
+		if start < len(runes)-1 && runes[start] == '-' {
+			builder.WriteString(`\-`)
+
+			start++
+		}
 	}
 
 	if start < len(runes)-1 && runes[start] == ']' {

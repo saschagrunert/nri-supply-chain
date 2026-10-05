@@ -19,6 +19,10 @@ import (
 // no limit.
 var MaxPacketLengthBytes int64 = math.MaxInt32
 
+// MaxNestingDepth specifies the maximum allowed nesting depth when calling ReadPacket, DecodePacket, or
+// DecodePacketErr. Set to 0 for no limit.
+var MaxNestingDepth int = 1000
+
 type Packet struct {
 	Identifier
 	Value       interface{}
@@ -218,7 +222,7 @@ func printPacket(out io.Writer, p *Packet, indent int, printBytes bool) {
 
 // ReadPacket reads a single Packet from the reader.
 func ReadPacket(reader io.Reader) (*Packet, error) {
-	p, _, err := readPacket(reader)
+	p, _, err := readPacket(reader, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -278,7 +282,7 @@ func int64Length(i int64) (numBytes int) {
 // DecodePacket decodes the given bytes into a single Packet
 // If a decode error is encountered, nil is returned.
 func DecodePacket(data []byte) *Packet {
-	p, _, _ := readPacket(bytes.NewBuffer(data))
+	p, _, _ := readPacket(bytes.NewBuffer(data), 0)
 
 	return p
 }
@@ -286,7 +290,7 @@ func DecodePacket(data []byte) *Packet {
 // DecodePacketErr decodes the given bytes into a single Packet
 // If a decode error is encountered, nil is returned.
 func DecodePacketErr(data []byte) (*Packet, error) {
-	p, _, err := readPacket(bytes.NewBuffer(data))
+	p, _, err := readPacket(bytes.NewBuffer(data), 0)
 	if err != nil {
 		return nil, err
 	}
@@ -294,10 +298,18 @@ func DecodePacketErr(data []byte) (*Packet, error) {
 }
 
 // readPacket reads a single Packet from the reader, returning the number of bytes read.
-func readPacket(reader io.Reader) (*Packet, int, error) {
+func readPacket(reader io.Reader, depth int) (*Packet, int, error) {
+	if MaxNestingDepth > 0 && depth >= MaxNestingDepth {
+		return nil, 0, fmt.Errorf("nesting depth %d exceeds maximum %d", depth, MaxNestingDepth)
+	}
+
 	identifier, length, read, err := readHeader(reader)
 	if err != nil {
 		return nil, read, err
+	}
+
+	if length != LengthIndefinite && MaxPacketLengthBytes > 0 && int64(length) > MaxPacketLengthBytes {
+		return nil, read, fmt.Errorf("length %d greater than maximum %d", length, MaxPacketLengthBytes)
 	}
 
 	p := &Packet{
@@ -326,12 +338,18 @@ func readPacket(reader io.Reader) (*Packet, int, error) {
 			}
 
 			// Read the next packet
-			child, r, err := readPacket(reader)
+			child, r, err := readPacket(reader, depth+1)
 			if err != nil {
 				return nil, read, unexpectedEOF(err)
 			}
 			contentRead += r
 			read += r
+
+			// Enforce the aggregate size limit for constructed packets. Indefinite length declares
+			// no bound up front, so the content bytes are only known as they are read.
+			if MaxPacketLengthBytes > 0 && int64(contentRead) > MaxPacketLengthBytes {
+				return nil, read, fmt.Errorf("length %d greater than maximum %d", contentRead, MaxPacketLengthBytes)
+			}
 
 			// Test is this is the EOC marker for our packet
 			if isEOCPacket(child) {
@@ -349,11 +367,6 @@ func readPacket(reader io.Reader) (*Packet, int, error) {
 
 	if length == LengthIndefinite {
 		return nil, read, errors.New("indefinite length used with primitive type")
-	}
-
-	// Read definite-length content
-	if MaxPacketLengthBytes > 0 && int64(length) > MaxPacketLengthBytes {
-		return nil, read, fmt.Errorf("length %d greater than maximum %d", length, MaxPacketLengthBytes)
 	}
 
 	var content []byte
@@ -412,7 +425,7 @@ func readPacket(reader io.Reader) (*Packet, int, error) {
 				p.Value = val
 			}
 		case TagRelativeOID:
-			oid, err := parseObjectIdentifier(content)
+			oid, err := parseRelativeObjectIdentifier(content)
 			if err == nil {
 				p.Value = OIDToString(oid)
 			}
@@ -560,16 +573,14 @@ func NewBoolean(classType Class, tagType Type, tag Tag, value bool, description 
 
 // NewLDAPBoolean returns a RFC 4511-compliant Boolean packet.
 func NewLDAPBoolean(classType Class, tagType Type, tag Tag, value bool, description string) *Packet {
-	intValue := int64(0)
-
-	if value {
-		intValue = 255
-	}
-
 	p := Encode(classType, tagType, tag, nil, description)
 
 	p.Value = value
-	p.Data.Write(encodeInteger(intValue))
+	if value {
+		p.Data.Write([]byte{255})
+	} else {
+		p.Data.Write([]byte{0})
+	}
 
 	return p
 }
@@ -663,6 +674,25 @@ func NewOID(classType Class, tagType Type, tag Tag, value interface{}, descripti
 	return p
 }
 
+func NewRelativeOID(classType Class, tagType Type, tag Tag, value interface{}, description string) *Packet {
+	p := Encode(classType, tagType, tag, nil, description)
+
+	switch v := value.(type) {
+	case string:
+		encoded, err := encodeRelativeOID(v)
+		if err != nil {
+			fmt.Printf("failed writing %v", err)
+			return nil
+		}
+		p.Value = v
+		p.Data.Write(encoded)
+		// TODO: support []int already ?
+	default:
+		panic(fmt.Sprintf("Invalid type %T, expected float{64|32}", v))
+	}
+	return p
+}
+
 // encodeOID takes a string representation of an OID and returns its DER-encoded byte slice along with any error.
 func encodeOID(oidString string) ([]byte, error) {
 	// Convert the string representation to an asn1.ObjectIdentifier
@@ -682,6 +712,26 @@ func encodeOID(oidString string) ([]byte, error) {
 
 	encoded = appendBase128Int(encoded[:0], int64(oid[0]*40+oid[1]))
 	for i := 2; i < len(oid); i++ {
+		encoded = appendBase128Int(encoded, int64(oid[i]))
+	}
+
+	return encoded, nil
+}
+
+func encodeRelativeOID(oidString string) ([]byte, error) {
+	parts := strings.Split(oidString, ".")
+	oid := make([]int, len(parts))
+	for i, part := range parts {
+		var val int
+		if _, err := fmt.Sscanf(part, "%d", &val); err != nil {
+			return nil, fmt.Errorf("invalid RELATIVE OID part '%s': %w", part, err)
+		}
+		oid[i] = val
+	}
+
+	encoded := make([]byte, 0)
+
+	for i := 0; i < len(oid); i++ {
 		encoded = appendBase128Int(encoded, int64(oid[i]))
 	}
 
@@ -761,6 +811,27 @@ func parseObjectIdentifier(bytes []byte) (s []int, err error) {
 	}
 
 	i := 2
+	for ; offset < len(bytes); i++ {
+		v, offset, err = parseBase128Int(bytes, offset)
+		if err != nil {
+			return
+		}
+		s[i] = v
+	}
+	s = s[0:i]
+	return
+}
+
+func parseRelativeObjectIdentifier(bytes []byte) (s []int, err error) {
+	if len(bytes) == 0 {
+		err = fmt.Errorf("zero length RELATIVE OBJECT IDENTIFIER")
+		return
+	}
+
+	s = make([]int, len(bytes)+1)
+
+	var v, offset int
+	i := 0
 	for ; offset < len(bytes); i++ {
 		v, offset, err = parseBase128Int(bytes, offset)
 		if err != nil {

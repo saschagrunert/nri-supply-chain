@@ -155,7 +155,7 @@ func (f *OCIFetcher) verifyCosignLayers(
 		return nil, &stats, nil
 	}
 
-	keyHints := trustedKeyHints(ctx, fetchOpts)
+	keys := loadLegacyKeys(ctx, fetchOpts)
 
 	for idx, layer := range layers {
 		// Stop at an interruption but keep the outcomes recorded so far, so
@@ -175,7 +175,7 @@ func (f *OCIFetcher) verifyCosignLayers(
 			desc = &descriptors[idx]
 		}
 
-		att, outcome, err := f.processCosignLayer(ctx, layer, desc, digest, keyHints, fetchOpts)
+		att, outcome, err := f.processCosignLayer(ctx, layer, desc, digest, &keys, fetchOpts)
 		stats.record(outcome, err)
 
 		if outcome != outcomeVerified {
@@ -200,7 +200,7 @@ func (f *OCIFetcher) verifyCosignLayers(
 // layers; foreign layers are rejected before anything is downloaded.
 func (f *OCIFetcher) processCosignLayer(
 	ctx context.Context, layer ociV1.Layer, desc *ociV1.Descriptor,
-	digest string, keyHints []string, fetchOpts *FetchOptions,
+	digest string, keys *legacyKeys, fetchOpts *FetchOptions,
 ) (VerifiedAttestation, referrerOutcome, error) {
 	var annotations map[string]string
 
@@ -231,11 +231,18 @@ func (f *OCIFetcher) processCosignLayer(
 	// Legacy cosign layers are bare DSSE envelopes with the signing material
 	// in layer annotations; convert them into verifiable Sigstore bundles.
 	if !isSigstoreBundleJSON(data) {
-		converted, convErr := legacyLayerToBundles(data, annotations, keyHints)
+		converted, convErr := legacyLayerToBundles(data, annotations, keys.hints)
 		if convErr != nil {
 			slog.WarnContext(ctx, "Cosign attestation layer is not a verifiable bundle",
 				"error", convErr,
 			)
+
+			// Without any loadable trusted key a key-signed layer cannot be
+			// checked, which is unavailable trust material rather than a
+			// verification failure; see evaluateCollection.
+			if errors.Is(convErr, errNoLegacyVerificationMaterial) && keys.err != nil {
+				return VerifiedAttestation{}, outcomeKeyUnavailable, keys.err
+			}
 
 			return VerifiedAttestation{}, outcomeVerifyFailed, nil
 		}
@@ -282,7 +289,7 @@ func (f *OCIFetcher) verifyCosignCandidates(
 	slog.WarnContext(ctx, "Cosign tag attestation failed verification", "error", joined)
 
 	if errors.Is(joined, ErrTrustMaterialUnavailable) {
-		return VerifiedAttestation{}, outcomeFetchFailed, joined
+		return VerifiedAttestation{}, trustMaterialOutcome(joined), joined
 	}
 
 	return VerifiedAttestation{}, outcomeVerifyFailed, nil
@@ -298,8 +305,20 @@ func isSigstoreBundleJSON(data []byte) bool {
 	return err == nil && strings.HasPrefix(probe.MediaType, "application/vnd.dev.sigstore.bundle")
 }
 
-func trustedKeyHints(ctx context.Context, opts *FetchOptions) []string {
-	hints := make([]string, 0, len(opts.TrustedKeys))
+// legacyKeys holds the key hints of the trusted keys that legacy key-signed
+// cosign layers are tried against, and why any trusted key could not be
+// loaded.
+type legacyKeys struct {
+	hints []string
+	// err wraps ErrTrustMaterialUnavailable when a trusted key file could
+	// not be loaded.
+	err error
+}
+
+func loadLegacyKeys(ctx context.Context, opts *FetchOptions) legacyKeys {
+	keys := legacyKeys{hints: make([]string, 0, len(opts.TrustedKeys)), err: nil}
+
+	var loadErrs []error
 
 	for idx := range opts.TrustedKeys {
 		pub, err := LoadPublicKey(opts.TrustedKeys[idx].Path)
@@ -309,6 +328,12 @@ func trustedKeyHints(ctx context.Context, opts *FetchOptions) []string {
 				"error", err,
 			)
 
+			loadErrs = append(loadErrs, fmt.Errorf(
+				"%w: %w: loading public key %q: %w",
+				ErrTrustMaterialUnavailable, ErrTrustedKeyUnavailable,
+				opts.TrustedKeys[idx].Path, err,
+			))
+
 			continue
 		}
 
@@ -317,10 +342,12 @@ func trustedKeyHints(ctx context.Context, opts *FetchOptions) []string {
 			continue
 		}
 
-		hints = append(hints, hint)
+		keys.hints = append(keys.hints, hint)
 	}
 
-	return hints
+	keys.err = errors.Join(loadErrs...)
+
+	return keys
 }
 
 func exceededTotalAttestationSize(ctx context.Context, totalSize int64) bool {

@@ -28,7 +28,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/daemon"
 )
 
-var version = "v0.6.0"
+var version = "v0.7.0"
 
 const (
 	exitSuccess = 0

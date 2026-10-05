@@ -118,6 +118,19 @@ func TestVerify(t *testing.T) {
 			wantStatus: types.StatusFail,
 		},
 		{
+			name: "forbidden property padded with whitespace fails",
+			doc: buildEnvDoc{
+				Environment: []envProperty{{Name: " " + testPropOS + "\t", Value: "debug"}},
+			},
+			pol: &policy.Policy{
+				BuildEnv: &policy.BuildEnvPolicy{
+					ForbiddenProperties: []string{testPropOS + " "},
+				},
+			},
+			wantPassed: false,
+			wantStatus: types.StatusFail,
+		},
+		{
 			name: "property matching is case-insensitive",
 			doc:  validDoc(),
 			pol: &policy.Policy{

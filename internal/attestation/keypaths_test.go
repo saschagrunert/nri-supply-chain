@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,6 +28,8 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	ociV1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
+	"github.com/sigstore/sigstore-go/pkg/root"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
@@ -265,5 +268,87 @@ func TestFetchTrustMaterialUnavailableIsFetchFailure(t *testing.T) {
 
 	if errors.Is(err, attestation.ErrVerificationFailed) {
 		t.Fatalf("unavailable trust material must not be a verification failure: %v", err)
+	}
+}
+
+// TestFetchUnreadableKeyDoesNotHideVerifiedReferrer checks that a key-signed
+// referrer, which cannot be checked while a trusted key file is unreadable,
+// does not hide a verified referrer behind the fetch failure policy: anyone
+// with push access can attach one. When nothing verified, the trust material
+// to decide is missing and the fetch failure policy applies.
+func TestFetchUnreadableKeyDoesNotHideVerifiedReferrer(t *testing.T) {
+	t.Parallel()
+
+	virtual := testutil.NewVirtualSigstore(t)
+	trustedRoot := testutil.VirtualTrustedRoot(t, virtual)
+	signer := testutil.NewKeySigner(t)
+
+	keyless := bundleReferrer(1)
+	keySigned := bundleReferrer(2)
+	images := map[string]ociV1.Image{
+		keyless.Digest.String(): fakeImageWithPayload(testutil.KeylessBundle(
+			t, virtual, signerIdentity, signerIssuer, signerStatement(t),
+		)),
+		keySigned.Digest.String(): fakeImageWithPayload(
+			signer.SignBundle(t, signerStatement(t)),
+		),
+	}
+
+	for _, tc := range []struct {
+		name      string
+		referrers []ociV1.Descriptor
+		verified  bool
+	}{
+		{name: "key-signed first", referrers: []ociV1.Descriptor{keySigned, keyless}, verified: true},
+		{name: "key-signed last", referrers: []ociV1.Descriptor{keyless, keySigned}, verified: true},
+		{name: "only key-signed", referrers: []ociV1.Descriptor{keySigned}, verified: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			fetcher := attestation.NewTestOCIFetcherSigned(
+				func(
+					ctx context.Context, data []byte, opts *attestation.FetchOptions,
+				) (*attestation.VerifiedBundle, error) {
+					return attestation.ExportVerifyBundleWithRoots(
+						ctx, data, opts, []*root.TrustedRoot{trustedRoot}, nil, true,
+					)
+				},
+				func(ref name.Reference, _ ...remote.Option) (ociV1.Image, error) {
+					if img, ok := images[ref.Identifier()]; ok {
+						return img, nil
+					}
+
+					return nil, &transport.Error{StatusCode: http.StatusNotFound}
+				},
+				func(_ name.Digest, _ ...remote.Option) (ociV1.ImageIndex, error) {
+					return &fakeImageIndex{manifests: tc.referrers, err: nil}, nil
+				},
+			)
+
+			atts, err := fetcher.Fetch(t.Context(), signerImageRef, &attestation.FetchOptions{
+				TrustedKeys: []attestation.TrustedKeyRef{
+					{Path: signer.PublicKeyPath},
+					{Path: signer.PublicKeyPath + "-missing"},
+				},
+				TrustedIssuers: []string{signerIssuer},
+				SANPatterns:    []string{signerIdentity},
+				Digest:         signerTestDigest,
+			})
+
+			if !tc.verified {
+				testutil.AssertErrorIs(t, err, attestation.ErrTrustMaterialUnavailable)
+
+				if errors.Is(err, attestation.ErrVerificationFailed) {
+					t.Fatalf("unreadable key must not be a verification failure: %v", err)
+				}
+
+				return
+			}
+
+			testutil.AssertNoError(t, err)
+			testutil.AssertEqual(t, 1, len(atts))
+			testutil.AssertEqual(t, signerIdentity, atts[0].Signer.SAN)
+		})
 	}
 }

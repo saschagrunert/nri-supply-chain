@@ -110,6 +110,17 @@ func TestVerify(t *testing.T) {
 			wantPassed: false,
 			wantStatus: types.StatusFail,
 		},
+		{
+			name: "requirePackageId fails when blank",
+			doc:  relPredicate{PURL: testPURL, PackageID: " \t"},
+			pol: &policy.Policy{
+				Release: &policy.ReleasePolicy{
+					RequirePackageID: true,
+				},
+			},
+			wantPassed: false,
+			wantStatus: types.StatusFail,
+		},
 	}
 
 	for _, test := range tests {
@@ -495,6 +506,26 @@ func TestVerifyTrustedRegistryMatchesParsedPURL(t *testing.T) {
 			ociAppPrefix + "evil.io/x&tag=ghcr.io/myorg/app", ghcrPattern, false,
 		},
 		{"legacy oci namespace form", "pkg:oci/ghcr.io/myorg/app@" + ociDigest, ghcrPattern, true},
+		{
+			"identity does not match with another repository_url",
+			"pkg:oci/ghcr.io/myorg/app@" + ociDigest + "?repository_url=evil.io/app",
+			ghcrPattern, false,
+		},
+		{
+			"npm identity does not match with another repository_url",
+			"pkg:npm/%40myorg/pkg@1.0.0?repository_url=https://evil.example/npm",
+			npmPattern, false,
+		},
+		{
+			"npm repository_url location keeps the scope",
+			"pkg:npm/%40myorg/pkg@1.0.0?repository_url=https://npm.pkg.github.com",
+			"pkg:npm/npm.pkg.github.com/@myorg/*", true,
+		},
+		{
+			"npm repository_url location of another scope does not match",
+			"pkg:npm/%40evil/pkg@1.0.0?repository_url=https://npm.pkg.github.com",
+			"pkg:npm/npm.pkg.github.com/@myorg/*", false,
+		},
 		{"version pattern", "pkg:npm/lodash@4.17.21", "pkg:npm/lodash@4.*", true},
 		{"invalid purl fails", "not-a-purl", "**", false},
 	}

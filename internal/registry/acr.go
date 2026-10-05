@@ -319,7 +319,14 @@ func exchangeACRToken(
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := client.Do(req)
+	// The form carries the Azure access token. A redirect (307 and 308 resend
+	// the body) must not hand it to another host, so it fails the exchange.
+	noRedirect := *client
+	noRedirect.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+
+	resp, err := noRedirect.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("ACR token exchange request: %w", err)
 	}

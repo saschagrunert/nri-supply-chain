@@ -91,8 +91,10 @@ type graphQLRequest struct {
 	Variables map[string]any `json:"variables,omitempty"`
 }
 
+// graphQLResponse is a GraphQL response. Data is a pointer so that a
+// response without data (missing or null) is told apart from empty results.
 type graphQLResponse struct {
-	Data   graphQLData    `json:"data"`
+	Data   *graphQLData   `json:"data"`
 	Errors []graphQLError `json:"errors,omitempty"`
 }
 

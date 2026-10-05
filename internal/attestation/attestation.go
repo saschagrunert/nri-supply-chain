@@ -44,7 +44,9 @@ var ErrVerificationFailed = errors.New("attestation verification failed")
 // verify an attestation could not be loaded, for example because the Sigstore
 // trusted root could not be fetched or a configured key file could not be
 // read. It is an availability problem, not a verification failure, so it
-// never wraps ErrVerificationFailed and the fetch failure policy applies.
+// never wraps ErrVerificationFailed and the fetch failure policy applies. An
+// unreadable key file (ErrTrustedKeyUnavailable) only fails a fetch when no
+// other attestation of the image verified; see evaluateCollection.
 var ErrTrustMaterialUnavailable = errors.New("attestation trust material unavailable")
 
 // ErrIncompleteAttestationSet is wrapped together with ErrVerificationFailed
@@ -54,6 +56,12 @@ var ErrTrustMaterialUnavailable = errors.New("attestation trust material unavail
 // verification, such a set must deny: a dropped attestation could flip the
 // decision.
 var ErrIncompleteAttestationSet = errors.New("attestation set is incomplete")
+
+// ErrTrustedKeyUnavailable is wrapped together with ErrTrustMaterialUnavailable
+// when a configured trusted key file could not be loaded. An attestation that
+// cannot be checked for this reason is ignored like a failed verification
+// when another attestation of the image verified.
+var ErrTrustedKeyUnavailable = errors.New("trusted key file unavailable")
 
 var (
 	errEmptyAttestation      = errors.New("empty attestation")

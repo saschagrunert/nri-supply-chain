@@ -328,6 +328,9 @@ func (p *Plugin) CancelPrewarm() {
 // PrewarmAfterReload re-triggers cache pre-warming using the last known set
 // of running container images. Call after a successful config/policy reload
 // to avoid cold-cache verification latency for images already on the node.
+// A previous run is cancelled but not waited for, so a slow verification
+// cannot block the reload; results it returns after the cancellation are not
+// recorded.
 func (p *Plugin) PrewarmAfterReload(ctx context.Context) {
 	p.prewarm.mu.Lock()
 	images := p.prewarm.images

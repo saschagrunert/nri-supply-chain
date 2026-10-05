@@ -23,24 +23,25 @@ import (
 )
 
 const (
-	testLodashPURL  = "pkg:npm/lodash@4.17.21"
-	testLodashVer   = "4.17.21"
-	testExpressPURL = "pkg:npm/express@4.18.0"
-	testExpressVer  = "4.18.0"
-	testRemovedPURL = "pkg:npm/removed-pkg@1.0.0"
-	testLodashName  = "lodash"
-	testExpressName = "express"
-	testRemovedName = "removed-pkg"
-	testVer10       = "1.0"
-	testVer100      = "1.0.0"
-	testAlgoSHA256  = "SHA256"
-	testHashABC123  = "abc123"
-	testHashABC     = "abc"
-	testHashDef     = "def"
-	testAlgoSHA512  = "SHA512"
-	testLicMIT      = "MIT"
-	testLicApache   = "Apache-2.0"
-	testLibName     = "mylib"
+	testLodashPURL     = "pkg:npm/lodash@4.17.21"
+	testLodashVer      = "4.17.21"
+	testExpressPURL    = "pkg:npm/express@4.18.0"
+	testExpressVer     = "4.18.0"
+	testRemovedPURL    = "pkg:npm/removed-pkg@1.0.0"
+	testLodashName     = "lodash"
+	testExpressName    = "express"
+	testRemovedName    = "removed-pkg"
+	testVer10          = "1.0"
+	testVer100         = "1.0.0"
+	testAlgoSHA256     = "SHA256"
+	testHashABC123     = "abc123"
+	testHashABC        = "abc"
+	testHashDef        = "def"
+	testAlgoSHA512     = "SHA512"
+	testAlgoSHA256Dash = "SHA-256"
+	testLicMIT         = "MIT"
+	testLicApache      = "Apache-2.0"
+	testLibName        = "mylib"
 )
 
 func testPkg(purl, name, version string) sbomPackage {
@@ -578,6 +579,18 @@ func TestChecksumsEqual(t *testing.T) {
 			right:    map[string]string{testAlgoSHA256: testHashABC},
 			expected: true,
 		},
+		{
+			name:     "algorithm spellings of SPDX and CycloneDX match",
+			left:     map[string]string{testAlgoSHA256: testHashABC, "SHA3_256": testHashDef},
+			right:    map[string]string{testAlgoSHA256Dash: testHashABC, "sha3-256": testHashDef},
+			expected: true,
+		},
+		{
+			name:     "normalized algorithm with different value",
+			left:     map[string]string{testAlgoSHA256: testHashABC},
+			right:    map[string]string{testAlgoSHA256Dash: testHashDef},
+			expected: false,
+		},
 	}
 
 	for _, tc := range tests {
@@ -634,6 +647,18 @@ func TestLicensesEqual(t *testing.T) {
 			left:     []string{testLicMIT},
 			right:    []string{"GPL-3.0"},
 			expected: false,
+		},
+		{
+			name:     "case insensitive with different order",
+			left:     []string{"mit", testLicApache},
+			right:    []string{testLicMIT, "apache-2.0"},
+			expected: true,
+		},
+		{
+			name:     "repeated license",
+			left:     []string{testLicMIT, testLicMIT},
+			right:    []string{testLicMIT},
+			expected: true,
 		},
 	}
 
@@ -748,7 +773,7 @@ func TestParseCycloneDXExtractsVersionAndHashes(t *testing.T) {
 					}, Expression: ""},
 				},
 				Hashes: []cyclonedxHash{
-					{Algorithm: "SHA-256", Content: "112233"},
+					{Algorithm: testAlgoSHA256Dash, Content: "112233"},
 				},
 				Properties: nil,
 				Components: nil,
@@ -765,7 +790,7 @@ func TestParseCycloneDXExtractsVersionAndHashes(t *testing.T) {
 	testutil.AssertEqual(t, pkg.PURL, "pkg:npm/mylib@3.0.0")
 	testutil.AssertEqual(t, pkg.Name, testLibName)
 	testutil.AssertEqual(t, pkg.Version, "3.0.0")
-	testutil.AssertEqual(t, pkg.Checksums["SHA-256"], "112233")
+	testutil.AssertEqual(t, pkg.Checksums[testAlgoSHA256Dash], "112233")
 	testutil.AssertEqual(t, len(pkg.Licenses), 1)
 	testutil.AssertEqual(t, pkg.Licenses[0], testLicMIT)
 }

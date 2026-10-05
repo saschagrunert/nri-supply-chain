@@ -254,6 +254,8 @@ func exitCodeForBundleError(err error) int {
 		bundle.ErrBlobMissing, bundle.ErrBlobNotRegular,
 		bundle.ErrBlobSizeMismatch, bundle.ErrBlobDigestMismatch,
 		bundle.ErrBundleSignatureInvalid, bundle.ErrBundleSignatureRequired,
+		bundle.ErrStoreReplaced, bundle.ErrBlobTooLarge,
+		bundle.ErrUnsupportedDigestAlgorithm,
 	} {
 		if errors.Is(err, target) {
 			return exitDenied
@@ -490,6 +492,13 @@ func fetchOptsFromPolicy(policyDir string) (*attestation.FetchOptions, error) {
 }
 
 func runBundleInspect(writer io.Writer, storePath, outputFormat string) int {
+	if outputFormat != outputFormatTable && outputFormat != outputFormatJSON {
+		slog.Error("Invalid output format, valid options are: table, json",
+			"format", outputFormat)
+
+		return exitError
+	}
+
 	result, err := bundle.Inspect(storePath)
 	if err != nil {
 		slog.Error("Inspection failed", "error", err)

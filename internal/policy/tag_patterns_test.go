@@ -88,7 +88,7 @@ func TestValidateWarnsAboutTagScopedRules(t *testing.T) {
 }
 
 //nolint:paralleltest // replaces the default logger to capture the warning
-func TestValidateWarnsAboutUppercaseIncludes(t *testing.T) {
+func TestValidateWarnsAboutUppercasePatterns(t *testing.T) {
 	var logs bytes.Buffer
 
 	previous := slog.Default()
@@ -99,7 +99,9 @@ func TestValidateWarnsAboutUppercaseIncludes(t *testing.T) {
 
 	dir := t.TempDir()
 	testutil.WritePolicy(t, dir, "default.json", `{
-		"include": ["ghcr.io/Org/**", "ghcr.io/org/app:Latest", "ghcr.io/org/api@sha256:ABC*"]
+		"include": ["ghcr.io/Org/**", "ghcr.io/org/app:Latest", "ghcr.io/org/api@sha256:ABC*"],
+		"exclude": ["ghcr.io/Org/debug@*"],
+		"rules": [{"images": ["ghcr.io/Org/critical@*"], "slsa": {"missingPolicy": "deny"}}]
 	}`)
 
 	_, err := policy.LoadAll(dir)
@@ -107,7 +109,12 @@ func TestValidateWarnsAboutUppercaseIncludes(t *testing.T) {
 
 	output := logs.String()
 
-	for _, pattern := range []string{"ghcr.io/Org/**", "ghcr.io/org/api@sha256:ABC*"} {
+	// A rule or an exclude pattern that never matches is as easy to miss as
+	// an include pattern.
+	for _, pattern := range []string{
+		"ghcr.io/Org/**", "ghcr.io/org/api@sha256:ABC*",
+		"ghcr.io/Org/debug@*", "ghcr.io/Org/critical@*",
+	} {
 		if !strings.Contains(output, pattern) {
 			t.Errorf("expected a warning about %q, got logs:\n%s", pattern, output)
 		}

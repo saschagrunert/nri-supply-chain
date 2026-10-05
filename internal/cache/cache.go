@@ -17,6 +17,7 @@ package cache
 
 import (
 	"container/heap"
+	"hash/fnv"
 	"math/rand/v2"
 	"strings"
 	"sync"
@@ -36,6 +37,11 @@ const (
 	evictionIntervalDivisor = 10
 	minEvictionInterval     = 10 * time.Second
 	maxEvictionInterval     = 5 * time.Minute
+
+	// invalidationShards is the number of invalidation epochs. Digests share
+	// an epoch by hash, which keeps the epochs bounded: invalidating a digest
+	// can at most cost another digest of its shard a skipped cache write.
+	invalidationShards = 256
 )
 
 type key struct {
@@ -95,6 +101,9 @@ type Cache struct {
 	// digestIndex maps a digest to the keys of all its entries, so that
 	// DeleteAll only touches matching entries instead of scanning the cache.
 	digestIndex map[string]map[key]struct{}
+	// epochs are the invalidation epochs of the digest shards, advanced by
+	// DeleteAll (see Epoch).
+	epochs [invalidationShards]uint64
 	// stopped is set by Stop; a stopped cache no longer updates the gauge,
 	// which a replacement cache reports to.
 	stopped  bool
@@ -133,6 +142,7 @@ func NewWithGauge(
 		expHeap:     nil,
 		heapIndex:   make(map[key]*heapEntry),
 		digestIndex: make(map[string]map[key]struct{}),
+		epochs:      [invalidationShards]uint64{},
 		stopped:     false,
 		stopOnce:    sync.Once{},
 		stopCh:      make(chan struct{}),
@@ -183,6 +193,7 @@ func (c *Cache) Get(digest, namespace string) *types.Result {
 	}
 
 	c.removeLocked(cacheKey)
+	c.recordEviction("expired")
 	c.updateGaugeLocked()
 
 	return nil
@@ -203,35 +214,47 @@ func (c *Cache) SetWithTTL(digest, namespace string, result *types.Result, ttl t
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	cacheKey := key{digest: digest, namespace: namespace}
+	c.setLocked(digest, namespace, result, ttl)
+}
 
-	if _, exists := c.entries[cacheKey]; !exists && len(c.entries) >= c.maxSize {
-		c.evictExpiredLocked()
-
-		if len(c.entries) >= c.maxSize {
-			c.evictOldestLocked()
-		}
+// SetWithTTLAtEpoch is like SetWithTTL for a result computed from data
+// fetched at the given invalidation epoch of digest (see Epoch). The result
+// is dropped when digest was invalidated since, because it may predate the
+// invalidation. It reports whether the result was stored.
+func (c *Cache) SetWithTTLAtEpoch(
+	digest, namespace string, result *types.Result, ttl time.Duration, epoch uint64,
+) bool {
+	if ttl <= 0 {
+		return false
 	}
 
-	expiresAt := time.Now().Add(ttl + jitter(ttl))
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	c.indexLocked(cacheKey)
-
-	c.entries[cacheKey] = entry{
-		result:    result,
-		expiresAt: expiresAt,
+	if c.epochs[shardOf(digest)] != epoch {
+		return false
 	}
 
-	if heapEnt, ok := c.heapIndex[cacheKey]; ok {
-		heapEnt.expiresAt = expiresAt
-		heap.Fix(&c.expHeap, heapEnt.index)
-	} else {
-		heapEnt = &heapEntry{cacheKey: cacheKey, expiresAt: expiresAt, index: 0}
-		heap.Push(&c.expHeap, heapEnt)
-		c.heapIndex[cacheKey] = heapEnt
-	}
+	c.setLocked(digest, namespace, result, ttl)
 
-	c.updateGaugeLocked()
+	return true
+}
+
+// Epoch returns the invalidation epoch of digest. DeleteAll advances it, so a
+// caller that reads it before computing a result can store the result with
+// SetWithTTLAtEpoch without overwriting a later invalidation.
+func (c *Cache) Epoch(digest string) uint64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	return c.epochs[shardOf(digest)]
+}
+
+func shardOf(digest string) int {
+	hash := fnv.New32a()
+	_, _ = hash.Write([]byte(digest))
+
+	return int(hash.Sum32() % invalidationShards)
 }
 
 // Delete removes a single cached entry for the given digest and namespace.
@@ -254,11 +277,14 @@ func (c *Cache) Delete(digest, namespace string) bool {
 
 // DeleteAll removes every cached entry for the given digest whose namespace
 // key equals namespace or extends it with a "\x00" separated suffix (as used
-// for per-image and per-rule result keys). Returns the number of entries
-// removed.
+// for per-image and per-rule result keys), and advances the invalidation
+// epoch of digest so results computed before are not stored afterwards.
+// Returns the number of entries removed.
 func (c *Cache) DeleteAll(digest, namespace string) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	c.epochs[shardOf(digest)]++
 
 	removed := 0
 
@@ -333,6 +359,39 @@ func (c *Cache) Stop() {
 func (c *Cache) ReportSize() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	c.updateGaugeLocked()
+}
+
+// setLocked stores a result; c.mu must be held.
+func (c *Cache) setLocked(digest, namespace string, result *types.Result, ttl time.Duration) {
+	cacheKey := key{digest: digest, namespace: namespace}
+
+	if _, exists := c.entries[cacheKey]; !exists && len(c.entries) >= c.maxSize {
+		c.evictExpiredLocked()
+
+		if len(c.entries) >= c.maxSize {
+			c.evictOldestLocked()
+		}
+	}
+
+	expiresAt := time.Now().Add(ttl + jitter(ttl))
+
+	c.indexLocked(cacheKey)
+
+	c.entries[cacheKey] = entry{
+		result:    result,
+		expiresAt: expiresAt,
+	}
+
+	if heapEnt, ok := c.heapIndex[cacheKey]; ok {
+		heapEnt.expiresAt = expiresAt
+		heap.Fix(&c.expHeap, heapEnt.index)
+	} else {
+		heapEnt = &heapEntry{cacheKey: cacheKey, expiresAt: expiresAt, index: 0}
+		heap.Push(&c.expHeap, heapEnt)
+		c.heapIndex[cacheKey] = heapEnt
+	}
 
 	c.updateGaugeLocked()
 }

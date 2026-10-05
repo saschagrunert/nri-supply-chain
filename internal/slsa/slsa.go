@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -46,6 +47,10 @@ const (
 	paramWorkflow      = "workflow"
 	paramSourceToBuild = "sourceToBuild"
 	paramConfigSource  = "configSource"
+
+	digestGitCommit = "gitCommit"
+	digestSHA1      = "sha1"
+	digestSHA256    = "sha256"
 
 	sha1HexLength   = 40
 	sha256HexLength = 64
@@ -663,7 +668,14 @@ func verifyDependencyRef(source *sourceInfo, dep *resourceDescriptor, depRef str
 }
 
 // verifyDependencyDigest compares a known source digest with the dependency
-// digest of the same algorithm.
+// digest of the same algorithm. For a git repository, a commit digest
+// (gitCommit, sha1, or sha256 with a commit SHA value) is also compared with
+// a dependency commit digest under another of these names, so naming the
+// same commit differently cannot hide a mismatch. A gitCommit source digest
+// always names a commit, also on a self-hosted git server that isGitURI does
+// not recognize. Other sources (for example a source archive) are only
+// compared by the same algorithm, since their sha256 digest is a content
+// digest, not a commit.
 func verifyDependencyDigest(source *sourceInfo, dep *resourceDescriptor) error {
 	algorithm, value, found := strings.Cut(source.Digest, ":")
 	if !found {
@@ -671,13 +683,19 @@ func verifyDependencyDigest(source *sourceInfo, dep *resourceDescriptor) error {
 	}
 
 	depValue, present := dep.Digest[algorithm]
+	if !present && isCommitAlgorithm(algorithm) && isCommitSHA(strings.ToLower(value)) &&
+		(algorithm == digestGitCommit || isGitURI(dep.URI) || isGitURI(source.URI)) {
+		depValue = commitDigest(dep.Digest, strings.ToLower(value))
+		present = depValue != ""
+	}
+
 	if !present || strings.EqualFold(depValue, value) {
 		return nil
 	}
 
 	return fmt.Errorf(
-		"%w: dependency %q has %s digest %q, source digest is %q",
-		ErrSourceMismatch, dep.URI, algorithm, depValue, value,
+		"%w: dependency %q has digest %q, source %s digest is %q",
+		ErrSourceMismatch, dep.URI, depValue, algorithm, value,
 	)
 }
 
@@ -697,18 +715,91 @@ func isCommitSHA(ref string) bool {
 	return true
 }
 
+// knownGitHosts lists hosting services whose repository URLs name git
+// repositories.
+//
+//nolint:gochecknoglobals // immutable lookup set
+var knownGitHosts = map[string]struct{}{
+	"github.com":                   {},
+	"gitlab.com":                   {},
+	"bitbucket.org":                {},
+	"codeberg.org":                 {},
+	"source.developers.google.com": {},
+}
+
+// archiveSuffixes lists file extensions of source archives, which known git
+// hosting services also serve.
+//
+//nolint:gochecknoglobals // immutable lookup list
+var archiveSuffixes = []string{".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tar.xz", ".zip"}
+
+// isGitURI reports whether a source or dependency URI names a git
+// repository: a "git+" or git:// URI, an ssh:// or scp-like address, a path
+// ending in .git, or a repository (not an archive) on a known git hosting
+// service.
+func isGitURI(uri string) bool {
+	lower := strings.ToLower(strings.TrimSpace(uri))
+	for _, prefix := range []string{"git+", "git://", "ssh://"} {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+
+	repository, _, _ := glob.SplitGitRef(lower)
+	repository = strings.TrimSuffix(repository, "/")
+
+	if strings.HasSuffix(repository, ".git") {
+		return true
+	}
+
+	if !strings.Contains(repository, "://") {
+		// scp-like "user@host:path"
+		host, _, found := strings.Cut(repository, ":")
+
+		return found && strings.Contains(host, "@") && !strings.Contains(host, "/")
+	}
+
+	return isKnownGitHostRepository(repository)
+}
+
+// isKnownGitHostRepository reports whether a URL names a repository, not an
+// archive, on a known git hosting service.
+func isKnownGitHostRepository(repository string) bool {
+	parsed, err := url.Parse(repository)
+	if err != nil {
+		return false
+	}
+
+	if _, known := knownGitHosts[parsed.Hostname()]; !known {
+		return false
+	}
+
+	for _, suffix := range archiveSuffixes {
+		if strings.HasSuffix(parsed.Path, suffix) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// isCommitAlgorithm reports whether a digest algorithm can name a git commit.
+func isCommitAlgorithm(algorithm string) bool {
+	return algorithm == digestGitCommit || algorithm == digestSHA1 || algorithm == digestSHA256
+}
+
 // commitDigest returns the git commit digest of a dependency that is
 // comparable with the commit SHA ref: a 40 hex character ref is compared with
 // a gitCommit or sha1 digest, a 64 hex character ref with a gitCommit or
 // sha256 digest. It returns "" when the dependency has no digest of the
 // ref's length.
 func commitDigest(digests map[string]string, ref string) string {
-	algorithm := "sha1"
+	algorithm := digestSHA1
 	if len(ref) == sha256HexLength {
-		algorithm = "sha256"
+		algorithm = digestSHA256
 	}
 
-	for _, candidate := range []string{"gitCommit", algorithm} {
+	for _, candidate := range []string{digestGitCommit, algorithm} {
 		value := digests[candidate]
 		if len(value) == len(ref) && isCommitSHA(strings.ToLower(value)) {
 			return value

@@ -750,6 +750,28 @@ func TestCompileMatchSyntaxError(t *testing.T) {
 	}
 }
 
+func TestCompileRejectsInvalidRegexLiteral(t *testing.T) {
+	t.Parallel()
+
+	// An invalid constant pattern would fail every evaluation, so it is
+	// rejected at load time, in match and require expressions alike.
+	for _, rule := range []celengine.Rule{
+		{Require: `image.ref.matches("[")`},
+		{Match: `image.ref.matches("(")`, Require: exprTrue},
+	} {
+		_, err := celengine.Compile([]celengine.Rule{rule})
+		if !errors.Is(err, celengine.ErrCompileFailed) {
+			t.Errorf("rule %+v: expected ErrCompileFailed, got: %v", rule, err)
+		}
+	}
+
+	// Patterns that are only known at evaluation time still compile.
+	_, err := celengine.Compile([]celengine.Rule{{Require: "image.ref.matches(image.registry)"}})
+	if err != nil {
+		t.Errorf("unexpected compile error: %v", err)
+	}
+}
+
 func TestCompileMatchTypeError(t *testing.T) {
 	t.Parallel()
 
@@ -1762,6 +1784,40 @@ func TestEvaluateSourceVariables(t *testing.T) {
 		{
 			name:    "source.level check",
 			require: "source.level >= 2",
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeSource, "ok")
+				r.Metadata = map[string]any{
+					metaSource: testSourceURI,
+					metaBranch: testBranchMain,
+					metaLevel:  int64(2),
+				}
+
+				return r
+			}(),
+			pass: true,
+		},
+		{
+			name:    "source.locations covers every location",
+			require: `source.locations.all(l, l.uri.startsWith("https://github.com/example/"))`,
+			result: func() *types.CheckResult {
+				r := types.PassResult(types.CheckTypeSource, "ok")
+				r.Metadata = map[string]any{
+					metaSource: testSourceURI,
+					metaBranch: testBranchMain,
+					metaLevel:  int64(2),
+					"locations": []map[string]string{
+						{"uri": testSourceURI, "branch": testBranchMain},
+						{"uri": "https://evil.example.com/repo", "branch": testBranchMain},
+					},
+				}
+
+				return r
+			}(),
+			pass: false,
+		},
+		{
+			name:    "source.locations falls back to the first location",
+			require: `size(source.locations) == 1 && source.locations[0].uri == "https://github.com/example/repo"`,
 			result: func() *types.CheckResult {
 				r := types.PassResult(types.CheckTypeSource, "ok")
 				r.Metadata = map[string]any{

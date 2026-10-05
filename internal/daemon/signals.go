@@ -83,16 +83,23 @@ func setupSignals(
 }
 
 type pluginReloader interface {
+	remediationReloader
+
 	Close()
 	PrewarmAfterReload(ctx context.Context)
 	SetFetchTimeout(d time.Duration)
 	SetDigestResolveTimeout(d time.Duration)
 	SetTransportCache(tc *registry.TransportCache)
 	TransportCache() *registry.TransportCache
-	SetRemediationMode(mode config.RemediationMode)
-	SetRemediationConfig(cfg *config.RemediationConfig)
 	TriggerReverify()
 	TriggerFeedReverify(purls []string)
+}
+
+// remediationReloader applies the remediation settings of a reload.
+type remediationReloader interface {
+	SetRemediationMode(mode config.RemediationMode)
+	SetRemediationConfig(cfg *config.RemediationConfig)
+	StartContinuousVerifier(ctx context.Context, interval time.Duration)
 }
 
 func setupReload(
@@ -122,6 +129,12 @@ func handleReload(
 	plug pluginReloader, watcher *fsnotify.Watcher,
 	feedDirVal *atomic.Value,
 ) {
+	// A reload that was queued (a signal or a debounced file change) when
+	// shutdown started is dropped.
+	if ctx.Err() != nil {
+		return
+	}
+
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("Recovered panic in reload handler",
@@ -134,25 +147,8 @@ func handleReload(
 
 	slog.Info("Reloading config")
 
-	if !ShouldUseConfigFile(configPath) {
-		slog.Warn("No config file specified, skipping reload")
-
-		return
-	}
-
-	newCfg, err := config.LoadFromFile(configPath)
-	if err != nil {
-		met.ConfigReloadErrorsTotal.Inc()
-		slog.Error("Config reload failed", "error", err)
-
-		return
-	}
-
-	err = newCfg.ValidateRuntime()
-	if err != nil {
-		met.ConfigReloadErrorsTotal.Inc()
-		slog.Error("Config reload validation failed", "error", err)
-
+	newCfg := loadReloadConfig(configPath, met)
+	if newCfg == nil {
 		return
 	}
 
@@ -178,9 +174,40 @@ func handleReload(
 	}
 }
 
+// loadReloadConfig loads and validates the config file for a reload. It
+// returns nil when there is no config file or it is invalid.
+func loadReloadConfig(configPath string, met *metrics.Metrics) *config.Config {
+	if !ShouldUseConfigFile(configPath) {
+		slog.Warn("No config file specified, skipping reload")
+
+		return nil
+	}
+
+	newCfg, err := config.LoadFromFile(configPath)
+	if err != nil {
+		met.ConfigReloadErrorsTotal.Inc()
+		slog.Error("Config reload failed", "error", err)
+
+		return nil
+	}
+
+	err = newCfg.ValidateRuntime()
+	if err != nil {
+		met.ConfigReloadErrorsTotal.Inc()
+		slog.Error("Config reload validation failed", "error", err)
+
+		return nil
+	}
+
+	return newCfg
+}
+
 // applyPluginSettings applies the plugin-side settings of a reloaded
 // configuration (a config file reload or a configuration passed by the
-// runtime) after the verifier has been reloaded.
+// runtime) after the verifier has been reloaded. Enabling remediation starts
+// the continuous verifier: pre-warming degrades containers once remediation
+// is enabled, and only the continuous verifier recovers them. ctx is the
+// plugin's lifetime context.
 func applyPluginSettings(
 	ctx context.Context, cfg *config.Config, verif *verifier.Verifier, plug pluginReloader,
 ) {
@@ -190,6 +217,11 @@ func applyPluginSettings(
 	plug.SetRemediationMode(cfg.Remediation.Mode)
 	plug.SetRemediationConfig(&cfg.Remediation)
 	warnEvictDeferred(cfg.Remediation.Mode)
+
+	if cfg.Remediation.Enabled() {
+		plug.StartContinuousVerifier(ctx, cfg.Remediation.Interval.Duration)
+	}
+
 	plug.PrewarmAfterReload(ctx)
 
 	if cfg.Remediation.Enabled() && cfg.Remediation.Triggers.OnPolicyChange {
@@ -213,21 +245,6 @@ func warnNonReloadableChanges(current, proposed *config.Config) {
 		slog.Warn("config_version changed but requires restart to take effect",
 			"current", current.ConfigVersion,
 			"proposed", proposed.ConfigVersion,
-		)
-	}
-
-	if !current.Remediation.Enabled() && proposed.Remediation.Enabled() {
-		slog.Warn("remediation.mode enabled but requires restart to take effect; "+
-			"the continuous verifier goroutine is only started at startup",
-			"proposed_mode", proposed.Remediation.Mode,
-		)
-	}
-
-	if current.Remediation.Enabled() && proposed.Remediation.Enabled() &&
-		current.Remediation.Interval != proposed.Remediation.Interval {
-		slog.Warn("remediation.interval changed but requires restart to take effect",
-			"current", current.Remediation.Interval.Duration,
-			"proposed", proposed.Remediation.Interval.Duration,
 		)
 	}
 }

@@ -22,10 +22,11 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/google/cel-go/cel"
-	"github.com/google/cel-go/checker"
-	"github.com/google/cel-go/common/ast"
-	"github.com/google/cel-go/ext"
+	"cel.dev/cel-go/cel"
+	"cel.dev/cel-go/checker"
+	"cel.dev/cel-go/common/ast"
+	"cel.dev/cel-go/ext"
+	"cel.dev/cel-go/interpreter"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/guac"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
@@ -273,9 +274,16 @@ func compileExpression(env *cel.Env, expr, label string) (cel.Program, error) {
 		)
 	}
 
-	prog, err := env.Program(checked, cel.CostLimit(costLimit))
+	// Constant regular expressions are compiled with the program, so an
+	// invalid pattern (e.g. image.ref.matches("[")) is rejected here instead
+	// of failing every evaluation.
+	prog, err := env.Program(
+		checked,
+		cel.CostLimit(costLimit),
+		cel.OptimizeRegex(interpreter.MatchesRegexOptimization),
+	)
 	if err != nil {
-		return nil, fmt.Errorf("%s: creating program: %w", label, err)
+		return nil, fmt.Errorf("%s: %w: creating program: %w", label, ErrCompileFailed, err)
 	}
 
 	return prog, nil
@@ -950,6 +958,7 @@ func buildSourceVars(result *types.CheckResult) map[string]any {
 		varVerified: false,
 		"source":    "",
 		"branch":    "",
+		"locations": []map[string]string{},
 		"level":     int64(0),
 	}
 
@@ -957,6 +966,19 @@ func buildSourceVars(result *types.CheckResult) map[string]any {
 		vars[varVerified] = result.Passed
 		extractStringMeta(result.Metadata, vars, "source", "branch")
 		extractInt64Meta(result.Metadata, vars, "level")
+
+		// Without the full list, expose at least the first location, so a
+		// rule over all locations does not pass vacuously when the result
+		// names a source. A result without metadata (an attestation that did
+		// not verify) leaves the list empty, so locations.all(...) is true;
+		// policies combine it with source.verified or
+		// size(source.locations) > 0.
+		if locations, ok := result.Metadata["locations"].([]map[string]string); ok {
+			vars["locations"] = locations
+		} else if source, _ := vars["source"].(string); source != "" {
+			branch, _ := vars["branch"].(string)
+			vars["locations"] = []map[string]string{{"uri": source, "branch": branch}}
+		}
 	}
 
 	return vars

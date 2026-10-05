@@ -162,6 +162,7 @@
         "source": { "enum": ["local", "oci"] },
         "ociRef": { "type": "string" },
         "pollInterval": { "type": "string" },
+        "ociMaxStaleness": { "type": "string" },
         "issuers": { "type": "array", "items": { "type": "string" } },
         "sanPatterns": { "type": "array", "items": { "type": "string" } },
         "keys": { "type": "array", "items": { "type": "string" } }
@@ -185,7 +186,8 @@
       "properties": {
         "name": { "type": "string" },
         "tufMirror": { "type": "string" },
-        "tufRoot": { "type": "string" }
+        "tufRoot": { "type": "string" },
+        "issuers": { "type": "array", "items": { "type": "string" } }
       }
     },
     "registry": {

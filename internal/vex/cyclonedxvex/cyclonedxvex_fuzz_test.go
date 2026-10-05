@@ -51,14 +51,14 @@ func FuzzVerify(f *testing.F) {
 		`"hashes":[{"alg":"SHA-256",` +
 		`"content":"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"}]}],` +
 		`"vulnerabilities":[{"id":"CVE-2024-0003",` +
-		`"analysis":{"state":"not_affected"},` +
+		`"analysis":{"state":"not_affected","justification":"code_not_reachable"},` +
 		`"affects":[{"ref":"comp-app"}]}]}`))
 
 	// Seed: BOM with multiple vulnerabilities in different states,
 	// exercising the multi-vulnerability classification loop.
 	f.Add([]byte(`{"bomFormat":"CycloneDX","specVersion":"1.5",` +
 		`"vulnerabilities":[` +
-		`{"id":"CVE-2024-0010","analysis":{"state":"not_affected"},` +
+		`{"id":"CVE-2024-0010","analysis":{"state":"not_affected","justification":"code_not_reachable"},` +
 		`"affects":[{"ref":"` + testDigest + `"}]},` +
 		`{"id":"CVE-2024-0011","analysis":{"state":"exploitable"},` +
 		`"affects":[{"ref":"` + testDigest + `"}]},` +

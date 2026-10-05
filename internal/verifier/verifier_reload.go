@@ -32,10 +32,15 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/slsa"
 )
 
-// Reload reloads the verifier's configuration and policies.
+// Reload reloads the verifier's configuration and policies. It fails with
+// ErrVerifierStopped once the verifier was stopped.
 func (v *Verifier) Reload(ctx context.Context, cfg *config.Config) error {
 	v.reloadMu.Lock()
 	defer v.reloadMu.Unlock()
+
+	if v.stopped {
+		return ErrVerifierStopped
+	}
 
 	return v.reload(ctx, cfg)
 }

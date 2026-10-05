@@ -41,6 +41,7 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/verify"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 )
@@ -532,7 +533,7 @@ func TestOCILoadPEMPublicKeyPKIX(t *testing.T) {
 
 	keyPath := writePKIXPEMFile(t, &key.PublicKey)
 
-	pub, err := policy.LoadPEMPublicKeyForTest(keyPath)
+	pub, err := attestation.LoadPublicKey(keyPath)
 	testutil.AssertNoError(t, err)
 
 	ecPub, ok := pub.(*ecdsa.PublicKey)
@@ -563,7 +564,7 @@ func TestOCILoadPEMPublicKeyPKCS1(t *testing.T) {
 	})
 	writeFile(t, keyPath, string(pemBlock))
 
-	pub, err := policy.LoadPEMPublicKeyForTest(keyPath)
+	pub, err := attestation.LoadPublicKey(keyPath)
 	testutil.AssertNoError(t, err)
 
 	if _, ok := pub.(*rsa.PublicKey); !ok {
@@ -578,7 +579,7 @@ func TestOCILoadPEMPublicKeyInvalidPEM(t *testing.T) {
 	keyPath := filepath.Join(dir, "invalid.pub")
 	writeFile(t, keyPath, "this is not PEM data at all")
 
-	_, err := policy.LoadPEMPublicKeyForTest(keyPath)
+	_, err := attestation.LoadPublicKey(keyPath)
 	testutil.AssertError(t, err)
 	testutil.AssertContains(t, err.Error(), "no PEM block")
 }
@@ -590,7 +591,7 @@ func TestOCILoadPEMPublicKeyNoPEMBlock(t *testing.T) {
 	keyPath := filepath.Join(dir, "empty.pub")
 	writeFile(t, keyPath, "")
 
-	_, err := policy.LoadPEMPublicKeyForTest(keyPath)
+	_, err := attestation.LoadPublicKey(keyPath)
 	testutil.AssertError(t, err)
 	testutil.AssertContains(t, err.Error(), "no PEM block")
 }
@@ -607,7 +608,7 @@ func TestOCILoadPEMPublicKeyInvalidDER(t *testing.T) {
 	})
 	writeFile(t, keyPath, string(pemBlock))
 
-	_, err := policy.LoadPEMPublicKeyForTest(keyPath)
+	_, err := attestation.LoadPublicKey(keyPath)
 	testutil.AssertError(t, err)
 	testutil.AssertContains(t, err.Error(), "parsing public key")
 }
@@ -615,7 +616,7 @@ func TestOCILoadPEMPublicKeyInvalidDER(t *testing.T) {
 func TestOCILoadPEMPublicKeyNonexistentFile(t *testing.T) {
 	t.Parallel()
 
-	_, err := policy.LoadPEMPublicKeyForTest("/nonexistent/key.pub")
+	_, err := attestation.LoadPublicKey("/nonexistent/key.pub")
 	testutil.AssertError(t, err)
 	testutil.AssertContains(t, err.Error(), "reading PEM file")
 }

@@ -389,6 +389,7 @@ func (p *Policy) validateRule(idx int) []error {
 	}
 
 	warnTagScopedPatterns(fmt.Sprintf("rules[%d].images", idx), rule.Images)
+	warnUppercasePatterns(fmt.Sprintf("rules[%d].images", idx), rule.Images)
 
 	err = validateGlobPatterns(fmt.Sprintf("rules[%d].images", idx), rule.Images)
 	if err != nil {
