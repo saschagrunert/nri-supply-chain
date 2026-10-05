@@ -140,6 +140,9 @@ type verifyOutput struct {
 	Allowed       bool                `json:"allowed"`
 	Reason        string              `json:"reason,omitempty"`
 	CheckResults  []types.CheckResult `json:"checkResults,omitempty"`
+	// errored reports that the image could not be verified (exit code
+	// exitError), as opposed to being denied.
+	errored bool
 }
 
 type resolvedDigest struct {
@@ -347,7 +350,7 @@ func verifySingleImage(
 		out.PreviewPolicy = previewPolicy
 		out.Reason = err.Error()
 
-		return exitCodeForVerifyError(err), out
+		return verifyErrorExit(out, err)
 	}
 
 	result, err := verif.Verify(ctx, &types.VerifyRequest{
@@ -367,7 +370,7 @@ func verifySingleImage(
 
 		out.Reason = err.Error()
 
-		return exitCodeForVerifyError(err), out
+		return verifyErrorExit(out, err)
 	}
 
 	out.Allowed = result.Allowed
@@ -424,6 +427,16 @@ func exitCodeForVerifyError(err error) int {
 	}
 
 	return exitError
+}
+
+// verifyErrorExit returns the exit code for a verification error and the
+// output, marking the output as errored when the image could not be verified,
+// so that a preview counts it as an error instead of a denial.
+func verifyErrorExit(out *verifyOutput, err error) (int, *verifyOutput) {
+	code := exitCodeForVerifyError(err)
+	out.errored = code == exitError
+
+	return code, out
 }
 
 func newVerifier(
@@ -494,6 +507,7 @@ func newVerifyOutput(
 		Allowed:       false,
 		Reason:        "",
 		CheckResults:  nil,
+		errored:       false,
 	}
 }
 

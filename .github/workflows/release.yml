@@ -36,6 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     outputs:
+      ci-run-id: ${{ steps.check.outputs.ci-run-id }}
       publish: ${{ steps.check.outputs.publish }}
       release: ${{ steps.check.outputs.release }}
     steps:
@@ -49,23 +50,30 @@ jobs:
           RUN_EVENT: ${{ github.event.workflow_run.event }}
           RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
           RUN_HEAD_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
           SHA: ${{ github.sha }}
         run: |
           # require_green_ci fails unless SHA is on main and the CI run for a
-          # push of SHA to main succeeded. It waits while that run is pending.
+          # push of SHA to main succeeded, and sets ci_run_id to that run. It
+          # waits while that run is pending, and for up to 10 minutes for the
+          # run to appear, since a tag pushed together with its commit starts
+          # this workflow before CI registered its run.
           require_green_ci() {
             status=$(gh api "repos/${REPOSITORY}/compare/main...${SHA}" --jq .status)
             if [ "$status" != "identical" ] && [ "$status" != "behind" ]; then
               echo "::error::${SHA} is not on main (compare status: ${status})"
               exit 1
             fi
+            deadline=$((SECONDS + 600))
             while :; do
               runs=$(gh api "repos/${REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${SHA}&event=push&branch=main" \
-                --jq '[.workflow_runs[] | {status, conclusion}]')
-              if jq -e 'any(.conclusion == "success")' <<<"$runs" >/dev/null; then
+                --jq '[.workflow_runs[] | {id, status, conclusion}]')
+              ci_run_id=$(jq -r 'map(select(.conclusion == "success")) | first | .id // empty' <<<"$runs")
+              if [ -n "$ci_run_id" ]; then
                 return 0
               fi
-              if ! jq -e 'any(.status != "completed")' <<<"$runs" >/dev/null; then
+              if ! jq -e 'any(.status != "completed")' <<<"$runs" >/dev/null &&
+                { [ "$runs" != "[]" ] || [ "$SECONDS" -ge "$deadline" ]; }; then
                 echo "::error::no successful CI run for a push of ${SHA} to main"
                 exit 1
               fi
@@ -74,6 +82,7 @@ jobs:
             done
           }
 
+          ci_run_id=""
           publish=false
           release=false
           case "$EVENT_NAME" in
@@ -82,6 +91,7 @@ jobs:
                 [ "$RUN_EVENT" = "push" ] &&
                 [ "$RUN_HEAD_BRANCH" = "main" ] &&
                 [ "$RUN_HEAD_REPOSITORY" = "$REPOSITORY" ]; then
+                ci_run_id=$RUN_ID
                 publish=true
               fi
               ;;
@@ -102,8 +112,11 @@ jobs:
               esac
               ;;
           esac
-          echo "publish=$publish" >> "$GITHUB_OUTPUT"
-          echo "release=$release" >> "$GITHUB_OUTPUT"
+          {
+            echo "ci-run-id=$ci_run_id"
+            echo "publish=$publish"
+            echo "release=$release"
+          } >> "$GITHUB_OUTPUT"
 
   # Pull requests only build the image, without registry write access.
   build-pr:
@@ -122,6 +135,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -155,6 +170,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Login to GHCR
@@ -179,9 +195,10 @@ jobs:
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
 
       - name: Export digest
+        env:
+          digest: ${{ steps.build.outputs.digest }}
         run: |
           mkdir -p /tmp/digests
-          digest="${{ steps.build.outputs.digest }}"
           touch "/tmp/digests/${digest#sha256:}"
 
       - name: Upload digest
@@ -217,8 +234,9 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.IMAGE }}
-          # "latest" is only added by the deploy job after the image was
-          # scanned, attested, and verified.
+          # "main" is only added by the deploy job after the image was
+          # scanned, attested, and verified; "latest" only moves to
+          # verified tagged releases.
           tags: |
             type=sha,prefix=,format=short
 
@@ -235,7 +253,7 @@ jobs:
         run: |
           docker buildx imagetools create \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf '${{ env.IMAGE }}@sha256:%s ' *)
+            $(printf "${IMAGE}@sha256:%s " *)
           SHA_TAG=$(jq -cr '.tags[]' <<< "$DOCKER_METADATA_OUTPUT_JSON" | grep -E ':[0-9a-f]{7,}$' | head -1)
           digest=$(docker buildx imagetools inspect "$SHA_TAG" --format '{{.Manifest.Digest}}')
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
@@ -272,6 +290,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           sparse-checkout: |
             .github/actions/attest
@@ -292,9 +311,9 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-      - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+      - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
-          syft-version: v1.51.0
+          syft-version: v1.54.0
 
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
@@ -302,7 +321,9 @@ jobs:
           subject-name: ${{ env.IMAGE }}
 
       - name: Sign image
-        run: cosign sign --yes "$IMAGE@${{ needs.merge.outputs.digest }}"
+        env:
+          DIGEST: ${{ needs.merge.outputs.digest }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
 
       - uses: ./.github/actions/attest
         with:
@@ -310,32 +331,53 @@ jobs:
           # The policy URI must point at the checked out policy file, whose
           # digest the VSA records.
           policy-ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ci-run-id: ${{ needs.gate.outputs.ci-run-id }}
 
-      # Only a scanned, attested, and verified image may become "latest".
-      # crane adds the tag to the existing manifest, so the digest (and its
+      # Runs for different pushes to main are not ordered, so an older commit
+      # can finish after a newer one. Only the commit that is still the head
+      # of main may move "main", so the tag never moves backwards. A shared
+      # concurrency group would not help: GitHub replaces a pending run with
+      # the next one queued, which can drop the run of the newest commit.
+      - name: Check that the commit is the head of main
+        id: head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          status=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${SHA}...main" --jq .status)
+          if [ "$status" = "identical" ]; then
+            echo "head=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Not moving the main tag: ${SHA} is no longer the head of main (compare status: ${status})"
+            echo "head=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Only a scanned, attested, and verified image may become "main".
+      # "latest" is reserved for tagged releases (see release-attest). crane
+      # adds the tag to the existing manifest, so the digest (and its
       # signatures and attestations) stays the same.
-      - name: Tag verified image as latest
+      - name: Tag verified image as main
+        if: steps.head.outputs.head == 'true'
         env:
           DIGEST: ${{ needs.merge.outputs.digest }}
         run: |
           make build/crane
-          ./build/crane tag "${IMAGE}@${DIGEST}" latest
+          ./build/crane tag "${IMAGE}@${DIGEST}" main
 
       - name: Create deployment
+        if: steps.head.outputs.head == 'true'
         env:
+          DEPLOY_REF: ${{ github.event.workflow_run.head_sha || github.sha }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # required_contexts:[] bypasses deployment protection rules so the
           # deployment is created unconditionally without waiting for status checks.
-          DEPLOY_ID=$(gh api repos/${{ github.repository }}/deployments \
-            --input - \
-            --jq '.id' <<EOF
-          {"ref":"${{ github.event.workflow_run.head_sha || github.sha }}","environment":"latest","auto_merge":false,"required_contexts":[]}
-          EOF
-          )
-          gh api repos/${{ github.repository }}/deployments/$DEPLOY_ID/statuses \
+          DEPLOY_ID=$(jq -n --arg ref "$DEPLOY_REF" \
+            '{ref: $ref, environment: "main", auto_merge: false, required_contexts: []}' |
+            gh api "repos/${GITHUB_REPOSITORY}/deployments" --input - --jq '.id')
+          gh api "repos/${GITHUB_REPOSITORY}/deployments/${DEPLOY_ID}/statuses" \
             -f state=success \
-            -f environment_url="https://ghcr.io/${{ github.repository }}:latest" \
+            -f environment_url="https://${IMAGE}:main" \
             --silent
 
   release:
@@ -354,14 +396,19 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
+      # No module or build cache: the release binaries are built from
+      # scratch rather than from a cache another workflow run could have
+      # written.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          cache: false
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-      - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+      - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
-          syft-version: v1.51.0
+          syft-version: v1.54.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Login to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -372,7 +419,7 @@ jobs:
       - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
-          version: "v2.18.1"
+          version: "v2.18.2"
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -386,8 +433,10 @@ jobs:
         run: make build/crane
       - name: Get container image digest
         id: digest
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
         run: |
-          DIGEST=$(./build/crane digest "${IMAGE}:${{ steps.release.outputs.version }}")
+          DIGEST=$(./build/crane digest "${IMAGE}:${VERSION}")
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
       - name: Upload verify binary
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -425,19 +474,29 @@ jobs:
     with:
       base64-subjects: "${{ needs.release.outputs.hashes }}"
       upload-assets: true
+      # goreleaser creates the release as a draft, and the generator only
+      # finds an existing draft release (instead of creating a second,
+      # published one) when draft-release is true. publish-release publishes
+      # it after the release was verified.
+      draft-release: "true"
 
   release-attest:
     permissions:
+      # Reads the jobs of the CI run for the test result attestation.
+      actions: read
       attestations: write
       contents: read
       packages: write
       id-token: write
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [release, release-provenance]
+    needs: [gate, release, release-provenance]
+    outputs:
+      highest: ${{ steps.highest.outputs.highest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           sparse-checkout: |
             .github/actions/attest
             .trivyignore
@@ -457,9 +516,9 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-      - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+      - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
-          syft-version: v1.51.0
+          syft-version: v1.54.0
 
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
@@ -480,10 +539,38 @@ jobs:
           digest: ${{ needs.release.outputs.digest }}
           policy-ref: ${{ github.ref_name }}
           verify-binary: /tmp/verify-binary/nri-supply-chain
+          ci-run-id: ${{ needs.gate.outputs.ci-run-id }}
 
       # goreleaser only pushes the version tag. "latest" moves to the release
-      # after it was scanned, attested, and verified.
+      # after it was scanned, attested, and verified, but only if it is not a
+      # prerelease and no published release has a higher version, so a patch
+      # release of an older line does not move "latest" backwards. The
+      # release itself is still a draft here and not part of the list.
+      - name: Check that the release is the highest version
+        id: highest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          semver='^v[0-9]+\.[0-9]+\.[0-9]+$'
+          if ! grep -Eq "$semver" <<<"$TAG"; then
+            echo "::notice::Not moving the latest tag: ${TAG} is a prerelease"
+            echo "highest=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          released=$(gh release list --repo "$GITHUB_REPOSITORY" \
+            --exclude-drafts --exclude-pre-releases --limit 1000 \
+            --json tagName --jq '.[].tagName')
+          highest=$(printf '%s\n' "$released" "$TAG" | grep -E "$semver" | sort -V | tail -n1)
+          if [ "$highest" = "$TAG" ]; then
+            echo "highest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Not moving the latest tag: ${highest} is newer than ${TAG}"
+            echo "highest=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Tag verified release as latest
+        if: steps.highest.outputs.highest == 'true'
         env:
           DIGEST: ${{ needs.release.outputs.digest }}
         run: |
@@ -505,6 +592,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           sparse-checkout: |
             deploy/helm
             Makefile
@@ -538,3 +626,24 @@ jobs:
             exit 1
           fi
           cosign sign --yes "${CHARTS}/nri-supply-chain@${CHART_DIGEST}"
+
+  # goreleaser creates the GitHub release as a draft. It is only published
+  # after release-attest verified the released image, the binary provenance
+  # was uploaded, and the chart was published. GitHub marks a newly published
+  # release as the latest release unless told otherwise, so it follows the
+  # same rule as the "latest" image tag.
+  publish-release:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [release-attest, binary-provenance, release-chart]
+    steps:
+      - name: Publish draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LATEST: ${{ needs.release-attest.outputs.highest == 'true' }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --draft=false --latest="$LATEST"

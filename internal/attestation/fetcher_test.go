@@ -994,6 +994,25 @@ func TestExtractPredicateType(t *testing.T) {
 			payload: []byte(`{"other":"value"}`),
 			want:    "",
 		},
+		{
+			name:    "case-insensitive key",
+			payload: []byte(`{"PredicateType":"` + testPredicateSLSA + `"}`),
+			want:    testPredicateSLSA,
+		},
+		{
+			name: "duplicate key is ambiguous",
+			payload: []byte(
+				`{"predicateType":"` + testPredicateSLSA + `","predicateType":"other"}`,
+			),
+			want: "",
+		},
+		{
+			name: "case-folded duplicate key is ambiguous",
+			payload: []byte(
+				`{"predicateType":"` + testPredicateSLSA + `","PREDICATETYPE":"other"}`,
+			),
+			want: "",
+		},
 	}
 
 	for _, test := range tests {

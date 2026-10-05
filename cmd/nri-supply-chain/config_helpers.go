@@ -28,8 +28,13 @@ func setupConfig(configPath string) (*config.Config, error) {
 		return nil, err
 	}
 
+	return validateRuntimeConfig(cfg)
+}
+
+// validateRuntimeConfig runs the runtime validation of an enabled config.
+func validateRuntimeConfig(cfg *config.Config) (*config.Config, error) {
 	if cfg.Enabled() {
-		err = cfg.ValidateRuntime()
+		err := cfg.ValidateRuntime()
 		if err != nil {
 			return nil, fmt.Errorf("runtime validation: %w", err)
 		}
@@ -53,12 +58,21 @@ func serveConfigPath(path string, explicit bool) string {
 
 // setupServeConfig loads the config for the plugin process. Without a config
 // file the built-in defaults apply until the runtime passes a configuration.
+// A config file the plugin serves with must exist: serveConfigPath only keeps
+// the default path when it exists or was set explicitly, and an explicitly
+// set file that is missing must not silently fall back to the defaults
+// (verification disabled) while the configuration from the runtime is ignored.
 func setupServeConfig(path string) (*config.Config, error) {
 	if path == "" {
 		return config.DefaultConfig(), nil
 	}
 
-	return setupConfig(path)
+	cfg, err := config.LoadFromFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("loading config file: %w", err)
+	}
+
+	return validateRuntimeConfig(cfg)
 }
 
 func loadConfig(path string) (*config.Config, error) {

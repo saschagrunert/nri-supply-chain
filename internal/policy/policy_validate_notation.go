@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 )
 
 func validateNotationCertFiles(
@@ -59,7 +60,12 @@ func validateNotationLevels(notation *NotationPolicy) []error {
 
 	if notation.VerificationLevel != "" {
 		switch notation.VerificationLevel {
-		case "strict", "permissive", "audit", notationLevelSkip:
+		case "strict", notationLevelPermissive, notationLevelAudit:
+		case notationLevelSkip:
+			// notation-go rejects trust stores and identities at this level
+			// while every trust policy rule needs them, and a skipped
+			// verification never passes the check anyway.
+			errs = append(errs, ErrNotationSkipUnsupported)
 		default:
 			errs = append(errs, fmt.Errorf(
 				"%w: got %q",
@@ -79,11 +85,6 @@ func validateNotationLevels(notation *NotationPolicy) []error {
 				notation.RevocationMode,
 			))
 		}
-	}
-
-	if notation.VerificationLevel == notationLevelSkip &&
-		notation.RevocationMode != "" {
-		errs = append(errs, ErrNotationRevocationWithSkipLevel)
 	}
 
 	return errs
@@ -241,6 +242,64 @@ func validateNotationTrustPolicyFields(
 	err = validateNonEmpty(prefix+".trustedIdentities", rule.TrustedIdentities)
 	if err != nil {
 		errs = append(errs, err)
+	}
+
+	return errs
+}
+
+// validateNotationStoreRefs checks that every trust store a Notation trust
+// policy rule references ("<type>:<name>") is defined in the effective
+// notation section with that type. notation-go only checks the reference
+// format, so an undefined store would fail every Notation check at
+// verification time instead of at load time. Rules are checked on the
+// effective policy they produce, because a rule that only sets trustPolicy
+// uses the base trust stores.
+func (p *Policy) validateNotationStoreRefs() error {
+	errs := notationStoreRefErrors(p.Notation)
+
+	for idx := range p.Rules {
+		if p.Rules[idx].Notation == nil {
+			continue
+		}
+
+		for _, err := range notationStoreRefErrors(ApplyRule(p, &p.Rules[idx]).Notation) {
+			errs = append(errs, fmt.Errorf("rules[%d]: %w", idx, err))
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+func notationStoreRefErrors(notationPolicy *NotationPolicy) []error {
+	if notationPolicy == nil {
+		return nil
+	}
+
+	storeTypes := make(map[string]string, len(notationPolicy.TrustStores))
+	for _, store := range notationPolicy.TrustStores {
+		if _, seen := storeTypes[store.Name]; !seen {
+			storeTypes[store.Name] = store.Type
+		}
+	}
+
+	var errs []error
+
+	for idx, rule := range notationPolicy.TrustPolicy {
+		for sidx, ref := range rule.TrustStores {
+			if ref == "" {
+				continue
+			}
+
+			storeType, name, _ := strings.Cut(ref, ":")
+			if definedType, ok := storeTypes[name]; ok && definedType == storeType {
+				continue
+			}
+
+			errs = append(errs, fmt.Errorf(
+				"%w: notation.trustPolicy[%d] %q: trustStores[%d] %q",
+				ErrNotationTrustStoreUndefined, idx, rule.Name, sidx, ref,
+			))
+		}
 	}
 
 	return errs

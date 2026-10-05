@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/registry"
@@ -180,6 +181,52 @@ func TestExchangeACRTokenServerError(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "500") {
 		t.Errorf("error should mention status code 500, got: %v", err)
+	}
+}
+
+// TestExchangeACRTokenDoesNotFollowRedirects checks that the Azure access
+// token in the exchange request is never resent to a redirect target.
+func TestExchangeACRTokenDoesNotFollowRedirects(t *testing.T) {
+	t.Parallel()
+
+	var leaked atomic.Bool
+
+	target := httptest.NewTLSServer(http.HandlerFunc(
+		func(responseWriter http.ResponseWriter, request *http.Request) {
+			_ = request.ParseForm()
+
+			if request.FormValue("access_token") != "" {
+				leaked.Store(true)
+			}
+
+			//nolint:gosec // test helper encoding a mock response
+			_ = json.NewEncoder(responseWriter).Encode(
+				refreshTokenResponse{RefreshToken: "redirected-refresh-token"},
+			)
+		},
+	))
+	t.Cleanup(target.Close)
+
+	srv := httptest.NewTLSServer(http.HandlerFunc(
+		func(responseWriter http.ResponseWriter, request *http.Request) {
+			http.Redirect(
+				responseWriter, request, target.URL+"/oauth2/exchange",
+				http.StatusTemporaryRedirect,
+			)
+		},
+	))
+	t.Cleanup(srv.Close)
+
+	_, err := registry.ExchangeACRToken(
+		context.Background(), srv.Client(),
+		strings.TrimPrefix(srv.URL, "https://"), "test-access-token",
+	)
+	if err == nil {
+		t.Fatal("ExchangeACRToken() expected error for a redirect")
+	}
+
+	if leaked.Load() {
+		t.Fatal("access token was sent to the redirect target")
 	}
 }
 

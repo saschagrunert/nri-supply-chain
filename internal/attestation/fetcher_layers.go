@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 
 	ociV1 "github.com/google/go-containerregistry/pkg/v1"
 )
@@ -184,6 +185,11 @@ func decodeLayer(data []byte, maxSize int64) ([]byte, error) {
 	return decoded, nil
 }
 
+// extractPredicateType returns the predicateType of an in-toto statement.
+// encoding/json matches field names case-insensitively and keeps the last
+// match, so a statement with more than one key that folds to "predicateType"
+// is ambiguous and yields an empty type rather than a type the decoded
+// statement may not carry.
 func extractPredicateType(payload []byte) string {
 	dec := json.NewDecoder(bytes.NewReader(payload))
 
@@ -192,30 +198,40 @@ func extractPredicateType(payload []byte) string {
 		return ""
 	}
 
+	var (
+		predicateType string
+		found         bool
+	)
+
 	for dec.More() {
 		key, keyErr := dec.Token()
 		if keyErr != nil {
 			return ""
 		}
 
-		if key == "predicateType" {
-			var val string
+		name, ok := key.(string)
+		if !ok || !strings.EqualFold(name, "predicateType") {
+			var skip json.RawMessage
 
-			valErr := dec.Decode(&val)
-			if valErr != nil {
+			skipErr := dec.Decode(&skip)
+			if skipErr != nil {
 				return ""
 			}
 
-			return val
+			continue
 		}
 
-		var skip json.RawMessage
-
-		skipErr := dec.Decode(&skip)
-		if skipErr != nil {
+		if found {
 			return ""
 		}
+
+		valErr := dec.Decode(&predicateType)
+		if valErr != nil {
+			return ""
+		}
+
+		found = true
 	}
 
-	return ""
+	return predicateType
 }

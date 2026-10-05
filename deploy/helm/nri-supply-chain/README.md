@@ -7,7 +7,7 @@ that connects to the host NRI socket and verifies container-image attestations.
 
 - Kubernetes 1.26+
 - NRI enabled in CRI-O or containerd, with its socket at `/var/run/nri`
-- Helm 3
+- Helm 3 or 4
 
 ## Install
 

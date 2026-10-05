@@ -359,6 +359,27 @@ func TestPolicyValidateTrust(t *testing.T) {
 			wantErr: policy.ErrDuplicateKeyAcrossVerifiers,
 		},
 		{
+			// Signer binding compares cleaned paths, so another spelling of
+			// the verifier key would let it sign as the builder.
+			name: "key shared by builder and verifier spelled differently",
+			policy: trustPolicy(&policy.TrustPolicy{
+				Builders: []policy.TrustedBuilder{
+					{ID: testBuilderID, Keys: []string{"/etc/keys/./verifier.pub"}},
+				},
+				Verifiers: []policy.TrustedVerifier{keyVerifier(testVerifierID, testKeyPath)},
+			}),
+			wantErr: policy.ErrDuplicateKeyAcrossVerifiers,
+		},
+		{
+			name: "duplicate builder key spelled differently",
+			policy: trustPolicy(&policy.TrustPolicy{
+				Builders: []policy.TrustedBuilder{
+					{ID: testBuilderID, Keys: []string{testKeyPath, "/etc//keys/verifier.pub"}},
+				},
+			}),
+			wantErr: policy.ErrDuplicateBuilderKey,
+		},
+		{
 			name: "key shared by two builders",
 			policy: trustPolicy(&policy.TrustPolicy{
 				Builders: []policy.TrustedBuilder{
@@ -431,6 +452,14 @@ func TestPolicyValidateTrust(t *testing.T) {
 					NotAfter:  testNotAfter2025,
 				},
 				keyVerifier("verifier-b", testKeyPath),
+			),
+			wantErr: policy.ErrDuplicateKeyAcrossVerifiers,
+		},
+		{
+			name: "same key in two verifiers spelled differently",
+			policy: verifierPolicy(nil,
+				keyVerifier("verifier-a", testKeyPath),
+				keyVerifier("verifier-b", "/etc/keys/../keys/verifier.pub"),
 			),
 			wantErr: policy.ErrDuplicateKeyAcrossVerifiers,
 		},
@@ -1086,34 +1115,98 @@ func TestPolicyValidateNotation(t *testing.T) {
 			policy:  notationPolicy(&policy.NotationPolicy{RevocationMode: testInvalidValue}),
 			wantErr: policy.ErrNotationRevocationModeInvalid,
 		},
+		{
+			name: "trust policy references undefined trust store",
+			policy: notationPolicy(&policy.NotationPolicy{
+				TrustStores: []policy.NotationTrustStore{store},
+				TrustPolicy: []policy.NotationTrustPolicyRule{
+					notationTrustRule(
+						testNotationRuleName,
+						wildcard,
+						[]string{"ca:typo"},
+						wildcard,
+					),
+				},
+			}),
+			wantErr: policy.ErrNotationTrustStoreUndefined,
+		},
+		{
+			name: "trust policy references trust store with another type",
+			policy: notationPolicy(&policy.NotationPolicy{
+				TrustStores: []policy.NotationTrustStore{store},
+				TrustPolicy: []policy.NotationTrustPolicyRule{notationTrustRule(
+					testNotationRuleName, wildcard,
+					[]string{"signingAuthority:" + testNotationStoreName}, wildcard,
+				)},
+			}),
+			wantErr: policy.ErrNotationTrustStoreUndefined,
+		},
+		{
+			name: "rule trust policy uses base trust stores",
+			policy: policy.Policy{
+				Notation: &policy.NotationPolicy{TrustStores: []policy.NotationTrustStore{store}},
+				Rules: []policy.ImageRule{{
+					Images: []string{testDockerGlob},
+					Notation: &policy.NotationPolicy{
+						TrustPolicy: []policy.NotationTrustPolicyRule{
+							notationTrustRule(testNotationRuleName, wildcard, storeRefs, wildcard),
+						},
+					},
+				}},
+			},
+		},
+		{
+			name: "rule trust policy references undefined trust store",
+			policy: policy.Policy{
+				Notation: &policy.NotationPolicy{TrustStores: []policy.NotationTrustStore{store}},
+				Rules: []policy.ImageRule{{
+					Images: []string{testDockerGlob},
+					Notation: &policy.NotationPolicy{
+						TrustPolicy: []policy.NotationTrustPolicyRule{
+							notationTrustRule(
+								testNotationRuleName,
+								wildcard,
+								[]string{"ca:other"},
+								wildcard,
+							),
+						},
+					},
+				}},
+			},
+			wantErr: policy.ErrNotationTrustStoreUndefined,
+		},
+		{
+			// notation-go rejects the trust stores and identities every
+			// trust policy rule needs at this level, and a skipped
+			// verification never passes the check.
+			name: "verification level skip is rejected",
+			policy: notationPolicy(&policy.NotationPolicy{
+				VerificationLevel: testNotationLevelSkip,
+				TrustStores:       []policy.NotationTrustStore{store},
+				TrustPolicy: []policy.NotationTrustPolicyRule{
+					notationTrustRule(testNotationRuleName, wildcard, storeRefs, wildcard),
+				},
+			}),
+			wantErr: policy.ErrNotationSkipUnsupported,
+		},
 	}
 
-	for _, mode := range []string{testNotationLevelStrict, "soft", testNotationLevelSkip, ""} {
+	runValidateTests(t, tests)
+
+	revocationTests := make([]validateTest, 0, 4)
+
+	for _, mode := range []string{testNotationLevelStrict, "soft", "skip", ""} {
 		//nolint:exhaustruct_v5 // table cases only set the fields they assert
-		tests = append(tests, validateTest{
+		revocationTests = append(revocationTests, validateTest{
 			name: "revocation mode " + mode + " is valid",
 			policy: notationPolicy(&policy.NotationPolicy{
 				RevocationMode: mode,
 				TrustStores:    []policy.NotationTrustStore{store},
 			}),
 		})
-
-		if mode == "" {
-			continue
-		}
-
-		//nolint:exhaustruct_v5 // table cases only set the fields they assert
-		tests = append(tests, validateTest{
-			name: "revocation mode " + mode + " rejected with verification level skip",
-			policy: notationPolicy(&policy.NotationPolicy{
-				VerificationLevel: testNotationLevelSkip,
-				RevocationMode:    mode,
-			}),
-			wantErr: policy.ErrNotationRevocationWithSkipLevel,
-		})
 	}
 
-	runValidateTests(t, tests)
+	runValidateTests(t, revocationTests)
 }
 
 func TestPolicyValidateRules(t *testing.T) {

@@ -252,6 +252,13 @@ func TestVerifyMetadata(t *testing.T) {
 	if !ok || level != 2 {
 		t.Errorf("level = %v, want 2", result.Metadata["level"])
 	}
+
+	locations, ok := result.Metadata["locations"].([]map[string]string)
+	if !ok || len(locations) != 1 || locations[0]["uri"] != testSourceURI ||
+		locations[0]["branch"] != testSourceBranch {
+		t.Errorf("locations = %v, want one location %s@%s",
+			result.Metadata["locations"], testSourceURI, testSourceBranch)
+	}
 }
 
 func TestVerifyMalformedPayloads(t *testing.T) {

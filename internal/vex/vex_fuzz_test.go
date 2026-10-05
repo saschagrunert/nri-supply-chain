@@ -38,7 +38,7 @@ func FuzzVerify(f *testing.F) {
 		`"predicateType":"https://cyclonedx.org/bom",` +
 		`"predicate":{"bomFormat":"CycloneDX","specVersion":"1.5",` +
 		`"vulnerabilities":[{"id":"CVE-2024-0001",` +
-		`"analysis":{"state":"not_affected"},` +
+		`"analysis":{"state":"not_affected","justification":"code_not_reachable"},` +
 		`"affects":[{"ref":"` + testDigest + `"}]}]}` +
 		`}`))
 

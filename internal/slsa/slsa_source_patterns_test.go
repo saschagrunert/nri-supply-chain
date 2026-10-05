@@ -16,6 +16,7 @@ package slsa_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/slsa"
@@ -247,6 +248,178 @@ func TestVerifyCommitDigestMatchesRefLength(t *testing.T) {
 				testutil.MustMarshal(t, stmt), sourcePolicy(), testDigest)
 			testutil.AssertNoError(t, err)
 			testutil.AssertEqual(t, tc.wantPass, result.Passed)
+		})
+	}
+}
+
+func TestVerifySourceDigestMatchesCommitAliases(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		digest   map[string]string
+		depKey   string
+		depValue string
+		wantPass bool
+	}{
+		{
+			name:     "gitCommit source digest equal to sha1 dependency digest",
+			digest:   map[string]string{testKeyGitCommit: testGitCommit},
+			depKey:   testKeySHA1,
+			depValue: testGitCommit,
+			wantPass: true,
+		},
+		{
+			name:     "gitCommit source digest differing from sha1 dependency digest",
+			digest:   map[string]string{testKeyGitCommit: testGitCommit},
+			depKey:   testKeySHA1,
+			depValue: testGCBCommit,
+			wantPass: false,
+		},
+		{
+			name:     "sha1 source digest differing from gitCommit dependency digest",
+			digest:   map[string]string{testKeySHA1: testGitCommit},
+			depKey:   testKeyGitCommit,
+			depValue: testGCBCommit,
+			wantPass: false,
+		},
+		{
+			name:     "sha256 content digest is not compared with a sha1 commit",
+			digest:   map[string]string{testKeySHA256: testDigestHash},
+			depKey:   testKeySHA1,
+			depValue: testGCBCommit,
+			wantPass: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			stmt := rawStatement(testCustomBuild, map[string]any{
+				testKeySource: map[string]any{
+					testKeyURI:    testSource,
+					testKeyDigest: tc.digest,
+				},
+			}, []map[string]any{{
+				testKeyURI:    "git+" + testSource + "@" + testWorkflowRef,
+				testKeyDigest: map[string]string{tc.depKey: tc.depValue},
+			}})
+
+			result, err := slsa.Verify(context.Background(),
+				testutil.MustMarshal(t, stmt), sourcePolicy(), testDigest)
+			testutil.AssertNoError(t, err)
+			testutil.AssertEqual(t, tc.wantPass, result.Passed)
+		})
+	}
+}
+
+func TestVerifySourceDigestCommitAliasesOnlyForGit(t *testing.T) {
+	t.Parallel()
+
+	const archive = "https://downloads.example.com/repo-1.0.tar.gz"
+
+	tests := []struct {
+		name     string
+		source   string
+		depURI   string
+		pattern  string
+		wantPass bool
+	}{
+		{
+			name:     "sha256 archive digest is not compared with a gitCommit",
+			source:   archive,
+			depURI:   archive,
+			pattern:  archive,
+			wantPass: true,
+		},
+		{
+			name:     "sha256 commit of a git repository is compared with a gitCommit",
+			source:   testSource,
+			depURI:   "git+" + testSource + "@" + testWorkflowRef,
+			pattern:  "git+" + testSource,
+			wantPass: false,
+		},
+		{
+			name:     "known git host without git+ prefix is compared",
+			source:   testSource,
+			depURI:   testSource,
+			pattern:  testSource,
+			wantPass: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			stmt := rawStatement(testCustomBuild, map[string]any{
+				testKeySource: map[string]any{
+					testKeyURI:    tc.source,
+					testKeyDigest: map[string]string{testKeySHA256: testDigestHash},
+				},
+			}, []map[string]any{{
+				testKeyURI:    tc.depURI,
+				testKeyDigest: map[string]string{testKeyGitCommit: testCommitSHA256},
+			}})
+
+			pol := sourcePolicy()
+			pol.Trust.Sources = []string{tc.pattern}
+
+			result, err := slsa.Verify(context.Background(),
+				testutil.MustMarshal(t, stmt), pol, testDigest)
+			testutil.AssertNoError(t, err)
+			testutil.AssertEqual(t, tc.wantPass, result.Passed)
+
+			if !tc.wantPass && !strings.Contains(result.Detail, slsa.ErrSourceMismatch.Error()) {
+				t.Errorf("expected a source mismatch, got %q", result.Detail)
+			}
+		})
+	}
+}
+
+func TestVerifyGitCommitSourceDigestOnSelfHostedServer(t *testing.T) {
+	t.Parallel()
+
+	// A gitCommit source digest names a commit even when the repository URI
+	// is not recognizable as git, so a dependency naming another commit
+	// under sha1 is a mismatch.
+	const repository = "https://git.example.com/org/repo"
+
+	tests := []struct {
+		name     string
+		depValue string
+		wantPass bool
+	}{
+		{name: "same commit", depValue: testGitCommit, wantPass: true},
+		{name: "other commit", depValue: testGCBCommit, wantPass: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			stmt := rawStatement(testCustomBuild, map[string]any{
+				testKeySource: map[string]any{
+					testKeyURI:    repository,
+					testKeyDigest: map[string]string{testKeyGitCommit: testGitCommit},
+				},
+			}, []map[string]any{{
+				testKeyURI:    repository,
+				testKeyDigest: map[string]string{testKeySHA1: tc.depValue},
+			}})
+
+			pol := sourcePolicy()
+			pol.Trust.Sources = []string{repository}
+
+			result, err := slsa.Verify(context.Background(),
+				testutil.MustMarshal(t, stmt), pol, testDigest)
+			testutil.AssertNoError(t, err)
+			testutil.AssertEqual(t, tc.wantPass, result.Passed)
+
+			if !tc.wantPass && !strings.Contains(result.Detail, slsa.ErrSourceMismatch.Error()) {
+				t.Errorf("expected a source mismatch, got %q", result.Detail)
+			}
 		})
 	}
 }

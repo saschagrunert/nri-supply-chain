@@ -136,6 +136,69 @@ func TestGaugeUpdatesOnExpiry(t *testing.T) {
 	}
 }
 
+// TestGetCountsExpiredEviction checks that an expired entry removed by Get,
+// before the background eviction ran, counts as an expired eviction.
+func TestGetCountsExpiredEviction(t *testing.T) {
+	t.Parallel()
+
+	evictions := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "test_cache_get_evictions_total",
+		Help: testGaugeHelp,
+	}, []string{"reason"})
+
+	// The background eviction of an hour TTL cache does not run during the
+	// test.
+	testCache := cache.NewWithGauge(time.Hour, 0, nil, evictions)
+	t.Cleanup(testCache.Stop)
+
+	testCache.SetWithTTL(testDigest, "default", &types.Result{
+		Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
+	}, time.Millisecond)
+
+	time.Sleep(5 * time.Millisecond)
+
+	if got := testCache.Get(testDigest, "default"); got != nil {
+		t.Fatal("expected expired entry to be nil")
+	}
+
+	if val := testutil.ToFloat64(evictions.WithLabelValues("expired")); val != 1 {
+		t.Errorf("expected one expired eviction, got %f", val)
+	}
+}
+
+// TestSetWithTTLAtEpochDropsResultsBeforeInvalidation checks that a result
+// computed before DeleteAll invalidated its digest is not stored.
+func TestSetWithTTLAtEpochDropsResultsBeforeInvalidation(t *testing.T) {
+	t.Parallel()
+
+	testCache := cache.New(time.Hour)
+	t.Cleanup(testCache.Stop)
+
+	result := &types.Result{
+		Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
+	}
+
+	before := testCache.Epoch(testDigest)
+	testCache.DeleteAll(testDigest, "default")
+
+	if testCache.SetWithTTLAtEpoch(testDigest, "default", result, time.Hour, before) {
+		t.Error("expected a result from before the invalidation to be dropped")
+	}
+
+	if testCache.Get(testDigest, "default") != nil {
+		t.Fatal("expected no cached result")
+	}
+
+	after := testCache.Epoch(testDigest)
+	if !testCache.SetWithTTLAtEpoch(testDigest, "default", result, time.Hour, after) {
+		t.Error("expected a result from after the invalidation to be stored")
+	}
+
+	if testCache.Get(testDigest, "default") == nil {
+		t.Error("expected the result to be cached")
+	}
+}
+
 func TestCacheGetSet(t *testing.T) {
 	t.Parallel()
 

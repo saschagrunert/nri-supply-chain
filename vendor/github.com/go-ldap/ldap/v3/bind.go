@@ -3,15 +3,19 @@ package ldap
 import (
 	"bytes"
 	"crypto/md5"
+	"crypto/rand"
+	"encoding/binary"
+	"encoding/hex"
 	enchex "encoding/hex"
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"math/rand"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/Azure/go-ntlmssp"
 	ber "github.com/go-asn1-ber/asn1-ber"
+	"golang.org/x/crypto/md4" //nolint:staticcheck
 )
 
 // SimpleBindRequest represents a username/password bind operation
@@ -216,13 +220,16 @@ func (l *Conn) DigestMD5Bind(digestMD5BindRequest *DigestMD5BindRequest) (*Diges
 		}
 	}
 
-	if params != nil {
-		resp := computeResponse(
+	if len(params) > 0 {
+		resp, err := computeResponse(
 			params,
 			"ldap/"+strings.ToLower(digestMD5BindRequest.Host),
 			digestMD5BindRequest.Username,
 			digestMD5BindRequest.Password,
 		)
+		if err != nil {
+			return nil, fmt.Errorf("compute digest-md5 response: %s", err)
+		}
 		packet = ber.Encode(ber.ClassUniversal, ber.TypeConstructed, ber.TagSequence, nil, "LDAP Request")
 		packet.AppendChild(ber.NewInteger(ber.ClassUniversal, ber.TypePrimitive, ber.TagInteger, l.nextMessageID(), "MessageID"))
 
@@ -249,6 +256,34 @@ func (l *Conn) DigestMD5Bind(digestMD5BindRequest *DigestMD5BindRequest) (*Diges
 		if err != nil {
 			return nil, fmt.Errorf("read packet: %s", err)
 		}
+
+		if len(packet.Children) == 2 {
+			response := packet.Children[1]
+			if response == nil {
+				return result, GetLDAPError(packet)
+			}
+			if response.ClassType == ber.ClassApplication && response.TagType == ber.TypeConstructed && len(response.Children) >= 3 {
+				if ber.Type(response.Children[0].Tag) == ber.Type(ber.TagInteger) || ber.Type(response.Children[0].Tag) == ber.Type(ber.TagEnumerated) {
+					resultCode := uint16(response.Children[0].Value.(int64))
+					if resultCode == 14 {
+						msgCtx, err := l.doRequest(digestMD5BindRequest)
+						if err != nil {
+							return nil, err
+						}
+						defer l.finishMessage(msgCtx)
+						packetResponse, ok := <-msgCtx.responses
+						if !ok {
+							return nil, NewError(ErrorNetwork, errors.New("ldap: response channel closed"))
+						}
+						packet, err = packetResponse.ReadPacket()
+						l.Debug.Printf("%d: got response %p", msgCtx.id, packet)
+						if err != nil {
+							return nil, fmt.Errorf("read packet: %s", err)
+						}
+					}
+				}
+			}
+		}
 	}
 
 	err = GetLDAPError(packet)
@@ -259,11 +294,21 @@ func parseParams(str string) (map[string]string, error) {
 	m := make(map[string]string)
 	var key, value string
 	var state int
+	var escaped bool
 	for i := 0; i <= len(str); i++ {
 		switch state {
 		case 0: // reading key
 			if i == len(str) {
 				return nil, fmt.Errorf("syntax error on %d", i)
+			}
+			// The digest-challenge is an RFC 2068 #rule (RFC 2831 section 2.1.1),
+			// which permits optional linear whitespace around the comma directive
+			// separators. Directive names are tokens that never contain
+			// whitespace, so skip it here; otherwise a directive following
+			// "..., name" is keyed with a leading space and the lookups in
+			// computeResponse (realm, nonce, authzid) miss it.
+			if str[i] == ' ' || str[i] == '\t' {
+				continue
 			}
 			if str[i] != '=' {
 				key += string(str[i])
@@ -274,6 +319,14 @@ func parseParams(str string) (map[string]string, error) {
 			if i == len(str) {
 				m[key] = value
 				break
+			}
+			// Linear whitespace outside a quoted string is not part of the
+			// value: an unquoted value is a token and a quoted value's content
+			// is read in the quoted state below. Skipping it lets a challenge
+			// using the whitespace the #rule allows (e.g. `nonce="n" , qop=auth`)
+			// parse the same as the unspaced form.
+			if str[i] == ' ' || str[i] == '\t' {
+				continue
 			}
 			switch str[i] {
 			case ',':
@@ -293,20 +346,34 @@ func parseParams(str string) (map[string]string, error) {
 			if i == len(str) {
 				return nil, fmt.Errorf("syntax error on %d", i)
 			}
-			if str[i] != '"' {
+			switch {
+			case escaped:
+				// RFC 2831 section 7.1 quoted-pair: a backslash escapes the
+				// following character, so the next byte is taken literally
+				// (this is how a server sends a literal " or \ in a realm or
+				// nonce).
 				value += string(str[i])
-			} else {
+				escaped = false
+			case str[i] == '\\':
+				escaped = true
+			case str[i] == '"':
 				state = 1
+			default:
+				value += string(str[i])
 			}
 		}
 	}
 	return m, nil
 }
 
-func computeResponse(params map[string]string, uri, username, password string) string {
+func computeResponse(params map[string]string, uri, username, password string) (string, error) {
 	nc := "00000001"
 	qop := "auth"
-	cnonce := enchex.EncodeToString(randomBytes(16))
+	rb, err := randomBytes(16)
+	if err != nil {
+		return "", err
+	}
+	cnonce := enchex.EncodeToString(rb)
 	x := username + ":" + params["realm"] + ":" + password
 	y := md5Hash([]byte(x))
 
@@ -329,14 +396,24 @@ func computeResponse(params map[string]string, uri, username, password string) s
 	resp := enchex.EncodeToString(md5Hash([]byte(kd)))
 	return fmt.Sprintf(
 		`username="%s",realm="%s",nonce="%s",cnonce="%s",nc=00000001,qop=%s,digest-uri="%s",response=%s`,
-		username,
-		params["realm"],
-		params["nonce"],
+		quotedStringEscape(username),
+		quotedStringEscape(params["realm"]),
+		quotedStringEscape(params["nonce"]),
 		cnonce,
 		qop,
-		uri,
+		quotedStringEscape(uri),
 		resp,
-	)
+	), nil
+}
+
+// quotedStringEscape escapes the two characters that may not appear unescaped
+// inside a DIGEST-MD5 quoted string per RFC 2831 section 7.1: the backslash
+// and the double quote. The backslash is replaced first so the quotes escaped
+// afterwards are not doubled.
+func quotedStringEscape(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	return s
 }
 
 func md5Hash(b []byte) []byte {
@@ -345,12 +422,12 @@ func md5Hash(b []byte) []byte {
 	return hasher.Sum(nil)
 }
 
-func randomBytes(len int) []byte {
-	b := make([]byte, len)
-	for i := 0; i < len; i++ {
-		b[i] = byte(rand.Intn(256))
+func randomBytes(length int) ([]byte, error) {
+	b := make([]byte, length)
+	if _, err := rand.Read(b); err != nil {
+		return nil, err
 	}
-	return b
+	return b, nil
 }
 
 var externalBindRequest = requestFunc(func(envelope *ber.Packet) error {
@@ -406,17 +483,36 @@ type NTLMBindRequest struct {
 	Hash string
 	// Controls are optional controls to send with the bind request
 	Controls []Control
+	// Negotiator allows to specify a custom NTLM negotiator.
+	Negotiator NTLMNegotiator
 }
 
-func (req *NTLMBindRequest) appendTo(envelope *ber.Packet) error {
+// NTLMNegotiator is an abstraction of an NTLM implementation that produces and
+// processes NTLM binary tokens.
+type NTLMNegotiator interface {
+	Negotiate(domain string, workstation string) ([]byte, error)
+	ChallengeResponse(challenge []byte, username string, hash string) ([]byte, error)
+}
+
+func (req *NTLMBindRequest) appendTo(envelope *ber.Packet) (err error) {
 	request := ber.Encode(ber.ClassApplication, ber.TypeConstructed, ApplicationBindRequest, nil, "Bind Request")
 	request.AppendChild(ber.NewInteger(ber.ClassUniversal, ber.TypePrimitive, ber.TagInteger, 3, "Version"))
 	request.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, "", "User Name"))
 
+	var negMessage []byte
+
 	// generate an NTLMSSP Negotiation message for the  specified domain (it can be blank)
-	negMessage, err := ntlmssp.NewNegotiateMessage(req.Domain, "")
-	if err != nil {
-		return fmt.Errorf("err creating negmessage: %s", err)
+	switch {
+	case req.Negotiator == nil:
+		negMessage, err = ntlmssp.NewNegotiateMessage(req.Domain, "")
+		if err != nil {
+			return fmt.Errorf("create NTLM negotiate message: %s", err)
+		}
+	default:
+		negMessage, err = req.Negotiator.Negotiate(req.Domain, "")
+		if err != nil {
+			return fmt.Errorf("create NTLM negotiate message with custom negotiator: %s", err)
+		}
 	}
 
 	// append the generated NTLMSSP message as a TagEnumerated BER value
@@ -514,18 +610,29 @@ func (l *Conn) NTLMChallengeBind(ntlmBindRequest *NTLMBindRequest) (*NTLMBindRes
 	if ntlmsspChallenge != nil {
 		var err error
 		var responseMessage []byte
-		// generate a response message to the challenge with the given Username/Password if password is provided
-		if ntlmBindRequest.Hash != "" {
+
+		switch {
+		case ntlmBindRequest.Hash == "" && ntlmBindRequest.Password == "" && !ntlmBindRequest.AllowEmptyPassword:
+			err = fmt.Errorf("need a password or hash to generate reply")
+		case ntlmBindRequest.Negotiator == nil && ntlmBindRequest.Hash != "":
 			responseMessage, err = ntlmssp.ProcessChallengeWithHash(ntlmsspChallenge, ntlmBindRequest.Username, ntlmBindRequest.Hash)
-		} else if ntlmBindRequest.Password != "" || ntlmBindRequest.AllowEmptyPassword {
+		case ntlmBindRequest.Negotiator == nil && (ntlmBindRequest.Password != "" || ntlmBindRequest.AllowEmptyPassword):
+			// generate a response message to the challenge with the given Username/Password if password is provided
 			_, _, domainNeeded := ntlmssp.GetDomain(ntlmBindRequest.Username)
 			responseMessage, err = ntlmssp.ProcessChallenge(ntlmsspChallenge, ntlmBindRequest.Username, ntlmBindRequest.Password, domainNeeded)
-		} else {
-			err = fmt.Errorf("need a password or hash to generate reply")
+		default:
+			hash := ntlmBindRequest.Hash
+			if len(hash) == 0 {
+				hash = ntHash(ntlmBindRequest.Password)
+			}
+
+			responseMessage, err = ntlmBindRequest.Negotiator.ChallengeResponse(ntlmsspChallenge, ntlmBindRequest.Username, hash)
 		}
+
 		if err != nil {
-			return result, fmt.Errorf("parsing ntlm-challenge: %s", err)
+			return result, fmt.Errorf("process NTLM challenge: %s", err)
 		}
+
 		packet = ber.Encode(ber.ClassUniversal, ber.TypeConstructed, ber.TagSequence, nil, "LDAP Request")
 		packet.AppendChild(ber.NewInteger(ber.ClassUniversal, ber.TypePrimitive, ber.TagInteger, l.nextMessageID(), "MessageID"))
 
@@ -559,6 +666,18 @@ func (l *Conn) NTLMChallengeBind(ntlmBindRequest *NTLMBindRequest) (*NTLMBindRes
 	return result, err
 }
 
+func ntHash(pass string) string {
+	runes := utf16.Encode([]rune(pass))
+
+	b := bytes.Buffer{}
+	_ = binary.Write(&b, binary.LittleEndian, &runes)
+
+	hash := md4.New()
+	_, _ = hash.Write(b.Bytes())
+
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
 // GSSAPIClient interface is used as the client-side implementation for the
 // GSSAPI SASL mechanism.
 // Interface inspired by GSSAPIClient from golang.org/x/crypto/ssh
@@ -577,6 +696,9 @@ type GSSAPIClient interface {
 	// to InitSecContext via the token parameters.
 	// See RFC 4752 section 3.1.
 	InitSecContext(target string, token []byte) (outputToken []byte, needContinue bool, err error)
+	// InitSecContextWithOptions is the same as InitSecContext but allows for additional options to be passed to the context establishment.
+	// See RFC 4752 section 3.1.
+	InitSecContextWithOptions(target string, token []byte, options []int) (outputToken []byte, needContinue bool, err error)
 	// NegotiateSaslAuth performs the last step of the Sasl handshake.
 	// It takes a token, which, when unwrapped, describes the servers supported
 	// security layers (first octet) and maximum receive buffer (remaining
@@ -614,6 +736,11 @@ func (l *Conn) GSSAPIBind(client GSSAPIClient, servicePrincipal, authzid string)
 
 // GSSAPIBindRequest performs the GSSAPI SASL bind using the provided GSSAPI client.
 func (l *Conn) GSSAPIBindRequest(client GSSAPIClient, req *GSSAPIBindRequest) error {
+	return l.GSSAPIBindRequestWithAPOptions(client, req, []int{})
+}
+
+// GSSAPIBindRequest performs the GSSAPI SASL bind using the provided GSSAPI client.
+func (l *Conn) GSSAPIBindRequestWithAPOptions(client GSSAPIClient, req *GSSAPIBindRequest, APOptions []int) error {
 	//nolint:errcheck
 	defer client.DeleteSecContext()
 
@@ -624,7 +751,7 @@ func (l *Conn) GSSAPIBindRequest(client GSSAPIClient, req *GSSAPIBindRequest) er
 	for {
 		if needInit {
 			// Establish secure context between client and server.
-			reqToken, needInit, err = client.InitSecContext(req.ServicePrincipalName, recvToken)
+			reqToken, needInit, err = client.InitSecContextWithOptions(req.ServicePrincipalName, recvToken, APOptions)
 			if err != nil {
 				return err
 			}

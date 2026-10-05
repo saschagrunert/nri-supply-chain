@@ -325,7 +325,7 @@ func (f *OCIFetcher) processDescriptor(
 		)
 
 		if errors.Is(err, ErrTrustMaterialUnavailable) {
-			return VerifiedAttestation{}, outcomeFetchFailed, err
+			return VerifiedAttestation{}, trustMaterialOutcome(err), err
 		}
 
 		return VerifiedAttestation{}, outcomeVerifyFailed, nil

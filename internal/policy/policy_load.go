@@ -241,7 +241,10 @@ func readPolicyDir(policyDir string) ([]policyDirEntry, error) {
 	)
 
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), policyFileExtension) {
+		// The extension is compared case-insensitively so that a file such
+		// as "prod.JSON" fails the load (NamespaceFromFilename rejects it)
+		// instead of silently never applying.
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), policyFileExtension) {
 			continue
 		}
 
@@ -315,9 +318,10 @@ func checkPolicyFile(resolvedDir, fullPath string) error {
 // default policy. Independently of inherits, a namespace policy that does not
 // set a mode uses the default policy's mode, so moving a setting into
 // default.json never weakens the mode of other namespaces (the default mode
-// is at least as strict as the global mode). Keyless verifiers of inheriting
-// policies are validated here, on the merged policy, because they may rely on
-// the default policy's trust.issuers. Required and forbidden SCAI attributes
+// is at least as strict as the global mode). Keyless verifiers and Notation
+// trust store references of inheriting policies are validated here, on the
+// merged policy, because they may rely on the default policy's trust.issuers
+// and trust stores. Required and forbidden SCAI attributes
 // and build environment properties are checked here too, because the
 // default policy may require what the namespace forbids.
 func applyInheritance(policies map[string]*Policy) error {
@@ -343,7 +347,11 @@ func applyInheritance(policies map[string]*Policy) error {
 		}
 
 		if inherits {
-			err := errors.Join(pol.validateKeylessVerifiers(), pol.validateOverlaps())
+			err := errors.Join(
+				pol.validateKeylessVerifiers(),
+				pol.validateNotationStoreRefs(),
+				pol.validateOverlaps(),
+			)
 			if err != nil {
 				errs = append(errs, fmt.Errorf(
 					"invalid policy for namespace %q: %w", namespace, err,

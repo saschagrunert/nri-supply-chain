@@ -191,6 +191,12 @@ var (
 		"notation trust policy rule must have at least one trust store",
 	)
 
+	// ErrNotationTrustStoreUndefined indicates a trust policy rule references
+	// a trust store that is not defined with that type.
+	ErrNotationTrustStoreUndefined = errors.New(
+		"notation trust policy rule references an undefined trust store",
+	)
+
 	// ErrNotationTrustPolicyIdentitiesRequired indicates a trust policy rule has no trusted identities.
 	ErrNotationTrustPolicyIdentitiesRequired = errors.New(
 		"notation trust policy rule must have at least one trusted identity",
@@ -198,7 +204,14 @@ var (
 
 	// ErrNotationVerificationLevelInvalid indicates an invalid verification level.
 	ErrNotationVerificationLevelInvalid = errors.New(
-		"notation verification level must be \"strict\", \"permissive\", \"audit\", or \"skip\"",
+		"notation verification level must be \"strict\", \"permissive\", or \"audit\"",
+	)
+
+	// ErrNotationSkipUnsupported indicates the "skip" verification level,
+	// which never verifies a signature, so every Notation check would fail.
+	ErrNotationSkipUnsupported = errors.New(
+		"notation verification level \"skip\" is not supported: it never verifies " +
+			"a signature, so every Notation check fails; remove the notation section instead",
 	)
 
 	// ErrNotationSkipInEnforceMode indicates that "skip" verification level
@@ -210,13 +223,6 @@ var (
 	// ErrNotationRevocationModeInvalid indicates an invalid revocation mode.
 	ErrNotationRevocationModeInvalid = errors.New(
 		`notation revocation mode must be "strict", "soft", or "skip"`,
-	)
-
-	// ErrNotationRevocationWithSkipLevel indicates that revocationMode
-	// cannot be set when verificationLevel is "skip" because notation-go
-	// rejects overrides when verification is skipped.
-	ErrNotationRevocationWithSkipLevel = errors.New(
-		`notation revocation mode cannot be set when verification level is "skip"`,
 	)
 
 	// ErrDuplicateNotationTrustStoreName indicates a duplicate trust store name.
@@ -552,8 +558,8 @@ type NotationPolicy struct {
 	// TrustPolicy defines the trust policy rules that map registry scopes to trust stores.
 	TrustPolicy []NotationTrustPolicyRule `json:"trustPolicy,omitempty"`
 	// VerificationLevel controls how strict verification is.
-	// Valid values: "strict", "permissive", "audit", "skip". Defaults to "strict".
-	VerificationLevel string `json:"verificationLevel,omitempty" jsonschema:"enum=strict,enum=permissive,enum=audit,enum=skip"` //nolint:lll // struct tag
+	// Valid values: "strict", "permissive", "audit". Defaults to "strict".
+	VerificationLevel string `json:"verificationLevel,omitempty" jsonschema:"enum=strict,enum=permissive,enum=audit"` //nolint:lll // struct tag
 	// RevocationMode controls OCSP/CRL certificate revocation checking.
 	// Valid values: "strict" (enforce), "soft" (log), "skip" (disable).
 	// When omitted, no override is set and the base verification level

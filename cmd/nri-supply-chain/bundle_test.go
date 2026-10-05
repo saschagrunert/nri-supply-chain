@@ -391,6 +391,25 @@ func TestRunBundleInspect(t *testing.T) {
 			t.Errorf("age %q doesn't look like a duration string", ageStr)
 		}
 	})
+
+	t.Run("invalid format", func(t *testing.T) {
+		t.Parallel()
+
+		storePath := createBundleTestStore(t)
+
+		var buf bytes.Buffer
+
+		for _, format := range []string{outputFormatQuiet, "yaml"} {
+			code := runBundleInspect(&buf, storePath, format)
+			if code != exitError {
+				t.Errorf("format %q: expected exitError, got %d", format, code)
+			}
+		}
+
+		if buf.Len() != 0 {
+			t.Errorf("expected no output for an invalid format, got %q", buf.String())
+		}
+	})
 }
 
 func TestLoadBundleRevocationData(t *testing.T) {
@@ -565,6 +584,9 @@ func TestExitCodeForBundleError(t *testing.T) {
 		{"digest mismatch", bundle.ErrBlobDigestMismatch, exitDenied},
 		{"size mismatch", bundle.ErrBlobSizeMismatch, exitDenied},
 		{"not a regular file", bundle.ErrBlobNotRegular, exitDenied},
+		{"store replaced", bundle.ErrStoreReplaced, exitDenied},
+		{"blob too large", bundle.ErrBlobTooLarge, exitDenied},
+		{"unsupported digest algorithm", bundle.ErrUnsupportedDigestAlgorithm, exitDenied},
 		{"unreadable key", os.ErrNotExist, exitError},
 		{"corrupt manifest", bundle.ErrManifestCorrupt, exitError},
 	}

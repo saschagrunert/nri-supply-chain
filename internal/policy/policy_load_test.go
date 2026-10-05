@@ -318,6 +318,39 @@ func TestLoadAll(t *testing.T) {
 			wantErr: policy.ErrInvalidPolicyFilename,
 		},
 		{
+			// An uppercase extension must not silently drop the policy.
+			name: "rejects uppercase extension",
+			files: map[string]string{
+				testDefaultJSON:   `{}`,
+				"production.JSON": `{}`,
+			},
+			wantErr: policy.ErrInvalidPolicyFilename,
+		},
+		{
+			name: "inherited notation trust store",
+			files: map[string]string{
+				testDefaultJSON: `{"notation": {"trustStores": [
+					{"name": "myca", "type": "ca", "certificates": ["/etc/certs/ca.pem"]}
+				]}}`,
+				testStagingJSONFile: `{"inherits": true, "notation": {"trustPolicy": [
+					{"name": "all", "registryScopes": ["*"], "trustStores": ["ca:myca"],
+					 "trustedIdentities": ["*"]}
+				]}}`,
+			},
+			check: expectPolicyCount(2),
+		},
+		{
+			name: "inherited notation trust store missing",
+			files: map[string]string{
+				testDefaultJSON: `{}`,
+				testStagingJSONFile: `{"inherits": true, "notation": {"trustPolicy": [
+					{"name": "all", "registryScopes": ["*"], "trustStores": ["ca:myca"],
+					 "trustedIdentities": ["*"]}
+				]}}`,
+			},
+			wantErr: policy.ErrNotationTrustStoreUndefined,
+		},
+		{
 			name:    "default cannot inherit",
 			files:   map[string]string{testDefaultJSON: testInheritsJSON},
 			wantErr: policy.ErrDefaultCannotInherit,

@@ -117,6 +117,19 @@ render_chart "$TMP_DIR/helm-no-policies.yaml" \
 render_chart "$TMP_DIR/helm-restart-on-change.yaml" \
 	--set daemonSet.restartOnConfigChange=true
 
+# Verification stays disabled so validate does not fetch the OCI policies;
+# loading the config still checks the rendered keys.
+TRUST_ISSUER="https://token.actions.githubusercontent.com"
+render_chart "$TMP_DIR/helm-trust-options.yaml" \
+	--set config.verification=disabled \
+	--set config.policy.source=oci \
+	--set config.policy.ociRef=registry.example/policies:v1 \
+	--set config.policy.ociMaxStaleness=1h \
+	--set config.sigstore.enabled=true \
+	--set 'config.sigstore.roots[0].name=github' \
+	--set 'config.sigstore.roots[0].tufMirror=https://tuf-repo.github.com' \
+	--set "config.sigstore.roots[0].issuers[0]=$TRUST_ISSUER"
+
 TEST_DIGEST="sha256:$(printf '%064d' 0)"
 render_chart "$TMP_DIR/helm-digest.yaml" --set "image.digest=$TEST_DIGEST"
 grep -qF "image: \"ghcr.io/saschagrunert/nri-supply-chain@$TEST_DIGEST\"" "$TMP_DIR/helm-digest.yaml" ||
@@ -131,7 +144,8 @@ echo "Validating manifest schemas with kubeconform"
 	"$TMP_DIR/helm-hostnetwork-off.yaml" \
 	"$TMP_DIR/helm-extra-config.yaml" \
 	"$TMP_DIR/helm-no-policies.yaml" \
-	"$TMP_DIR/helm-restart-on-change.yaml"
+	"$TMP_DIR/helm-restart-on-change.yaml" \
+	"$TMP_DIR/helm-trust-options.yaml"
 
 # A ConfigMap volume without items projects every key (config.toml included)
 # into the policy directory, so an empty policy set must not render one.
@@ -161,10 +175,16 @@ fi
 extract_configmap "${RAW_MANIFESTS[0]}" "$TMP_DIR/raw" nri-supply-chain-config
 extract_configmap "$TMP_DIR/helm.yaml" "$TMP_DIR/helm" nri-supply-chain
 extract_configmap "$TMP_DIR/helm-extra-config.yaml" "$TMP_DIR/helm-extra" nri-supply-chain
+extract_configmap "$TMP_DIR/helm-trust-options.yaml" "$TMP_DIR/helm-trust" nri-supply-chain
 
 validate_config "$TMP_DIR/raw" "raw manifest"
 validate_config "$TMP_DIR/helm" "Helm chart"
 validate_config "$TMP_DIR/helm-extra" "Helm chart with extraConfig"
+validate_config "$TMP_DIR/helm-trust" "Helm chart with trust options"
+for setting in 'oci_max_staleness = "1h"' "issuers = [\"$TRUST_ISSUER\"]"; do
+	grep -qxF "$setting" "$TMP_DIR/helm-trust/config.toml" ||
+		fail "Helm chart does not render $setting"
+done
 
 first_table=$(grep -n '^\[' "$TMP_DIR/helm-extra/config.toml" | head -1 | cut -d: -f1)
 audit_line=$(grep -n '^audit_log = ' "$TMP_DIR/helm-extra/config.toml" | head -1 | cut -d: -f1)

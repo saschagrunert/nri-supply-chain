@@ -31,7 +31,6 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/bundle"
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/verify"
-	"golang.org/x/sync/singleflight"
 	"golang.org/x/time/rate"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
@@ -268,57 +267,25 @@ type TrustedRootCacheForTest = trustedRootCache
 
 // NewTestTrustedRootCache creates a trustedRootCache with an injectable fetch function for testing.
 func NewTestTrustedRootCache(fetchFn TrustedRootFetchFunc) *trustedRootCache {
-	return &trustedRootCache{
-		mu:           sync.RWMutex{},
-		root:         nil,
-		fetchedAt:    time.Time{},
-		fetchRoot:    fetchFn,
-		inflight:     singleflight.Group{},
-		onFallback:   nil,
-		lastFetchErr: time.Time{},
-		lastErr:      nil,
-		preSeeded:    nil,
-		name:         "",
-		issuers:      nil,
-	}
+	return newTrustedRootCache("", nil, fetchFn, nil)
 }
 
 // NewTestTrustedRootCacheWithRoot creates a cache pre-seeded with a root for testing.
 func NewTestTrustedRootCacheWithRoot(
 	fetchFn TrustedRootFetchFunc, cachedRoot *root.TrustedRoot, fetchedAt time.Time,
 ) *trustedRootCache {
-	return &trustedRootCache{
-		mu:           sync.RWMutex{},
-		root:         cachedRoot,
-		fetchedAt:    fetchedAt,
-		fetchRoot:    fetchFn,
-		inflight:     singleflight.Group{},
-		onFallback:   nil,
-		lastFetchErr: time.Time{},
-		lastErr:      nil,
-		preSeeded:    nil,
-		name:         "",
-		issuers:      nil,
-	}
+	cache := newTrustedRootCache("", nil, fetchFn, nil)
+	cache.root = cachedRoot
+	cache.fetchedAt = fetchedAt
+
+	return cache
 }
 
 // NewTestTrustedRootCacheWithPreSeeded creates a cache with a pre-seeded fallback root for testing.
 func NewTestTrustedRootCacheWithPreSeeded(
 	fetchFn TrustedRootFetchFunc, preSeeded *root.TrustedRoot,
 ) *trustedRootCache {
-	return &trustedRootCache{
-		mu:           sync.RWMutex{},
-		root:         nil,
-		fetchedAt:    time.Time{},
-		fetchRoot:    fetchFn,
-		inflight:     singleflight.Group{},
-		onFallback:   nil,
-		lastFetchErr: time.Time{},
-		lastErr:      nil,
-		preSeeded:    preSeeded,
-		name:         "",
-		issuers:      nil,
-	}
+	return newTrustedRootCache("", nil, fetchFn, preSeeded)
 }
 
 // NewTestTrustedRootCacheWithRootAndPreSeeded creates a cache with both a cached root and a
@@ -329,19 +296,11 @@ func NewTestTrustedRootCacheWithRootAndPreSeeded(
 	fetchedAt time.Time,
 	preSeeded *root.TrustedRoot,
 ) *trustedRootCache {
-	return &trustedRootCache{
-		mu:           sync.RWMutex{},
-		root:         cachedRoot,
-		fetchedAt:    fetchedAt,
-		fetchRoot:    fetchFn,
-		inflight:     singleflight.Group{},
-		onFallback:   nil,
-		lastFetchErr: time.Time{},
-		lastErr:      nil,
-		preSeeded:    preSeeded,
-		name:         "",
-		issuers:      nil,
-	}
+	cache := newTrustedRootCache("", nil, fetchFn, preSeeded)
+	cache.root = cachedRoot
+	cache.fetchedAt = fetchedAt
+
+	return cache
 }
 
 // GetTrustedRoot exposes the cache's get method for testing.

@@ -1053,15 +1053,30 @@ func firstRawDenied(invalid []string, denyList []componentEntry) string {
 // normalizeRawPURL lowercases a purl that cannot be parsed, decodes its
 // valid percent escapes (leaving invalid ones as they are), and drops slashes
 // after the scheme, so that it can be compared against the canonical form of
-// a list entry.
+// a list entry. PyPI names are normalized like parsed ones (see
+// purl.NormalizeName), so "Foo_Bar" cannot evade a "foo-bar" entry.
 func normalizeRawPURL(raw string) string {
 	normalized := strings.ToLower(lenientUnescape(strings.TrimSpace(raw)))
 
-	if rest, found := strings.CutPrefix(normalized, "pkg:"); found {
-		normalized = "pkg:" + strings.TrimLeft(rest, "/")
+	rest, found := strings.CutPrefix(normalized, "pkg:")
+	if !found {
+		return normalized
 	}
 
-	return normalized
+	rest = strings.TrimLeft(rest, "/")
+
+	const pypiPrefix = "pypi/"
+
+	if name, isPyPI := strings.CutPrefix(rest, pypiPrefix); isPyPI {
+		suffix := ""
+		if idx := strings.IndexAny(name, "@?#"); idx >= 0 {
+			name, suffix = name[:idx], name[idx:]
+		}
+
+		rest = pypiPrefix + purl.NormalizeName("pypi", name) + suffix
+	}
+
+	return "pkg:" + rest
 }
 
 func summarizeNames(names []string) string {

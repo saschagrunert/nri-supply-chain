@@ -275,7 +275,9 @@ func aggregateResults(results []*verifyOutput) previewSummary {
 
 func classifyResult(summary *previewSummary, out *verifyOutput) {
 	switch {
-	case out.Digest == "" && out.Reason != "":
+	case out.errored:
+		// The image could not be verified (exit code 2), whether or not
+		// its digest was resolved.
 		summary.Errors++
 	case out.Allowed:
 		summary.Allowed++

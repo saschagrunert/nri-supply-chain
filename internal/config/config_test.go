@@ -660,6 +660,45 @@ func TestConfigValidateMetricsAddrNonLoopbackWarning(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // replaces the default logger to capture the warning
+func TestConfigValidateMetricsAddrWarnsForAllInterfaces(t *testing.T) {
+	for _, test := range []struct {
+		addr string
+		warn bool
+	}{
+		{addr: ":9090", warn: true},
+		{addr: "0.0.0.0:9090", warn: true},
+		{addr: "127.0.0.1:9090", warn: false},
+		{addr: "localhost:9090", warn: false},
+	} {
+		var logs bytes.Buffer
+
+		previous := slog.Default()
+
+		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+
+		cfg := config.DefaultConfig()
+		cfg.MetricsAddr = test.addr
+
+		err := cfg.Validate()
+
+		slog.SetDefault(previous)
+
+		testutil.AssertNoError(t, err)
+
+		warned := strings.Contains(logs.String(), "Metrics address is not loopback")
+		if warned != test.warn {
+			t.Errorf(
+				"%q: warned = %v, want %v, logs:\n%s",
+				test.addr,
+				warned,
+				test.warn,
+				logs.String(),
+			)
+		}
+	}
+}
+
 func TestConfigValidateCircuitBreakerThreshold(t *testing.T) {
 	t.Parallel()
 

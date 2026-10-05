@@ -132,9 +132,10 @@ func validatePredicate(pred *buildEnvPredicate) error {
 			return fmt.Errorf("%w: environment[%d]", errEmptyPropertyName, idx)
 		}
 
-		// Property names are matched case-insensitively by the policy, so a
-		// repeated name with a different value is ambiguous.
-		folded := strings.ToLower(prop.Name)
+		// Property names are matched case-insensitively and without
+		// surrounding whitespace by the policy, so a repeated name with a
+		// different value is ambiguous.
+		folded := strings.ToLower(strings.TrimSpace(prop.Name))
 		if previous, seen := values[folded]; seen && previous != prop.Value {
 			return fmt.Errorf(
 				"%w: %q is both %q and %q", errConflictingProperty, prop.Name, previous, prop.Value,
@@ -151,9 +152,12 @@ func predicateMeta(pred *buildEnvPredicate) map[string]any {
 	propNames := make([]string, 0, len(pred.Environment))
 	propValues := make(map[string]string, len(pred.Environment))
 
+	// Names are trimmed like in policy matching and conflict detection, so
+	// " CI" and "CI" share one propertyValues key.
 	for idx := range pred.Environment {
-		propNames = append(propNames, pred.Environment[idx].Name)
-		propValues[pred.Environment[idx].Name] = pred.Environment[idx].Value
+		propName := strings.TrimSpace(pred.Environment[idx].Name)
+		propNames = append(propNames, propName)
+		propValues[propName] = pred.Environment[idx].Value
 	}
 
 	return map[string]any{
@@ -185,7 +189,7 @@ func checkPropertyPolicy(pred *buildEnvPredicate, pol *policy.Policy) string {
 
 func containsProperty(props []envProperty, name string) bool {
 	for idx := range props {
-		if strings.EqualFold(props[idx].Name, name) {
+		if strings.EqualFold(strings.TrimSpace(props[idx].Name), strings.TrimSpace(name)) {
 			return true
 		}
 	}

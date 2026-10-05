@@ -78,8 +78,12 @@ type Verifier struct {
 
 	// reloadMu serializes whole reloads, including pausing and restarting the
 	// OCI policy poller, so concurrent reloads cannot lose the rollback guard
-	// or leak pollers. It is never taken by the poller callback.
+	// or leak pollers, and Stop, so no reload installs a snapshot or starts a
+	// poller after the verifier released its resources. It is never taken by
+	// the poller callback.
 	reloadMu sync.Mutex
+	// stopped is set by Stop (under reloadMu); later reloads fail.
+	stopped bool
 	// mu serializes snapshot replacement (Reload and OCI policy updates).
 	mu         sync.Mutex
 	nodeName   string
@@ -238,7 +242,8 @@ func (v *Verifier) Stop() {
 
 // StopContext is like Stop but waits for in-flight verifications only until
 // ctx is done before cancelling them. Verifications requested after
-// StopContext was called fail with ErrVerifierStopped.
+// StopContext was called fail with ErrVerifierStopped, and so do reloads.
+// A reload in progress finishes first. Stopping twice is a no-op.
 func (v *Verifier) StopContext(ctx context.Context) {
 	v.stop(ctx.Done())
 }
@@ -399,6 +404,8 @@ func policyNamespaces(policies map[string]*policy.Policy) []string {
 // InvalidateCache removes the cached verification results for a digest in a
 // namespace, including results keyed by image reference or policy rule,
 // forcing the next Verify call to re-fetch and re-evaluate attestations.
+// Verifications of the digest that are already running neither serve later
+// Verify calls nor store their results.
 func (v *Verifier) InvalidateCache(digest, namespace string) {
 	v.snap().cache.DeleteAll(digest, namespace)
 }
@@ -457,6 +464,7 @@ func (v *Verifier) Verify( //nolint:funlen // early-return branches inflate line
 
 	info.policyHash = policyHashForNamespace(state.policyHashes, namespace)
 	namespaceMode := pol.EffectiveMode(globalMode)
+	info.verificationMode = string(namespaceMode)
 
 	if !isIncluded(ctx, pol.Include, imageRef) {
 		state.metrics.VerificationSkippedTotal.WithLabelValues("not_included", namespace).Inc()
@@ -505,6 +513,18 @@ func (v *Verifier) Verify( //nolint:funlen // early-return branches inflate line
 }
 
 func (v *Verifier) stop(done <-chan struct{}) {
+	// Verifications requested while a running reload finishes fail already.
+	v.flights.reject()
+
+	v.reloadMu.Lock()
+	defer v.reloadMu.Unlock()
+
+	if v.stopped {
+		return
+	}
+
+	v.stopped = true
+
 	v.stopPoller()
 
 	if !v.flights.wait(done, true) {
@@ -632,15 +652,19 @@ func cachedResult(state *snapshot, digest, namespace, cacheNS string) *types.Res
 }
 
 // verifyOnce runs the checks for a cache miss, deduplicating concurrent
-// requests for the same image, namespace, rule and snapshot generation. The
-// verification continues in the background when ctx is done first (e.g. the
-// admission deadline expired) so its result still fills the cache; only Stop
-// cancels it.
+// requests for the same image, namespace, rule, snapshot generation and
+// invalidation epoch. A request after InvalidateCache therefore never joins a
+// verification that started before, and such a verification does not store
+// its result. The verification continues in the background when ctx is done
+// first (e.g. the admission deadline expired) so its result still fills the
+// cache; only Stop cancels it.
 func (v *Verifier) verifyOnce(
 	ctx context.Context, state *snapshot, pol *policy.Policy,
 	mode config.VerificationMode, req *types.VerifyRequest, cacheNS string,
 ) (*types.Result, error) {
-	flightKey := strconv.FormatUint(state.generation, 10) + "\x00" + req.Digest + "\x00" + cacheNS
+	epoch := state.cache.Epoch(req.Digest)
+	flightKey := strconv.FormatUint(state.generation, 10) + "\x00" +
+		strconv.FormatUint(epoch, 10) + "\x00" + req.Digest + "\x00" + cacheNS
 
 	err := v.checkJoinable(ctx, state, flightKey)
 	if err != nil {
@@ -681,9 +705,7 @@ func (v *Verifier) verifyOnce(
 			return nil, ErrVerifierStopped
 		}
 
-		if cacheTTL > 0 {
-			state.cache.SetWithTTL(req.Digest, cacheNS, result, cacheTTL)
-		}
+		state.cache.SetWithTTLAtEpoch(req.Digest, cacheNS, result, cacheTTL, epoch)
 
 		return result, nil
 	})

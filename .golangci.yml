@@ -146,7 +146,7 @@ linters:
             - github.com/containerd/ttrpc
             - github.com/fatih/color
             - github.com/fsnotify/fsnotify
-            - github.com/google/cel-go
+            - cel.dev/cel-go
             - github.com/google/go-containerregistry
             - github.com/invopop/jsonschema
             - github.com/notaryproject/notation-core-go

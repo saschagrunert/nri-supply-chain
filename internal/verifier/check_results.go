@@ -85,12 +85,8 @@ func handleFetchError(
 // checkVSAMissing applies vsa.missingPolicy when no trusted VSA passed, which
 // covers both absent VSAs and VSAs that are untrusted, stale, unbound or
 // unparsable. It returns nil when direct verification should run.
-func checkVSAMissing(
-	pol *policy.Policy, detail string, met *metrics.Metrics,
-) *types.Result {
+func checkVSAMissing(pol *policy.Policy, detail string) *types.Result {
 	missingPolicy := pol.MissingPolicyFor(types.CheckTypeVSA)
-
-	met.VerificationDuration.WithLabelValues(string(types.CheckTypeVSA)).Observe(0)
 
 	if missingPolicy == types.ActionAllow || missingPolicy == types.ActionWarn {
 		return nil

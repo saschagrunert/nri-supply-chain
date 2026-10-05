@@ -186,6 +186,12 @@ func TestFeedMatching(t *testing.T) {
 			wantMatch: true,
 		},
 		{
+			name:      "rocky linux ecosystem maps to the rocky rpm namespace",
+			feed:      `{"id":"A","affected":[{"package":{"ecosystem":"Rocky Linux:9","name":"openssl"}}]}`,
+			sbomPURLs: []string{"pkg:rpm/rocky/openssl@3.0.7-25.el9_3?arch=x86_64"},
+			wantMatch: true,
+		},
+		{
 			name:      "withdrawn entries are skipped",
 			feed:      `{"id":"A","withdrawn":"2024-01-01T00:00:00Z","affected":[{"package":{"purl":"pkg:npm/lodash"}}]}`,
 			sbomPURLs: []string{"pkg:npm/lodash@4.17.20"},

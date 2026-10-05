@@ -41,7 +41,7 @@ The plugin exposes Prometheus metrics at the configured
 | `nri_supply_chain_cache_failure_hits_total`          | Counter   |                               | Cache hits returning a cached failure                                                                                                           |
 | `nri_supply_chain_build_info`                        | Gauge     | `version`, `goversion`        | Build metadata (set once at startup)                                                                                                            |
 | `nri_supply_chain_config_reloads_total`              | Counter   |                               | Successful config reloads                                                                                                                       |
-| `nri_supply_chain_verification_interrupted_total`    | Counter   |                               | Verifications interrupted by context cancellation or internal errors                                                                            |
+| `nri_supply_chain_verification_interrupted_total`    | Counter   |                               | Verifications interrupted because the request ended (admission deadline or cancellation) before the verification completed                      |
 | `nri_supply_chain_config_reload_errors_total`        | Counter   |                               | Failed config reload attempts                                                                                                                   |
 | `nri_supply_chain_prewarm_duration_seconds`          | Histogram | `result`                      | Cache prewarm latency (buckets: 1, 5, 10, 30, 60, 120, 300)                                                                                     |
 | `nri_supply_chain_mirror_fallback_total`             | Counter   | `registry`, `type`            | Mirror fallback events. `type`: `digest`, `attestation`                                                                                         |
@@ -75,6 +75,15 @@ throttled container is not rolled back. This also holds in `enforce` mode with
 plugin logs a warning for the container, and
 `nri_supply_chain_reverify_incomplete_containers` counts it until a
 re-verification completes.
+
+Throttling scales the CPU quota and CPU shares the container was created with
+by `remediation.throttle.cpu_quota_percent`, with floors of a 1ms quota and 2
+shares. An unlimited CPU quota (`-1`) is throttled to the 1ms floor, so a
+container without a CPU limit is throttled hardest; a quota that is not set at
+all is left alone. With `memory_limit_percent` below 100 the memory limit is
+scaled the same way with a 4 MiB floor, which also applies to an unlimited
+memory limit (`-1`) and can OOM-kill the container. A rollback restores the
+original limits.
 
 When `include` is configured, the include check runs before the exclude check.
 Images that do not match any include pattern are counted as `not_included` even
@@ -169,8 +178,11 @@ when cache-affecting config fields changed (`verification`, `policy_dir`,
 `policy.issuers`, `policy.san_patterns`, `policy.keys`, `guac`, `offline`),
 when any loaded policy changed, or when the content of a trust material file
 changed (keys and certificates referenced by policies, `policy.keys`,
-`offline.bundle_signature_key`, and custom `tuf_root` files). If the config,
-policies and trust material are identical, the cache is preserved. To
+`offline.bundle_signature_key`, and custom `tuf_root` files). It is also
+cleared when the reload replaces the attestation fetcher, for example because
+the bundle in `offline.attestation_store` was replaced on disk. If the config,
+policies, trust material and attestation store are identical, the cache is
+preserved. To
 force a cache clear when nothing else needs to change, temporarily modify
 `cache_ttl` (for example, change it from `24h` to `23h59m`), send SIGHUP, then
 change it back and send SIGHUP again.
@@ -215,8 +227,10 @@ collapsed into a single reload.
 When continuous verification is enabled and `remediation.triggers.on_policy_change`
 is true, a successful config or policy reload also triggers an immediate
 re-verification cycle for all tracked containers. The remediation mode and
-cooldown period are updated atomically during reload. If `remediation.feed_dir`
-changes, the new directory is added to the file watcher.
+cooldown period are updated atomically during reload. A reload that enables
+remediation starts the continuous verifier; a changed `remediation.interval`
+only takes effect after a restart. If `remediation.feed_dir` changes, the new
+directory is added to the file watcher.
 
 ## Logging
 
@@ -355,7 +369,7 @@ groups:
         expr: sum(increase(nri_supply_chain_verification_interrupted_total[5m])) > 0
         for: 5m
         annotations:
-          summary: Verifications are being interrupted by context cancellation or internal errors.
+          summary: Verifications are being interrupted because requests end before they complete.
 
       # Keep the threshold below admission_timeout and the runtime's NRI
       # request timeout (2s by default).
@@ -563,8 +577,9 @@ Validate policies and configuration with `nri-supply-chain validate` and run
 - **SBOM component matching.** Component allow and deny lists match parsed,
   normalized package URLs on whole path segments instead of string prefixes
   (`pkg:npm/lodash` no longer matches `pkg:npm/lodash-es`), with exact version
-  and qualifier matching. A component package URL that cannot be parsed fails
-  the check while a list is set. See [policy.md](policy.md).
+  and version prefixes matched at segment boundaries. A component package URL
+  that cannot be parsed fails an allow list and is compared as text against a
+  deny list. See [policy.md](policy.md).
 - **SBOM drift.** A version bump of a component counts as modified instead of
   as one removal and one addition.
 - **CLI exit codes.** `preview`, `bundle verify` and `bundle import` return the
@@ -584,3 +599,45 @@ Validate policies and configuration with `nri-supply-chain validate` and run
   registry scopes are normalized the same way (Docker Hub as `docker.io`, with
   official images under `library/`). Such images now select a trust policy
   instead of failing, so review which trust policy applies to them.
+- **Stricter Notation and CEL validation.** `notation.verificationLevel: skip`
+  is rejected, trust policy entries must name a defined trust store of the
+  right type, and CEL `matches()` calls with an invalid regular expression fail
+  at policy load instead of failing every evaluation.
+- **Policy file names.** A policy file with an upper-case extension such as
+  `prod.JSON` fails the load instead of being skipped.
+- **Missing config file.** An explicit `--config` path that does not exist
+  makes the plugin exit with code 2 instead of starting with verification
+  disabled.
+- **Bundle failures.** A missing or invalid bundle manifest signature, a stale
+  bundle with `bundle_expiry_policy = "deny"`, a bundle store replaced while
+  in use and manifest entries over the blob size limit or with a digest
+  algorithm other than sha256 deny regardless of `fetch_failure_policy`.
+- **Oversized referrers.** A referrers listing or cosign `.att` manifest over
+  the size limit denies as an incomplete attestation set instead of counting
+  as absent attestations.
+- **Checker semantics.**
+  - CycloneDX `not_affected` analyses need a justification or detail, in VEX
+    documents and for the `sbom.cvss` thresholds.
+  - OpenVEX `not_affected` and `fixed` statements whose products name the image
+    with another image's hash no longer match, and image tags are compared
+    case-sensitively.
+  - Release package URLs with a `repository_url` qualifier only match
+    `trustedRegistries` by that location.
+  - Every entry of a required test suite must pass, and negative counts are
+    rejected.
+  - SCAI evidence needs a `uri`, `digest` or `content`.
+  - An unknown `vulnScan.minSeverity` fails closed.
+  - Unscored vulnerability findings report the lowest score of their severity
+    as `maxScore`.
+  - CycloneDX analysis states are compared exactly.
+  - SBOM components nested deeper than 32 levels are rejected.
+  - Empty or `null` GUAC GraphQL responses fail the check.
+- **Remediation on reload.** Enabling remediation in the configuration file
+  starts the continuous verifier on reload, without a restart.
+- **Metrics address.** A `metrics_addr` without a host, such as `:9090`, logs a
+  warning that metrics are exposed on all interfaces.
+- **Image tags and releases.** `latest` points to the highest verified
+  non-prerelease version and `main` to the verified build of the current head
+  of the main branch. GitHub releases stay drafts until the released image is
+  verified, tags with a prerelease suffix are marked as prereleases, and the
+  latest GitHub release follows the same rule as the `latest` tag.

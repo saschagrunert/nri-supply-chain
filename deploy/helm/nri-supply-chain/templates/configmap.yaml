@@ -44,6 +44,9 @@ data:
     oci_ref = {{ . | quote }}
     {{- end }}
     poll_interval = {{ .pollInterval | quote }}
+    {{- with .ociMaxStaleness }}
+    oci_max_staleness = {{ . | quote }}
+    {{- end }}
     {{- with .issuers }}
     issuers = {{ . | toJson }}
     {{- end }}
@@ -64,6 +67,9 @@ data:
     tuf_mirror = {{ .tufMirror | quote }}
     {{- with .tufRoot }}
     tuf_root = {{ . | quote }}
+    {{- end }}
+    {{- with .issuers }}
+    issuers = {{ . | toJson }}
     {{- end }}
     {{- end }}
     {{- end }}

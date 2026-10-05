@@ -87,7 +87,8 @@ type Metrics struct {
 	PrewarmDurationSeconds *prometheus.HistogramVec
 	// MirrorFallbackTotal counts mirror fallback events by registry and type.
 	MirrorFallbackTotal *prometheus.CounterVec
-	// ContainerLifetime measures the duration between container creation and removal.
+	// ContainerLifetime measures the duration between container creation and
+	// the container stopping or being removed, whichever comes first.
 	ContainerLifetime *prometheus.HistogramVec
 	// PolicyReloadsTotal counts OCI policy update events.
 	PolicyReloadsTotal prometheus.Counter
@@ -97,7 +98,7 @@ type Metrics struct {
 	GUACQueryDuration *prometheus.HistogramVec
 	// BundleStalenessTotal counts bundle staleness events by policy (allow, warn, deny).
 	BundleStalenessTotal *prometheus.CounterVec
-	// BundleVerificationsTotal counts bundle verification attempts by result (success, failure).
+	// BundleVerificationsTotal counts bundle verification attempts by result (success, error).
 	BundleVerificationsTotal *prometheus.CounterVec
 	// BundleAgeSeconds reports the current age of the active bundle in seconds.
 	BundleAgeSeconds prometheus.Gauge
@@ -427,7 +428,7 @@ func newContainerLifetime() *prometheus.HistogramVec {
 		prometheus.HistogramOpts{
 			Namespace: namespace,
 			Name:      "container_lifetime_seconds",
-			Help:      "Duration between container creation and removal in seconds.",
+			Help:      "Duration between container creation and the container stopping or being removed in seconds.",
 			Buckets: prometheus.ExponentialBuckets(
 				bucketLifetimeStart, bucketLifetimeBase, bucketLifetimeCount,
 			),

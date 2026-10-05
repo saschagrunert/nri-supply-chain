@@ -17,11 +17,8 @@ package policy
 import (
 	"context"
 	"crypto"
-	"crypto/sha256"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -38,7 +35,7 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/verify"
 	"github.com/sigstore/sigstore/pkg/signature"
 
-	"github.com/saschagrunert/nri-supply-chain/internal/fileutil"
+	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/glob"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
@@ -98,9 +95,6 @@ var (
 	errNilFetchTrustedRoot = errors.New(
 		"fetchTrustedRoot is required for keyless verification",
 	)
-
-	// errNoPEMBlock indicates no PEM block was found in a public key file.
-	errNoPEMBlock = errors.New("no PEM block found")
 
 	// errIssuersAndKeysMutuallyExclusive indicates both were set.
 	errIssuersAndKeysMutuallyExclusive = errors.New(
@@ -569,7 +563,7 @@ func buildPolicyKeyMaterial(keyPaths []string) (*root.TrustedPublicKeyMaterial, 
 	verifiers := make(map[string]*root.ExpiringKey, len(keyPaths))
 
 	for _, keyPath := range keyPaths {
-		pubKey, err := loadPEMPublicKey(keyPath)
+		pubKey, err := attestation.LoadPublicKey(keyPath)
 		if err != nil {
 			return nil, fmt.Errorf("loading public key %q: %w", keyPath, err)
 		}
@@ -590,39 +584,11 @@ func buildPolicyKeyMaterial(keyPaths []string) (*root.TrustedPublicKeyMaterial, 
 	return root.NewTrustedPublicKeyMaterialFromMapping(verifiers), nil
 }
 
-func loadPEMPublicKey(path string) (crypto.PublicKey, error) {
-	data, err := fileutil.ReadLimited(path, fileutil.MaxCredentialFileSize)
-	if err != nil {
-		return nil, fmt.Errorf("reading PEM file: %w", err)
-	}
-
-	block, _ := pem.Decode(data)
-	if block == nil {
-		return nil, fmt.Errorf("%w: %q", errNoPEMBlock, path)
-	}
-
-	pub, pkixErr := x509.ParsePKIXPublicKey(block.Bytes)
-	if pkixErr == nil {
-		return pub, nil
-	}
-
-	rsaKey, rsaErr := x509.ParsePKCS1PublicKey(block.Bytes)
-	if rsaErr == nil {
-		return rsaKey, nil
-	}
-
-	return nil, fmt.Errorf(
-		"parsing public key (PKIX: %w, PKCS1: %w)", pkixErr, rsaErr,
-	)
-}
-
 func policyKeyHint(pub crypto.PublicKey) (string, error) {
-	der, err := x509.MarshalPKIXPublicKey(pub)
+	sum, err := attestation.PublicKeyDigest(pub)
 	if err != nil {
-		return "", fmt.Errorf("marshaling public key to PKIX: %w", err)
+		return "", fmt.Errorf("computing public key digest: %w", err)
 	}
-
-	sum := sha256.Sum256(der)
 
 	return base64.StdEncoding.EncodeToString(sum[:]), nil
 }

@@ -109,7 +109,7 @@ func TestQueryScorecardQueriesSourcesConcurrently(t *testing.T) {
 			t.Errorf("decode request: %v", err)
 		}
 
-		var resp graphQLResponse
+		resp := graphQLResponse{Data: &graphQLData{}, Errors: nil}
 
 		if strings.Contains(req.Query, "IsOccurrence") {
 			resp.Data.IsOccurrence = occurrences

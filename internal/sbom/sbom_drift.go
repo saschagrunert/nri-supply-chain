@@ -192,6 +192,10 @@ func packageModified(base, cur *sbomPackage) bool {
 	return false
 }
 
+// checksumsEqual reports whether the current checksums cover the baseline
+// ones. Algorithm names are compared without case and separators, since SPDX
+// 2 ("SHA256"), SPDX 3 ("sha256"), and CycloneDX ("SHA-256") spell them
+// differently.
 func checksumsEqual(baseline, current map[string]string) bool {
 	if len(baseline) == 0 && len(current) == 0 {
 		return true
@@ -201,6 +205,8 @@ func checksumsEqual(baseline, current map[string]string) bool {
 	if len(baseline) > 0 && len(current) == 0 {
 		return false
 	}
+
+	baseline, current = normalizeChecksums(baseline), normalizeChecksums(current)
 
 	// Flag when current has fewer algorithms than baseline (partial stripping).
 	if len(current) < len(baseline) {
@@ -221,27 +227,39 @@ func checksumsEqual(baseline, current map[string]string) bool {
 	return true
 }
 
+// checksumAlgorithmReplacer drops the separators of checksum algorithm names.
+//
+//nolint:gochecknoglobals // immutable replacer
+var checksumAlgorithmReplacer = strings.NewReplacer("-", "", "_", "")
+
+// normalizeChecksums keys checksums by their lowercase algorithm name without
+// separators.
+func normalizeChecksums(checksums map[string]string) map[string]string {
+	normalized := make(map[string]string, len(checksums))
+
+	for algo, value := range checksums {
+		normalized[strings.ToLower(checksumAlgorithmReplacer.Replace(algo))] = value
+	}
+
+	return normalized
+}
+
+// licensesEqual compares two license lists as case-insensitive sets, so the
+// order and repetitions (SPDX 2 lists the concluded and the declared license
+// of a package) do not count as a change.
 func licensesEqual(baseline, current []string) bool {
-	if len(baseline) != len(current) {
-		return false
+	return slices.Equal(licenseSet(baseline), licenseSet(current))
+}
+
+func licenseSet(licenses []string) []string {
+	set := make([]string, 0, len(licenses))
+	for _, license := range licenses {
+		set = append(set, strings.ToLower(license))
 	}
 
-	sorted := func(s []string) []string {
-		cp := make([]string, len(s))
-		copy(cp, s)
-		slices.Sort(cp)
+	slices.Sort(set)
 
-		return cp
-	}
-
-	sortedBase, sortedCur := sorted(baseline), sorted(current)
-	for i := range sortedBase {
-		if !strings.EqualFold(sortedBase[i], sortedCur[i]) {
-			return false
-		}
-	}
-
-	return true
+	return slices.Compact(set)
 }
 
 func (d *driftResult) ToMetadata() map[string]any {

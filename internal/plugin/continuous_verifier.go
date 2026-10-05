@@ -40,6 +40,12 @@ const (
 	triggerPrewarm = "prewarm"
 )
 
+// errNoReverifyResult reports a re-verification that returned neither a
+// result nor an error.
+var errNoReverifyResult = errors.New("verification returned no result")
+
+const msgIntervalRequiresRestart = "remediation.interval changed but requires restart to take effect"
+
 // containerForReverify holds a snapshot of container data needed for
 // re-verification, avoiding holding the registry lock during verification.
 type containerForReverify struct {
@@ -62,6 +68,8 @@ func (p *Plugin) RunContinuousVerifier(ctx context.Context, interval time.Durati
 	}
 
 	defer p.remediation.started.Store(false)
+
+	p.remediation.interval.Store(int64(interval))
 
 	slog.InfoContext(ctx, "Continuous verifier waiting for prewarm", "interval", interval)
 
@@ -96,10 +104,19 @@ func (p *Plugin) RunContinuousVerifier(ctx context.Context, interval time.Durati
 }
 
 // StartContinuousVerifier starts the continuous verifier in the background
-// unless it is already running, for example when a configuration passed by
-// the runtime enables remediation.
+// unless it is already running, for example when a reload or a configuration
+// passed by the runtime enables remediation. A running verifier keeps its
+// interval, so a different interval is logged as requiring a restart.
 func (p *Plugin) StartContinuousVerifier(ctx context.Context, interval time.Duration) {
 	if p.remediation.started.Load() {
+		running := time.Duration(p.remediation.interval.Load())
+		if running != 0 && running != interval {
+			slog.WarnContext(ctx, msgIntervalRequiresRestart,
+				"current", running,
+				"proposed", interval,
+			)
+		}
+
 		return
 	}
 
@@ -255,6 +272,12 @@ func (p *Plugin) reverifyContainer(
 		return nil
 	}
 
+	if result == nil {
+		p.handleReverifyError(ctx, target, errNoReverifyResult)
+
+		return nil
+	}
+
 	// A verification that could not complete (for example a registry outage)
 	// says nothing about the image: it neither degrades the container nor
 	// recovers or rolls it back, and it does not count as an error. A
@@ -390,6 +413,7 @@ func (p *Plugin) handleReverifyError(
 				"image", target.imageRef,
 				"errors", cState.consecutiveErrors,
 			)
+			p.metrics.RemediationActionsTotal.WithLabelValues("warn", target.namespace).Inc()
 		}
 	})
 }

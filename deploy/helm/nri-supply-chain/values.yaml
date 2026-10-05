@@ -127,12 +127,17 @@ config:
     source: local
     ociRef: ""
     pollInterval: 5m
+    # Report not ready when the OCI policies were not refreshed for this long
+    # (at least pollInterval). Empty disables the limit.
+    ociMaxStaleness: ""
     issuers: []
     sanPatterns: []
     keys: []
   sigstore:
     enabled: false
     includePublicRoot: true
+    # Each root takes name, tufMirror, an optional tufRoot (absolute path) and
+    # optional issuers, which restricts the OIDC issuers it may vouch for.
     roots: []
   registries: []
   guac:

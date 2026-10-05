@@ -102,7 +102,12 @@ nfpms:
       postinstall: deploy/scripts/postinstall.sh
       preremove: deploy/scripts/preremove.sh
 
+# The release is created as a draft. The release workflow publishes it once the
+# released image was scanned, attested, and verified. Tags with a semver
+# prerelease suffix (v1.0.0-rc.1) are marked as prereleases.
 release:
+  draft: true
+  prerelease: auto
   extra_files:
     - glob: deploy/kubernetes/*.yaml
     - glob: deploy/systemd/*.service

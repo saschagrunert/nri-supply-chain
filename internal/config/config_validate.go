@@ -156,7 +156,8 @@ func (c *Config) validateMetricsAddr() error {
 		return fmt.Errorf("%w: %q: %w", ErrInvalidMetricsAddr, c.MetricsAddr, err)
 	}
 
-	if host != "127.0.0.1" && host != "::1" && host != "localhost" && host != "" {
+	// An empty host (":9090") listens on every address.
+	if host != "127.0.0.1" && host != "::1" && host != "localhost" {
 		ip := net.ParseIP(host)
 		if ip == nil || !ip.IsLoopback() {
 			slog.Warn("Metrics address is not loopback, metrics will be exposed externally",

@@ -569,6 +569,41 @@ func TestRunParallelCheckPanicRecovery(t *testing.T) {
 	}
 }
 
+// TestRunAttestationCheckWithoutResultFails checks that a check returning
+// neither a result nor an error for present attestations fails instead of
+// dropping out of the combined result.
+func TestRunAttestationCheckWithoutResultFails(t *testing.T) {
+	t.Parallel()
+
+	spec := &checkSpec{
+		checkType:     types.CheckTypeSLSA,
+		label:         "SLSA",
+		missingNoun:   "provenance attestation",
+		missingReason: reasonMissingAttestation,
+		predicates:    nil,
+		verify: func(context.Context, *checkInput) (*types.CheckResult, error) {
+			return nil, nil
+		},
+	}
+	input := &checkInput{
+		bins: attestationBins{
+			types.CheckTypeSLSA: make([]attestation.VerifiedAttestation, 1),
+		},
+		pol:            &policy.Policy{},
+		imageRef:       "image",
+		digest:         "",
+		relatedDigests: nil,
+		parsedRef:      nil,
+	}
+
+	result := combineResults(runAttestationCheck(context.Background(), spec, input, metrics.New()))
+
+	if result.Allowed || len(result.CheckResults) != 1 ||
+		result.CheckResults[0].Status != types.StatusFail {
+		t.Errorf("expected the check without a result to fail, got %+v", result)
+	}
+}
+
 func TestAcquireHostSemSameHost(t *testing.T) {
 	t.Parallel()
 
@@ -685,6 +720,49 @@ func TestBuildFetchOptsPropagatesTimeBounds(t *testing.T) {
 
 	if !opts.TrustedKeys[2].NotAfter.IsZero() {
 		t.Errorf("key[2] NotAfter: expected zero, got %v", opts.TrustedKeys[2].NotAfter)
+	}
+}
+
+// TestTrustedKeyRefsBoundsDifferentlySpelledBuilderKey checks that a builder
+// entry naming a verifier key with a different spelling (as merged policies
+// can produce) does not add an unbounded entry escaping the verifier's
+// validity window, and keeps the verifier scope of the key.
+func TestTrustedKeyRefsBoundsDifferentlySpelledBuilderKey(t *testing.T) {
+	t.Parallel()
+
+	notBefore := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	notAfter := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	trust := &policy.TrustPolicy{
+		Verifiers: []policy.TrustedVerifier{{
+			ID:            "https://example.com/v",
+			Keys:          []string{"/keys/v.pem"},
+			NotBeforeTime: notBefore,
+			NotAfterTime:  notAfter,
+		}},
+		Builders: []policy.TrustedBuilder{{
+			ID:   "https://example.com/b",
+			Keys: []string{"/keys/./v.pem", "/keys/b.pem"},
+		}},
+	}
+
+	keys := trustedKeyRefs(trust)
+
+	if len(keys) != 2 {
+		t.Fatalf("expected the verifier key and the builder-only key, got %+v", keys)
+	}
+
+	if keys[0].Path != "/keys/v.pem" || !keys[0].NotAfter.Equal(notAfter) {
+		t.Errorf("expected the bounded verifier key first, got %+v", keys[0])
+	}
+
+	if keys[1].Path != "/keys/b.pem" {
+		t.Errorf("expected only the builder-only key to be added, got %+v", keys[1])
+	}
+
+	builderOnly := builderOnlyKeys(trust)
+	if _, scoped := builderOnly["/keys/./v.pem"]; scoped || len(builderOnly) != 1 {
+		t.Errorf("expected only /keys/b.pem to be builder-only, got %v", builderOnly)
 	}
 }
 

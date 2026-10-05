@@ -469,7 +469,7 @@ func TestVerifyAuditRecordsAdmissionDecision(t *testing.T) {
 	cfg.AuditLog = auditPath
 
 	verif, _ := newHardeningVerifier(t, cfg, newScriptedFetcher(nil), map[string]string{
-		testDefaultPolicy: `{"slsa": {"missingPolicy": "deny"}}`,
+		testDefaultPolicy: testSLSADenyPolicy,
 	})
 
 	// The first verification runs the checks, the second hits the cache.
@@ -509,4 +509,35 @@ func TestVerifyAuditRecordsAdmissionDecision(t *testing.T) {
 	if decisions != 2 {
 		t.Errorf("expected one decision event per verification, got %d", decisions)
 	}
+}
+
+func TestVerifyAuditRecordsNamespaceModeOfSkippedImage(t *testing.T) {
+	t.Parallel()
+
+	auditPath := filepath.Join(t.TempDir(), "audit.log")
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.AuditLog = auditPath
+
+	verif, _ := newHardeningVerifier(t, cfg, newScriptedFetcher(nil), map[string]string{
+		testDefaultPolicy: `{}`,
+		testProdPolicy:    `{"mode": "enforce", "exclude": ["ghcr.io/org/**"]}`,
+	})
+
+	result, err := verif.Verify(
+		context.Background(),
+		newRequest(testHardeningImage, testFetchDigest, "", testHardeningNS, ""),
+	)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqual(t, string(config.ModeEnforce), result.Mode)
+
+	data, err := os.ReadFile(auditPath) //nolint:gosec // test temp dir
+	testutil.AssertNoError(t, err)
+
+	var event map[string]any
+
+	testutil.AssertNoError(t, json.Unmarshal(data, &event))
+	testutil.AssertEqual(t, "allowed", event["decision"])
+	testutil.AssertEqual[any](t, string(config.ModeEnforce), event["verificationMode"])
 }

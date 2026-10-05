@@ -773,6 +773,26 @@ func TestVerifyMultiplePassAndFail(t *testing.T) {
 	testutil.AssertEqual(t, types.StatusFail, result.Status)
 }
 
+func TestVerifyMaxScoreMetadataUsesSeverityWithoutScore(t *testing.T) {
+	t.Parallel()
+
+	doc := vulnScanDoc{ //nolint:exhaustruct_v5 // test omits Metadata
+		Scanner: scannerInfo{URI: testScannerURI, Version: ""},
+		Result: scanResult{Vulnerabilities: []vuln{
+			{ID: testCVE1, Severity: testSevCritical, Score: nil},
+			{ID: testCVE2, Severity: testSevLow, Score: new(2.1)},
+		}},
+	}
+	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
+
+	result, err := vulnscan.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+	testutil.AssertNoError(t, err)
+
+	// A critical finding without a numeric score counts with the lowest
+	// critical score, so a CEL rule on maxScore cannot miss it.
+	testutil.AssertEqual(t, 9.0, result.Metadata["maxScore"])
+}
+
 func TestVerifySeverityAliasesAndUnknown(t *testing.T) {
 	t.Parallel()
 
@@ -832,6 +852,15 @@ func TestVerifySeverityAliasesAndUnknown(t *testing.T) {
 			vuln: vuln{ID: testCVE1, Severity: testSevCritical, Score: nil},
 			pol: &policy.VulnScanPolicy{
 				MaxScore: new(7.0),
+			},
+			wantPassed: false,
+			wantSubstr: "score 9.0, severity critical",
+		},
+		{
+			name: "unrecognized minSeverity fails closed",
+			vuln: vuln{ID: testCVE1, Severity: testSevLow, Score: new(2.1)},
+			pol: &policy.VulnScanPolicy{
+				MinSeverity: "severe",
 			},
 			wantPassed: false,
 			wantSubstr: "threshold exceeded",

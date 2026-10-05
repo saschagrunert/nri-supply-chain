@@ -54,8 +54,12 @@ type Fetcher struct {
 	requireBundleSignature bool
 	bundleSignatureKey     string
 	metrics                *Metrics
-	signatureOnce          sync.Once
-	signatureErr           error
+	// signatureMu guards the cached outcome of the manifest signature
+	// check. A key that could not be loaded is not cached, so the check is
+	// retried once the key is readable again.
+	signatureMu      sync.Mutex
+	signatureChecked bool
+	signatureErr     error
 
 	// closeMu is held for reading by every Fetch and for writing by Close,
 	// so Close waits for running fetches before it releases the store.
@@ -80,7 +84,8 @@ func NewFetcher(
 		requireBundleSignature: false,
 		bundleSignatureKey:     "",
 		metrics:                nil,
-		signatureOnce:          sync.Once{},
+		signatureMu:            sync.Mutex{},
+		signatureChecked:       false,
 		signatureErr:           nil,
 		closeMu:                sync.RWMutex{},
 		closed:                 false,
@@ -178,9 +183,12 @@ func (f *Fetcher) Fetch(
 		return nil, ErrFetcherClosed
 	}
 
+	// A bundle the expiry policy rejects, or whose manifest signature does
+	// not verify, cannot be evaluated, so it denies instead of following the
+	// fetch failure policy.
 	stalenessErr := f.checkStaleness()
 	if stalenessErr != nil {
-		return nil, stalenessErr
+		return nil, denyIncomplete(stalenessErr)
 	}
 
 	signatureErr := f.checkSignature()
@@ -198,10 +206,7 @@ func (f *Fetcher) Fetch(
 		// removed after import is tampering, so it must be denied instead of
 		// being handled with the fetch failure policy.
 		if isBlobIntegrityError(err) {
-			return nil, fmt.Errorf(
-				"%w: %w: %w",
-				attestation.ErrVerificationFailed, attestation.ErrIncompleteAttestationSet, err,
-			)
+			return nil, denyIncomplete(err)
 		}
 
 		return nil, err
@@ -217,6 +222,13 @@ func (f *Fetcher) Fetch(
 	return result, nil
 }
 
+// verifyStoredAttestations verifies every stored attestation of an image. An
+// attestation without its trust material makes the set incomplete, so the
+// fetch fails and the fetch failure policy applies. The exception is a
+// key-signed attestation that cannot be checked because a trusted key file is
+// unreadable: like in the registry path, it is ignored like a failed
+// verification when another attestation verified, and only fails the fetch
+// when nothing verified.
 func (f *Fetcher) verifyStoredAttestations(
 	ctx context.Context,
 	stored []StoredAttestation,
@@ -224,7 +236,10 @@ func (f *Fetcher) verifyStoredAttestations(
 ) ([]attestation.VerifiedAttestation, error) {
 	result := make([]attestation.VerifiedAttestation, 0, len(stored))
 
-	var failures int
+	var (
+		failures int
+		keyErr   error
+	)
 
 	for idx := range stored {
 		ctxErr := ctx.Err()
@@ -235,34 +250,54 @@ func (f *Fetcher) verifyStoredAttestations(
 		}
 
 		att, err := f.verifyStoredAttestation(ctx, &stored[idx], opts)
-		if err != nil {
-			slog.WarnContext(ctx,
-				"Skipping attestation that failed verification",
-				"digest", stored[idx].Digest,
-				"predicateType", stored[idx].PredicateType,
-				"error", err,
-			)
-
-			// Without its trust material the attestation set cannot be
-			// evaluated completely; report that instead of a verification
-			// failure so the fetch failure policy applies.
-			if errors.Is(err, attestation.ErrTrustMaterialUnavailable) {
-				f.recordVerification("error")
-
-				return nil, err
-			}
-
-			if !errors.Is(err, errUnsupportedSignatureType) {
-				failures++
-			}
+		if err == nil {
+			result = append(result, *att)
 
 			continue
 		}
 
-		result = append(result, *att)
+		slog.WarnContext(ctx,
+			"Skipping attestation that failed verification",
+			"digest", stored[idx].Digest,
+			"predicateType", stored[idx].PredicateType,
+			"error", err,
+		)
+
+		switch {
+		case errors.Is(err, attestation.ErrTrustedKeyUnavailable):
+			if keyErr == nil {
+				keyErr = err
+			}
+		case errors.Is(err, attestation.ErrTrustMaterialUnavailable):
+			f.recordVerification("error")
+
+			return nil, err
+		case !errors.Is(err, errUnsupportedSignatureType):
+			failures++
+		}
 	}
 
-	if len(result) == 0 && failures > 0 {
+	return f.storedVerificationResult(result, failures, keyErr)
+}
+
+// storedVerificationResult turns the outcome of verifyStoredAttestations into
+// its result: an unreadable trusted key file wins over failed verifications
+// when nothing verified, because the attestation it could not check might
+// have verified.
+func (f *Fetcher) storedVerificationResult(
+	result []attestation.VerifiedAttestation, failures int, keyErr error,
+) ([]attestation.VerifiedAttestation, error) {
+	if len(result) > 0 {
+		return result, nil
+	}
+
+	if keyErr != nil {
+		f.recordVerification("error")
+
+		return nil, keyErr
+	}
+
+	if failures > 0 {
 		f.recordVerification("error")
 
 		return nil, fmt.Errorf(
@@ -384,12 +419,32 @@ func (f *Fetcher) reportBundleState() {
 	}
 }
 
+// checkSignature verifies the manifest signature once. A signature that is
+// required but missing or invalid denies, because whoever writes the bundle
+// could otherwise drop attestations or swap the embedded trusted root and
+// creation time. A verification key that cannot be loaded is unavailable
+// trust material: it follows the fetch failure policy and is retried.
 func (f *Fetcher) checkSignature() error {
-	f.signatureOnce.Do(func() {
-		f.signatureErr = f.verifySignature()
-	})
+	f.signatureMu.Lock()
+	defer f.signatureMu.Unlock()
 
-	return f.signatureErr
+	if f.signatureChecked {
+		return f.signatureErr
+	}
+
+	err := f.verifySignature()
+	if errors.Is(err, attestation.ErrTrustMaterialUnavailable) {
+		return err
+	}
+
+	if err != nil {
+		err = denyIncomplete(err)
+	}
+
+	f.signatureChecked = true
+	f.signatureErr = err
+
+	return err
 }
 
 func (f *Fetcher) verifySignature() error {
@@ -421,10 +476,25 @@ func (f *Fetcher) verifySignature() error {
 	return nil
 }
 
+// isBlobIntegrityError reports whether a blob listed in the bundle manifest
+// cannot be evaluated because of the store content: it was modified,
+// truncated, removed or replaced, exceeds the read limit, or is listed with an
+// unsupported digest algorithm.
 func isBlobIntegrityError(err error) bool {
 	return errors.Is(err, ErrBlobDigestMismatch) ||
 		errors.Is(err, ErrBlobSizeMismatch) ||
 		errors.Is(err, ErrBlobMissing) ||
 		errors.Is(err, ErrBlobNotRegular) ||
+		errors.Is(err, ErrBlobTooLarge) ||
+		errors.Is(err, ErrUnsupportedDigestAlgorithm) ||
 		errors.Is(err, ErrStoreReplaced)
+}
+
+// denyIncomplete marks err as an attestation set that cannot be evaluated,
+// which denies regardless of the fetch failure policy.
+func denyIncomplete(err error) error {
+	return fmt.Errorf(
+		"%w: %w: %w",
+		attestation.ErrVerificationFailed, attestation.ErrIncompleteAttestationSet, err,
+	)
 }

@@ -5,14 +5,7 @@ load helpers
 DAEMONSET_IMAGE="${REGISTRY_HOST}/nri-supply-chain/plugin:test"
 
 setup_file() {
-	mkdir -p "$KUBERNIX_ROOT" "$POLICY_DIR"
-
-	cat >"$POLICY_DIR/default.json" <<-'EOF'
-		{
-		  "slsa": {"missingPolicy": "allow"},
-		  "vex": {"missingPolicy": "allow"}
-		}
-	EOF
+	mkdir -p "$KUBERNIX_ROOT"
 
 	# Configure insecure registry and start it BEFORE kubernix so:
 	# - CRI-O reads registries.conf at startup (SIGHUP won't reload it)

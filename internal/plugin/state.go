@@ -85,6 +85,8 @@ type remediationState struct {
 	stubMu      sync.RWMutex
 	feedMu      sync.Mutex
 	started     atomic.Bool
+	// interval is the interval of the running continuous verifier.
+	interval atomic.Int64
 }
 
 func newRemediationState() *remediationState {

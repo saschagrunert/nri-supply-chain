@@ -95,6 +95,7 @@ func verifyResultJSONSchema() ([]byte, error) {
 			Allowed:       false,
 			Reason:        "",
 			CheckResults:  nil,
+			errored:       false,
 		},
 		"nri-supply-chain Verify Result",
 		"JSON output of the verify command.",

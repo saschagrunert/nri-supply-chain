@@ -93,12 +93,8 @@ type OCIFetcher struct {
 // a refresh failure.
 // Must be called during initialization, before any concurrent Fetch calls.
 func (f *OCIFetcher) SetFallbackCallback(callback func()) {
-	if f.rootCache != nil {
-		f.rootCache.onFallback = callback
-	}
-
-	for _, c := range f.rootCaches {
-		c.onFallback = callback
+	for _, cache := range f.allRootCaches() {
+		cache.onFallback = callback
 	}
 }
 
@@ -159,10 +155,7 @@ func (f *OCIFetcher) IsMultiRoot() bool {
 // source name and issuer restriction, without triggering a network fetch.
 // Roots that have not been cached yet are left out (call Warm first).
 func (f *OCIFetcher) CachedTrustedRoots() []StaticRoot {
-	caches := f.rootCaches
-	if f.rootCache != nil {
-		caches = []*trustedRootCache{f.rootCache}
-	}
+	caches := f.allRootCaches()
 
 	roots := make([]StaticRoot, 0, len(caches))
 
@@ -490,6 +483,14 @@ func (f *OCIFetcher) fetchOnce(
 	if len(attestations) == 0 && len(baselineSBOMs) == 0 {
 		tagAtts, tagErr := f.cosignTagFallback(ctx, ref, digest, remoteOpts, fetchOpts)
 		if tagErr != nil {
+			// As for referrers that failed verification, the Notation
+			// signatures still apply when the tag merely failed
+			// verification; see Fetcher.
+			if errors.Is(tagErr, ErrVerificationFailed) &&
+				!errors.Is(tagErr, ErrIncompleteAttestationSet) {
+				return notationSigs, tagErr
+			}
+
 			return nil, tagErr
 		}
 
@@ -591,6 +592,12 @@ func (f *OCIFetcher) collectSelection(
 //   - a transport error fails the fetch (retries and fetch failure handling
 //     apply), even if other referrers failed verification: the referrer that
 //     could not be fetched might have verified;
+//   - a key-signed referrer that could not be checked because a trusted key
+//     file could not be loaded is ignored like a failed verification when
+//     another referrer verified: anyone with push access can attach one, so
+//     it must not hide verified attestations behind the fetch failure policy.
+//     When nothing verified, the trust material to decide is missing and the
+//     fetch failure policy applies;
 //   - when nothing verified and at least one referrer failed verification or
 //     was not a valid attestation, the error wraps ErrVerificationFailed.
 func evaluateCollection(verified int, stats ...*collectStats) error {
@@ -610,6 +617,10 @@ func evaluateCollection(verified int, stats ...*collectStats) error {
 		return fmt.Errorf("fetching referrer: %w", merged.fetchErr)
 	}
 
+	if verified == 0 && merged.keyErr != nil {
+		return fmt.Errorf("verifying referrer: %w", merged.keyErr)
+	}
+
 	if verified == 0 && merged.verifyFailures > 0 {
 		return fmt.Errorf(
 			"%w: %w: all %d referrers failed verification",
@@ -623,7 +634,16 @@ func evaluateCollection(verified int, stats ...*collectStats) error {
 // referrersError classifies a failure to list the referrers of an image.
 // The fallback referrers tag can be pushed by anyone with push access, so a
 // listing that is reachable but malformed counts as a verification failure.
+// A listing that exceeds the response size limit makes the attestation set
+// incomplete: referrers pushed with oversized annotations would otherwise
+// hide every attestation of the image.
 func referrersError(what string, err error) error {
+	if isLimitError(err) {
+		return fmt.Errorf(
+			"%w: %w: %s: %w", ErrVerificationFailed, errReferrerLimitExceeded, what, err,
+		)
+	}
+
 	if isTransportFailure(err) {
 		return fmt.Errorf("%s: %w", what, err)
 	}

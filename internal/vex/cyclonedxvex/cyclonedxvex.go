@@ -98,6 +98,13 @@ func Evaluate(bom *cdx.BOM, image *imagematch.Image) *Result {
 			continue
 		}
 
+		if !justified(vuln) {
+			slog.Warn("Ignoring CycloneDX not_affected analysis without justification or detail",
+				"vulnerability", vulnerabilityName(vuln))
+
+			continue
+		}
+
 		result.MatchedVulnerabilities++
 
 		classifyVulnerability(vuln, result)
@@ -126,6 +133,17 @@ func classifyVulnerability(vuln *cdx.Vulnerability, result *Result) {
 
 		result.AffectedNames = append(result.AffectedNames, vulnerabilityName(vuln))
 	}
+}
+
+// justified reports whether a not_affected analysis carries a justification
+// or a detail. Without either it is an unsupported claim (like an OpenVEX
+// not_affected statement without justification or impact statement, and like
+// the sbom.cvss evaluation of the same entry), so it must not resolve the
+// vulnerability.
+func justified(vuln *cdx.Vulnerability) bool {
+	return vuln.Analysis.State != cdx.IASNotAffected ||
+		strings.TrimSpace(string(vuln.Analysis.Justification)) != "" ||
+		strings.TrimSpace(vuln.Analysis.Detail) != ""
 }
 
 func vulnerabilityName(vuln *cdx.Vulnerability) string {

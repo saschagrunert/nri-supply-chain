@@ -28,7 +28,9 @@ import (
 // severityUnknown is the CycloneDX severity of an unrated vulnerability.
 const severityUnknown = "unknown"
 
-// maxComponentDepth bounds recursion into nested CycloneDX components.
+// maxComponentDepth bounds recursion into nested CycloneDX components. A
+// document nesting components deeper is rejected rather than truncated, so
+// deeply nested components cannot escape the license and component lists.
 const maxComponentDepth = 32
 
 const (
@@ -45,6 +47,10 @@ const (
 
 var (
 	errNotCycloneDX = errors.New("no components found, not a valid CycloneDX document")
+
+	errComponentsTooDeep = fmt.Errorf(
+		"components nested deeper than %d levels", maxComponentDepth,
+	)
 
 	// errNoSBOMContent marks a CycloneDX document without components and
 	// without a subject, such as a VEX-only document. It is not an SBOM, so
@@ -82,15 +88,16 @@ type cyclonedxVulnerability struct {
 type cyclonedxAnalysis struct {
 	State         string `json:"state,omitempty"`
 	Justification string `json:"justification,omitempty"`
+	Detail        string `json:"detail,omitempty"`
 }
 
 // cyclonedxStateNotAffected is the analysis state that only resolves a
-// vulnerability together with a justification.
+// vulnerability together with a justification or a detail.
 const cyclonedxStateNotAffected = "not_affected"
 
 // cyclonedxResolvedStates lists the analysis states that resolve a
-// vulnerability. not_affected resolves it only with a justification (like an
-// OpenVEX not_affected statement). Every other state (exploitable,
+// vulnerability. not_affected resolves it only with a justification or a
+// detail (like an OpenVEX not_affected statement). Every other state (exploitable,
 // in_triage, or none) leaves it unresolved.
 var cyclonedxResolvedStates = map[string]struct{}{ //nolint:gochecknoglobals // immutable lookup set
 	"resolved":                {},
@@ -172,7 +179,10 @@ func cyclonedxFromRaw(raw *rawSBOM) (sbomData, error) {
 		addCycloneDXLicenses(raw.Metadata.Component, &result)
 	}
 
-	walkCycloneDXComponents(raw.Components, 0, &result)
+	err := walkCycloneDXComponents(raw.Components, 0, &result)
+	if err != nil {
+		return sbomData{}, err
+	}
 
 	if len(result.Packages) == 0 && !hasSubject {
 		return vulnerabilityOnlyData(raw.Vulnerabilities)
@@ -221,21 +231,24 @@ func unresolvedRatedVulnerabilities(vulns []cyclonedxVulnerability) []cyclonedxV
 }
 
 // vulnerabilityResolved reports whether the analysis state of a
-// vulnerability resolves it. A not_affected state without a justification
-// is an unsupported claim and leaves the vulnerability unresolved, so it
-// still fails the CVSS thresholds.
+// vulnerability resolves it. States are compared case-sensitively, like in
+// the VEX check, so an invalid state leaves the vulnerability unresolved. A
+// not_affected state without a justification or a detail is an unsupported
+// claim and leaves the vulnerability unresolved, so it still fails the CVSS
+// thresholds.
 func vulnerabilityResolved(vuln *cyclonedxVulnerability) bool {
 	if vuln.Analysis == nil {
 		return false
 	}
 
-	state := strings.ToLower(vuln.Analysis.State)
+	state := vuln.Analysis.State
 	if _, resolved := cyclonedxResolvedStates[state]; !resolved {
 		return false
 	}
 
 	return state != cyclonedxStateNotAffected ||
-		strings.TrimSpace(vuln.Analysis.Justification) != ""
+		strings.TrimSpace(vuln.Analysis.Justification) != "" ||
+		strings.TrimSpace(vuln.Analysis.Detail) != ""
 }
 
 // vulnerabilityRated reports whether a vulnerability carries a rating. A
@@ -266,10 +279,13 @@ func unratedSeverity(severity string) bool {
 	return known && rank == types.SeverityRankNone
 }
 
-// walkCycloneDXComponents flattens nested components into result.
-func walkCycloneDXComponents(components []cyclonedxComponent, depth int, result *sbomData) {
-	if depth > maxComponentDepth {
-		return
+// walkCycloneDXComponents flattens nested components into result. It fails
+// when components are nested deeper than maxComponentDepth.
+func walkCycloneDXComponents(
+	components []cyclonedxComponent, depth int, result *sbomData,
+) error {
+	if len(components) > 0 && depth > maxComponentDepth {
+		return errComponentsTooDeep
 	}
 
 	for idx := range components {
@@ -278,8 +294,13 @@ func walkCycloneDXComponents(components []cyclonedxComponent, depth int, result 
 
 		result.addPackage(&sp, cyclonedxPURLExempt(comp))
 
-		walkCycloneDXComponents(comp.Components, depth+1, result)
+		err := walkCycloneDXComponents(comp.Components, depth+1, result)
+		if err != nil {
+			return err
+		}
 	}
+
+	return nil
 }
 
 // cyclonedxPURLExempt reports whether a component is not expected to carry a

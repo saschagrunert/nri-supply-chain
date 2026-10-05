@@ -273,7 +273,7 @@ container is re-verified when a feed entry names a package from its SBOM:
   distribution feeds name source packages. When `package.purl` is missing,
   the PURL is derived from `package.ecosystem` and `package.name` for common
   ecosystems (npm, PyPI, Go, Maven, crates.io, RubyGems, NuGet, Packagist,
-  Hex, Pub, Debian, Ubuntu, Alpine, Wolfi, Rocky, AlmaLinux, Red Hat, SUSE);
+  Hex, Pub, Debian, Ubuntu, Alpine, Wolfi, Rocky Linux, AlmaLinux, Red Hat, SUSE);
   entries of other ecosystems without a PURL are ignored and logged once.
 - The affected versions are the union of the enumerated `versions`, the
   version in `package.purl` (if any), and the ranges. Versions compare
@@ -342,6 +342,13 @@ is set, even if `require_bundle_signature` is false: the path must be absolute
 and name a regular file at startup (symbolic links are followed only while they
 resolve inside the file's directory). In `disabled` mode the `offline` section
 is not validated.
+
+A bundle whose manifest signature is missing or invalid, a stale bundle with
+`bundle_expiry_policy = "deny"`, a bundle store replaced or removed while in
+use, and manifest entries that exceed the blob read limit or use a digest
+algorithm other than sha256 always deny, regardless of `fetch_failure_policy`.
+An unreadable `bundle_signature_key` is treated as unavailable trust material:
+it follows `fetch_failure_policy` and is read again on the next verification.
 
 The three modes control how the plugin sources attestation data:
 
@@ -838,7 +845,9 @@ Plugin flags (root command only):
 
 Without an explicit `--config`, the plugin uses the configuration passed by the
 runtime when the default config file does not exist. `--config ""` always uses
-the runtime-provided configuration.
+the runtime-provided configuration. A config file passed explicitly with
+`--config` must exist, also when it is the default path, so the plugin does not
+start with verification disabled when the file is missing.
 
 The `validate` subcommand loads the config, parses all policy files, and runs
 `ValidateRuntime()` on each policy (checking that referenced key and certificate

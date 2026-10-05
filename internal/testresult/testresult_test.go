@@ -888,3 +888,45 @@ func TestVerifyCancelledContext(t *testing.T) {
 		t.Errorf("expected context.Canceled, got: %v", err)
 	}
 }
+
+func TestVerifyRejectsNegativeSuiteCounts(t *testing.T) {
+	t.Parallel()
+
+	for _, field := range []string{"count", "passed", "failed"} {
+		t.Run(field, func(t *testing.T) {
+			t.Parallel()
+
+			predicate := `{"result":"PASSED","suites":[{"name":"unit","result":"PASSED","` +
+				field + `":-1}]}`
+			att := testutil.WrapInToto(t, json.RawMessage(predicate), testDigest, testPredicateType)
+
+			_, err := testresult.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+			if !errors.Is(err, testresult.ErrInvalidTestResult) {
+				t.Errorf("expected ErrInvalidTestResult, got %v", err)
+			}
+		})
+	}
+}
+
+func TestVerifyRequiredSuiteReportedTwice(t *testing.T) {
+	t.Parallel()
+
+	pol := &policy.Policy{
+		TestResult: &policy.TestResultPolicy{RequiredSuites: []string{testSuiteInteg}},
+	}
+
+	for _, suites := range []string{
+		`[{"name":"integration","result":"SKIPPED"},{"name":"integration","result":"PASSED"}]`,
+		`[{"name":"integration","result":"PASSED"},{"name":"integration","result":"SKIPPED"}]`,
+	} {
+		predicate := `{"result":"PASSED","suites":` + suites + `}`
+		att := testutil.WrapInToto(t, json.RawMessage(predicate), testDigest, testPredicateType)
+
+		result, err := testresult.Verify(context.Background(), att, pol, testDigest)
+		testutil.AssertNoError(t, err)
+
+		if result.Passed {
+			t.Errorf("expected a skipped entry of a required suite to fail: %s", suites)
+		}
+	}
+}

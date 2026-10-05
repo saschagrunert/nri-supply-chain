@@ -818,6 +818,29 @@ func TestExitCodeForVerifyError(t *testing.T) {
 	})
 }
 
+func TestVerifyErrorExitMarksErrors(t *testing.T) {
+	t.Parallel()
+
+	denied := newVerifyOutput(testImgV1, testDigestAAA, testNamespaceDefault, "")
+
+	code, out := verifyErrorExit(denied, fmt.Errorf("wrapped: %w", verifier.ErrVerificationFailed))
+	if code != exitDenied || out.errored {
+		t.Errorf("denial: code = %d, errored = %v, want %d, false", code, out.errored, exitDenied)
+	}
+
+	failed := newVerifyOutput(testImgV1, testDigestAAA, testNamespaceDefault, "")
+
+	code, out = verifyErrorExit(failed, errTestInternal)
+	if code != exitError || !out.errored {
+		t.Errorf("error: code = %d, errored = %v, want %d, true", code, out.errored, exitError)
+	}
+
+	if summary := aggregateResults([]*verifyOutput{denied, failed}); summary.Denied != 1 ||
+		summary.Errors != 1 {
+		t.Errorf("summary = %+v, want 1 denied and 1 error", summary)
+	}
+}
+
 func TestRunVerifyVerifierNewError(t *testing.T) {
 	t.Parallel()
 

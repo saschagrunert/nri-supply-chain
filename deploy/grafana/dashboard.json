@@ -2244,6 +2244,65 @@
           "title": "Last Verifier Run",
           "type": "stat",
           "description": "Seconds since the continuous verifier last completed a cycle. Empty while remediation is disabled or before the first cycle completes."
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 26
+          },
+          "id": 50,
+          "options": {
+            "reduceOptions": {
+              "values": false,
+              "calcs": ["lastNotNull"],
+              "fields": ""
+            },
+            "orientation": "auto",
+            "textMode": "auto",
+            "wideLayout": true,
+            "showPercentChange": false,
+            "colorMode": "value"
+          },
+          "pluginVersion": "10.0.0",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "max(nri_supply_chain_reverify_incomplete_containers{job=~\"$job\",instance=~\"$instance\"})",
+              "legendFormat": "Containers",
+              "refId": "A"
+            }
+          ],
+          "title": "Incomplete Re-verifications",
+          "type": "stat",
+          "description": "Containers whose last 3 or more re-verifications could not complete (for example during a registry outage). They keep their state, so a persistent outage never degrades them; check registry reachability."
         }
       ]
     },
@@ -3077,6 +3136,163 @@
           "title": "GUAC Query Duration P95",
           "type": "timeseries",
           "description": "95th percentile GUAC query duration by query type"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                {
+                  "type": "value",
+                  "options": {
+                    "0": {
+                      "text": "OK",
+                      "index": 0
+                    },
+                    "1": {
+                      "text": "Failed",
+                      "index": 1
+                    }
+                  }
+                }
+              ],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 28
+          },
+          "id": 51,
+          "options": {
+            "reduceOptions": {
+              "values": false,
+              "calcs": ["lastNotNull"],
+              "fields": ""
+            },
+            "orientation": "auto",
+            "textMode": "auto",
+            "wideLayout": true,
+            "showPercentChange": false,
+            "colorMode": "value"
+          },
+          "pluginVersion": "10.0.0",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "max(nri_supply_chain_runtime_config_apply_failed{job=~\"$job\",instance=~\"$instance\"})",
+              "legendFormat": "Apply Failed",
+              "refId": "A"
+            }
+          ],
+          "title": "Runtime Config Apply Failed",
+          "type": "stat",
+          "description": "Whether the configuration passed by the runtime failed to apply and is being retried. Until it is applied the plugin reports not ready and denies admissions in namespaces the configuration enforces."
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "barAlignment": 0,
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "spanNulls": false,
+                "insertNulls": false,
+                "showPoints": "auto",
+                "pointSize": 5,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                },
+                "axisPlacement": "auto",
+                "axisLabel": "",
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "hideFrom": {
+                  "tooltip": false,
+                  "viz": false,
+                  "legend": false
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 28
+          },
+          "id": 52,
+          "options": {
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            },
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "calcs": []
+            }
+          },
+          "pluginVersion": "10.0.0",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "nri_supply_chain_policy_oci_staleness_seconds{job=~\"$job\",instance=~\"$instance\"}",
+              "legendFormat": "{{instance}}",
+              "refId": "A"
+            }
+          ],
+          "title": "OCI Policy Staleness",
+          "type": "timeseries",
+          "description": "Seconds since the last successful OCI policy registry check (policy.source = oci only). The plugin reports not ready once this exceeds policy.oci_max_staleness."
         }
       ]
     },

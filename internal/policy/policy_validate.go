@@ -81,10 +81,11 @@ func (p *Policy) Validate() error {
 		errs = append(errs, err)
 	}
 
-	// An inheriting policy may rely on the default policy's trust.issuers,
-	// so its keyless verifiers are checked after merging (applyInheritance).
+	// An inheriting policy may rely on the default policy's trust.issuers
+	// and notation trust stores, so its keyless verifiers and trust store
+	// references are checked after merging (applyInheritance).
 	if p.Inherits == nil || !*p.Inherits {
-		errs = append(errs, p.validateKeylessVerifiers())
+		errs = append(errs, p.validateKeylessVerifiers(), p.validateNotationStoreRefs())
 	}
 
 	celErr := p.validateAndCompileCEL()
@@ -361,7 +362,9 @@ func (s *Sections) validateVerifiers() error {
 // entries with different time bounds would cause one to silently overwrite the
 // other in the key material map, and would make the VSA signer binding
 // ambiguous. Builders may share a key with each other, since builder keys carry
-// no time bounds and only bind provenance to the claimed builder.
+// no time bounds and only bind provenance to the claimed builder. Paths are
+// compared in their cleaned form, as signer binding (matchesKey) does, so
+// "/keys/./a.pem" and "/keys/a.pem" name the same key.
 func validateNoDuplicateKeys(trust *TrustPolicy) error {
 	verifierOwners, errs := verifierKeyOwners(trust.Verifiers)
 
@@ -369,7 +372,11 @@ func validateNoDuplicateKeys(trust *TrustPolicy) error {
 		builder := &trust.Builders[idx]
 
 		for _, key := range builder.Keys {
-			if verifierID, exists := verifierOwners[key]; exists {
+			if key == "" {
+				continue
+			}
+
+			if verifierID, exists := verifierOwners[filepath.Clean(key)]; exists {
 				errs = append(errs, fmt.Errorf(
 					"%w: key %q appears in verifier %q and builder %q",
 					ErrDuplicateKeyAcrossVerifiers, key, verifierID, builder.ID,
@@ -394,9 +401,11 @@ func verifierKeyOwners(verifiers []TrustedVerifier) (owners map[string]string, e
 				continue
 			}
 
-			firstID, exists := owners[key]
+			cleaned := filepath.Clean(key)
+
+			firstID, exists := owners[cleaned]
 			if !exists {
-				owners[key] = verif.ID
+				owners[cleaned] = verif.ID
 
 				continue
 			}
@@ -492,7 +501,9 @@ func validateKeyPaths(
 			continue
 		}
 
-		if seen[key] {
+		// Spellings of the same path ("/keys//a.pem") name the same key.
+		cleaned := filepath.Clean(key)
+		if seen[cleaned] {
 			errs = append(errs, fmt.Errorf(
 				"%w %q at %s.keys[%d]", errDuplicate, key, label, kidx,
 			))
@@ -500,7 +511,7 @@ func validateKeyPaths(
 			continue
 		}
 
-		seen[key] = true
+		seen[cleaned] = true
 
 		if !filepath.IsAbs(key) {
 			errs = append(errs, fmt.Errorf(
@@ -634,22 +645,28 @@ func warnEmptyTrust(trust *TrustPolicy) {
 }
 
 func (p *Policy) validateInclude() error {
-	// Image references are matched with a lowercase repository and digest,
-	// so an uppercase character outside the tag never matches anything.
-	for idx, pattern := range p.Include {
-		if hasUppercaseOutsideTag(pattern) {
-			slog.Warn("Include pattern contains uppercase characters outside the tag; "+
-				"image repositories are lowercase, so it never matches",
-				"field", fmt.Sprintf("include[%d]", idx),
-				"pattern", pattern,
-			)
-		}
-	}
+	warnUppercasePatterns("include", p.Include)
 
 	return errors.Join(
 		validateNonEmpty("include", p.Include),
 		validateGlobPatterns("include", p.Include),
 	)
+}
+
+// warnUppercasePatterns warns about image patterns that never match because
+// they have uppercase characters outside the tag: image references are
+// matched with a lowercase repository and digest. Such an include pattern
+// skips verification, an exclude pattern or a rule never applies.
+func warnUppercasePatterns(field string, patterns []string) {
+	for idx, pattern := range patterns {
+		if hasUppercaseOutsideTag(pattern) {
+			slog.Warn("Image pattern contains uppercase characters outside the tag; "+
+				"image repositories are lowercase, so it never matches",
+				"field", fmt.Sprintf("%s[%d]", field, idx),
+				"pattern", pattern,
+			)
+		}
+	}
 }
 
 // hasUppercaseOutsideTag reports whether an image pattern has an uppercase
@@ -667,6 +684,8 @@ func hasUppercaseOutsideTag(pattern string) bool {
 }
 
 func (p *Policy) validateExclude() error {
+	warnUppercasePatterns("exclude", p.Exclude)
+
 	// A tag-scoped exclude fails safe: digest-pinned references are verified.
 	for _, pattern := range tagScopedPatterns(p.Exclude) {
 		slog.Info("Exclude pattern is scoped to a tag and does not match digest-pinned references",
@@ -692,8 +711,8 @@ func tagScopedPatterns(patterns []string) []string {
 		}
 
 		lastSegment := pattern
-		if idx := strings.LastIndex(pattern, "/"); idx >= 0 {
-			lastSegment = pattern[idx+1:]
+		if _, after, found := strings.CutLast(pattern, "/"); found {
+			lastSegment = after
 		}
 
 		if strings.Contains(lastSegment, ":") {

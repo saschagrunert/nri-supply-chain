@@ -17,6 +17,7 @@ package plugin_test
 import (
 	"context"
 	"maps"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -459,4 +460,103 @@ func failingPrewarmPlugin(t *testing.T, remediation bool, id string) *plugin.Plu
 	waitForPrewarm(t, done)
 
 	return plug
+}
+
+// stalePrewarmVerifier blocks every Verify call until it is released and then
+// returns that call's result, ignoring ctx like a verification that completes
+// just after its pre-warm run was cancelled.
+type stalePrewarmVerifier struct {
+	*cvTestVerifier
+
+	entered chan int
+	release []chan struct{}
+	results []*types.Result
+	calls   atomic.Int32
+}
+
+func (v *stalePrewarmVerifier) Verify(
+	_ context.Context, _ *types.VerifyRequest,
+) (*types.Result, error) {
+	call := int(v.calls.Add(1)) - 1
+	v.entered <- call
+
+	<-v.release[call]
+
+	return v.results[call], nil
+}
+
+// A pre-warm cancelled by a reload must not record the result of the old
+// policy as a container's first result: the run started by the reload could
+// no longer replace it, leaving the container degraded.
+func TestCancelledPrewarmDoesNotRecordStaleResult(t *testing.T) {
+	t.Parallel()
+
+	const id = "ctr-recovered-reload"
+
+	verif := &stalePrewarmVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+		cvTestVerifier: &cvTestVerifier{}, //nolint:exhaustruct_v5 // unused
+		entered:        make(chan int, 2),
+		release:        []chan struct{}{make(chan struct{}), make(chan struct{})},
+		results: []*types.Result{
+			{
+				Allowed: true, Verified: false, Mode: "", Reason: testDegradedReason,
+				CheckResults: []types.CheckResult{
+					*types.FailResult(types.CheckTypeSLSA, "no provenance", nil),
+				},
+			},
+			{Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil},
+		},
+	}
+
+	plug := plugin.New(verif, metrics.New(), "", 30*time.Second, time.Second, nil)
+	plug.SetRemediationMode(config.RemediationModeWarn)
+
+	done := make(chan struct{}, 2)
+
+	plug.ExportSetPrewarmDone(func() { done <- struct{}{} })
+
+	pods := []*api.PodSandbox{{Id: testPodID, Namespace: testNamespace, Name: testPodName}}
+
+	_, err := plug.Synchronize(
+		context.Background(), pods, []*api.Container{recoveryContainer(id, nil, nil)},
+	)
+	testutil.AssertNoError(t, err)
+	waitForCall(t, verif.entered, 0)
+
+	// The reload cancels the first run while its verification is in flight,
+	// and the new run's verification starts before the old one returns.
+	plug.PrewarmAfterReload(context.Background())
+	waitForCall(t, verif.entered, 1)
+
+	close(verif.release[0])
+	waitForPrewarm(t, done)
+
+	close(verif.release[1])
+	waitForPrewarm(t, done)
+
+	state, found := plug.ExportGetContainerState(id)
+	if !found {
+		t.Fatal("expected recovered container to be tracked")
+	}
+
+	if state.State != plugin.StateVerified {
+		t.Errorf("state = %v, want %v", state.State, plugin.StateVerified)
+	}
+
+	if !state.HasLastResult {
+		t.Error("expected the result of the new pre-warm run to be recorded")
+	}
+}
+
+func waitForCall(t *testing.T, entered <-chan int, want int) {
+	t.Helper()
+
+	select {
+	case got := <-entered:
+		if got != want {
+			t.Fatalf("verification call = %d, want %d", got, want)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("timed out waiting for verification call %d", want)
+	}
 }

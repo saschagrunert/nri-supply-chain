@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -98,17 +99,24 @@ func builderOnlyKeys(trust *policy.TrustPolicy) map[string]struct{} {
 		return nil
 	}
 
+	// Verifier key paths are compared cleaned, like trustedKeyRefs does, so
+	// a differently spelled builder entry of a verifier key keeps the
+	// verifier scope.
+	verifierKeys := make(map[string]struct{})
+
+	for idx := range trust.Verifiers {
+		for _, keyPath := range trust.Verifiers[idx].Keys {
+			verifierKeys[filepath.Clean(keyPath)] = struct{}{}
+		}
+	}
+
 	keys := make(map[string]struct{})
 
 	for idx := range trust.Builders {
 		for _, keyPath := range trust.Builders[idx].Keys {
-			keys[keyPath] = struct{}{}
-		}
-	}
-
-	for idx := range trust.Verifiers {
-		for _, keyPath := range trust.Verifiers[idx].Keys {
-			delete(keys, keyPath)
+			if _, verifierKey := verifierKeys[filepath.Clean(keyPath)]; !verifierKey {
+				keys[keyPath] = struct{}{}
+			}
 		}
 	}
 

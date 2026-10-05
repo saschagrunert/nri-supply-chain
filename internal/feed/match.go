@@ -42,6 +42,7 @@ const (
 	purlTypeHex        = "hex"
 	purlTypePub        = "pub"
 	upstreamQualifier  = "upstream="
+	namespaceRocky     = "rocky"
 )
 
 // semverEcosystemTypes lists purl types whose ecosystem versions order like
@@ -69,25 +70,28 @@ type ecosystemPURL struct {
 }
 
 // ecosystems maps lowercase OSV ecosystems (without release suffix) to purls.
+// The OSV schema names Rocky Linux "Rocky Linux"; "rocky" is kept for feeds
+// that abbreviate it.
 var ecosystems = map[string]ecosystemPURL{ //nolint:gochecknoglobals // immutable lookup table
-	purlTypeNPM: {typ: purlTypeNPM, namespace: ""},
-	"pypi":      {typ: "pypi", namespace: ""},
-	"go":        {typ: purlTypeGolang, namespace: ""},
-	"maven":     {typ: purlTypeMaven, namespace: ""},
-	"crates.io": {typ: purlTypeCargo, namespace: ""},
-	"rubygems":  {typ: "gem", namespace: ""},
-	"nuget":     {typ: "nuget", namespace: ""},
-	"packagist": {typ: "composer", namespace: ""},
-	purlTypeHex: {typ: purlTypeHex, namespace: ""},
-	purlTypePub: {typ: purlTypePub, namespace: ""},
-	"debian":    {typ: purlTypeDeb, namespace: "debian"},
-	"ubuntu":    {typ: purlTypeDeb, namespace: "ubuntu"},
-	"alpine":    {typ: purlTypeAPK, namespace: "alpine"},
-	"wolfi":     {typ: purlTypeAPK, namespace: "wolfi"},
-	"rocky":     {typ: purlTypeRPM, namespace: "rocky"},
-	"almalinux": {typ: purlTypeRPM, namespace: "almalinux"},
-	"red hat":   {typ: purlTypeRPM, namespace: "redhat"},
-	"suse":      {typ: purlTypeRPM, namespace: "suse"},
+	purlTypeNPM:    {typ: purlTypeNPM, namespace: ""},
+	"pypi":         {typ: "pypi", namespace: ""},
+	"go":           {typ: purlTypeGolang, namespace: ""},
+	"maven":        {typ: purlTypeMaven, namespace: ""},
+	"crates.io":    {typ: purlTypeCargo, namespace: ""},
+	"rubygems":     {typ: "gem", namespace: ""},
+	"nuget":        {typ: "nuget", namespace: ""},
+	"packagist":    {typ: "composer", namespace: ""},
+	purlTypeHex:    {typ: purlTypeHex, namespace: ""},
+	purlTypePub:    {typ: purlTypePub, namespace: ""},
+	"debian":       {typ: purlTypeDeb, namespace: "debian"},
+	"ubuntu":       {typ: purlTypeDeb, namespace: "ubuntu"},
+	"alpine":       {typ: purlTypeAPK, namespace: "alpine"},
+	"wolfi":        {typ: purlTypeAPK, namespace: "wolfi"},
+	"rocky linux":  {typ: purlTypeRPM, namespace: namespaceRocky},
+	namespaceRocky: {typ: purlTypeRPM, namespace: namespaceRocky},
+	"almalinux":    {typ: purlTypeRPM, namespace: "almalinux"},
+	"red hat":      {typ: purlTypeRPM, namespace: "redhat"},
+	"suse":         {typ: purlTypeRPM, namespace: "suse"},
 }
 
 // affectedSpecs converts an OSV affected entry into purl specs.

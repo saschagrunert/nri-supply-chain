@@ -63,8 +63,8 @@ func ParseDigest(digest string) (algo, hash string) {
 func ExtractDigest(entry string) string {
 	candidate := entry
 
-	if idx := strings.LastIndex(entry, "@"); idx >= 0 {
-		candidate = entry[idx+1:]
+	if _, after, found := strings.CutLast(entry, "@"); found {
+		candidate = after
 	}
 
 	algo, _ := ParseDigest(candidate)

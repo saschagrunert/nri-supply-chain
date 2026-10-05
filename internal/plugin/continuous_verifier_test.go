@@ -15,9 +15,12 @@
 package plugin_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -2263,4 +2266,76 @@ func TestFeedTriggerVerifiesReplicasOfAnImageOnce(t *testing.T) {
 		t.Errorf("expected one verification for %d replicas of an image, got %d",
 			replicas, verif.verifications)
 	}
+}
+
+// Enabling remediation again with another interval while the continuous
+// verifier runs (for example after a reload disabled remediation) logs that
+// the interval requires a restart instead of ignoring it silently.
+//
+//nolint:paralleltest // mutates slog.SetDefault
+func TestStartContinuousVerifierWarnsAboutChangedInterval(t *testing.T) {
+	logs := &syncBuffer{} //nolint:exhaustruct_v5 // zero-value buffer
+
+	prev := slog.Default()
+
+	handler := slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelWarn})
+	slog.SetDefault(slog.New(handler))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	verif := &cvTestVerifier{} //nolint:exhaustruct_v5 // zero-value fields intentional
+	plug := newCVTestPlugin(verif)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+
+	go func() {
+		plug.RunContinuousVerifier(ctx, time.Hour)
+		close(done)
+	}()
+
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+
+	deadline := time.Now().Add(5 * time.Second)
+	for plug.ExportContinuousVerifierInterval() != time.Hour {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for the continuous verifier to start")
+		}
+
+		time.Sleep(time.Millisecond)
+	}
+
+	plug.StartContinuousVerifier(ctx, time.Hour)
+
+	if strings.Contains(logs.String(), "remediation.interval") {
+		t.Errorf("expected no warning for an unchanged interval, got: %s", logs.String())
+	}
+
+	plug.StartContinuousVerifier(ctx, time.Minute)
+
+	if !strings.Contains(logs.String(), "remediation.interval changed but requires restart") {
+		t.Errorf("expected a warning for a changed interval, got: %s", logs.String())
+	}
+}
+
+// syncBuffer is a bytes.Buffer that loggers can write to concurrently.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(data []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buf.Write(data) //nolint:wrapcheck // writing to a bytes.Buffer does not fail
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buf.String()
 }

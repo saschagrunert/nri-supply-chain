@@ -1,6 +1,6 @@
 dependencies:
   - name: nri-supply-chain
-    version: 0.6.0
+    version: 0.7.0
     refPaths:
       - path: cmd/nri-supply-chain/main.go
         match: ^var version
@@ -28,7 +28,7 @@ dependencies:
         match: "imageRef.*nri-supply-chain:"
 
   - name: helm
-    version: 3.21.4
+    version: 4.3.0
     refPaths:
       - path: Makefile
         match: ^HELM_VERSION
@@ -56,7 +56,7 @@ dependencies:
         match: "^go "
 
   - name: golangci-lint
-    version: 2.13.1
+    version: 2.14.0
     refPaths:
       - path: Makefile
         match: ^GOLANGCI_LINT_VERSION
@@ -64,7 +64,7 @@ dependencies:
         match: "version: v2\\."
 
   - name: trivy
-    version: 0.74.0
+    version: 0.75.0
     refPaths:
       - path: .github/workflows/ci.yml
         match: "version: v0\\."
@@ -72,7 +72,7 @@ dependencies:
         match: "version: v0\\."
 
   - name: syft
-    version: 1.51.0
+    version: 1.54.0
     refPaths:
       - path: .github/workflows/ci.yml
         match: syft-version
@@ -80,7 +80,7 @@ dependencies:
         match: syft-version
 
   - name: goreleaser
-    version: 2.18.1
+    version: 2.18.2
     refPaths:
       - path: Makefile
         match: ^GORELEASER_VERSION
@@ -96,7 +96,7 @@ dependencies:
         match: ^ZEITGEIST_VERSION
 
   - name: shfmt
-    version: 3.13.1
+    version: 3.14.1
     refPaths:
       - path: Makefile
         match: ^SHFMT_VERSION
@@ -108,7 +108,7 @@ dependencies:
         match: ^SHELLCHECK_VERSION
 
   - name: kubernix
-    version: 0.3.5
+    version: 0.4.1
     refPaths:
       - path: Makefile
         match: ^KUBERNIX_VERSION
@@ -126,25 +126,25 @@ dependencies:
         match: ^COSIGN_VERSION
 
   - name: crane
-    version: 0.21.9
+    version: 0.22.1
     refPaths:
       - path: Makefile
         match: ^CRANE_VERSION
 
   - name: govulncheck
-    version: v1.7.0
+    version: v1.8.0
     refPaths:
       - path: Makefile
         match: ^GOVULNCHECK_VERSION
 
   - name: prettier
-    version: 3.9.6
+    version: 3.9.9
     refPaths:
       - path: Makefile
         match: ^PRETTIER_VERSION
 
   - name: markdownlint-cli2
-    version: 0.23.2
+    version: 0.23.3
     refPaths:
       - path: Makefile
         match: ^MARKDOWNLINT_VERSION
@@ -156,7 +156,7 @@ dependencies:
         match: ^DASHBOARD_LINTER_VERSION
 
   - name: pause
-    version: 3.10
+    version: 3.10.2
     refPaths:
       - path: test/e2e/helpers.bash
         match: "registry.k8s.io/pause:"

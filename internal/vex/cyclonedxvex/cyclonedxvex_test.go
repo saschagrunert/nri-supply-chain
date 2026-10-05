@@ -38,6 +38,17 @@ func testImage() *imagematch.Image {
 	return imagematch.New(testImageRef, testDigest, nil)
 }
 
+// analysisFor returns the analysis a valid entry with the state carries:
+// not_affected requires a justification.
+func analysisFor(state cdx.ImpactAnalysisState) *cdx.VulnerabilityAnalysis {
+	analysis := &cdx.VulnerabilityAnalysis{State: state}
+	if state == cdx.IASNotAffected {
+		analysis.Justification = cdx.IAJCodeNotReachable
+	}
+
+	return analysis
+}
+
 func bomWithVuln(state cdx.ImpactAnalysisState, affectsRef string) *cdx.BOM {
 	bom := cdx.NewBOM()
 	bom.Components = &[]cdx.Component{
@@ -55,7 +66,7 @@ func bomWithVuln(state cdx.ImpactAnalysisState, affectsRef string) *cdx.BOM {
 		},
 	}
 
-	analysis := &cdx.VulnerabilityAnalysis{State: state}
+	analysis := analysisFor(state)
 
 	bom.Vulnerabilities = &[]cdx.Vulnerability{
 		{
@@ -474,7 +485,7 @@ func TestVerifyMetadataComponentIndexed(t *testing.T) {
 	}
 	bom.Vulnerabilities = &[]cdx.Vulnerability{{
 		ID:       testCVE,
-		Analysis: &cdx.VulnerabilityAnalysis{State: cdx.IASNotAffected},
+		Analysis: analysisFor(cdx.IASNotAffected),
 		Affects:  &[]cdx.Affects{{Ref: "image"}},
 	}}
 
@@ -485,6 +496,95 @@ func TestVerifyMetadataComponentIndexed(t *testing.T) {
 
 	if result.MatchedVulnerabilities != 1 || len(result.AffectedNames) != 0 {
 		t.Errorf("expected metadata component match with not_affected, got %+v", result)
+	}
+}
+
+func TestVerifyIgnoresUnjustifiedNotAffected(t *testing.T) {
+	t.Parallel()
+
+	unjustified := &cdx.VulnerabilityAnalysis{State: cdx.IASNotAffected}
+	blank := &cdx.VulnerabilityAnalysis{State: cdx.IASNotAffected, Justification: " "}
+	blankDetail := &cdx.VulnerabilityAnalysis{State: cdx.IASNotAffected, Detail: " "}
+	withDetail := &cdx.VulnerabilityAnalysis{
+		State:  cdx.IASNotAffected,
+		Detail: "The vulnerable function is never called.",
+	}
+
+	tests := []struct {
+		name         string
+		analyses     []*cdx.VulnerabilityAnalysis
+		wantAffected bool
+		wantMatched  int
+	}{
+		{
+			name:         "unjustified not_affected alone is ignored",
+			analyses:     []*cdx.VulnerabilityAnalysis{unjustified},
+			wantAffected: false,
+			wantMatched:  0,
+		},
+		{
+			name:         "blank justification is ignored",
+			analyses:     []*cdx.VulnerabilityAnalysis{blank},
+			wantAffected: false,
+			wantMatched:  0,
+		},
+		{
+			name:         "blank detail is ignored",
+			analyses:     []*cdx.VulnerabilityAnalysis{blankDetail},
+			wantAffected: false,
+			wantMatched:  0,
+		},
+		{
+			name:         "detail justifies not_affected",
+			analyses:     []*cdx.VulnerabilityAnalysis{withDetail},
+			wantAffected: false,
+			wantMatched:  1,
+		},
+		{
+			name: "unjustified not_affected does not hide exploitable",
+			analyses: []*cdx.VulnerabilityAnalysis{
+				unjustified, {State: cdx.IASExploitable},
+			},
+			wantAffected: true,
+			wantMatched:  1,
+		},
+		{
+			name:         "justified not_affected applies",
+			analyses:     []*cdx.VulnerabilityAnalysis{analysisFor(cdx.IASNotAffected)},
+			wantAffected: false,
+			wantMatched:  1,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			bom := bomWithVuln(cdx.IASNotAffected, testCompRef)
+			template := (*bom.Vulnerabilities)[0]
+			vulns := make([]cdx.Vulnerability, 0, len(test.analyses))
+
+			for _, analysis := range test.analyses {
+				vuln := template
+				vuln.Analysis = analysis
+				vulns = append(vulns, vuln)
+			}
+
+			bom.Vulnerabilities = &vulns
+
+			result, err := cyclonedxvex.Verify(testutil.MustMarshal(t, bom), testImage())
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if got := len(result.AffectedNames) > 0; got != test.wantAffected {
+				t.Errorf("affected = %v, want %v (%+v)", got, test.wantAffected, result)
+			}
+
+			if result.MatchedVulnerabilities != test.wantMatched {
+				t.Errorf("matched = %d, want %d", result.MatchedVulnerabilities, test.wantMatched)
+			}
+		})
 	}
 }
 
@@ -525,7 +625,7 @@ func TestVerifyMultipleVulnerabilities(t *testing.T) {
 	bom.Vulnerabilities = &[]cdx.Vulnerability{
 		{
 			ID:       "CVE-2024-1111",
-			Analysis: &cdx.VulnerabilityAnalysis{State: cdx.IASNotAffected},
+			Analysis: analysisFor(cdx.IASNotAffected),
 			Affects: &[]cdx.Affects{
 				{Ref: testDigest},
 			},
@@ -627,7 +727,7 @@ func TestVerifyUnresolvedReferences(t *testing.T) {
 		}}
 		bom.Vulnerabilities = &[]cdx.Vulnerability{{
 			ID:       testCVE,
-			Analysis: &cdx.VulnerabilityAnalysis{State: state},
+			Analysis: analysisFor(state),
 			Affects:  &[]cdx.Affects{{Ref: "subject"}},
 		}}
 
@@ -635,7 +735,7 @@ func TestVerifyUnresolvedReferences(t *testing.T) {
 	}
 
 	withState := func(bom *cdx.BOM, state cdx.ImpactAnalysisState) *cdx.BOM {
-		(*bom.Vulnerabilities)[0].Analysis = &cdx.VulnerabilityAnalysis{State: state}
+		(*bom.Vulnerabilities)[0].Analysis = analysisFor(state)
 
 		return bom
 	}

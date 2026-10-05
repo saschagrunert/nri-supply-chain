@@ -49,6 +49,7 @@ var (
 	ErrFutureTimestamp = errors.New("test result timestamp is in the future")
 
 	errMissingResult = errors.New("result is required")
+	errNegativeCount = errors.New("suite test counts must not be negative")
 )
 
 const (
@@ -149,6 +150,17 @@ func VerifyMultiple(
 func validatePredicate(pred *testResultPredicate) error {
 	if strings.TrimSpace(pred.Result) == "" {
 		return errMissingResult
+	}
+
+	// Negative counts would offset the passed and failed totals exposed to
+	// CEL and hide failures from the suite failure check.
+	for idx := range pred.Suites {
+		suite := &pred.Suites[idx]
+		for _, count := range []*int{suite.Count, suite.Passed, suite.Failed} {
+			if count != nil && *count < 0 {
+				return fmt.Errorf("%w: suite %q", errNegativeCount, suite.Name)
+			}
+		}
 	}
 
 	return nil
@@ -253,16 +265,23 @@ func checkRequiredSuites(pred *testResultPredicate, pol *policy.Policy) string {
 		return ""
 	}
 
-	suiteMap := make(map[string]*testSuite, len(pred.Suites))
+	// Suites may be reported more than once (for example per platform), so
+	// every entry of a required suite must pass, independent of order.
+	suiteMap := make(map[string][]*testSuite, len(pred.Suites))
 	for idx := range pred.Suites {
-		suiteMap[strings.ToLower(pred.Suites[idx].Name)] = &pred.Suites[idx]
+		key := strings.ToLower(pred.Suites[idx].Name)
+		suiteMap[key] = append(suiteMap[key], &pred.Suites[idx])
 	}
 
 	for _, name := range pol.TestResult.RequiredSuites {
-		suite, found := suiteMap[strings.ToLower(name)]
+		suites, found := suiteMap[strings.ToLower(name)]
 		if found {
-			if !isPassed(suite.Result) {
-				return fmt.Sprintf("%s: suite %q has result %q", ErrTestsFailed, name, suite.Result)
+			for _, suite := range suites {
+				if !isPassed(suite.Result) {
+					return fmt.Sprintf(
+						"%s: suite %q has result %q", ErrTestsFailed, name, suite.Result,
+					)
+				}
 			}
 
 			continue

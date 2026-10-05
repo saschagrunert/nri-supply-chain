@@ -287,6 +287,7 @@ func TestSetupSignalsCleanupClosesPlugin(t *testing.T) {
 		triggerReverifyCalled:        false,
 		triggerFeedReverifyCalled:    false,
 		triggerFeedReverifyLastPURLs: nil,
+		continuousInterval:           0,
 	}
 	cleanup := setupSignals(ctx, cancel, "", verif, met, cfg, mock)
 	cleanup()
@@ -730,6 +731,7 @@ func TestHandleReloadUpdatesPluginRegistries(t *testing.T) {
 		triggerReverifyCalled:        false,
 		triggerFeedReverifyCalled:    false,
 		triggerFeedReverifyLastPURLs: nil,
+		continuousInterval:           0,
 	}
 	handleReload(context.Background(), configPath, verif, met, mock, nil, &atomic.Value{})
 
@@ -793,6 +795,90 @@ func TestHandleReloadUpdatesPluginRegistriesNonEmpty(t *testing.T) {
 	}
 }
 
+// writeRemediationReloadConfig writes a warn mode config file enabling
+// remediation and returns its path and a verifier created without it.
+func writeRemediationReloadConfig(t *testing.T) (string, *verifier.Verifier, *metrics.Metrics) {
+	t.Helper()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	policyDir := filepath.Join(dir, "policies")
+
+	err := os.Mkdir(policyDir, 0o750)
+	if err != nil {
+		t.Fatalf("creating policy dir: %v", err)
+	}
+
+	err = os.WriteFile(filepath.Join(policyDir, "default.json"), []byte(`{}`), 0o600)
+	if err != nil {
+		t.Fatalf("writing policy: %v", err)
+	}
+
+	data := "verification = \"warn\"\npolicy_dir = \"" + policyDir + "\"\n" +
+		"[remediation]\nmode = \"warn\"\ninterval = \"5m\"\n"
+
+	err = os.WriteFile(configPath, []byte(data), 0o600)
+	if err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = policyDir
+
+	met := metrics.New()
+
+	verif, err := verifier.New(t.Context(), cfg, met, nil)
+	if err != nil {
+		t.Fatalf("creating verifier: %v", err)
+	}
+
+	t.Cleanup(verif.Stop)
+
+	return configPath, verif, met
+}
+
+// Enabling remediation by a reload starts the continuous verifier, which
+// recovers containers that pre-warming degrades.
+//
+//nolint:paralleltest // modifies package-level LogLevel
+func TestHandleReloadEnablingRemediationStartsContinuousVerifier(t *testing.T) {
+	configPath, verif, met := writeRemediationReloadConfig(t)
+
+	mock := &mockPluginReloader{} //nolint:exhaustruct_v5 // zero-value mock
+	handleReload(t.Context(), configPath, verif, met, mock, nil, &atomic.Value{})
+
+	if mock.remediationMode != config.RemediationModeWarn {
+		t.Fatalf("expected the reload to enable remediation, got %q", mock.remediationMode)
+	}
+
+	if mock.continuousInterval != 5*time.Minute {
+		t.Errorf("expected the continuous verifier to start, got interval %v",
+			mock.continuousInterval)
+	}
+}
+
+func TestHandleReloadAfterShutdownIsDropped(t *testing.T) {
+	t.Parallel()
+
+	configPath, verif, met := writeRemediationReloadConfig(t)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	mock := &mockPluginReloader{} //nolint:exhaustruct_v5 // zero-value mock
+	handleReload(ctx, configPath, verif, met, mock, nil, &atomic.Value{})
+
+	if mock.prewarmAfterReloadCalled || mock.remediationMode != "" {
+		t.Error("expected no plugin settings to be applied after shutdown started")
+	}
+
+	if got := testutil.ToFloat64(met.ConfigReloadsTotal) +
+		testutil.ToFloat64(met.ConfigReloadErrorsTotal); got != 0 {
+		t.Errorf("expected no reload after shutdown started, got %v", got)
+	}
+}
+
 type mockPluginReloader struct {
 	closeCalled                  bool
 	prewarmAfterReloadCalled     bool
@@ -803,6 +889,7 @@ type mockPluginReloader struct {
 	triggerReverifyCalled        bool
 	triggerFeedReverifyCalled    bool
 	triggerFeedReverifyLastPURLs []string
+	continuousInterval           time.Duration
 }
 
 func (m *mockPluginReloader) Close() {
@@ -842,6 +929,10 @@ func (m *mockPluginReloader) TriggerReverify() {
 func (m *mockPluginReloader) TriggerFeedReverify(purls []string) {
 	m.triggerFeedReverifyCalled = true
 	m.triggerFeedReverifyLastPURLs = purls
+}
+
+func (m *mockPluginReloader) StartContinuousVerifier(_ context.Context, interval time.Duration) {
+	m.continuousInterval = interval
 }
 
 //nolint:paralleltest // mutates slog.SetDefault
@@ -935,8 +1026,9 @@ func TestWarnNonReloadableChangesRemediationEnabled(t *testing.T) {
 
 	output := buf.String()
 
-	if !strings.Contains(output, "remediation.mode enabled but requires restart") {
-		t.Errorf("expected remediation enable warning, got: %s", output)
+	// The reload starts the continuous verifier.
+	if strings.Contains(output, "requires restart") {
+		t.Errorf("expected no restart warning when enabling remediation, got: %s", output)
 	}
 }
 
@@ -1303,62 +1395,6 @@ func TestUpdateWatchedPathsPreservesFeedDir(t *testing.T) {
 	if !slices.Contains(watcher.WatchList(), absFeed) {
 		t.Errorf("feed directory %s should be preserved, watch list: %v",
 			absFeed, watcher.WatchList())
-	}
-}
-
-//nolint:paralleltest // mutates slog.SetDefault
-func TestWarnNonReloadableChangesRemediationInterval(t *testing.T) {
-	var buf bytes.Buffer
-
-	prev := slog.Default()
-
-	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
-	slog.SetDefault(slog.New(handler))
-
-	t.Cleanup(func() { slog.SetDefault(prev) })
-
-	current := config.DefaultConfig()
-	current.Remediation.Mode = config.RemediationModeWarn
-	current.Remediation.Interval = config.Duration{Duration: 30 * time.Second}
-
-	proposed := config.DefaultConfig()
-	proposed.Remediation.Mode = config.RemediationModeWarn
-	proposed.Remediation.Interval = config.Duration{Duration: 60 * time.Second}
-
-	warnNonReloadableChanges(current, proposed)
-
-	output := buf.String()
-
-	if !strings.Contains(output, "remediation.interval changed but requires restart") {
-		t.Errorf("expected remediation.interval warning, got: %s", output)
-	}
-}
-
-//nolint:paralleltest // mutates slog.SetDefault
-func TestWarnNonReloadableChangesRemediationIntervalUnchanged(t *testing.T) {
-	var buf bytes.Buffer
-
-	prev := slog.Default()
-
-	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
-	slog.SetDefault(slog.New(handler))
-
-	t.Cleanup(func() { slog.SetDefault(prev) })
-
-	current := config.DefaultConfig()
-	current.Remediation.Mode = config.RemediationModeWarn
-	current.Remediation.Interval = config.Duration{Duration: 30 * time.Second}
-
-	proposed := config.DefaultConfig()
-	proposed.Remediation.Mode = config.RemediationModeWarn
-	proposed.Remediation.Interval = config.Duration{Duration: 30 * time.Second}
-
-	warnNonReloadableChanges(current, proposed)
-
-	output := buf.String()
-
-	if strings.Contains(output, "remediation.interval") {
-		t.Errorf("expected no interval warning for unchanged interval, got: %s", output)
 	}
 }
 

@@ -87,7 +87,9 @@ type fetcherBasis struct {
 // components are reused unless what they depend on changed:
 //
 //   - result cache: replaced, with a new generation, when policies, trust
-//     material or cache affecting config fields changed
+//     material, cache affecting config fields or the attestation fetcher
+//     changed (a replaced bundle store can drop attestations that cached
+//     results were based on)
 //   - per-host semaphores and verification helper caches (PEM keys, SAN
 //     warnings, Notation verifiers, globs): reset when policies or trust
 //     material changed
@@ -132,7 +134,8 @@ func (v *Verifier) buildSnapshot(
 		guacBreaker:      prev.guacBreaker,
 	}
 
-	if policiesChanged || cacheAffectingFieldsChanged(prev.config, cfg) {
+	if policiesChanged || cacheAffectingFieldsChanged(prev.config, cfg) ||
+		input.fetcher != prev.fetcher {
 		next.cache = newResultCache(cfg, input.metrics)
 		next.generation = v.generation.Add(1)
 	}
@@ -331,6 +334,14 @@ func (t *flightTracker) begin() bool {
 	t.active++
 
 	return true
+}
+
+// reject closes the tracker: no new verification can begin afterwards.
+func (t *flightTracker) reject() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.closed = true
 }
 
 // end marks a verification registered by begin as finished.
