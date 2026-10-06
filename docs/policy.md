@@ -2961,6 +2961,8 @@ only the production promotion jobs can use (issuer
 `https://accounts.google.com` for both). A rule trusts that verifier for one
 project and requires its VSA, so unattested or tampered digests are rejected:
 
+<!-- registry-k8s-io-spo-rule -->
+
 ```json
 {
   "rules": [
@@ -2984,11 +2986,13 @@ project and requires its VSA, so unattested or tampered digests are rejected:
           }
         ]
       },
-      "vsa": { "missingPolicy": "deny" }
+      "vsa": { "missingPolicy": "deny", "minimumLevel": 1 }
     }
   ]
 }
 ```
+
+<!-- /registry-k8s-io-spo-rule -->
 
 - `exclude` wins over rules, so no exclude pattern may match the images of the
   rule. The shipped default policy only excludes the system images (see
@@ -2997,16 +3001,28 @@ project and requires its VSA, so unattested or tampered digests are rejected:
 - `sanPatterns` needs both identities: every keyless bundle, the VSA too, is
   verified against them before the verifier's `identities` bind the VSA to
   `promoter-summaries`.
-- The promoter writes the VSA once, when it promotes the digest, so leave
+- The promoter writes the VSA once, when it promotes the digest or, if that
+  failed, in the repair of a later run, and never replaces it, so leave
   `vsa.maxAge` unset. Digests promoted before the promoter wrote VSAs have
-  none, so `vsa.missingPolicy: deny` rejects them.
+  none, unless the repair of a later run reached them within its manifest
+  diff window, and `vsa.missingPolicy: deny` rejects them. A digest that
+  violated the provenance policy of its project keeps a `FAILED` VSA, which is
+  rejected as well: the Security Profiles Operator v1.1.0 images got theirs
+  from such a repair.
 - `verifiedLevels` has `SLSA_BUILD_LEVEL_<n>` only for projects whose promoter
-  manifest has a provenance policy, otherwise `SLSA_BUILD_LEVEL_UNEVALUATED`.
-  Set `vsa.minimumLevel` only for such projects. Even then, the VSAs of the
+  manifest has a provenance policy, otherwise `SLSA_BUILD_LEVEL_UNEVALUATED`,
+  which the plugin counts as level 0. A `PASSED` VSA alone only means that
+  the digest was promoted from a reviewed promoter manifest, so set
+  `vsa.minimumLevel` for projects with a policy: the Security Profiles
+  Operator verifies its images at level 1 or 3, so `1` rejects VSAs that
+  claim no level, for example if its policy were turned off. Don't set it
+  for projects without a policy. With a policy, too, the VSAs of the
   platform manifests of a multi-arch image claim a level only when their own
-  attestations satisfy the policy, and the plugin uses them whenever the index
-  digest has no attestations, so `vsa.minimumLevel` can deny a multi-arch
-  image whose platform manifests are not attested on their own.
+  attestations in the repository of the image satisfy the policy, and the
+  plugin uses them whenever it only sees the platform digest, so
+  `vsa.minimumLevel` can deny a multi-arch image whose platform manifests are
+  not attested there. The Security Profiles Operator attests them since
+  v1.1.1, so its multi-arch images verify at level 3 through either digest.
 - `policy.uri` names the promoter manifest, for example
   `git+https://github.com/kubernetes/k8s.io#registry.k8s.io/manifests/k8s-staging-sp-operator/promoter-manifest.yaml`.
   A digest promoted from several manifests, or a platform manifest of indexes

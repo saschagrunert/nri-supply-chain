@@ -149,6 +149,12 @@ func TestRegistryK8sIOExampleRequiresPromoterVSA(t *testing.T) {
 			t.Errorf("expected a missing VSA to be denied for %s, got %q", imageRef, got)
 		}
 
+		// The project has a provenance policy, so its VSAs claim a level.
+		if resolved.VSA == nil || resolved.VSA.MinimumLevel != 1 {
+			t.Errorf("expected VSAs of %s to need SLSA build level 1, got %+v",
+				imageRef, resolved.VSA)
+		}
+
 		if len(resolved.Trust.Verifiers) != 1 {
 			t.Fatalf("expected one trusted verifier, got %d", len(resolved.Trust.Verifiers))
 		}
