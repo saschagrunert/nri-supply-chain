@@ -44,7 +44,7 @@
           }
         ]
       },
-      "vsa": { "missingPolicy": "deny" }
+      "vsa": { "missingPolicy": "deny", "minimumLevel": 1 }
     }
   ]
 }
