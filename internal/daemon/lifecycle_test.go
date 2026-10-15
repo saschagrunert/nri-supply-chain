@@ -105,7 +105,7 @@ func waitForEnforcing(t *testing.T, verif *verifier.Verifier, want bool, step st
 
 	deadline := time.After(5 * time.Second)
 
-	for verif.Enforcing() != want {
+	for (verif.CurrentConfig().Verification == config.ModeEnforce) != want {
 		select {
 		case <-deadline:
 			t.Fatalf("%s: expected enforcing=%v", step, want)

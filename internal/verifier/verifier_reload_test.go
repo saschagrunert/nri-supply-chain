@@ -28,6 +28,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/bundle"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
+	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
@@ -556,5 +557,40 @@ func TestBundleMetricsIntegration(t *testing.T) {
 
 	if verificationCount == 0 {
 		t.Error("expected at least one verification metric recorded")
+	}
+}
+
+// TestFailedReloadLeavesFetcherUntouched checks that a reload that fails
+// (here on an audit log that cannot be opened) does not apply the new
+// settings to the fetcher it would have reused, which the current snapshot
+// keeps using.
+func TestFailedReloadLeavesFetcherUntouched(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+
+	fetcher, err := verifier.NewFetcher(context.Background(), cfg, nil)
+	testutil.AssertNoError(t, err)
+
+	verif, _ := newHardeningVerifier(t, cfg, fetcher,
+		map[string]string{testDefaultPolicy: `{}`})
+
+	if verif.TransportCache() != nil {
+		t.Fatal("expected no transport cache without registries")
+	}
+
+	next := *cfg
+	next.Registries = []config.Registry{{
+		Prefix: "docker.io", Mirror: "mirror.example.com", CACert: "", Insecure: false,
+	}}
+	next.AuditLog = filepath.Join(t.TempDir(), "missing", "audit.log")
+
+	if verif.Reload(context.Background(), &next) == nil {
+		t.Fatal("expected the reload to fail on the audit log")
+	}
+
+	if verif.TransportCache() != nil {
+		t.Error("expected the failed reload not to replace the fetcher's transport cache")
 	}
 }

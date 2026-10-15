@@ -16,6 +16,7 @@ package verifier
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"slices"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/bundle"
+	"github.com/saschagrunert/nri-supply-chain/internal/circuit"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/glob"
 	"github.com/saschagrunert/nri-supply-chain/internal/guac"
@@ -72,12 +74,12 @@ func (v *Verifier) reload(ctx context.Context, cfg *config.Config) error {
 
 	current := v.state.Load()
 
-	next, err := v.buildSnapshot(ctx, current, &snapshotInput{
+	next, err := v.buildSnapshot(current, &snapshotInput{
 		config:       &cfgCopy,
 		policies:     plan.loaded.policies,
 		policyHashes: plan.loaded.hashes,
 		trust:        plan.trust,
-		fetcher:      v.reloadFetcher(current, &cfgCopy, plan.newFetcher),
+		fetcher:      reloadFetcher(current, &cfgCopy, plan.newFetcher),
 		fetcherBasis: reloadFetcherBasis(current, &cfgCopy, plan.trust),
 		metrics:      current.metrics,
 	})
@@ -88,6 +90,8 @@ func (v *Verifier) reload(ctx context.Context, cfg *config.Config) error {
 		return err
 	}
 
+	applyReusedFetcherSettings(current, next)
+
 	logReloadChanges(
 		ctx, current.config, &cfgCopy, current.policyHashes, plan.loaded.hashes,
 		next.generation != current.generation,
@@ -96,24 +100,32 @@ func (v *Verifier) reload(ctx context.Context, cfg *config.Config) error {
 	v.state.Store(next)
 	retireSnapshot(current, next)
 	closeOldTransportCache(current, plan.newFetcher)
+	v.finishReload(ctx, current, next, plan)
+
+	return nil
+}
+
+// finishReload completes a reload that published next in place of prev: it
+// updates the policy fetcher, starts the OCI policy poller and warns about
+// risky defaults.
+func (v *Verifier) finishReload(ctx context.Context, prev, next *snapshot, plan *reloadPlan) {
+	cfg := next.config
 
 	// Keep the policy fetcher's transport cache in sync with registry changes.
 	if plan.loaded.policyFetcher != nil &&
-		config.RegistriesChanged(current.config.Registries, cfgCopy.Registries) {
-		plan.loaded.policyFetcher.SetTransportCache(policyTransportCache(&cfgCopy, next.fetcher))
+		config.RegistriesChanged(prev.config.Registries, cfg.Registries) {
+		plan.loaded.policyFetcher.SetTransportCache(policyTransportCache(cfg, next.fetcher))
 	}
 
 	// Start the new poller if the source is OCI (the old one stays stopped).
-	if cfgCopy.Policy.Source == config.PolicySourceOCI {
-		v.startPoller(ctx, plan.loaded.policyFetcher, &cfgCopy, plan.loaded.ociDigest)
+	if cfg.Policy.Source == config.PolicySourceOCI {
+		v.startPoller(ctx, plan.loaded.policyFetcher, cfg, plan.loaded.ociDigest)
 	}
 
-	if cfgCopy.Enabled() {
-		WarnEnforceDefaults(ctx, &cfgCopy, plan.loaded.policies)
-		WarnWarnModeDefaults(ctx, &cfgCopy, plan.loaded.policies)
+	if cfg.Enabled() {
+		WarnEnforceDefaults(ctx, cfg, plan.loaded.policies)
+		WarnWarnModeDefaults(ctx, cfg, plan.loaded.policies)
 	}
-
-	return nil
 }
 
 // resumePoller restarts a poller paused by a reload that failed, so the
@@ -172,23 +184,20 @@ func (v *Verifier) prepareReload(
 
 // reloadAuditLogger returns the audit logger for cfg, reusing the previous
 // one when the path is unchanged. The previous file is closed by
-// retireSnapshot once the new snapshot is published.
-func reloadAuditLogger(
-	ctx context.Context, prev *snapshot, cfg *config.Config,
-) (*slog.Logger, *os.File) {
+// retireSnapshot once the new snapshot is published. A new audit log that
+// cannot be opened fails the reload, as it fails startup, instead of moving
+// the audit trail elsewhere.
+func reloadAuditLogger(prev *snapshot, cfg *config.Config) (*slog.Logger, *os.File, error) {
 	if prev.config.AuditLog == cfg.AuditLog {
-		return prev.auditLogger, prev.auditLogFile
+		return prev.auditLogger, prev.auditLogFile, nil
 	}
 
 	logger, auditFile, err := openAuditLogger(cfg.AuditLog)
 	if err != nil {
-		slog.ErrorContext(ctx, "Failed to open audit log, falling back to default logger",
-			"path", cfg.AuditLog, "error", err)
-
-		return slog.Default(), nil
+		return nil, nil, fmt.Errorf("opening audit log: %w", err)
 	}
 
-	return logger, auditFile
+	return logger, auditFile, nil
 }
 
 func resetVerificationCaches() {
@@ -318,6 +327,15 @@ func applyOCISettings(
 	}
 }
 
+// applyReusedFetcherSettings applies the settings of next to the fetcher it
+// reuses from prev (see reloadFetcher). The fetcher is shared with prev, so a
+// reload only updates it once it can no longer fail.
+func applyReusedFetcherSettings(prev, next *snapshot) {
+	if next.fetcher == prev.fetcher && next.config.Enabled() {
+		applyOCISettings(prev.fetcher, prev.fetcherBasis.config, next.config)
+	}
+}
+
 // reloadFetcherBasis returns the basis of the fetcher reloadFetcher returns.
 // With verification disabled the fetcher is kept untouched, so it keeps its
 // basis; otherwise it was rebuilt for or updated to cfg.
@@ -330,25 +348,20 @@ func reloadFetcherBasis(prev *snapshot, cfg *config.Config, trust trustFingerpri
 }
 
 // reloadFetcher returns the fetcher to use for the new snapshot. If a new
-// fetcher was pre-created, it is configured and returned; otherwise the existing
-// fetcher is updated with the new rate limit and registries.
-func (v *Verifier) reloadFetcher( //nolint:ireturn // returns prev.fetcher which is the Fetcher interface
+// fetcher was pre-created, it is configured and returned; otherwise the
+// existing fetcher is returned, and reload updates it with the new rate
+// limit, attestation size limit and registries once the snapshot is built.
+func reloadFetcher( //nolint:ireturn // returns prev.fetcher which is the Fetcher interface
 	prev *snapshot,
 	cfg *config.Config,
 	newFetcher attestation.Fetcher,
 ) attestation.Fetcher {
-	if !cfg.Enabled() {
-		return prev.fetcher
-	}
-
-	if newFetcher != nil {
+	if cfg.Enabled() && newFetcher != nil {
 		configureOCICallbacks(newFetcher, prev.metrics)
 		setBundleMetricsOnFetcher(newFetcher, prev.metrics)
 
 		return newFetcher
 	}
-
-	applyOCISettings(prev.fetcher, prev.fetcherBasis.config, cfg)
 
 	return prev.fetcher
 }
@@ -361,9 +374,16 @@ func cacheAffectingFieldsChanged(prev, next *config.Config) bool {
 		config.SigstoreConfigChanged(&prev.Sigstore, &next.Sigstore) ||
 		config.RegistriesChanged(prev.Registries, next.Registries) ||
 		policySourceChanged(prev, next) ||
-		prev.CacheMaxEntries != next.CacheMaxEntries ||
+		limitsChanged(prev, next) ||
 		guacConfigChanged(prev, next) ||
 		config.OfflineConfigChanged(&prev.Offline, &next.Offline)
+}
+
+// limitsChanged reports a change of the cache size or the attestation size
+// limit: cached results may be built on attestations above a lowered limit.
+func limitsChanged(prev, next *config.Config) bool {
+	return prev.CacheMaxEntries != next.CacheMaxEntries ||
+		prev.MaxAttestationSize != next.MaxAttestationSize
 }
 
 func fetchFailurePolicyChanged(prev, next *config.Config) bool {
@@ -394,7 +414,7 @@ func policySourceChanged(prev, next *config.Config) bool {
 
 func reloadGUACClient(
 	prev *snapshot, cfg *config.Config,
-) (*guac.Client, *attestation.CircuitBreaker, error) {
+) (*guac.Client, *circuit.Breaker, error) {
 	if !cfg.Guac.Enabled() {
 		return nil, nil, nil
 	}
@@ -408,7 +428,7 @@ func reloadGUACClient(
 		return nil, nil, err
 	}
 
-	return guacClient, attestation.NewCircuitBreaker(
+	return guacClient, circuit.NewBreaker(
 		cfg.CircuitBreakerThreshold,
 		cfg.CircuitBreakerCooldown.Duration,
 	), nil

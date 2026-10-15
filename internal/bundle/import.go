@@ -21,7 +21,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 const (
@@ -106,6 +105,14 @@ func extractTarGz(bundlePath, storePath string) error {
 	}
 	defer func() { _ = gzipReader.Close() }()
 
+	// Entries are created through the root, so neither their names nor
+	// symbolic links can place files outside the store.
+	root, err := os.OpenRoot(storePath)
+	if err != nil {
+		return fmt.Errorf("opening store directory: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+
 	tarReader := tar.NewReader(gzipReader)
 
 	var totalSize int64
@@ -132,7 +139,7 @@ func extractTarGz(bundlePath, storePath string) error {
 			return fmt.Errorf("%w: %d bytes", ErrBundleTooLarge, maxBundleTarSize)
 		}
 
-		entryErr := extractTarEntry(tarReader, header, storePath)
+		entryErr := extractTarEntry(tarReader, header, root)
 		if entryErr != nil {
 			return entryErr
 		}
@@ -141,27 +148,21 @@ func extractTarGz(bundlePath, storePath string) error {
 	return nil
 }
 
-func extractTarEntry(tarReader *tar.Reader, header *tar.Header, storePath string) error {
-	//nolint:gosec // validated by path traversal check below
-	target := filepath.Join(storePath, header.Name)
-
-	cleanStore := filepath.Clean(storePath) + string(filepath.Separator)
-	cleanTarget := filepath.Clean(target)
-
-	if cleanTarget != filepath.Clean(storePath) &&
-		!strings.HasPrefix(cleanTarget, cleanStore) {
+func extractTarEntry(tarReader *tar.Reader, header *tar.Header, root *os.Root) error {
+	target := filepath.Clean(header.Name)
+	if !filepath.IsLocal(target) {
 		return fmt.Errorf("%w: %s", ErrPathTraversal, header.Name)
 	}
 
 	switch header.Typeflag {
 	case tar.TypeDir:
-		mkdirErr := os.MkdirAll(target, bundleDirMode)
+		mkdirErr := root.MkdirAll(target, bundleDirMode)
 		if mkdirErr != nil {
 			return fmt.Errorf("creating directory %s: %w", target, mkdirErr)
 		}
 
 	case tar.TypeReg:
-		extractErr := extractFile(tarReader, target, header.Size)
+		extractErr := extractFile(tarReader, root, target, header.Size)
 		if extractErr != nil {
 			return extractErr
 		}
@@ -170,16 +171,15 @@ func extractTarEntry(tarReader *tar.Reader, header *tar.Header, storePath string
 	return nil
 }
 
-func extractFile(reader io.Reader, target string, size int64) error {
+func extractFile(reader io.Reader, root *os.Root, target string, size int64) error {
 	dir := filepath.Dir(target)
 
-	mkdirErr := os.MkdirAll(dir, bundleDirMode)
+	mkdirErr := root.MkdirAll(dir, bundleDirMode)
 	if mkdirErr != nil {
 		return fmt.Errorf("creating directory %s: %w", dir, mkdirErr)
 	}
 
-	//nolint:gosec // path validated above
-	outFile, err := os.OpenFile(
+	outFile, err := root.OpenFile(
 		target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, bundleFileMode,
 	)
 	if err != nil {

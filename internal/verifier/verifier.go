@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"sync"
@@ -54,6 +55,10 @@ var (
 	// a verification already running for longer than the admission timeout,
 	// instead of waiting for it until the admission deadline.
 	ErrVerificationInProgress = errors.New("verification already in progress")
+
+	// ErrVerificationPanic is returned for a verification whose checks
+	// panicked outside a single check (fetching, binning, VSA or CEL).
+	ErrVerificationPanic = errors.New("internal error during verification")
 
 	errUnexpectedVerifyResult = errors.New("verifier: unexpected singleflight result type")
 )
@@ -90,7 +95,12 @@ type Verifier struct {
 	inflight   singleflight.Group
 	flights    flightTracker
 	generation atomic.Uint64
-	poller     atomic.Pointer[policyPoller]
+	// policyRevision numbers the policy sets of the snapshots.
+	policyRevision atomic.Uint64
+	poller         atomic.Pointer[policyPoller]
+	// policyUpdated is called after the OCI policy poller applied changed
+	// policies; see SetPolicyUpdateHook.
+	policyUpdated atomic.Pointer[func()]
 	// flightStarts maps singleflight keys to the start time of the running
 	// verification, so admissions can avoid joining slow verifications.
 	flightStarts sync.Map
@@ -156,7 +166,7 @@ func New(
 
 	trust := computeTrustFingerprint(&cfgCopy, loaded.policies)
 
-	snap, err := verif.buildSnapshot(ctx, nil, &snapshotInput{
+	snap, err := verif.buildSnapshot(nil, &snapshotInput{
 		config:       &cfgCopy,
 		policies:     loaded.policies,
 		policyHashes: loaded.hashes,
@@ -253,17 +263,25 @@ func (v *Verifier) CurrentConfig() *config.Config {
 	return v.state.Load().config
 }
 
+// PolicyRevision identifies the current policies and the trust material they
+// rely on. It changes when a reload or an OCI policy update changes them, so
+// callers can tell a policy change apart from other configuration changes.
+func (v *Verifier) PolicyRevision() uint64 {
+	return v.state.Load().policyRevision
+}
+
+// SetPolicyUpdateHook sets a function that is called after the OCI policy
+// poller applied changed policies, which changes PolicyRevision without a
+// reload. It is called while snapshot replacement is locked, so it must not
+// block or call Reload.
+func (v *Verifier) SetPolicyUpdateHook(hook func()) {
+	v.policyUpdated.Store(&hook)
+}
+
 // AdmissionTimeout returns the configured bound for the NRI CreateContainer
 // admission (admission_timeout).
 func (v *Verifier) AdmissionTimeout() time.Duration {
 	return v.state.Load().config.AdmissionTimeout.Duration
-}
-
-// Enforcing returns true if the global verification mode is enforce.
-// It does not account for per-namespace mode overrides. Callers that
-// need per-namespace semantics should use EffectiveModeForNamespace.
-func (v *Verifier) Enforcing() bool {
-	return v.state.Load().config.Verification == config.ModeEnforce
 }
 
 // EffectiveModeForNamespace returns the verification mode that applies to the
@@ -438,14 +456,15 @@ func (v *Verifier) Verify( //nolint:funlen // early-return branches inflate line
 		nodeName:          v.nodeName,
 		podServiceAccount: req.ServiceAccount,
 		verificationMode:  string(globalMode),
+		origin:            string(types.VerifyOriginFrom(ctx)),
 	}
 
 	if !state.config.Enabled() {
 		return skipResult(ctx, state, req, globalMode, reasonVerificationDisabled, info), nil
 	}
 
-	if _, ok := state.allowlistDigests[digest]; ok {
-		state.metrics.VerificationSkippedTotal.WithLabelValues("allowlisted", namespace).Inc()
+	if allowlisted(state, req) {
+		countSkipped(ctx, state, "allowlisted", namespace)
 
 		return skipResult(ctx, state, req, globalMode, "image digest is allowlisted", info), nil
 	}
@@ -457,7 +476,7 @@ func (v *Verifier) Verify( //nolint:funlen // early-return branches inflate line
 	if pol == nil {
 		result, err := handleMissingPolicy(ctx, state.config, imageRef, namespace)
 		logVerification(ctx, state, req, result, err, info)
-		recordMetrics(state.metrics, result, namespace)
+		recordMetrics(ctx, state.metrics, result, namespace)
 
 		return result, err
 	}
@@ -467,13 +486,13 @@ func (v *Verifier) Verify( //nolint:funlen // early-return branches inflate line
 	info.verificationMode = string(namespaceMode)
 
 	if !isIncluded(ctx, pol.Include, imageRef) {
-		state.metrics.VerificationSkippedTotal.WithLabelValues("not_included", namespace).Inc()
+		countSkipped(ctx, state, "not_included", namespace)
 
 		return skipResult(ctx, state, req, namespaceMode, reasonNotIncluded, info), nil
 	}
 
 	if isExcluded(ctx, pol.Exclude, imageRef) {
-		state.metrics.VerificationSkippedTotal.WithLabelValues("excluded", namespace).Inc()
+		countSkipped(ctx, state, "excluded", namespace)
 
 		return skipResult(ctx, state, req, namespaceMode, reasonExcluded, info), nil
 	}
@@ -494,7 +513,7 @@ func (v *Verifier) Verify( //nolint:funlen // early-return branches inflate line
 
 	var err error
 
-	result := cachedResult(state, digest, namespace, cacheNS)
+	result := cachedResult(ctx, state, digest, namespace, cacheNS)
 	if result == nil {
 		result, err = v.verifyOnce(ctx, state, resolvedPol, effectiveMode, req, cacheNS)
 	}
@@ -560,6 +579,29 @@ func (v *Verifier) stop(done <-chan struct{}) {
 	closeFetcher(snap.fetcher)
 }
 
+// allowlisted reports whether the image digest of req, or the digest of the
+// index it was resolved from, is allowlisted. An allowlisted index matches
+// whether the runtime reports the index digest or the tag was resolved to a
+// platform digest of it.
+func allowlisted(state *snapshot, req *types.VerifyRequest) bool {
+	for _, digest := range []string{req.Digest, req.IndexDigest} {
+		if _, ok := state.allowlistDigests[digest]; ok && digest != "" {
+			return true
+		}
+	}
+
+	return false
+}
+
+// countSkipped counts an admission that skipped verification.
+func countSkipped(ctx context.Context, state *snapshot, reason, namespace string) {
+	if types.VerifyOriginFrom(ctx) != types.OriginAdmission {
+		return
+	}
+
+	state.metrics.VerificationSkippedTotal.WithLabelValues(reason, namespace).Inc()
+}
+
 // skipResult builds the result for an image that is admitted without
 // verification (disabled, allowlisted, excluded, not included).
 func skipResult(
@@ -598,8 +640,11 @@ func handleVerifyError(
 ) (*types.Result, error) {
 	// Only a request that ended before its verification was interrupted;
 	// other errors (a stopping verifier, a slow verification an admission
-	// does not join) never started waiting for one.
-	if ctx.Err() != nil {
+	// does not join) never started waiting for one. Background
+	// verifications are cancelled on purpose (a reload restarts
+	// pre-warming, disabling remediation stops re-verification), so only
+	// admissions count.
+	if ctx.Err() != nil && types.VerifyOriginFrom(ctx) == types.OriginAdmission {
 		state.metrics.VerificationInterruptedTotal.Inc()
 	}
 
@@ -630,7 +675,9 @@ func handleVerifyError(
 
 // cachedResult returns a copy of the cached result for a request, or nil on
 // a cache miss.
-func cachedResult(state *snapshot, digest, namespace, cacheNS string) *types.Result {
+func cachedResult(
+	ctx context.Context, state *snapshot, digest, namespace, cacheNS string,
+) *types.Result {
 	cached := state.cache.Get(digest, cacheNS)
 	if cached == nil {
 		state.metrics.CacheMissesTotal.Inc()
@@ -646,7 +693,7 @@ func cachedResult(state *snapshot, digest, namespace, cacheNS string) *types.Res
 
 	result := cached.Clone()
 
-	recordMetrics(state.metrics, &result, namespace)
+	recordMetrics(ctx, state.metrics, &result, namespace)
 
 	return &result
 }
@@ -698,7 +745,10 @@ func (v *Verifier) verifyOnce(
 		stopCheck := context.AfterFunc(v.stopCtx, checkCancel)
 		defer stopCheck()
 
-		result, cacheTTL := runChecks(checkCtx, state, pol, mode, req)
+		result, cacheTTL, err := runChecksRecovered(checkCtx, state, pol, mode, req)
+		if err != nil {
+			return nil, err
+		}
 
 		// A cancelled verification did not evaluate the image.
 		if v.stopCtx.Err() != nil {
@@ -714,8 +764,38 @@ func (v *Verifier) verifyOnce(
 	case <-ctx.Done():
 		return nil, fmt.Errorf("verification interrupted: %w", ctx.Err())
 	case res := <-flightCh:
-		return handleFlightResult(state, res, req.Namespace)
+		return handleFlightResult(ctx, state, res, req.Namespace)
 	}
+}
+
+// runChecksRecovered runs the checks of a verification and turns a panic
+// into an error, so the verification fails (and is not cached) instead of
+// crashing the daemon: singleflight re-raises a panic of the shared call on a
+// new goroutine, where nothing can recover it. Panics of a single check are
+// recovered in runParallelCheck already.
+func runChecksRecovered(
+	ctx context.Context, state *snapshot, pol *policy.Policy,
+	mode config.VerificationMode, req *types.VerifyRequest,
+) (result *types.Result, cacheTTL time.Duration, err error) {
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			return
+		}
+
+		slog.ErrorContext(ctx, "Panic during verification",
+			"image", req.ImageRef,
+			"digest", req.Digest,
+			"panic", recovered,
+			"stack", string(debug.Stack()),
+		)
+
+		result, cacheTTL, err = nil, 0, fmt.Errorf("%w: %v", ErrVerificationPanic, recovered)
+	}()
+
+	result, cacheTTL = runChecks(ctx, state, pol, mode, req)
+
+	return result, cacheTTL, nil
 }
 
 // checkJoinable fails fast when an admission would join a verification that
@@ -754,13 +834,22 @@ func (v *Verifier) checkJoinable(ctx context.Context, state *snapshot, flightKey
 }
 
 func handleFlightResult(
-	state *snapshot, res singleflight.Result, namespace string,
+	ctx context.Context, state *snapshot, res singleflight.Result, namespace string,
 ) (*types.Result, error) {
 	if res.Shared {
 		state.metrics.InflightDedupTotal.Inc()
 	}
 
 	if res.Err != nil {
+		// Every admission that waited for a panicked verification counts
+		// as an internal failure, whichever caller started it.
+		if errors.Is(res.Err, ErrVerificationPanic) &&
+			types.VerifyOriginFrom(ctx) == types.OriginAdmission {
+			state.metrics.VerificationTotal.WithLabelValues(
+				string(types.CheckTypeInternal), string(types.StatusFail), namespace,
+			).Inc()
+		}
+
 		return nil, fmt.Errorf("inflight verification: %w", res.Err)
 	}
 
@@ -771,7 +860,7 @@ func handleFlightResult(
 
 	result := shared.Clone()
 
-	recordMetrics(state.metrics, &result, namespace)
+	recordMetrics(ctx, state.metrics, &result, namespace)
 
 	return &result, nil
 }

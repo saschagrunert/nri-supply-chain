@@ -21,8 +21,6 @@ import (
 	"time"
 
 	"github.com/containerd/nri/pkg/api"
-
-	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
 // VerificationState represents the current verification state of a running
@@ -68,7 +66,6 @@ type containerState struct {
 	serviceAccount     string
 	createdAt          time.Time
 	state              VerificationState
-	lastResult         *types.Result
 	lastRemediation    time.Time
 	lastTriggerHash    string
 	originalResources  *api.LinuxResources
@@ -124,15 +121,6 @@ func (r *containerRegistry) StoreIfAbsent(containerID string, state *containerSt
 	return true
 }
 
-// Load retrieves a container state by ID.
-func (r *containerRegistry) Load(id string) (*containerState, bool) {
-	r.mu.RLock()
-	cs, found := r.m[id]
-	r.mu.RUnlock()
-
-	return cs, found
-}
-
 // LoadAndDelete retrieves and removes a container state by ID.
 func (r *containerRegistry) LoadAndDelete(id string) (*containerState, bool) {
 	r.mu.Lock()
@@ -179,14 +167,6 @@ func (r *containerRegistry) UpdateState(id string, updateFn func(cs *containerSt
 	return true
 }
 
-// Len returns the number of tracked containers.
-func (r *containerRegistry) Len() int {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	return len(r.m)
-}
-
 // StateCounts returns the number of containers in each verification state.
 func (r *containerRegistry) StateCounts() map[VerificationState]int {
 	r.mu.RLock()
@@ -215,24 +195,6 @@ func (r *containerRegistry) IncompleteCount(threshold int) int {
 	}
 
 	return count
-}
-
-// ReadState reads container fields under the read lock to avoid races with
-// UpdateState. Returns false if the container does not exist.
-func (r *containerRegistry) ReadState(
-	id string, readFn func(cs containerState),
-) bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	state, found := r.m[id]
-	if !found {
-		return false
-	}
-
-	readFn(*state)
-
-	return true
 }
 
 func (r *containerRegistry) cleanStale(activeIDs map[string]struct{}) {

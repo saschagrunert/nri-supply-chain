@@ -33,8 +33,9 @@ type FallbackFetcher struct {
 }
 
 // NewFallbackFetcher creates a FallbackFetcher that tries primary first, then
-// falls back to fallback when the primary returns ErrNoAttestationsForDigest or
-// ErrBundleNotFound.
+// falls back to fallback when the primary returns ErrNoAttestationsForDigest.
+// A missing bundle store or manifest fails when the primary is opened, so a
+// fetch never reports one.
 func NewFallbackFetcher(primary, fallback attestation.Fetcher) *FallbackFetcher {
 	return &FallbackFetcher{
 		primary:  primary,
@@ -114,7 +115,5 @@ func (f *FallbackFetcher) OCIFetcher() *attestation.OCIFetcher {
 }
 
 func isRecoverableError(err error) bool {
-	return errors.Is(err, ErrNoAttestationsForDigest) ||
-		errors.Is(err, ErrBundleNotFound) ||
-		errors.Is(err, ErrManifestNotFound)
+	return errors.Is(err, ErrNoAttestationsForDigest)
 }

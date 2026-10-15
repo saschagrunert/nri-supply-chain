@@ -53,7 +53,6 @@ interval = "5m"
 	testutil.AssertNoError(t, applier(t.Context(), cfg))
 
 	testutil.AssertEqual(t, verif.CurrentConfig().Verification, config.ModeWarn)
-	testutil.AssertEqual(t, mock.fetchTimeout, 7*time.Second)
 	testutil.AssertEqual(t, mock.digestResolveTimeout, 2*time.Second)
 	testutil.AssertEqual(t, mock.remediationMode, config.RemediationModeWarn)
 	testutil.AssertEqual(t, mock.continuousInterval, 5*time.Minute)

@@ -964,12 +964,6 @@ func TestVerifyStatusMetadata(t *testing.T) {
 			wantPassed: true,
 		},
 		{
-			name:       "null predicate reports no_match",
-			att:        wrapRawPredicate(t, []byte("null")),
-			wantStatus: vex.StatusNoMatch,
-			wantPassed: true,
-		},
-		{
 			name:       "statements for another image report no_match",
 			att:        testutil.WrapInToto(t, otherImageDoc, testDigest, testPredicateType),
 			wantStatus: vex.StatusNoMatch,
@@ -1017,6 +1011,20 @@ func TestVerifyUnrecognizedPredicateFails(t *testing.T) {
 	if !errors.Is(err, vex.ErrInvalidVEX) {
 		t.Errorf("expected ErrInvalidVEX for unrecognized predicate, got %v", err)
 	}
+}
+
+// TestVerifyNullPredicateFails checks that a VEX statement with a null
+// predicate is not evaluated as a document without statements.
+func TestVerifyNullPredicateFails(t *testing.T) {
+	t.Parallel()
+
+	att := wrapRawPredicate(t, []byte("null"))
+
+	result, err := vex.VerifyMultiple(
+		context.Background(), [][]byte{att}, &policy.Policy{}, testImageRef, testDigest, nil,
+	)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqual(t, false, result.Passed)
 }
 
 func TestVerifyMultipleMergesOpenVEXDocuments(t *testing.T) {

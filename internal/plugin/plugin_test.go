@@ -274,7 +274,7 @@ func TestConfigureWithEmptyConfig(t *testing.T) {
 	v, err := verifier.New(t.Context(), cfg, met, nil)
 	testutil.AssertNoError(t, err)
 
-	plug := plugin.New(v, met, "", 30*time.Second, 1*time.Second, nil)
+	plug := plugin.New(v, met, "", 1*time.Second, nil)
 
 	_, err = plug.Configure(context.Background(), "", "cri-o", "1.32")
 	testutil.AssertNoError(t, err)
@@ -292,7 +292,7 @@ func TestConfigureWithNRIConfig(t *testing.T) {
 	v, err := verifier.New(t.Context(), cfg, met, nil)
 	testutil.AssertNoError(t, err)
 
-	plug := plugin.New(v, met, "", 30*time.Second, 1*time.Second, nil)
+	plug := plugin.New(v, met, "", 1*time.Second, nil)
 
 	tomlConfig := `verification = "warn"` + "\n" +
 		`policy_dir = "` + dir + `"` + "\n"
@@ -310,7 +310,7 @@ func TestConfigureWithInvalidNRIConfig(t *testing.T) {
 	v, err := verifier.New(t.Context(), cfg, met, nil)
 	testutil.AssertNoError(t, err)
 
-	plug := plugin.New(v, met, "", 30*time.Second, 1*time.Second, nil)
+	plug := plugin.New(v, met, "", 1*time.Second, nil)
 
 	_, err = plug.Configure(context.Background(), `[[[invalid`, "cri-o", "1.32")
 	if err == nil {
@@ -327,7 +327,7 @@ func TestConfigureWithInvalidPolicyDir(t *testing.T) {
 	v, err := verifier.New(t.Context(), cfg, met, nil)
 	testutil.AssertNoError(t, err)
 
-	plug := plugin.New(v, met, "", 30*time.Second, 1*time.Second, nil)
+	plug := plugin.New(v, met, "", 1*time.Second, nil)
 
 	tomlConfig := "verification = \"warn\"\n" +
 		"policy_dir = \"/nonexistent/policies\"\n"
@@ -347,7 +347,7 @@ func TestConfigureSkipsWhenConfigPathSet(t *testing.T) {
 	v, err := verifier.New(t.Context(), cfg, met, nil)
 	testutil.AssertNoError(t, err)
 
-	plug := plugin.New(v, met, "/some/config.toml", 30*time.Second, 1*time.Second, nil)
+	plug := plugin.New(v, met, "/some/config.toml", 1*time.Second, nil)
 
 	_, err = plug.Configure(context.Background(), `verification = "enforce"`, "cri-o", "1.32")
 	testutil.AssertNoError(t, err)
@@ -650,7 +650,7 @@ func newTestPlugin(t *testing.T, mode config.VerificationMode, policyDir string)
 	v, err := verifier.New(t.Context(), cfg, met, nil)
 	testutil.AssertNoError(t, err)
 
-	return plugin.New(v, met, "", 30*time.Second, 1*time.Second, nil)
+	return plugin.New(v, met, "", 1*time.Second, nil)
 }
 
 func newTestPluginWithPrewarmSignal(
@@ -1324,7 +1324,7 @@ func newBlockingPrewarmPlugin(
 		started:        make(chan struct{}),
 		once:           sync.Once{},
 	}
-	plug := plugin.New(verif, metrics.New(), "", 30*time.Second, time.Second, nil)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 	done := make(chan struct{}, 2)
 
 	plug.ExportSetPrewarmDone(func() { done <- struct{}{} })
@@ -1399,7 +1399,7 @@ func TestCancelledPrewarmWaitsForInFlightVerifications(t *testing.T) {
 		},
 		returned: atomic.Bool{},
 	}
-	plug := plugin.New(verif, metrics.New(), "", 30*time.Second, time.Second, nil)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 
 	var returnedAtDone atomic.Bool
 
@@ -1627,7 +1627,7 @@ func TestCreateContainerPassesServiceAccount(t *testing.T) {
 	cv := &capturingVerifier{serviceAccount: "", mu: sync.Mutex{}}
 	met := metrics.New()
 
-	plug := plugin.New(cv, met, "", 30*time.Second, 1*time.Second, nil)
+	plug := plugin.New(cv, met, "", 1*time.Second, nil)
 
 	const testSA = "my-service-account"
 
@@ -1664,7 +1664,7 @@ func TestCreateContainerEmptyServiceAccount(t *testing.T) {
 	cv := &capturingVerifier{serviceAccount: "", mu: sync.Mutex{}}
 	met := metrics.New()
 
-	plug := plugin.New(cv, met, "", 30*time.Second, 1*time.Second, nil)
+	plug := plugin.New(cv, met, "", 1*time.Second, nil)
 
 	pod := &api.PodSandbox{
 		Namespace: testNamespace,
@@ -1994,7 +1994,7 @@ func TestRemoveContainerUnknownID(t *testing.T) {
 
 	cv := &capturingVerifier{serviceAccount: "", mu: sync.Mutex{}}
 	met := metrics.New()
-	plug := plugin.New(cv, met, "", 30*time.Second, 1*time.Second, nil)
+	plug := plugin.New(cv, met, "", 1*time.Second, nil)
 
 	pod := &api.PodSandbox{
 		Namespace: testNamespace,
@@ -2019,7 +2019,7 @@ func TestRemoveContainerRecordsLifetime(t *testing.T) {
 
 	cv := &capturingVerifier{serviceAccount: "", mu: sync.Mutex{}}
 	met := metrics.New()
-	plug := plugin.New(cv, met, "", 30*time.Second, 1*time.Second, nil)
+	plug := plugin.New(cv, met, "", 1*time.Second, nil)
 
 	const ctrID = "test-ctr-1"
 
@@ -2049,7 +2049,7 @@ func TestCreateThenRemoveContainerRecordsPositiveLifetime(t *testing.T) {
 
 	cv := &capturingVerifier{serviceAccount: "", mu: sync.Mutex{}}
 	met := metrics.New()
-	plug := plugin.New(cv, met, "", 30*time.Second, 1*time.Second, nil)
+	plug := plugin.New(cv, met, "", 1*time.Second, nil)
 
 	const ctrID = "lifecycle-ctr"
 
@@ -2093,7 +2093,7 @@ func TestSynchronizeCleansStaleContainerTimes(t *testing.T) {
 
 	cv := &capturingVerifier{serviceAccount: "", mu: sync.Mutex{}}
 	met := metrics.New()
-	plug := plugin.New(cv, met, "", 30*time.Second, 1*time.Second, nil)
+	plug := plugin.New(cv, met, "", 1*time.Second, nil)
 
 	// Simulate containers that were created while the plugin was active.
 	plug.ExportStoreContainerTime("active-ctr", time.Now())
@@ -2129,7 +2129,7 @@ func TestSynchronizeDoesNotTrackPreExistingContainers(t *testing.T) {
 
 	cv := &capturingVerifier{serviceAccount: "", mu: sync.Mutex{}}
 	met := metrics.New()
-	plug := plugin.New(cv, met, "", 30*time.Second, 1*time.Second, nil)
+	plug := plugin.New(cv, met, "", 1*time.Second, nil)
 
 	const ctrID = "pre-existing-ctr"
 
@@ -2160,7 +2160,7 @@ func TestMissingAnnotationsWarnModeTracksLifetime(t *testing.T) {
 
 	cv := &capturingVerifier{serviceAccount: "", mu: sync.Mutex{}}
 	met := metrics.New()
-	plug := plugin.New(cv, met, "", 30*time.Second, 1*time.Second, nil)
+	plug := plugin.New(cv, met, "", 1*time.Second, nil)
 
 	const ctrID = "missing-annot-ctr"
 
@@ -2199,7 +2199,7 @@ func TestCreateContainerVerifyErrorDoesNotTrackTime(t *testing.T) {
 
 	fv := &failingVerifier{}
 	met := metrics.New()
-	plug := plugin.New(fv, met, "", 30*time.Second, 1*time.Second, nil)
+	plug := plugin.New(fv, met, "", 1*time.Second, nil)
 
 	const ctrID = "fail-verify-ctr"
 
@@ -2231,7 +2231,7 @@ func TestMissingAnnotationsEnforceModeDoesNotTrackTime(t *testing.T) {
 
 	fv := &failingVerifier{}
 	met := metrics.New()
-	plug := plugin.New(fv, met, "", 30*time.Second, 1*time.Second, nil)
+	plug := plugin.New(fv, met, "", 1*time.Second, nil)
 
 	const ctrID = "enforce-missing-annot-ctr"
 
@@ -2260,7 +2260,7 @@ func TestRemoveContainerConcurrentSameID(t *testing.T) {
 
 	cv := &capturingVerifier{serviceAccount: "", mu: sync.Mutex{}}
 	met := metrics.New()
-	plug := plugin.New(cv, met, "", 30*time.Second, 1*time.Second, nil)
+	plug := plugin.New(cv, met, "", 1*time.Second, nil)
 
 	const ctrID = "concurrent-ctr"
 
@@ -2299,7 +2299,7 @@ func TestPluginStatusReadyRequiresNRIConnection(t *testing.T) {
 
 	cv := &capturingVerifier{serviceAccount: "", mu: sync.Mutex{}}
 	met := metrics.New()
-	plug := plugin.New(cv, met, "", 30*time.Second, 1*time.Second, nil)
+	plug := plugin.New(cv, met, "", 1*time.Second, nil)
 
 	status := plug.Status()
 	if status.Ready {
@@ -2334,30 +2334,12 @@ func TestPluginStatusReadyRequiresNRIConnection(t *testing.T) {
 	}
 }
 
-func TestSetFetchTimeout(t *testing.T) {
-	t.Parallel()
-
-	cv := &capturingVerifier{serviceAccount: "", mu: sync.Mutex{}}
-	met := metrics.New()
-	plug := plugin.New(cv, met, "", 30*time.Second, 1*time.Second, nil)
-
-	if got := plug.ExportFetchTimeout(); got != 30*time.Second {
-		t.Errorf("initial fetch timeout = %v, want %v", got, 30*time.Second)
-	}
-
-	plug.SetFetchTimeout(45 * time.Second)
-
-	if got := plug.ExportFetchTimeout(); got != 45*time.Second {
-		t.Errorf("updated fetch timeout = %v, want %v", got, 45*time.Second)
-	}
-}
-
 func TestSetDigestResolveTimeout(t *testing.T) {
 	t.Parallel()
 
 	cv := &capturingVerifier{serviceAccount: "", mu: sync.Mutex{}}
 	met := metrics.New()
-	plug := plugin.New(cv, met, "", 30*time.Second, 1*time.Second, nil)
+	plug := plugin.New(cv, met, "", 1*time.Second, nil)
 
 	if got := plug.ExportDigestResolveTimeout(); got != 1*time.Second {
 		t.Errorf("initial digest resolve timeout = %v, want %v", got, 1*time.Second)

@@ -16,6 +16,7 @@ package attestation
 
 import (
 	"context"
+	"crypto"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -219,9 +220,9 @@ func verifyKeyBased(
 		return SignerIdentity{}, fmt.Errorf("%w: %w", errNoTrustedMaterial, errNoTrustedKeys)
 	}
 
-	keys, err := buildKeyMaterial(opts.TrustedKeys)
-	if err != nil {
-		return SignerIdentity{}, err
+	keys, loadErr := loadKeyMaterial(ctx, opts.TrustedKeys)
+	if keys == nil {
+		return SignerIdentity{}, loadErr
 	}
 
 	pol := verify.NewPolicy(artPolicy, verify.WithKey())
@@ -231,7 +232,7 @@ func verifyKeyBased(
 			bndl, root.TrustedMaterialCollection{keys.material}, pol, verify.WithCurrentTime(),
 		)
 		if verifyErr != nil {
-			return SignerIdentity{}, verifyErr
+			return SignerIdentity{}, keys.unloadedKeyError(bndl, verifyErr, loadErr)
 		}
 
 		return keys.signerFromResult(result)
@@ -266,7 +267,7 @@ func verifyKeyBased(
 		return keys.signerFromResult(result)
 	}
 
-	return SignerIdentity{}, failures.err()
+	return SignerIdentity{}, keys.unloadedKeyError(bndl, failures.err(), loadErr)
 }
 
 // trustedRootError marks a failure to obtain a Sigstore trusted root as
@@ -574,45 +575,69 @@ func scopeIssuers(policyIssuers, rootIssuers []string) []string {
 	return scoped
 }
 
+// loadKeyMaterial builds the key material of the trusted keys and logs the
+// keys that could not be loaded; see buildKeyMaterial.
+func loadKeyMaterial(ctx context.Context, keys []TrustedKeyRef) (*trustedKeys, error) {
+	material, loadErr := buildKeyMaterial(keys)
+	if material != nil && loadErr != nil {
+		slog.WarnContext(ctx, "Verifying with the trusted keys that could be loaded",
+			"error", loadErr)
+	}
+
+	return material, loadErr
+}
+
+// unloadedKeyError returns the error of a failed key-based verification.
+// When some trusted keys could not be loaded and the bundle does not name one
+// of the loaded keys, one of the unloaded keys might have verified it, so the
+// load error (unavailable trust material) is reported along with verifyErr.
+func (k *trustedKeys) unloadedKeyError(bndl *bundle.Bundle, verifyErr, loadErr error) error {
+	if loadErr == nil {
+		return verifyErr
+	}
+
+	content, err := bndl.VerificationContent()
+	if err == nil && content.PublicKey() != nil {
+		if _, loaded := k.byHint[content.PublicKey().Hint()]; loaded {
+			return verifyErr
+		}
+	}
+
+	return errors.Join(verifyErr, loadErr)
+}
+
 // buildKeyMaterial loads the trusted keys. A key configured at several paths
 // or with several validity windows keeps every entry, so one entry's window
-// neither extends nor restricts another entry's attribution. Failing to load
-// a key file is reported as unavailable trust material.
+// neither extends nor restricts another entry's attribution. Key files that
+// cannot be loaded are skipped, so they do not block bundles signed by a key
+// that loaded, and reported as unavailable trust material in the returned
+// error. Without any loaded key the material is nil.
 func buildKeyMaterial(keys []TrustedKeyRef) (*trustedKeys, error) {
 	byHint := make(map[string]*windowedKey, len(keys))
+
+	var loadErrs []error
 
 	for idx := range keys {
 		pubKey, err := LoadPublicKey(keys[idx].Path)
 		if err != nil {
-			return nil, fmt.Errorf(
+			loadErrs = append(loadErrs, fmt.Errorf(
 				"%w: %w: loading public key %q: %w",
 				ErrTrustMaterialUnavailable, ErrTrustedKeyUnavailable, keys[idx].Path, err,
-			)
-		}
-
-		hint, hintErr := computeKeyHint(pubKey)
-		if hintErr != nil {
-			return nil, fmt.Errorf("computing key hint for %q: %w", keys[idx].Path, hintErr)
-		}
-
-		entry := keyEntry{
-			path:      keys[idx].Path,
-			notBefore: keys[idx].NotBefore,
-			notAfter:  keys[idx].NotAfter,
-		}
-
-		if existing, ok := byHint[hint]; ok {
-			existing.entries = append(existing.entries, entry)
+			))
 
 			continue
 		}
 
-		keyVerifier, err := signature.LoadVerifier(pubKey, types.HashAlgorithmForKey(pubKey))
+		err = addKeyEntry(byHint, &keys[idx], pubKey)
 		if err != nil {
-			return nil, fmt.Errorf("creating verifier for %q: %w", keys[idx].Path, err)
+			return nil, err
 		}
+	}
 
-		byHint[hint] = &windowedKey{Verifier: keyVerifier, entries: []keyEntry{entry}}
+	loadErr := errors.Join(loadErrs...)
+
+	if len(byHint) == 0 {
+		return nil, loadErr
 	}
 
 	material := root.NewTrustedPublicKeyMaterial(
@@ -630,7 +655,37 @@ func buildKeyMaterial(keys []TrustedKeyRef) (*trustedKeys, error) {
 		},
 	)
 
-	return &trustedKeys{material: material, byHint: byHint}, nil
+	return &trustedKeys{material: material, byHint: byHint}, loadErr
+}
+
+// addKeyEntry adds the entry of a loaded trusted key to byHint, next to the
+// entries of the same key at other paths or with other validity windows.
+func addKeyEntry(
+	byHint map[string]*windowedKey,
+	ref *TrustedKeyRef,
+	pubKey crypto.PublicKey,
+) error {
+	hint, err := computeKeyHint(pubKey)
+	if err != nil {
+		return fmt.Errorf("computing key hint for %q: %w", ref.Path, err)
+	}
+
+	entry := keyEntry{path: ref.Path, notBefore: ref.NotBefore, notAfter: ref.NotAfter}
+
+	if existing, ok := byHint[hint]; ok {
+		existing.entries = append(existing.entries, entry)
+
+		return nil
+	}
+
+	keyVerifier, err := signature.LoadVerifier(pubKey, types.HashAlgorithmForKey(pubKey))
+	if err != nil {
+		return fmt.Errorf("creating verifier for %q: %w", ref.Path, err)
+	}
+
+	byHint[hint] = &windowedKey{Verifier: keyVerifier, entries: []keyEntry{entry}}
+
+	return nil
 }
 
 func buildCertificateIdentity(issuers, sanPatterns []string) (verify.CertificateIdentity, error) {

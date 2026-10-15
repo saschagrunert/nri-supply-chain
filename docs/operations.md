@@ -26,7 +26,7 @@ The plugin exposes Prometheus metrics at the configured
 
 | Metric                                               | Type      | Labels                        | Description                                                                                                                                     |
 | ---------------------------------------------------- | --------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `nri_supply_chain_verification_total`                | Counter   | `type`, `result`, `namespace` | Total verification attempts. `result`: `pass`, `warn`, `fail`                                                                                   |
+| `nri_supply_chain_verification_total`                | Counter   | `type`, `result`, `namespace` | Check results of admissions (not of pre-warming and re-verification). `result`: `pass`, `warn`, `fail`                                          |
 | `nri_supply_chain_verification_duration_seconds`     | Histogram | `type`                        | Verification latency                                                                                                                            |
 | `nri_supply_chain_cache_hits_total`                  | Counter   |                               | Cache hits                                                                                                                                      |
 | `nri_supply_chain_cache_misses_total`                | Counter   |                               | Cache misses                                                                                                                                    |
@@ -41,7 +41,7 @@ The plugin exposes Prometheus metrics at the configured
 | `nri_supply_chain_cache_failure_hits_total`          | Counter   |                               | Cache hits returning a cached failure                                                                                                           |
 | `nri_supply_chain_build_info`                        | Gauge     | `version`, `goversion`        | Build metadata (set once at startup)                                                                                                            |
 | `nri_supply_chain_config_reloads_total`              | Counter   |                               | Successful config reloads                                                                                                                       |
-| `nri_supply_chain_verification_interrupted_total`    | Counter   |                               | Verifications interrupted because the request ended (admission deadline or cancellation) before the verification completed                      |
+| `nri_supply_chain_verification_interrupted_total`    | Counter   |                               | Admission verifications interrupted because the request ended (admission deadline or cancellation) before they completed                        |
 | `nri_supply_chain_config_reload_errors_total`        | Counter   |                               | Failed config reload attempts                                                                                                                   |
 | `nri_supply_chain_prewarm_duration_seconds`          | Histogram | `result`                      | Cache prewarm latency (buckets: 1, 5, 10, 30, 60, 120, 300)                                                                                     |
 | `nri_supply_chain_mirror_fallback_total`             | Counter   | `registry`, `type`            | Mirror fallback events. `type`: `digest`, `attestation`                                                                                         |
@@ -225,11 +225,14 @@ after a 500ms debounce window. Rapid successive writes within that window are
 collapsed into a single reload.
 
 When continuous verification is enabled and `remediation.triggers.on_policy_change`
-is true, a successful config or policy reload also triggers an immediate
-re-verification cycle for all tracked containers. The remediation mode and
-cooldown period are updated atomically during reload. A reload that enables
-remediation starts the continuous verifier; a changed `remediation.interval`
-only takes effect after a restart. If `remediation.feed_dir` changes, the new
+is true, a successful config or policy reload that changes the policies or the
+trust material they rely on also triggers an immediate re-verification cycle
+for all tracked containers, as does an OCI policy update applied by the poller.
+The remediation mode and cooldown period are updated atomically during reload.
+A reload that enables remediation starts the continuous verifier; a changed
+`remediation.interval` only takes effect after a restart. A reload that
+disables remediation stops the continuous verifier and restores the original
+limits of throttled containers. If `remediation.feed_dir` changes, the new
 directory is added to the file watcher.
 
 ## Logging
@@ -244,7 +247,10 @@ Every verification decision emits a structured log entry with the message
 Filter for this message to build an audit trail of all container verification
 outcomes. When `audit_log` is set in the config, these entries are written as
 JSON to a dedicated file instead of the application logger (see
-[config.md](config.md)).
+[config.md](config.md)). Cache pre-warming and re-verification of running
+containers write audit entries as well; their `origin` field tells them apart
+from admission decisions, so filter out entries with an `origin` to count
+admissions.
 
 | Field               | Description                                                                                                                                       |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -263,6 +269,7 @@ JSON to a dedicated file instead of the application logger (see
 | `nodeName`          | Node where the container was scheduled                                                                                                            |
 | `podServiceAccount` | Kubernetes service account of the pod                                                                                                             |
 | `verificationMode`  | Effective verification mode (`warn`, `enforce`)                                                                                                   |
+| `origin`            | Background verification of a running container (`prewarm`, `reverification`); absent for admissions                                               |
 
 ## Troubleshooting
 
@@ -437,7 +444,7 @@ protect against resource exhaustion and unbounded processing.
 | Aggregate attestation limit | 50 MiB per image                 | Total attestation payload per image is capped at 50 MiB. Exceeding it denies the image as a verification failure, because skipping attestations could flip a decision.                                                                        |
 | Max referrers per image     | 50 bundles                       | At most 50 bundle, 10 Notation, and 5 baseline SBOM referrers (distinct manifests, at most 4 MiB each) are processed. Exceeding a limit denies the image as a verification failure.                                                           |
 | Policy file size limit      | 1 MiB per file                   | Policy files larger than 1 MiB are rejected during loading. The file is read through a size-limited reader and an error is returned if the limit is exceeded.                                                                                 |
-| Circuit breaker registry    | 1,000 hosts                      | At most 1,000 per-host circuit breakers are tracked. When full, closed breakers are evicted first. If all remaining breakers are open or half-open, a shared overflow breaker is used for additional hosts.                                   |
+| Circuit breaker registry    | 1,000 hosts                      | At most 1,000 per-host circuit breakers are tracked. When full, closed breakers are evicted first. If all remaining breakers are open or half-open, the least recently used one is evicted, so every host keeps a breaker of its own.         |
 | Sigstore trusted root cache | 1h TTL, 24h max staleness        | The root is refreshed every hour. If the Sigstore TUF mirror is unreachable, the stale root is used for up to 24 hours.                                                                                                                       |
 | Clock skew tolerance        | 60 seconds                       | SLSA and VSA timestamps up to 60 seconds in the future are accepted. Beyond that, they are rejected as future timestamps.                                                                                                                     |
 | Digest resolve timeout      | 1 second (default)               | Image digest resolution during NRI callbacks is capped by `digest_resolve_timeout` (default 1s, max 5s) to stay under containerd's ttrpc timeout. The `verify` CLI path uses the configured `fetch_timeout` instead.                          |
@@ -644,6 +651,38 @@ Validate policies and configuration with `nri-supply-chain validate` and run
   - Empty or `null` GUAC GraphQL responses fail the check.
 - **Remediation on reload.** Enabling remediation in the configuration file
   starts the continuous verifier on reload, without a restart.
+- **Image index platform selection.** An image index is resolved to the entry
+  containerd and CRI-O run on the node. A runtime digest that the registry
+  serves as an index without an entry for the node, or with several equally
+  good entries of different digests (for example the gzip and zstd entries
+  `podman push --add-compression` writes, or `amd64` next to `amd64/v1`), is
+  no longer verified as a manifest digest: the container is rejected in
+  `enforce` mode and admitted unverified in `warn` mode. See
+  [config.md](config.md#admission-deadline).
+- **Fatal reload errors.** A reload whose GUAC client cannot be created or
+  whose new `audit_log` cannot be opened fails and keeps the previous
+  configuration, as these errors fail startup, instead of keeping the
+  previous GUAC client or writing the audit trail to the application log.
+- **Policy change trigger.** `remediation.triggers.on_policy_change` only
+  re-verifies after a reload that changes the policies or the trust material
+  they rely on, and also after an OCI policy update applied by the poller.
+  A reload that disables remediation stops the continuous verifier and
+  restores the original limits of throttled containers.
+- **Admission metrics and audit entries.**
+  `nri_supply_chain_verification_total`,
+  `nri_supply_chain_verification_skipped_total` and
+  `nri_supply_chain_verification_interrupted_total` only count admissions;
+  pre-warming and re-verification are reported by their own metrics. Their
+  audit entries carry the new `origin` field.
+- **Allowlisted index digests.** An index digest in `allowlist_digests` also
+  allowlists the platform images resolved from it.
+- **Unloadable trusted keys.** A trusted key file that cannot be loaded no
+  longer fails every key-based verification: bundles signed by the keys that
+  loaded verify. An attestation that names none of them is ignored when
+  another attestation of the image verified, so a check that only denies on
+  findings (for example `vulnScan` with `missingPolicy: allow`) passes without
+  it. Watch for the `Verifying with the trusted keys that could be loaded`
+  warning (see [verification.md](verification.md#verification-flow)).
 - **Metrics address.** A `metrics_addr` without a host, such as `:9090`, logs a
   warning that metrics are exposed on all interfaces.
 - **Image tags and releases.** `latest` points to the highest verified

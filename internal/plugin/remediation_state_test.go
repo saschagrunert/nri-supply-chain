@@ -61,7 +61,7 @@ func newRemediationTestPlugin(
 ) *plugin.Plugin {
 	t.Helper()
 
-	plug := plugin.New(verif, metrics.New(), "", 30*time.Second, time.Second, nil)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 	plug.SetRemediationMode(config.RemediationModeThrottle)
 	plug.SetRemediationConfig(
 		&config.RemediationConfig{ //nolint:exhaustruct_v5 // zero-value fields intentional
@@ -165,14 +165,14 @@ func TestRollbackStateCommittedOnlyAfterUpdateSucceeds(t *testing.T) {
 		false,
 	)
 
-	plug.ExportRunVerificationCycle(t.Context(), plugin.ExportTriggerManual)
+	plug.ExportRunVerificationCycle(t.Context(), plugin.ExportTriggerPolicyChange)
 	assertContainerState(t, plug, "ctr-rollback", plugin.StateThrottled)
 
 	stub.mu.Lock()
 	stub.err = nil
 	stub.mu.Unlock()
 
-	plug.ExportRunVerificationCycle(t.Context(), plugin.ExportTriggerManual)
+	plug.ExportRunVerificationCycle(t.Context(), plugin.ExportTriggerPolicyChange)
 	assertContainerState(t, plug, "ctr-rollback", plugin.StateVerified)
 }
 
@@ -212,7 +212,7 @@ func TestVerificationCycleSkipsContainersWithoutDigest(t *testing.T) {
 
 	plug.ExportStoreContainerState("ctr-nodigest", "", plugin.StateSkipped, nil, false)
 
-	plug.ExportRunVerificationCycle(t.Context(), plugin.ExportTriggerManual)
+	plug.ExportRunVerificationCycle(t.Context(), plugin.ExportTriggerPolicyChange)
 
 	verif.mu.Lock()
 	calls := verif.calls
@@ -351,7 +351,7 @@ func TestNRIConnectedGauge(t *testing.T) {
 
 	met := metrics.New()
 	verif := &cvTestVerifier{} //nolint:exhaustruct_v5 // zero-value fields intentional
-	plug := plugin.New(verif, met, "", time.Second, time.Second, nil)
+	plug := plugin.New(verif, met, "", time.Second, nil)
 
 	if got := promtestutil.ToFloat64(met.NRIConnected); got != 0 {
 		t.Errorf("expected gauge 0 before connecting, got %v", got)

@@ -133,6 +133,31 @@ func TestVerifySubjectAndExtractPredicate(t *testing.T) {
 			},
 		},
 		{
+			name: "statement without predicate returns ErrMissingPredicate",
+			att: func(t *testing.T) []byte {
+				t.Helper()
+
+				return testutil.MustMarshal(t, map[string]any{
+					"subject": []intoto.Subject{
+						{Digest: map[string]string{testDigestAlgo: testDigestHash}},
+					},
+				})
+			},
+			imageDigest: testDigest,
+			wantErr:     intoto.ErrMissingPredicate,
+			checkResult: nil,
+		},
+		{
+			name: "statement with a null predicate returns ErrMissingPredicate",
+			att: func(_ *testing.T) []byte {
+				return []byte(`{"subject":[{"digest":{"` + testDigestAlgo + `":"` +
+					testDigestHash + `"}}],"predicate":null}`)
+			},
+			imageDigest: testDigest,
+			wantErr:     intoto.ErrMissingPredicate,
+			checkResult: nil,
+		},
+		{
 			name: "invalid JSON returns ErrInvalidStatement",
 			att: func(_ *testing.T) []byte {
 				return []byte("not valid json")

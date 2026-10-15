@@ -16,6 +16,7 @@
 package intoto
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,6 +38,9 @@ var (
 	// ErrNoDigestBinding indicates subjects exist but no digest was provided
 	// for binding.
 	ErrNoDigestBinding = errors.New("statement has subjects but no digest for binding")
+
+	// ErrMissingPredicate indicates a statement without a predicate.
+	ErrMissingPredicate = fmt.Errorf("%w: statement has no predicate", ErrInvalidStatement)
 )
 
 // Statement is a minimal in-toto statement containing subjects and a raw
@@ -73,30 +77,49 @@ func VerifySubjectAndExtractPredicate(att []byte, imageDigest string) (json.RawM
 		return nil, fmt.Errorf("%w: %w", ErrInvalidStatement, err)
 	}
 
-	if imageDigest != "" && len(stmt.Subject) == 0 {
-		return nil, fmt.Errorf(
-			"%w: digest %q available but statement has no subjects",
-			ErrEmptySubjects, imageDigest,
-		)
+	err = checkSubjectBinding(stmt.Subject, imageDigest)
+	if err != nil {
+		return nil, err
 	}
 
-	if len(stmt.Subject) > 0 && imageDigest != "" {
-		if !SubjectMatchesDigest(stmt.Subject, imageDigest) {
-			return nil, fmt.Errorf(
-				"%w: none of the subjects match %q",
-				ErrSubjectMismatch, imageDigest,
-			)
-		}
-	} else if imageDigest == "" && len(stmt.Subject) > 0 {
-		return nil, fmt.Errorf(
-			"%w: statement has %d subjects but no digest for binding",
-			ErrNoDigestBinding, len(stmt.Subject),
-		)
-	}
-
-	if len(stmt.Predicate) > 0 {
+	// A null predicate is a missing one: encoding/json hands json.RawMessage
+	// the literal null.
+	predicate := bytes.TrimSpace(stmt.Predicate)
+	if len(predicate) > 0 && !bytes.Equal(predicate, []byte("null")) {
 		return stmt.Predicate, nil
 	}
 
+	// A statement without a predicate must not be evaluated as an empty
+	// document, which would pass deny lists trivially. Only a bare document
+	// (no subjects, verified without a digest) is returned as is.
+	if len(stmt.Subject) > 0 {
+		return nil, ErrMissingPredicate
+	}
+
 	return att, nil
+}
+
+// checkSubjectBinding checks that the subjects of a statement bind it to
+// imageDigest: with a digest some subject must match it, without one the
+// statement must have no subjects.
+func checkSubjectBinding(subjects []Subject, imageDigest string) error {
+	switch {
+	case imageDigest != "" && len(subjects) == 0:
+		return fmt.Errorf(
+			"%w: digest %q available but statement has no subjects",
+			ErrEmptySubjects, imageDigest,
+		)
+	case imageDigest != "" && !SubjectMatchesDigest(subjects, imageDigest):
+		return fmt.Errorf(
+			"%w: none of the subjects match %q",
+			ErrSubjectMismatch, imageDigest,
+		)
+	case imageDigest == "" && len(subjects) > 0:
+		return fmt.Errorf(
+			"%w: statement has %d subjects but no digest for binding",
+			ErrNoDigestBinding, len(subjects),
+		)
+	default:
+		return nil
+	}
 }

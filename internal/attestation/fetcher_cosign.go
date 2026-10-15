@@ -226,8 +226,6 @@ func (f *OCIFetcher) processCosignLayer(
 		return VerifiedAttestation{}, outcome, outcomeErr
 	}
 
-	candidates := [][]byte{data}
-
 	// Legacy cosign layers are bare DSSE envelopes with the signing material
 	// in layer annotations; convert them into verifiable Sigstore bundles.
 	if !isSigstoreBundleJSON(data) {
@@ -247,10 +245,19 @@ func (f *OCIFetcher) processCosignLayer(
 			return VerifiedAttestation{}, outcomeVerifyFailed, nil
 		}
 
-		candidates = converted
+		att, outcome, verifyErr := f.verifyCosignCandidates(ctx, converted, digest, fetchOpts)
+
+		// A legacy layer does not name its key, so it is tried against the
+		// loaded keys only. When none verified it, a trusted key that could
+		// not be loaded might have signed it.
+		if outcome == outcomeVerifyFailed && keys.err != nil {
+			return VerifiedAttestation{}, outcomeKeyUnavailable, keys.err
+		}
+
+		return att, outcome, verifyErr
 	}
 
-	return f.verifyCosignCandidates(ctx, candidates, digest, fetchOpts)
+	return f.verifyCosignCandidates(ctx, [][]byte{data}, digest, fetchOpts)
 }
 
 // verifyCosignCandidates verifies the bundles derived from one cosign layer

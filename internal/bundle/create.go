@@ -303,8 +303,11 @@ func bundleImageAttestations(
 ) (*ImageEntry, error) {
 	slog.InfoContext(ctx, "Fetching attestations", "image", imageRef, "digest", digest)
 
+	// The options are shared by every image of the bundle, so the fields
+	// that identify one image are set per image.
 	fetchOpts := *opts.FetchOptions
 	fetchOpts.Digest = digest
+	fetchOpts.ParsedRef = nil
 
 	atts, err := opts.Fetcher.Fetch(ctx, imageRef, &fetchOpts)
 	if err != nil {

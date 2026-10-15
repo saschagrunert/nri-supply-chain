@@ -284,10 +284,9 @@ func Run(version, configPath string, settings Settings, cfg *config.Config) erro
 	}
 
 	plug := plugin.New(
-		verif, met, configPath,
-		cfg.FetchTimeout.Duration, cfg.DigestResolveTimeout.Duration,
-		transportCache,
+		verif, met, configPath, cfg.DigestResolveTimeout.Duration, transportCache,
 	)
+	plug.SetFetchTimeout(cfg.FetchTimeout.Duration)
 
 	if cfg.Remediation.Enabled() {
 		plug.SetRemediationMode(cfg.Remediation.Mode)
@@ -296,6 +295,7 @@ func Run(version, configPath string, settings Settings, cfg *config.Config) erro
 	}
 
 	plug.SetConfigApplier(runtimeConfigApplier(ctx, cfg, verif, met, plug))
+	verif.SetPolicyUpdateHook(policyUpdateReverifier(verif, plug))
 
 	cleanupSignals := setupSignals(ctx, cancel, configPath, verif, met, cfg, plug)
 
@@ -334,6 +334,8 @@ func runtimeConfigApplier(
 			)
 		}
 
+		policyRevision := verif.PolicyRevision()
+
 		err := verif.Reload(ctx, cfg)
 		if err != nil {
 			met.ConfigReloadErrorsTotal.Inc()
@@ -343,9 +345,21 @@ func runtimeConfigApplier(
 
 		met.ConfigReloadsTotal.Inc()
 
-		applyPluginSettings(ctx, cfg, verif, plug)
+		applyPluginSettings(ctx, cfg, verif, plug, policyRevision)
 
 		return nil
+	}
+}
+
+// policyUpdateReverifier returns the hook that re-verifies the running
+// containers after the OCI policy poller changed the policies, as a reload
+// that changes them does (remediation.triggers.on_policy_change).
+func policyUpdateReverifier(verif *verifier.Verifier, plug pluginReloader) func() {
+	return func() {
+		remediation := verif.CurrentConfig().Remediation
+		if remediation.Enabled() && remediation.Triggers.OnPolicyChange {
+			plug.TriggerReverify()
+		}
 	}
 }
 

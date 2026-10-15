@@ -217,7 +217,7 @@ func TestVerifyAttestationVerificationFailureIgnoresFetchPolicy(t *testing.T) {
 	cfg.CacheFailureTTL = config.Duration{Duration: 0}
 
 	verif, met := newHardeningVerifier(t, cfg, fetcher,
-		map[string]string{testDefaultPolicy: `{"slsa":{"missingPolicy":"deny"}}`})
+		map[string]string{testDefaultPolicy: testSLSADenyPolicy})
 
 	for call := range 3 {
 		digest := "sha256:" + strings.Repeat(string("abc"[call]), 64)
@@ -307,7 +307,11 @@ func TestVerifyBreakerOpenResultNotCached(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Verification = config.ModeWarn
 	cfg.CircuitBreakerThreshold = 1
-	cfg.CircuitBreakerCooldown = config.Duration{Duration: 50 * time.Millisecond}
+	// The cooldown leaves room for a slow (race detector, loaded CI)
+	// second verification while the breaker is still open.
+	const cooldown = 500 * time.Millisecond
+
+	cfg.CircuitBreakerCooldown = config.Duration{Duration: cooldown}
 
 	verif, _ := newHardeningVerifier(t, cfg, fetcher, map[string]string{testDefaultPolicy: `{}`})
 
@@ -331,7 +335,7 @@ func TestVerifyBreakerOpenResultNotCached(t *testing.T) {
 		t.Fatalf("expected the open breaker to skip the fetch, got %d fetches", got)
 	}
 
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(cooldown + 50*time.Millisecond)
 
 	fetcher.err = nil
 
@@ -1070,9 +1074,9 @@ func TestCacheEntriesGaugeReportsCurrentCacheAfterReload(t *testing.T) {
 
 	// A verification still holding the previous snapshot stores its result
 	// in the replaced cache, which must not report to the gauge anymore.
-	previous.Set("sha256:other", testHardeningNS, &types.Result{
+	previous.SetWithTTLAtEpoch("sha256:other", testHardeningNS, &types.Result{
 		Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
-	})
+	}, time.Hour, previous.Epoch("sha256:other"))
 
 	if got := promtestutil.ToFloat64(met.CacheEntriesTotal); got != 0 {
 		t.Errorf("expected the replaced cache to leave the gauge alone, got %v", got)

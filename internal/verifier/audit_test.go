@@ -24,6 +24,8 @@ import (
 	"strings"
 	"testing"
 
+	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
@@ -382,7 +384,9 @@ func TestReloadAuditLoggerSamePath(t *testing.T) {
 	prevLogger := slog.Default()
 	prev := verifier.ExportNewSnapshot(prevCfg, prevLogger, nil)
 
-	logger, file := verifier.ExportReloadAuditLogger(context.Background(), prev, nextCfg)
+	logger, file, err := verifier.ExportReloadAuditLogger(prev, nextCfg)
+	testutil.AssertNoError(t, err)
+
 	if logger != prevLogger {
 		t.Error("expected same logger when audit log path unchanged")
 	}
@@ -403,7 +407,9 @@ func TestReloadAuditLoggerDifferentPath(t *testing.T) {
 
 	prev := verifier.ExportNewSnapshot(prevCfg, slog.Default(), nil)
 
-	logger, file := verifier.ExportReloadAuditLogger(context.Background(), prev, nextCfg)
+	logger, file, err := verifier.ExportReloadAuditLogger(prev, nextCfg)
+	testutil.AssertNoError(t, err)
+
 	if logger == nil {
 		t.Fatal("expected non-nil logger for new audit log path")
 	}
@@ -415,7 +421,10 @@ func TestReloadAuditLoggerDifferentPath(t *testing.T) {
 	t.Cleanup(func() { verifier.ExportCloseAuditLogFile(file) })
 }
 
-func TestReloadAuditLoggerInvalidPathFallsBack(t *testing.T) {
+// TestReloadAuditLoggerInvalidPathFails checks that a new audit log that
+// cannot be opened fails the reload, as it fails startup, instead of moving
+// the audit trail to the default logger.
+func TestReloadAuditLoggerInvalidPathFails(t *testing.T) {
 	t.Parallel()
 
 	prevCfg := config.DefaultConfig()
@@ -426,13 +435,13 @@ func TestReloadAuditLoggerInvalidPathFallsBack(t *testing.T) {
 
 	prev := verifier.ExportNewSnapshot(prevCfg, slog.Default(), nil)
 
-	logger, file := verifier.ExportReloadAuditLogger(context.Background(), prev, nextCfg)
-	if logger == nil {
-		t.Fatal("expected non-nil fallback logger")
+	logger, file, err := verifier.ExportReloadAuditLogger(prev, nextCfg)
+	if err == nil {
+		t.Fatal("expected an error for an audit log that cannot be opened")
 	}
 
-	if file != nil {
-		t.Error("expected nil file on fallback")
+	if logger != nil || file != nil {
+		t.Error("expected no logger and no file on error")
 	}
 }
 
@@ -453,7 +462,9 @@ func TestReloadAuditLoggerClosesPreviousFile(t *testing.T) {
 
 	prev := verifier.ExportNewSnapshot(prevCfg, slog.Default(), prevFile)
 
-	_, newFile := verifier.ExportReloadAuditLogger(context.Background(), prev, nextCfg)
+	_, newFile, err := verifier.ExportReloadAuditLogger(prev, nextCfg)
+	testutil.AssertNoError(t, err)
+
 	if newFile != nil {
 		t.Cleanup(func() { verifier.ExportCloseAuditLogFile(newFile) })
 	}
@@ -509,6 +520,44 @@ func TestVerifyAuditRecordsAdmissionDecision(t *testing.T) {
 	if decisions != 2 {
 		t.Errorf("expected one decision event per verification, got %d", decisions)
 	}
+}
+
+// TestVerifyBackgroundOriginIsNotAnAdmission checks that background
+// verifications (pre-warming, re-verification) carry their origin in the
+// audit log and are not counted as admissions.
+func TestVerifyBackgroundOriginIsNotAnAdmission(t *testing.T) {
+	t.Parallel()
+
+	auditPath := filepath.Join(t.TempDir(), "audit.log")
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.AuditLog = auditPath
+
+	verif, met := newHardeningVerifier(t, cfg, newScriptedFetcher(nil), map[string]string{
+		testDefaultPolicy: testSLSADenyPolicy,
+	})
+
+	ctx := types.WithVerifyOrigin(context.Background(), types.OriginReverification)
+
+	_, err := verif.Verify(
+		ctx,
+		newRequest(testHardeningImage, testFetchDigest, "", testHardeningNS, ""),
+	)
+	testutil.AssertNoError(t, err)
+
+	if count := promtestutil.CollectAndCount(met.VerificationTotal); count != 0 {
+		t.Errorf("expected no admission metrics for a re-verification, got %d series", count)
+	}
+
+	data, err := os.ReadFile(auditPath) //nolint:gosec // test temp dir
+	testutil.AssertNoError(t, err)
+
+	var event map[string]any
+
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	testutil.AssertNoError(t, json.Unmarshal([]byte(lines[len(lines)-1]), &event))
+	testutil.AssertEqual(t, any(string(types.OriginReverification)), event["origin"])
 }
 
 func TestVerifyAuditRecordsNamespaceModeOfSkippedImage(t *testing.T) {

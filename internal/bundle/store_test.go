@@ -411,8 +411,8 @@ func TestBlobReadLimitPositive(t *testing.T) {
 		t.Fatalf("blobReadLimit(1024) error: %v", err)
 	}
 
-	if limit != 1025 {
-		t.Errorf("blobReadLimit(1024) = %d, want 1025", limit)
+	if limit != 1024 {
+		t.Errorf("blobReadLimit(1024) = %d, want 1024", limit)
 	}
 }
 

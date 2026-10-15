@@ -16,6 +16,8 @@ package plugin_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -26,6 +28,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/plugin"
+	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 	scTypes "github.com/saschagrunert/nri-supply-chain/internal/types"
 )
@@ -100,7 +103,7 @@ func TestCreateContainerPrefersAnnotationDigestOverRuntimeDigest(t *testing.T) {
 	t.Parallel()
 
 	verif := newDigestTestVerifier(true)
-	plug := plugin.New(verif, metrics.New(), "", time.Second, time.Second, nil)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 
 	resolver := &resolverRecorder{
 		mu: sync.Mutex{}, refs: nil, digest: testPlatformDigest, indexDigest: "", err: nil,
@@ -126,7 +129,7 @@ func TestCreateContainerResolvesRuntimeDigest(t *testing.T) {
 	t.Parallel()
 
 	verif := newDigestTestVerifier(true)
-	plug := plugin.New(verif, metrics.New(), "", time.Second, time.Second, nil)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 
 	resolver := &resolverRecorder{
 		mu: sync.Mutex{}, refs: nil,
@@ -155,7 +158,7 @@ func TestCreateContainerFallsBackToRuntimeDigest(t *testing.T) {
 	t.Parallel()
 
 	verif := newDigestTestVerifier(true)
-	plug := plugin.New(verif, metrics.New(), "", time.Second, time.Second, nil)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 
 	resolver := &resolverRecorder{
 		mu: sync.Mutex{}, refs: nil, digest: "", indexDigest: "", err: errRegistryUnavailable,
@@ -170,6 +173,49 @@ func TestCreateContainerFallsBackToRuntimeDigest(t *testing.T) {
 
 	if req := verif.lastRequest(t); req.Digest != testRuntimeIndexDigest || req.IndexDigest != "" {
 		t.Errorf("expected the runtime digest as fallback, got %+v", req)
+	}
+}
+
+// TestCreateContainerRejectsAmbiguousRuntimeIndex checks that a runtime
+// digest the registry serves as an index without a single entry for the node
+// is not verified as a manifest digest: its attestations need not cover the
+// platform image the runtime runs.
+func TestCreateContainerRejectsAmbiguousRuntimeIndex(t *testing.T) {
+	t.Parallel()
+
+	for _, resolveErr := range []error{registry.ErrAmbiguousPlatform, registry.ErrNoPlatformMatch} {
+		t.Run(resolveErr.Error(), func(t *testing.T) {
+			t.Parallel()
+
+			verif := newDigestTestVerifier(true)
+			plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
+
+			resolver := &resolverRecorder{
+				mu: sync.Mutex{}, refs: nil, digest: "", indexDigest: "",
+				err: fmt.Errorf("resolving index digest: %w", resolveErr),
+			}
+			plug.ExportSetDigestResolver(resolver.resolve)
+
+			ctr := admissionContainer("")
+			ctr.Image = &api.Image{
+				Name:         testImage,
+				Digest:       testRuntimeIndexDigest,
+				ConfigDigest: "",
+			}
+
+			_, _, err := plug.CreateContainer(t.Context(), admissionPod(), ctr)
+			if !errors.Is(err, resolveErr) {
+				t.Fatalf("expected the container to be rejected with %v, got %v", resolveErr, err)
+			}
+
+			verif.mu.Lock()
+			requests := len(verif.requests)
+			verif.mu.Unlock()
+
+			if requests != 0 {
+				t.Errorf("expected no verification of the index digest, got %d", requests)
+			}
+		})
 	}
 }
 
@@ -197,7 +243,7 @@ func TestCreateContainerResolvesDigestWhenVerifierRequiresIt(t *testing.T) {
 	t.Parallel()
 
 	verif := &digestRequiringVerifier{admissionVerifier: newDigestTestVerifier(false)}
-	plug := plugin.New(verif, metrics.New(), "", time.Second, time.Second, nil)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 
 	resolver := &resolverRecorder{
 		mu: sync.Mutex{}, refs: nil, digest: testPlatformDigest, indexDigest: "", err: nil,
@@ -222,7 +268,7 @@ func TestAdmissionContextProportionalSafetyMargin(t *testing.T) {
 	verif := newDigestTestVerifier(true)
 	verif.admissionTimeout = 10 * time.Second
 
-	plug := plugin.New(verif, metrics.New(), "", time.Second, time.Second, nil)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 
 	runtimeCtx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
@@ -249,7 +295,7 @@ func TestSynchronizePrewarmUsesRuntimeImage(t *testing.T) {
 	t.Parallel()
 
 	verif := newDigestTestVerifier(true)
-	plug := plugin.New(verif, metrics.New(), "", time.Second, time.Second, nil)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 
 	done := make(chan struct{})
 
@@ -294,7 +340,7 @@ func TestSynchronizePrewarmWarmsEveryAnnotationDigest(t *testing.T) {
 	t.Parallel()
 
 	verif := newDigestTestVerifier(true)
-	plug := plugin.New(verif, metrics.New(), "", time.Second, time.Second, nil)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 
 	done := make(chan struct{})
 
@@ -339,7 +385,7 @@ func TestContinuousVerifierResolvesDigestOfContainerAdmittedWithoutVerification(
 	t.Parallel()
 
 	verif := newDigestTestVerifier(false)
-	plug := plugin.New(verif, metrics.New(), "", time.Second, time.Second, nil)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 
 	resolver := &resolverRecorder{
 		mu: sync.Mutex{}, refs: nil,
@@ -377,7 +423,7 @@ func TestContinuousVerifierResolvesRuntimeDigestUnresolvedAtAdmission(t *testing
 	t.Parallel()
 
 	verif := newDigestTestVerifier(true)
-	plug := plugin.New(verif, metrics.New(), "", time.Second, time.Second, nil)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 
 	resolver := &resolverRecorder{
 		mu: sync.Mutex{}, refs: nil, digest: "", indexDigest: "", err: errRegistryUnavailable,
@@ -407,7 +453,7 @@ func TestContinuousVerifierResolvesRuntimeDigestUnresolvedAtRecovery(t *testing.
 	t.Parallel()
 
 	verif := newDigestTestVerifier(true)
-	plug := plugin.New(verif, metrics.New(), "", time.Second, time.Second, nil)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 
 	done := make(chan struct{})
 
@@ -466,5 +512,78 @@ func TestContinuousVerifierResolvesRuntimeDigestUnresolvedAtRecovery(t *testing.
 	state, found = plug.ExportGetContainerState(testContainerID)
 	if !found || state.Digest != testPlatformDigest || state.IndexDigest != testRuntimeIndexDigest {
 		t.Errorf("expected the container to record the resolved digests, got %+v", state)
+	}
+}
+
+// TestBackgroundDigestResolutionUsesFetchTimeout checks that admissions
+// resolve a runtime digest within the digest resolve timeout, while the
+// continuous verifier, which resolves the digests admissions could not, uses
+// the longer fetch timeout.
+func TestBackgroundDigestResolutionUsesFetchTimeout(t *testing.T) {
+	t.Parallel()
+
+	const (
+		resolveTimeout = time.Second
+		fetchTimeout   = time.Hour
+	)
+
+	verif := newDigestTestVerifier(true)
+	plug := plugin.New(verif, metrics.New(), "", resolveTimeout, nil)
+	plug.SetFetchTimeout(fetchTimeout)
+
+	var (
+		mu        sync.Mutex
+		remaining []time.Duration
+		fail      = true
+	)
+
+	plug.ExportSetDigestResolver(func(ctx context.Context, _ string) (string, string, error) {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			t.Error("expected a digest resolution deadline")
+		}
+
+		mu.Lock()
+		defer mu.Unlock()
+
+		remaining = append(remaining, time.Until(deadline))
+
+		if fail {
+			return "", "", errRegistryUnavailable
+		}
+
+		return testPlatformDigest, testRuntimeIndexDigest, nil
+	})
+
+	ctr := admissionContainer("")
+	ctr.Image = &api.Image{Name: testImage, Digest: testRuntimeIndexDigest, ConfigDigest: ""}
+
+	_, _, err := plug.CreateContainer(t.Context(), admissionPod(), ctr)
+	testutil.AssertNoError(t, err)
+
+	mu.Lock()
+	fail = false
+	mu.Unlock()
+
+	plug.ExportRunVerificationCycle(t.Context(), plugin.ExportTriggerTimer)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(remaining) != 2 {
+		t.Fatalf("expected an admission and a background resolution, got %d", len(remaining))
+	}
+
+	if remaining[0] > resolveTimeout {
+		t.Errorf(
+			"admission resolution deadline in %v, want at most %v",
+			remaining[0],
+			resolveTimeout,
+		)
+	}
+
+	if remaining[1] <= resolveTimeout || remaining[1] > fetchTimeout {
+		t.Errorf("background resolution deadline in %v, want the fetch timeout %v",
+			remaining[1], fetchTimeout)
 	}
 }

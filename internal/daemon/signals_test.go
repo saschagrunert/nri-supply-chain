@@ -88,7 +88,7 @@ func TestSetupReload(t *testing.T) {
 		t.Fatalf("creating verifier: %v", err)
 	}
 
-	if verif.Enforcing() {
+	if verif.CurrentConfig().Verification == config.ModeEnforce {
 		t.Fatal("expected warn mode initially")
 	}
 
@@ -103,7 +103,7 @@ func TestSetupReload(t *testing.T) {
 
 	deadline := time.After(2 * time.Second)
 
-	for !verif.Enforcing() {
+	for verif.CurrentConfig().Verification != config.ModeEnforce {
 		select {
 		case <-deadline:
 			t.Fatal("verifier did not switch to enforce mode after SIGHUP")
@@ -133,7 +133,7 @@ func TestSetupReloadNoConfig(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 
-	if verif.Enforcing() {
+	if verif.CurrentConfig().Verification == config.ModeEnforce {
 		t.Fatal("expected warn mode to remain unchanged after no-op reload")
 	}
 }
@@ -164,7 +164,7 @@ func TestSetupFileWatch(t *testing.T) {
 		t.Fatalf("creating verifier: %v", err)
 	}
 
-	if verif.Enforcing() {
+	if verif.CurrentConfig().Verification == config.ModeEnforce {
 		t.Fatal("expected warn mode initially")
 	}
 
@@ -181,7 +181,7 @@ func TestSetupFileWatch(t *testing.T) {
 
 	deadline := time.After(3 * time.Second)
 
-	for !verif.Enforcing() {
+	for verif.CurrentConfig().Verification != config.ModeEnforce {
 		select {
 		case <-deadline:
 			t.Fatal("verifier did not switch to enforce mode after file change")
@@ -209,7 +209,7 @@ func TestSetupFileWatchNoConfig(t *testing.T) {
 	)
 	defer cleanup()
 
-	if verif.Enforcing() {
+	if verif.CurrentConfig().Verification == config.ModeEnforce {
 		t.Fatal("expected disabled mode to remain unchanged")
 	}
 }
@@ -281,13 +281,14 @@ func TestSetupSignalsCleanupClosesPlugin(t *testing.T) {
 		closeCalled:                  false,
 		prewarmAfterReloadCalled:     false,
 		transportCache:               nil,
-		fetchTimeout:                 0,
 		digestResolveTimeout:         0,
+		fetchTimeout:                 0,
 		remediationMode:              "",
 		triggerReverifyCalled:        false,
 		triggerFeedReverifyCalled:    false,
 		triggerFeedReverifyLastPURLs: nil,
 		continuousInterval:           0,
+		continuousStopped:            false,
 	}
 	cleanup := setupSignals(ctx, cancel, "", verif, met, cfg, mock)
 	cleanup()
@@ -725,13 +726,14 @@ func TestHandleReloadUpdatesPluginRegistries(t *testing.T) {
 		closeCalled:                  false,
 		prewarmAfterReloadCalled:     false,
 		transportCache:               nil,
-		fetchTimeout:                 0,
 		digestResolveTimeout:         0,
+		fetchTimeout:                 0,
 		remediationMode:              "",
 		triggerReverifyCalled:        false,
 		triggerFeedReverifyCalled:    false,
 		triggerFeedReverifyLastPURLs: nil,
 		continuousInterval:           0,
+		continuousStopped:            false,
 	}
 	handleReload(context.Background(), configPath, verif, met, mock, nil, &atomic.Value{})
 
@@ -739,18 +741,15 @@ func TestHandleReloadUpdatesPluginRegistries(t *testing.T) {
 		t.Error("expected nil transport cache when no registries configured")
 	}
 
-	if mock.fetchTimeout != 30*time.Second {
-		t.Errorf(
-			"expected fetch timeout 30s, got %v",
-			mock.fetchTimeout,
-		)
-	}
-
 	if mock.digestResolveTimeout != 1*time.Second {
 		t.Errorf(
 			"expected digest resolve timeout 1s, got %v",
 			mock.digestResolveTimeout,
 		)
+	}
+
+	if mock.fetchTimeout != cfg.FetchTimeout.Duration {
+		t.Errorf("expected fetch timeout %v, got %v", cfg.FetchTimeout.Duration, mock.fetchTimeout)
 	}
 }
 
@@ -858,6 +857,82 @@ func TestHandleReloadEnablingRemediationStartsContinuousVerifier(t *testing.T) {
 	}
 }
 
+// on_policy_change re-verifies the running containers only when a reload
+// changed the policies, and a reload disabling remediation stops the
+// continuous verifier.
+//
+//nolint:paralleltest // modifies package-level LogLevel
+func TestHandleReloadPolicyChangeTriggerAndRemediationStop(t *testing.T) {
+	configPath, verif, met := writeRemediationReloadConfig(t)
+
+	policyDir := verif.CurrentConfig().PolicyDir
+	base := "verification = \"warn\"\npolicy_dir = \"" + policyDir + "\"\n"
+	remediation := "[remediation]\nmode = \"warn\"\ninterval = \"5m\"\n" +
+		"[remediation.triggers]\non_policy_change = true\n"
+
+	writeFile := func(path, data string) {
+		t.Helper()
+
+		err := os.WriteFile(path, []byte(data), 0o600)
+		if err != nil {
+			t.Fatalf("writing %s: %v", path, err)
+		}
+	}
+
+	writeFile(configPath, base+remediation)
+
+	mock := &mockPluginReloader{} //nolint:exhaustruct_v5 // zero-value mock
+	handleReload(t.Context(), configPath, verif, met, mock, nil, &atomic.Value{})
+
+	if mock.triggerReverifyCalled {
+		t.Error("expected no re-verification when the policies did not change")
+	}
+
+	writeFile(filepath.Join(policyDir, "default.json"), `{"exclude": ["registry.example.com/*"]}`)
+
+	handleReload(t.Context(), configPath, verif, met, mock, nil, &atomic.Value{})
+
+	if !mock.triggerReverifyCalled {
+		t.Error("expected re-verification after a policy change")
+	}
+
+	writeFile(configPath, base)
+
+	handleReload(t.Context(), configPath, verif, met, mock, nil, &atomic.Value{})
+
+	if !mock.continuousStopped {
+		t.Error("expected disabling remediation to stop the continuous verifier")
+	}
+}
+
+// TestPolicyUpdateReverifier checks that an OCI policy update re-verifies the
+// running containers like a reload that changes the policies, only while
+// remediation and on_policy_change are enabled.
+//
+//nolint:paralleltest // modifies package-level LogLevel
+func TestPolicyUpdateReverifier(t *testing.T) {
+	configPath, verif, met := writeRemediationReloadConfig(t)
+
+	mock := &mockPluginReloader{} //nolint:exhaustruct_v5 // zero-value mock
+	hook := policyUpdateReverifier(verif, mock)
+
+	hook()
+
+	if mock.triggerReverifyCalled {
+		t.Error("expected no re-verification while remediation is disabled")
+	}
+
+	handleReload(t.Context(), configPath, verif, met, mock, nil, &atomic.Value{})
+
+	mock.triggerReverifyCalled = false
+
+	hook()
+
+	if !mock.triggerReverifyCalled {
+		t.Error("expected re-verification after an OCI policy update")
+	}
+}
+
 func TestHandleReloadAfterShutdownIsDropped(t *testing.T) {
 	t.Parallel()
 
@@ -883,13 +958,14 @@ type mockPluginReloader struct {
 	closeCalled                  bool
 	prewarmAfterReloadCalled     bool
 	transportCache               *registry.TransportCache
-	fetchTimeout                 time.Duration
 	digestResolveTimeout         time.Duration
+	fetchTimeout                 time.Duration
 	remediationMode              config.RemediationMode
 	triggerReverifyCalled        bool
 	triggerFeedReverifyCalled    bool
 	triggerFeedReverifyLastPURLs []string
 	continuousInterval           time.Duration
+	continuousStopped            bool
 }
 
 func (m *mockPluginReloader) Close() {
@@ -900,12 +976,12 @@ func (m *mockPluginReloader) PrewarmAfterReload(_ context.Context) {
 	m.prewarmAfterReloadCalled = true
 }
 
-func (m *mockPluginReloader) SetFetchTimeout(d time.Duration) {
-	m.fetchTimeout = d
-}
-
 func (m *mockPluginReloader) SetDigestResolveTimeout(d time.Duration) {
 	m.digestResolveTimeout = d
+}
+
+func (m *mockPluginReloader) SetFetchTimeout(d time.Duration) {
+	m.fetchTimeout = d
 }
 
 func (m *mockPluginReloader) SetTransportCache(cache *registry.TransportCache) {
@@ -933,6 +1009,10 @@ func (m *mockPluginReloader) TriggerFeedReverify(purls []string) {
 
 func (m *mockPluginReloader) StartContinuousVerifier(_ context.Context, interval time.Duration) {
 	m.continuousInterval = interval
+}
+
+func (m *mockPluginReloader) StopContinuousVerifier(_ context.Context) {
+	m.continuousStopped = true
 }
 
 //nolint:paralleltest // mutates slog.SetDefault

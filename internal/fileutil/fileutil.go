@@ -188,11 +188,12 @@ const maxCredentialFileMode = 0o600
 
 // CheckCredentialPermissions verifies that a credential or key file is not
 // world- or group-readable. Returns ErrInsecurePermissions if the file's
-// mode bits exceed 0600.
+// mode bits exceed 0600. Symbolic links are resolved like ReadLimited does,
+// so the mode checked is the one of the file that is read.
 func CheckCredentialPermissions(path string) error {
-	info, err := os.Stat(filepath.Clean(path))
+	info, err := StatContained(path)
 	if err != nil {
-		return fmt.Errorf("stat %q: %w", path, err)
+		return err
 	}
 
 	mode := info.Mode().Perm()

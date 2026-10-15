@@ -81,8 +81,6 @@ func (v *admissionVerifier) AdmissionTimeout() time.Duration { return v.admissio
 
 func (v *admissionVerifier) Ready() (ready bool, reason string) { return true, "" }
 
-func (v *admissionVerifier) Enforcing() bool { return v.mode == config.ModeEnforce }
-
 func (v *admissionVerifier) EffectiveModeForNamespace(_ string) config.VerificationMode {
 	return v.mode
 }
@@ -148,7 +146,7 @@ func TestCreateContainerAdmissionTimeoutDeniesInEnforce(t *testing.T) {
 		requests:         nil,
 	}
 
-	plug := plugin.New(verif, metrics.New(), "", time.Second, time.Second, nil)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 
 	start := time.Now()
 	_, _, err := plug.CreateContainer(t.Context(), admissionPod(), admissionContainer(testDigest))
@@ -176,7 +174,7 @@ func TestCreateContainerAdmissionTimeoutMarksIncompleteInWarn(t *testing.T) {
 		requests:         nil,
 	}
 
-	plug := plugin.New(verif, metrics.New(), "", time.Second, time.Second, nil)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 
 	adj, _, err := plug.CreateContainer(t.Context(), admissionPod(), admissionContainer(testDigest))
 	testutil.AssertNoError(t, err)
@@ -205,7 +203,7 @@ func TestCreateContainerAdmissionAnswersBeforeRuntimeDeadline(t *testing.T) {
 		requests:         nil,
 	}
 
-	plug := plugin.New(verif, metrics.New(), "", time.Second, time.Second, nil)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 
 	// The runtime deadline is shorter than the admission timeout, so the
 	// plugin must answer ahead of it instead of timing out with the runtime.
@@ -235,7 +233,7 @@ func TestCreateContainerSkipsDigestResolutionForSkippedImages(t *testing.T) {
 		requests:         nil,
 	}
 
-	plug := plugin.New(verif, metrics.New(), "", time.Second, time.Second, nil)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 
 	var resolved atomic.Bool
 
@@ -270,7 +268,7 @@ func TestCreateContainerUsesRuntimeImageWithoutAnnotations(t *testing.T) {
 		requests:         nil,
 	}
 
-	plug := plugin.New(verif, metrics.New(), "", time.Second, time.Second, nil)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 
 	ctr := &api.Container{
 		Id:    "ctr-runtime-image",
@@ -322,7 +320,7 @@ func TestCreateContainerRecordsOriginalResources(t *testing.T) {
 		requests:         nil,
 	}
 
-	plug := plugin.New(verif, metrics.New(), "", time.Second, time.Second, nil)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 
 	ctr := admissionContainer(testDigest)
 	ctr.Linux = &api.LinuxContainer{
@@ -366,7 +364,7 @@ func TestCreateContainerRejectsResultThatDoesNotAdmit(t *testing.T) {
 
 			verif := newDigestTestVerifier(true)
 			verif.result = test.result
-			plug := plugin.New(verif, metrics.New(), "", time.Second, time.Second, nil)
+			plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 
 			adj, _, err := plug.CreateContainer(
 				t.Context(), admissionPod(), admissionContainer(testDigest),

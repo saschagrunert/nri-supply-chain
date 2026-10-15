@@ -35,7 +35,9 @@ const (
 	batchYieldDuration = 100 * time.Millisecond
 	triggerTimer       = "timer"
 	triggerFeed        = "feed"
-	triggerManual      = "trigger"
+	// triggerPolicyChange marks cycles started because a reload changed
+	// the policies (remediation.triggers.on_policy_change).
+	triggerPolicyChange = "policy_change"
 	// triggerPrewarm marks results recorded by cache pre-warming.
 	triggerPrewarm = "prewarm"
 )
@@ -59,18 +61,56 @@ type containerForReverify struct {
 }
 
 // RunContinuousVerifier starts the background re-verification loop. It blocks
-// until ctx is cancelled. Start in the errgroup alongside nriStub.Run.
+// until ctx is cancelled or StopContinuousVerifier stops it. Start in the
+// errgroup alongside nriStub.Run.
 func (p *Plugin) RunContinuousVerifier(ctx context.Context, interval time.Duration) {
-	if !p.remediation.started.CompareAndSwap(false, true) {
+	runCtx, finish, ok := p.beginContinuousVerifier(ctx, interval)
+	if !ok {
 		slog.WarnContext(ctx, "Continuous verifier already running, ignoring duplicate call")
 
 		return
 	}
 
-	defer p.remediation.started.Store(false)
+	defer finish()
+
+	p.runContinuousVerifier(runCtx, interval)
+}
+
+// beginContinuousVerifier registers a run of the continuous verifier unless
+// one is running. The run is registered before its loop starts, so
+// StopContinuousVerifier stops a run that was just started. finish must be
+// called when the loop returned.
+func (p *Plugin) beginContinuousVerifier(
+	ctx context.Context, interval time.Duration,
+) (runCtx context.Context, finish func(), ok bool) {
+	if !p.remediation.started.CompareAndSwap(false, true) {
+		return nil, nil, false
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+
+	p.remediation.runMu.Lock()
+	p.remediation.stopRun, p.remediation.runDone = cancel, done
+	p.remediation.runMu.Unlock()
 
 	p.remediation.interval.Store(int64(interval))
 
+	return runCtx, func() {
+		cancel()
+
+		p.remediation.runMu.Lock()
+		if p.remediation.runDone == done {
+			p.remediation.stopRun, p.remediation.runDone = nil, nil
+		}
+		p.remediation.runMu.Unlock()
+
+		p.remediation.started.Store(false)
+		close(done)
+	}, true
+}
+
+func (p *Plugin) runContinuousVerifier(ctx context.Context, interval time.Duration) {
 	slog.InfoContext(ctx, "Continuous verifier waiting for prewarm", "interval", interval)
 
 	select {
@@ -93,7 +133,7 @@ func (p *Plugin) RunContinuousVerifier(ctx context.Context, interval time.Durati
 		case <-ticker.C:
 			p.runVerificationCycle(ctx, triggerTimer, nil, nil)
 		case <-p.remediation.reverifyTrigger:
-			p.runVerificationCycle(ctx, triggerManual, nil, nil)
+			p.runVerificationCycle(ctx, triggerPolicyChange, nil, nil)
 		case feedPURLs := <-p.remediation.feedTrigger:
 			filterIDs := p.matchFeedPURLs(feedPURLs)
 			if len(filterIDs) > 0 {
@@ -108,7 +148,8 @@ func (p *Plugin) RunContinuousVerifier(ctx context.Context, interval time.Durati
 // passed by the runtime enables remediation. A running verifier keeps its
 // interval, so a different interval is logged as requiring a restart.
 func (p *Plugin) StartContinuousVerifier(ctx context.Context, interval time.Duration) {
-	if p.remediation.started.Load() {
+	runCtx, finish, ok := p.beginContinuousVerifier(ctx, interval)
+	if !ok {
 		running := time.Duration(p.remediation.interval.Load())
 		if running != 0 && running != interval {
 			slog.WarnContext(ctx, msgIntervalRequiresRestart,
@@ -120,7 +161,67 @@ func (p *Plugin) StartContinuousVerifier(ctx context.Context, interval time.Dura
 		return
 	}
 
-	go p.RunContinuousVerifier(ctx, interval)
+	go func() {
+		defer finish()
+
+		p.runContinuousVerifier(runCtx, interval)
+	}()
+}
+
+// StopContinuousVerifier stops the running continuous verifier, for example
+// when a reload disables remediation, and waits for it to return. Throttled
+// containers are no longer remediated, so their original limits are restored
+// and they stay degraded: a later enabled continuous verifier throttles them
+// again when their verification still fails.
+func (p *Plugin) StopContinuousVerifier(ctx context.Context) {
+	p.remediation.runMu.Lock()
+	stop, done := p.remediation.stopRun, p.remediation.runDone
+	p.remediation.stopRun, p.remediation.runDone = nil, nil
+	p.remediation.runMu.Unlock()
+
+	if stop == nil {
+		return
+	}
+
+	stop()
+	<-done
+
+	slog.InfoContext(ctx, "Continuous verifier stopped, remediation disabled")
+
+	p.releaseThrottledContainers(ctx)
+}
+
+// releaseThrottledContainers restores the original limits of the throttled
+// containers whose original resources are known.
+func (p *Plugin) releaseThrottledContainers(ctx context.Context) {
+	var updates []*pendingUpdate
+
+	//nolint:gocritic // value copy intentional: snapshot holds copies
+	for containerID, cState := range p.containers.SnapshotIDs() {
+		if cState.state != StateThrottled || !p.hasTrustedOriginals(&cState) {
+			continue
+		}
+
+		updates = append(updates, &pendingUpdate{
+			update: buildRollbackUpdate(containerID, cState.originalResources),
+			commit: func(state *containerState) {
+				state.state = StateDegraded
+
+				slog.InfoContext(ctx, "Released throttled container",
+					"container", containerID,
+					"image", state.imageRef,
+					"namespace", state.namespace,
+				)
+				p.metrics.RemediationActionsTotal.WithLabelValues(
+					"rollback", state.namespace,
+				).Inc()
+			},
+		})
+	}
+
+	if len(updates) > 0 {
+		p.applyUpdates(ctx, updates)
+	}
 }
 
 //nolint:cyclop,funlen // batching, filtering, and yield logic require branching
@@ -234,35 +335,27 @@ func (p *Plugin) runVerificationCycle(
 	)
 }
 
-// reverifyContainer re-verifies a container. Triggers other than the timer
-// bypass cached results: the results of the container's digest and namespace
-// are invalidated unless invalidated shows that this cycle already did.
+// reverifyContainer re-verifies a container. Feed triggers bypass cached
+// results: the results of the container's digest and namespace are
+// invalidated unless invalidated shows that this cycle already did. A policy
+// change already replaced the result cache, so its cycle shares the results
+// of the pre-warming started by the same reload instead of invalidating them.
 func (p *Plugin) reverifyContainer(
 	ctx context.Context, target *containerForReverify,
 	trigger string, mode config.RemediationMode, feedPURLs []string,
 	invalidated map[string]struct{},
 ) *pendingUpdate {
-	if trigger != triggerTimer {
-		key := target.digest + "\x00" + target.namespace
-		if _, done := invalidated[key]; !done {
-			invalidated[key] = struct{}{}
-
-			p.verifier.InvalidateCache(target.digest, target.namespace)
-		}
+	if trigger == triggerFeed {
+		p.invalidateOnce(target, invalidated)
 	}
 
-	start := time.Now()
+	result, err := p.verifyTarget(ctx, target)
 
-	result, err := p.verifier.Verify(ctx, &types.VerifyRequest{
-		ImageRef:       target.imageRef,
-		Digest:         target.digest,
-		IndexDigest:    target.indexDigest,
-		Namespace:      target.namespace,
-		ServiceAccount: target.serviceAccount,
-	})
-
-	duration := time.Since(start).Seconds()
-	p.metrics.ReverificationDuration.WithLabelValues(target.namespace).Observe(duration)
+	// A verification cancelled because the continuous verifier stopped (for
+	// example remediation was disabled) says nothing about the image.
+	if ctx.Err() != nil {
+		return nil
+	}
 
 	// In enforce mode a failed verification comes with its result; only an
 	// error without a decision is a re-verification error.
@@ -307,6 +400,43 @@ func (p *Plugin) reverifyContainer(
 	return p.applyStateTransition(ctx, target, result, degraded, trigger, mode, feedPURLs)
 }
 
+// verifyTarget re-verifies the image of a container and records the
+// duration.
+func (p *Plugin) verifyTarget(
+	ctx context.Context, target *containerForReverify,
+) (*types.Result, error) {
+	start := time.Now()
+
+	result, err := p.verifier.Verify(
+		types.WithVerifyOrigin(ctx, types.OriginReverification),
+		&types.VerifyRequest{
+			ImageRef:       target.imageRef,
+			Digest:         target.digest,
+			IndexDigest:    target.indexDigest,
+			Namespace:      target.namespace,
+			ServiceAccount: target.serviceAccount,
+		},
+	)
+
+	p.metrics.ReverificationDuration.WithLabelValues(target.namespace).
+		Observe(time.Since(start).Seconds())
+
+	return result, err //nolint:wrapcheck // callers inspect the verifier error as is
+}
+
+// invalidateOnce invalidates the cached results of the target's digest and
+// namespace unless invalidated shows that this cycle already did.
+func (p *Plugin) invalidateOnce(target *containerForReverify, invalidated map[string]struct{}) {
+	key := target.digest + "\x00" + target.namespace
+	if _, done := invalidated[key]; done {
+		return
+	}
+
+	invalidated[key] = struct{}{}
+
+	p.verifier.InvalidateCache(target.digest, target.namespace)
+}
+
 // digestResolution is the result of resolving a runtime image digest, shared
 // by the containers of a verification cycle that run the same image.
 type digestResolution struct {
@@ -328,7 +458,7 @@ func (p *Plugin) resolveTargetDigest(
 
 	res, found := resolved[key]
 	if !found {
-		resolveCtx, cancel := context.WithTimeout(ctx, time.Duration(p.fetchTimeout.Load()))
+		resolveCtx, cancel := context.WithTimeout(ctx, p.backgroundResolveTimeout())
 		res.digest, res.indexDigest, res.err = p.resolveRuntimeDigest(
 			resolveCtx, target.imageRef, runtimeDigest,
 		)
@@ -438,7 +568,6 @@ func (p *Plugin) applyStateTransition(
 	var pending *pendingUpdate
 
 	p.containers.UpdateState(target.id, func(cState *containerState) {
-		cState.lastResult = result
 		cState.purls = extractPURLsFromResult(result)
 		cState.awaitingFirstResult = false
 

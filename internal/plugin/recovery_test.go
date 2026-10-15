@@ -354,7 +354,7 @@ func TestRecoveredContainerDegradedByFailingPrewarm(t *testing.T) {
 		t.Errorf("state = %v, want %v", state.State, plugin.StateDegraded)
 	}
 
-	if !state.HasLastResult {
+	if !state.ResultRecorded {
 		t.Error("expected the pre-warm result to be recorded")
 	}
 
@@ -390,7 +390,7 @@ func TestFailingPrewarmKeepsStateWithoutRemediation(t *testing.T) {
 		t.Errorf("state = %v, want %v", state.State, plugin.StateVerified)
 	}
 
-	if !state.HasLastResult {
+	if !state.ResultRecorded {
 		t.Error("expected the pre-warm result to be recorded")
 	}
 
@@ -442,7 +442,7 @@ func failingPrewarmPlugin(t *testing.T, remediation bool, id string) *plugin.Plu
 		},
 	}
 
-	plug := plugin.New(verif, metrics.New(), "", 30*time.Second, time.Second, nil)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 	if remediation {
 		plug.SetRemediationMode(config.RemediationModeWarn)
 	}
@@ -508,7 +508,7 @@ func TestCancelledPrewarmDoesNotRecordStaleResult(t *testing.T) {
 		},
 	}
 
-	plug := plugin.New(verif, metrics.New(), "", 30*time.Second, time.Second, nil)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 	plug.SetRemediationMode(config.RemediationModeWarn)
 
 	done := make(chan struct{}, 2)
@@ -543,7 +543,7 @@ func TestCancelledPrewarmDoesNotRecordStaleResult(t *testing.T) {
 		t.Errorf("state = %v, want %v", state.State, plugin.StateVerified)
 	}
 
-	if !state.HasLastResult {
+	if !state.ResultRecorded {
 		t.Error("expected the result of the new pre-warm run to be recorded")
 	}
 }

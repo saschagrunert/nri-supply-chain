@@ -87,6 +87,12 @@ type remediationState struct {
 	started     atomic.Bool
 	// interval is the interval of the running continuous verifier.
 	interval atomic.Int64
+	// runMu guards stopRun and runDone.
+	runMu sync.Mutex
+	// stopRun cancels the running continuous verifier; runDone is closed
+	// when it returned.
+	stopRun context.CancelFunc
+	runDone chan struct{}
 }
 
 func newRemediationState() *remediationState {

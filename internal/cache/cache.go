@@ -111,11 +111,6 @@ type Cache struct {
 	stopCh   chan struct{}
 }
 
-// New creates a new verification result cache with the given TTL.
-func New(ttl time.Duration) *Cache {
-	return NewWithGauge(ttl, 0, nil, nil)
-}
-
 // NewWithGauge creates a cache that updates the given Prometheus gauge
 // on entry count changes and tracks evictions. If maxSize is <= 0,
 // DefaultMaxSize is used as a fallback.
@@ -199,24 +194,6 @@ func (c *Cache) Get(digest, namespace string) *types.Result {
 	return nil
 }
 
-// Set stores a verification result in the cache using the default TTL.
-func (c *Cache) Set(digest, namespace string, result *types.Result) {
-	c.SetWithTTL(digest, namespace, result, c.ttl)
-}
-
-// SetWithTTL stores a verification result in the cache with an explicit TTL
-// (e.g., a shorter TTL for failure results).
-func (c *Cache) SetWithTTL(digest, namespace string, result *types.Result, ttl time.Duration) {
-	if ttl <= 0 {
-		return
-	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.setLocked(digest, namespace, result, ttl)
-}
-
 // SetWithTTLAtEpoch is like SetWithTTL for a result computed from data
 // fetched at the given invalidation epoch of digest (see Epoch). The result
 // is dropped when digest was invalidated since, because it may predate the
@@ -257,24 +234,6 @@ func shardOf(digest string) int {
 	return int(hash.Sum32() % invalidationShards)
 }
 
-// Delete removes a single cached entry for the given digest and namespace.
-// Returns true if an entry was deleted, false if no entry existed.
-func (c *Cache) Delete(digest, namespace string) bool {
-	cacheKey := key{digest: digest, namespace: namespace}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if _, found := c.entries[cacheKey]; !found {
-		return false
-	}
-
-	c.removeLocked(cacheKey)
-	c.updateGaugeLocked()
-
-	return true
-}
-
 // DeleteAll removes every cached entry for the given digest whose namespace
 // key equals namespace or extends it with a "\x00" separated suffix (as used
 // for per-image and per-rule result keys), and advances the invalidation
@@ -311,19 +270,6 @@ func namespaceKeyMatches(keyNamespace, namespace string) bool {
 	rest, found := strings.CutPrefix(keyNamespace, namespace)
 
 	return found && (rest == "" || rest[0] == 0)
-}
-
-// Clear removes all cached entries.
-func (c *Cache) Clear() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.entries = make(map[key]entry)
-	c.expHeap = nil
-	c.heapIndex = make(map[key]*heapEntry)
-	c.digestIndex = make(map[string]map[key]struct{})
-
-	c.updateGaugeLocked()
 }
 
 // Len returns the current number of entries in the cache.
@@ -371,7 +317,7 @@ func (c *Cache) setLocked(digest, namespace string, result *types.Result, ttl ti
 		c.evictExpiredLocked()
 
 		if len(c.entries) >= c.maxSize {
-			c.evictOldestLocked()
+			c.evictSoonestExpiringLocked()
 		}
 	}
 
@@ -426,7 +372,9 @@ func (c *Cache) updateGaugeLocked() {
 	}
 }
 
-func (c *Cache) evictOldestLocked() {
+// evictSoonestExpiringLocked evicts the entry that expires first, which is
+// not necessarily the oldest one: entries have different TTLs.
+func (c *Cache) evictSoonestExpiringLocked() {
 	if c.expHeap.Len() == 0 {
 		return
 	}

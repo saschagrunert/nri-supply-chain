@@ -347,6 +347,9 @@ func (s *Store) replaced() bool {
 	return err != nil || !os.SameFile(pinned, current)
 }
 
+// blobReadLimit returns how many bytes a blob may have: its declared size, or
+// maxBlobReadSize without one. readBlob reads one byte more to detect
+// longer blobs.
 func blobReadLimit(expectedSize int64) (int64, error) {
 	if expectedSize > maxBlobReadSize {
 		return 0, fmt.Errorf(
@@ -356,7 +359,7 @@ func blobReadLimit(expectedSize int64) (int64, error) {
 	}
 
 	if expectedSize > 0 {
-		return expectedSize + 1, nil
+		return expectedSize, nil
 	}
 
 	return int64(maxBlobReadSize), nil

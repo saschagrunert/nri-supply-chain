@@ -17,6 +17,8 @@ package registry_test
 import (
 	"testing"
 
+	v1 "github.com/google/go-containerregistry/pkg/v1"
+
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 )
@@ -96,11 +98,19 @@ func BenchmarkRewriteReferenceNoMatch(b *testing.B) {
 	}
 }
 
-func BenchmarkPlatformVariant(b *testing.B) {
+func BenchmarkSelectPlatformDigest(b *testing.B) {
+	manifests := []v1.Descriptor{
+		linuxEntry(testArchAMD64, "", "1"),
+		linuxEntry(testArchARM, "v7", "2"),
+		linuxEntry(testArchARM64, "v8", "3"),
+		platformEntry("unknown", "unknown", "", "4"),
+		platformEntry("unknown", "unknown", "", "5"),
+	}
+
 	b.ResetTimer()
 
 	for range b.N {
-		registry.PlatformVariant("arm64")
+		_, _ = registry.SelectPlatformDigest(manifests, testOSLinux, testArchARM64, "")
 	}
 }
 

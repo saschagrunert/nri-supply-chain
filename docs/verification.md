@@ -292,7 +292,12 @@ is the exception when another Sigstore attestation of the image verified: it
 is then ignored like an attestation that failed verification, because anyone
 with push access can attach one to a registry image and it must not hide the
 verified attestations behind `fetch_failure_policy`. When nothing verified,
-the unreadable key file follows `fetch_failure_policy`. While the breaker is
+the unreadable key file follows `fetch_failure_policy`. Key files that cannot
+be loaded do not affect attestations signed by a trusted key that loaded, so
+only attestations naming none of the loaded keys are ignored. An ignored
+attestation counts as absent: a check that only denies on findings (for
+example `vulnScan` with `missingPolicy: allow`) passes without it, so treat the
+`Verifying with the trusted keys that could be loaded` warning as urgent. While the breaker is
 half-open, only the single probe request decides whether it closes or opens
 again; requests admitted before the breaker opened cannot release or decide
 the probe.
