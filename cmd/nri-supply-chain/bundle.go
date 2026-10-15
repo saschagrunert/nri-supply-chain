@@ -52,6 +52,12 @@ func newBundleCmd(configPath, logLevel *string) *cobra.Command {
 		Short: "Manage offline attestation bundles",
 		Long: "Create, inspect, verify, and import portable attestation bundles\n" +
 			"for air-gapped environments.",
+		// Reject unknown subcommands instead of printing the help with exit
+		// code 0, which would hide a typo in a script.
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
+		},
 	}
 
 	cmd.AddCommand(
@@ -120,7 +126,7 @@ func runBundleCreateCmd(
 		return errMissingOutputFile
 	}
 
-	cfg, err := setupConfig(*configPath)
+	cfg, err := setupConfig(*configPath, configFlagSet(cmd))
 	if err != nil {
 		slog.Error("Setup failed", "error", err)
 
@@ -477,7 +483,7 @@ func fetchOptsFromPolicy(policyDir string) (*attestation.FetchOptions, error) {
 		return &attestation.FetchOptions{}, nil
 	}
 
-	defaultPolicyPath := filepath.Join(policyDir, "default.json")
+	defaultPolicyPath := filepath.Join(policyDir, defaultPolicyFile)
 
 	pol, err := policy.Load(defaultPolicyPath)
 	if err != nil {

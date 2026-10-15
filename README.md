@@ -117,7 +117,9 @@ See the [compatibility section](#compatibility) for supported versions.
      "image": "ghcr.io/saschagrunert/nri-supply-chain:0.7.0",
      "digest": "sha256:abc123...",
      "namespace": "default",
+     "mode": "enforce",
      "allowed": true,
+     "passed": true,
      "checkResults": [
        {
          "type": "slsa",
@@ -135,7 +137,8 @@ See the [compatibility section](#compatibility) for supported versions.
          "type": "notation",
          "passed": true,
          "status": "pass",
-         "detail": "no Notation signature found for image ghcr.io/saschagrunert/nri-supply-chain:0.7.0"
+         "detail": "no Notation signature found for image ghcr.io/saschagrunert/nri-supply-chain:0.7.0",
+         "missing": true
        },
        {
          "type": "sbom",
@@ -147,7 +150,8 @@ See the [compatibility section](#compatibility) for supported versions.
          "type": "scai",
          "passed": true,
          "status": "pass",
-         "detail": "no SCAI attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.7.0"
+         "detail": "no SCAI attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.7.0",
+         "missing": true
        },
        {
          "type": "source",
@@ -183,13 +187,15 @@ See the [compatibility section](#compatibility) for supported versions.
          "type": "runtimetrace",
          "passed": true,
          "status": "pass",
-         "detail": "no runtime trace attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.7.0"
+         "detail": "no runtime trace attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.7.0",
+         "missing": true
        },
        {
          "type": "scorecard",
          "passed": true,
          "status": "pass",
-         "detail": "no OpenSSF Scorecard attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.7.0"
+         "detail": "no OpenSSF Scorecard attestation found for image ghcr.io/saschagrunert/nri-supply-chain:0.7.0",
+         "missing": true
        }
      ]
    }
@@ -420,6 +426,10 @@ image was verified, and `latest` only moves after that verification.
 The version image tag is pushed before the attestations are added, so verify
 the image signature and VSA (steps 5 and 6) before using an image.
 
+The release workflow signs every release artifact keylessly, so the
+certificate identity below only matches its runs for a release tag. Images of
+the main branch are signed by the same workflow for `refs/heads/main` instead.
+
 To verify a release:
 
 1. Verify the checksum file signature with cosign:
@@ -427,7 +437,7 @@ To verify a release:
    ```console
    cosign verify-blob --bundle checksums.txt.sigstore.json \
      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-     --certificate-identity-regexp 'https://github.com/saschagrunert/nri-supply-chain/' \
+     --certificate-identity-regexp '^https://github\.com/saschagrunert/nri-supply-chain/\.github/workflows/release\.yml@refs/tags/v' \
      checksums.txt
    ```
 
@@ -463,7 +473,7 @@ To verify a release:
    ```console
    cosign verify ghcr.io/saschagrunert/nri-supply-chain:latest \
      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-     --certificate-identity-regexp 'https://github.com/saschagrunert/nri-supply-chain/'
+     --certificate-identity-regexp '^https://github\.com/saschagrunert/nri-supply-chain/\.github/workflows/release\.yml@refs/tags/v'
    ```
 
 6. Verify the VSA (Verification Summary Attestation) on the container image:
@@ -472,7 +482,7 @@ To verify a release:
    cosign verify-attestation ghcr.io/saschagrunert/nri-supply-chain:latest \
      --type https://slsa.dev/verification_summary/v1 \
      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-     --certificate-identity-regexp 'https://github.com/saschagrunert/nri-supply-chain/'
+     --certificate-identity-regexp '^https://github\.com/saschagrunert/nri-supply-chain/\.github/workflows/release\.yml@refs/tags/v'
    ```
 
 7. Inspect the SBOM (generated with syft, integrity covered by the signed

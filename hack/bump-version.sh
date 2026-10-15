@@ -36,8 +36,8 @@ echo "Bumping version: $OLD_VERSION -> $NEW_VERSION"
 
 OLD_ESCAPED="${OLD_VERSION//./\\.}"
 
-# Go source (uses v prefix).
-sed -i "s/var version = \"v${OLD_ESCAPED}\"/var version = \"v${NEW_VERSION}\"/" \
+# Go source.
+sed -i "s/var version = \"${OLD_ESCAPED}\"/var version = \"${NEW_VERSION}\"/" \
 	"$ROOT_DIR/cmd/nri-supply-chain/main.go"
 
 # dependencies.yaml (nri-supply-chain entry only).
@@ -57,9 +57,5 @@ sed -i "s|nri-supply-chain:${OLD_ESCAPED}|nri-supply-chain:${NEW_VERSION}|g" \
 # README examples.
 sed -i "s|nri-supply-chain:${OLD_ESCAPED}|nri-supply-chain:${NEW_VERSION}|g" \
 	"$ROOT_DIR/README.md"
-
-# Benchmark tests (uses v prefix).
-sed -i "s|nri-supply-chain:v${OLD_ESCAPED}|nri-supply-chain:v${NEW_VERSION}|g" \
-	"$ROOT_DIR/internal/registry/registry_bench_test.go"
 
 echo "Done. Verify with: make verify-dependencies"

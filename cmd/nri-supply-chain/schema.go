@@ -93,6 +93,7 @@ func verifyResultJSONSchema() ([]byte, error) {
 			Mode:          "",
 			PreviewPolicy: "",
 			Allowed:       false,
+			Passed:        false,
 			Reason:        "",
 			CheckResults:  nil,
 			errored:       false,

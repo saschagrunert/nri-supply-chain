@@ -18,12 +18,20 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/spf13/cobra"
+
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/daemon"
 )
 
-func setupConfig(configPath string) (*config.Config, error) {
-	cfg, err := loadConfig(configPath)
+// configFlagSet reports whether --config was passed explicitly to cmd or one
+// of its parents.
+func configFlagSet(cmd *cobra.Command) bool {
+	return cmd.Flags().Changed(flagConfig)
+}
+
+func setupConfig(configPath string, explicit bool) (*config.Config, error) {
+	cfg, err := loadConfig(configPath, explicit)
 	if err != nil {
 		return nil, err
 	}
@@ -75,8 +83,11 @@ func setupServeConfig(path string) (*config.Config, error) {
 	return validateRuntimeConfig(cfg)
 }
 
-func loadConfig(path string) (*config.Config, error) {
-	if path == defaultConfigPath {
+// loadConfig loads the config file at path. Only the default config file may
+// be missing, and only when --config was not passed explicitly: the built-in
+// defaults apply then.
+func loadConfig(path string, explicit bool) (*config.Config, error) {
+	if !explicit && path == defaultConfigPath {
 		_, statErr := os.Stat(path)
 		if statErr != nil {
 			if os.IsNotExist(statErr) {

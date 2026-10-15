@@ -27,7 +27,11 @@
     "nriSocket": { "$ref": "#/definitions/nriSocket" },
     "config": { "$ref": "#/definitions/config" },
     "policies": {
+      "description": "Policy files keyed by file name: default.json or <namespace>.json, where namespace is a lowercase RFC 1123 label.",
       "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\\.json$"
+      },
       "additionalProperties": { "type": "string" }
     },
     "extraVolumes": { "type": "array", "items": { "type": "object" } },
@@ -290,6 +294,7 @@
           "type": "object",
           "additionalProperties": { "type": "string" }
         },
+        "job": { "type": "string" },
         "failureRateThreshold": { "type": "number", "minimum": 0 },
         "circuitBreakerFor": { "type": "string" },
         "fetchErrorRateThreshold": { "type": "number", "minimum": 0 },

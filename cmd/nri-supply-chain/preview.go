@@ -23,6 +23,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -54,7 +55,7 @@ func newPreviewCmd(configPath, logLevel *string) *cobra.Command {
 			cmd.SilenceUsage = true
 
 			return runPreviewCmd(
-				configPath, logLevel, args, namespace, outputFormat,
+				configPath, configFlagSet(cmd), logLevel, args, namespace, outputFormat,
 				imagesFile, comparePolicy,
 			)
 		},
@@ -73,7 +74,7 @@ func newPreviewCmd(configPath, logLevel *string) *cobra.Command {
 }
 
 func runPreviewCmd(
-	configPath, logLevel *string,
+	configPath *string, explicitConfig bool, logLevel *string,
 	args []string, namespace, outputFormat, imagesFile, comparePolicy string,
 ) error {
 	images, err := loadImages(args, imagesFile)
@@ -89,7 +90,7 @@ func runPreviewCmd(
 		return errExitNonZero
 	}
 
-	cfg, err := setupConfig(*configPath)
+	cfg, err := setupConfig(*configPath, explicitConfig)
 	if err != nil {
 		slog.Error("Setup failed", "error", err)
 
@@ -188,9 +189,9 @@ func runPreview(
 }
 
 // executePreview verifies images and writes the preview. The exit code is the
-// worst across all images, as for a batch verify: exitDenied when any image
-// would be denied, exitError when any image could not be verified or the
-// preview was interrupted.
+// worst across all images: exitDenied when any image would be denied in
+// enforce mode, also when warn mode admits it, exitError when any image could
+// not be verified or the preview was interrupted.
 func executePreview(
 	ctx context.Context, writer io.Writer,
 	images []string, namespace, outputFormat string,
@@ -218,8 +219,8 @@ func executePreview(
 }
 
 // previewImages verifies images like a batch verify and returns the results
-// with the worst exit code. An interrupted preview returns the partial
-// results with exitError.
+// with the worst exit code, judging each image as enforce mode would. An
+// interrupted preview returns the partial results with exitError.
 func previewImages(
 	ctx context.Context,
 	images []string, namespace string,
@@ -234,6 +235,15 @@ func previewImages(
 		return results, exitError
 	}
 
+	for _, out := range results {
+		switch {
+		case out.errored:
+			code = max(code, exitError)
+		case !out.Passed:
+			code = max(code, exitDenied)
+		}
+	}
+
 	return results, code
 }
 
@@ -243,6 +253,8 @@ type previewOutput struct {
 	Suggestions []string        `json:"suggestions,omitempty"`
 }
 
+// previewSummary counts the images as enforce mode would decide them: Denied
+// includes images that fail verification but are admitted in warn mode.
 type previewSummary struct {
 	Total   int                     `json:"total"`
 	Allowed int                     `json:"allowed"`
@@ -279,7 +291,7 @@ func classifyResult(summary *previewSummary, out *verifyOutput) {
 		// The image could not be verified (exit code 2), whether or not
 		// its digest was resolved.
 		summary.Errors++
-	case out.Allowed:
+	case out.Passed:
 		summary.Allowed++
 	default:
 		summary.Denied++
@@ -430,7 +442,14 @@ func renderPreviewSummary(writer io.Writer, out *previewOutput) error {
 			colorBold.Sprint("Errors:"), colorRed.Sprint(out.Summary.Errors))
 	}
 
-	if len(out.Summary.Checks) > 0 {
+	// The table only lists attestation checks: images that could not be
+	// verified only have internal or fetch checks, which would leave it
+	// without rows.
+	if slices.ContainsFunc(types.AttestationCheckTypes, func(checkType types.CheckType) bool {
+		_, exists := out.Summary.Checks[string(checkType)]
+
+		return exists
+	}) {
 		_, _ = fmt.Fprintln(writer)
 
 		return renderCheckSummaryTable(writer, out.Summary.Checks)
@@ -460,15 +479,12 @@ func renderCheckSummaryTable(
 			continue
 		}
 
-		appendErr := table.Append([]string{
+		table.Append([]string{
 			strings.ToUpper(checkName),
 			colorGreen.Sprint(entry.Pass),
 			colorYellow.Sprint(entry.Warn),
 			formatFailCount(entry.Fail),
 		})
-		if appendErr != nil {
-			return fmt.Errorf("appending check summary row: %w", appendErr)
-		}
 	}
 
 	renderErr := table.Render()

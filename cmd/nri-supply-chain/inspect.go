@@ -61,7 +61,7 @@ func newInspectCmd(configPath, logLevel *string) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 
-			cfg, err := setupConfig(*configPath)
+			cfg, err := setupConfig(*configPath, configFlagSet(cmd))
 			if err != nil {
 				slog.Error("Setup failed", "error", err)
 
@@ -266,10 +266,7 @@ func renderInspectTable(writer io.Writer, atts []inspectAttestation) error {
 
 		predicate := shortenPredicateType(att.PredicateType)
 
-		err := table.Append([]string{predicate, att.SignatureType, digest})
-		if err != nil {
-			return fmt.Errorf("appending table row: %w", err)
-		}
+		table.Append([]string{predicate, att.SignatureType, digest})
 	}
 
 	err := table.Render()

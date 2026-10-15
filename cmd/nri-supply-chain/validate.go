@@ -46,14 +46,14 @@ func newValidateCmd(configPath, logLevel *string) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cmd.SilenceUsage = true
 
-			err := requireConfigFile(*configPath, allowMissingConfig)
+			err := requireConfigFile(*configPath, configFlagSet(cmd), allowMissingConfig)
 			if err != nil {
 				slog.Error("Setup failed", "error", err)
 
 				return errExitNonZero
 			}
 
-			cfg, err := loadConfig(*configPath)
+			cfg, err := loadConfig(*configPath, configFlagSet(cmd))
 			if err != nil {
 				slog.Error("Setup failed", "error", err)
 
@@ -76,9 +76,10 @@ func newValidateCmd(configPath, logLevel *string) *cobra.Command {
 
 // requireConfigFile returns an error when the default config file does not
 // exist, unless allowMissing is set. Without this check validate would
-// silently pass by validating the built-in defaults.
-func requireConfigFile(path string, allowMissing bool) error {
-	if allowMissing || path != defaultConfigPath {
+// silently pass by validating the built-in defaults. An explicitly passed
+// --config is always required to exist, which loadConfig enforces.
+func requireConfigFile(path string, explicit, allowMissing bool) error {
+	if explicit || allowMissing || path != defaultConfigPath {
 		return nil
 	}
 
@@ -219,7 +220,13 @@ func loadPolicies(
 	}
 
 	transportCache := registry.NewTransportCacheOrNil(cfg.Registries)
-	fetcher := policy.NewOCIFetcher(transportCache)
+
+	// Verify the policy signature like the plugin does, so that validate and
+	// effective-policy never accept or show policies the plugin refuses.
+	fetcher, err := verifier.NewPolicyFetcher(cfg, transportCache)
+	if err != nil {
+		return nil, "", fmt.Errorf("creating OCI policy fetcher: %w", err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.FetchTimeout.Duration)
 	defer cancel()

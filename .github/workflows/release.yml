@@ -543,9 +543,11 @@ jobs:
 
       # goreleaser only pushes the version tag. "latest" moves to the release
       # after it was scanned, attested, and verified, but only if it is not a
-      # prerelease and no published release has a higher version, so a patch
-      # release of an older line does not move "latest" backwards. The
-      # release itself is still a draft here and not part of the list.
+      # prerelease and no published release has a higher version. The gate
+      # only releases commits of main, but a tag on an older commit of main
+      # can still have a lower version than an existing release, and must not
+      # move "latest" backwards. The release itself is still a draft here and
+      # not part of the list.
       - name: Check that the release is the highest version
         id: highest
         env:

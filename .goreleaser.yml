@@ -84,7 +84,7 @@ nfpms:
     formats:
       - deb
       - rpm
-    bindir: /usr/local/bin
+    bindir: /usr/bin
     contents:
       - src: deploy/systemd/nri-supply-chain.service
         dst: /usr/lib/systemd/system/nri-supply-chain.service

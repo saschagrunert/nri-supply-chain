@@ -100,7 +100,7 @@ func (v *Verifier) reload(ctx context.Context, cfg *config.Config) error {
 	// Keep the policy fetcher's transport cache in sync with registry changes.
 	if plan.loaded.policyFetcher != nil &&
 		config.RegistriesChanged(current.config.Registries, cfgCopy.Registries) {
-		plan.loaded.policyFetcher.SetTransportCache(transportCacheFromFetcher(next.fetcher))
+		plan.loaded.policyFetcher.SetTransportCache(policyTransportCache(&cfgCopy, next.fetcher))
 	}
 
 	// Start the new poller if the source is OCI (the old one stays stopped).

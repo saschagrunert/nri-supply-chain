@@ -88,7 +88,7 @@ func TestSetupConfig(t *testing.T) {
 	t.Run("default config path", func(t *testing.T) {
 		t.Parallel()
 
-		cfg, err := setupConfig(defaultConfigPath)
+		cfg, err := setupConfig(defaultConfigPath, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -112,7 +112,7 @@ func TestSetupConfig(t *testing.T) {
 			t.Fatalf("writing config: %v", err)
 		}
 
-		_, err = setupConfig(configPath)
+		_, err = setupConfig(configPath, true)
 		if err == nil {
 			t.Fatal("expected error for nonexistent policy dir")
 		}
@@ -136,7 +136,7 @@ func TestLoadConfig(t *testing.T) {
 	t.Run("default config path missing", func(t *testing.T) {
 		t.Parallel()
 
-		cfg, err := loadConfig(defaultConfigPath)
+		cfg, err := loadConfig(defaultConfigPath, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -160,7 +160,7 @@ func TestLoadConfig(t *testing.T) {
 			t.Fatalf("writing config: %v", err)
 		}
 
-		cfg, err := loadConfig(configPath)
+		cfg, err := loadConfig(configPath, true)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -173,9 +173,23 @@ func TestLoadConfig(t *testing.T) {
 	t.Run("nonexistent file", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := loadConfig("/nonexistent/config.toml")
+		_, err := loadConfig("/nonexistent/config.toml", true)
 		if err == nil {
 			t.Fatal("expected error for nonexistent file")
+		}
+	})
+
+	t.Run("explicit default config path missing", func(t *testing.T) {
+		t.Parallel()
+
+		_, statErr := os.Stat(defaultConfigPath)
+		if statErr == nil {
+			t.Skip("default config file exists on this host")
+		}
+
+		_, err := loadConfig(defaultConfigPath, true)
+		if err == nil {
+			t.Fatal("expected error for an explicitly passed missing default config")
 		}
 	})
 }

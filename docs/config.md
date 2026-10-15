@@ -100,7 +100,7 @@ circuit_breaker_cooldown = "30s"
 | `max_attestation_size`      | `10485760` (10 MiB)              | Maximum allowed size in bytes for a single attestation bundle. Min 1 MiB, max 100 MiB.                                                                                                                                                                                                                                                            |
 | `cache_max_entries`         | `10000`                          | Maximum number of entries in the verification result cache. Min 100, max 1,000,000.                                                                                                                                                                                                                                                               |
 | `allowlist_digests`         | `[]`                             | Global list of trusted image digests that skip verification in all namespaces, overriding per-namespace policies. Accepts bare digests (`sha256:...`) or full references (`image@sha256:...`). Reloaded with the config on SIGHUP.                                                                                                                |
-| `audit_log`                 | (empty)                          | Absolute path for a dedicated audit log file. When set, supply chain audit events are written as JSON to this file instead of the application logger. Reloaded on SIGHUP.                                                                                                                                                                         |
+| `audit_log`                 | (empty)                          | Absolute path for a dedicated audit log file. When set, supply chain audit events are written as JSON to this file instead of the application logger. Reloaded on SIGHUP. The CLI commands (`verify`, `preview`) never write to it.                                                                                                               |
 
 ### Admission deadline
 
@@ -300,15 +300,15 @@ The plugin reloads its configuration on SIGHUP or when the config file changes
 on disk. Most fields take effect immediately. The following fields require a
 full restart:
 
-| Field                       | Reason                                                       |
-| --------------------------- | ------------------------------------------------------------ |
-| `config_version`            | Schema version is structural                                 |
-| `metrics_addr`              | The HTTP listener is already bound at start                  |
-| `remediation.mode` (enable) | The continuous verifier goroutine is started only on boot    |
-| `remediation.interval`      | The verification ticker interval is set at goroutine startup |
+| Field                  | Reason                                                                      |
+| ---------------------- | --------------------------------------------------------------------------- |
+| `config_version`       | Schema version is structural                                                |
+| `metrics_addr`         | The HTTP listener is already bound at start                                 |
+| `remediation.interval` | The verification ticker interval is set when the continuous verifier starts |
 
 When a non-reloadable field changes during a reload, the plugin logs a warning
-and keeps the original value.
+and keeps the original value. Enabling `remediation.mode` by a reload starts
+the continuous verifier with the reloaded `remediation.interval`.
 
 ### Offline Bundles
 
@@ -847,7 +847,9 @@ Without an explicit `--config`, the plugin uses the configuration passed by the
 runtime when the default config file does not exist. `--config ""` always uses
 the runtime-provided configuration. A config file passed explicitly with
 `--config` must exist, also when it is the default path, so the plugin does not
-start with verification disabled when the file is missing.
+start with verification disabled when the file is missing. The same applies to
+the other subcommands, which use the built-in defaults only when `--config` is
+not set and the default config file does not exist.
 
 The `validate` subcommand loads the config, parses all policy files, and runs
 `ValidateRuntime()` on each policy (checking that referenced key and certificate
@@ -874,7 +876,11 @@ Verify flags:
 The `--quiet` and `--output` flags are mutually exclusive.
 
 With `--preview-policy`, the given policy file replaces the configured policies
-for this run, also when the config sets `policy.source = "oci"`.
+for this run, also when the config sets `policy.source = "oci"`. For a
+namespace other than `default`, the file is the namespace policy and the
+configured local `default.json` stays available, so a preview policy with
+`inherits` inherits from it as in production. An OCI policy source has no local
+default policy, so such a preview policy inherits nothing.
 
 The `--verbose` flag enables debug-level logging during verification. This shows
 intermediate steps including registry connectivity, digest resolution, discovered
@@ -908,7 +914,9 @@ Use `--output json` (or `-o json`) for machine-readable JSON output:
   "image": "ghcr.io/myorg/myimage:v1.0",
   "digest": "sha256:abc123...",
   "namespace": "default",
+  "mode": "enforce",
   "allowed": true,
+  "passed": true,
   "checkResults": [
     {
       "type": "slsa",
@@ -920,6 +928,11 @@ Use `--output json` (or `-o json`) for machine-readable JSON output:
   ]
 }
 ```
+
+`allowed` is the admission decision in the effective `mode`. `passed` reports
+whether the image passes verification, so that enforce mode would allow it. In
+warn mode, an image that fails its checks has `allowed` set to `true` and
+`passed` set to `false`.
 
 ### Batch Verification
 
@@ -933,8 +946,8 @@ nri-supply-chain verify alpine:latest nginx:1.25 --output json
 
 ```json
 [
-  {"image": "alpine:latest", "digest": "sha256:...", "namespace": "default", "allowed": true, "checkResults": [...]},
-  {"image": "nginx:1.25", "digest": "sha256:...", "namespace": "default", "allowed": true, "checkResults": [...]}
+  {"image": "alpine:latest", "digest": "sha256:...", "namespace": "default", "mode": "enforce", "allowed": true, "passed": true, "checkResults": [...]},
+  {"image": "nginx:1.25", "digest": "sha256:...", "namespace": "default", "mode": "enforce", "allowed": true, "passed": true, "checkResults": [...]}
 ]
 ```
 
@@ -962,7 +975,9 @@ Exit code 1 is specific to the commands that verify something:
 The other commands (`validate`, `effective-policy`, `inspect`, `bundle create`,
 `bundle inspect`, `json-schema` and `version`) exit with 0 on success and 2 on
 any error. In warn mode, images that fail their checks are still allowed, so
-`verify` and `preview` exit with 0 for them.
+`verify` exits with 0 for them. `preview` judges images as enforce mode would
+and exits with 1 for them, and with 2 for an image whose verification ended
+with an error.
 
 The plugin daemon exits with 0 after `SIGTERM` or `SIGINT` and with 2 on
 errors.
@@ -1003,9 +1018,13 @@ The diff mode shows which images would change status (allowed/denied) under the
 proposed policy set. The proposed policies are always read from the given local
 directory, also when the config sets `policy.source = "oci"`.
 
-The exit code follows the [exit codes](#exit-codes) of a batch verify: 1 when
-any image would be denied, 2 when any image cannot be verified. With
-`--compare-policy`, it reflects the proposed policy set.
+The preview counts images as enforce mode would decide them, also when the
+config or a namespace policy runs in warn mode: an image that fails its checks
+counts as denied even though warn mode admits it. The exit code follows the
+[exit codes](#exit-codes) of a batch verify: 1 when any image would be denied,
+2 when any image cannot be verified. With `--compare-policy`, denials count
+only for the proposed policy set, while an image that cannot be verified
+against either policy set exits with 2.
 
 Preview flags:
 
@@ -1118,10 +1137,16 @@ nri-supply-chain json-schema result
         "namespace": {
           "type": "string"
         },
+        "mode": {
+          "type": "string"
+        },
         "previewPolicy": {
           "type": "string"
         },
         "allowed": {
+          "type": "boolean"
+        },
+        "passed": {
           "type": "boolean"
         },
         "reason": {
@@ -1136,7 +1161,7 @@ nri-supply-chain json-schema result
       },
       "additionalProperties": false,
       "type": "object",
-      "required": ["image", "digest", "namespace", "allowed"]
+      "required": ["image", "digest", "namespace", "allowed", "passed"]
     }
   },
   "title": "nri-supply-chain Verify Result",

@@ -166,7 +166,7 @@ func buildDiffOutput(
 }
 
 func buildDiffImage(current, proposed *verifyOutput) previewDiffImage {
-	changed := current.Allowed != proposed.Allowed || checkStatusesChanged(current, proposed)
+	changed := current.Passed != proposed.Passed || checkStatusesChanged(current, proposed)
 
 	return previewDiffImage{
 		Image:    current.Image,
@@ -217,11 +217,11 @@ func updateDiffSummary(summary *previewDiffSummary, diff *previewDiffImage) {
 	if diff.Changed {
 		summary.Changed++
 
-		if diff.Current.Allowed && !diff.Proposed.Allowed {
+		if diff.Current.Passed && !diff.Proposed.Passed {
 			summary.NewDenied++
 		}
 
-		if !diff.Current.Allowed && diff.Proposed.Allowed {
+		if !diff.Current.Passed && diff.Proposed.Passed {
 			summary.NewAllow++
 		}
 	} else {
@@ -288,15 +288,12 @@ func renderDiffTable(writer io.Writer, images []previewDiffImage) error {
 			continue
 		}
 
-		appendErr := table.Append([]string{
+		table.Append([]string{
 			diff.Image,
-			formatAllowed(diff.Current.Allowed),
-			formatAllowed(diff.Proposed.Allowed),
-			diffImpact(diff.Current.Allowed, diff.Proposed.Allowed),
+			formatAllowed(diff.Current.Passed),
+			formatAllowed(diff.Proposed.Passed),
+			diffImpact(diff.Current.Passed, diff.Proposed.Passed),
 		})
-		if appendErr != nil {
-			return fmt.Errorf("appending diff row: %w", appendErr)
-		}
 	}
 
 	renderErr := table.Render()
@@ -307,6 +304,8 @@ func renderDiffTable(writer io.Writer, images []previewDiffImage) error {
 	return nil
 }
 
+// formatAllowed formats the decision enforce mode makes for an image that
+// passes or fails verification.
 func formatAllowed(allowed bool) string {
 	if allowed {
 		return colorGreen.Sprint("ALLOWED")

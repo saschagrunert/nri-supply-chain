@@ -167,10 +167,34 @@ func loadPoliciesFromSource(
 func buildPolicyFetcher(
 	cfg *config.Config, fetcher attestation.Fetcher,
 ) (*policy.OCIFetcher, error) {
-	fetcherTransportCache := transportCacheFromFetcher(fetcher)
+	return NewPolicyFetcher(cfg, policyTransportCache(cfg, fetcher))
+}
 
+// policyTransportCache returns the transport cache for OCI policy fetches:
+// the one of the attestation fetcher, so that both share connections, or a
+// new one for the configured registries when the fetcher has none. An offline
+// fetcher reads attestations from local bundles, but the policies are still
+// pulled from a registry whose ca_cert and insecure settings apply.
+func policyTransportCache(
+	cfg *config.Config, fetcher attestation.Fetcher,
+) *registry.TransportCache {
+	cache := transportCacheFromFetcher(fetcher)
+	if cache != nil {
+		return cache
+	}
+
+	return registry.NewTransportCacheOrNil(cfg.Registries)
+}
+
+// NewPolicyFetcher creates the fetcher for the OCI policy source of cfg. It
+// verifies policy signatures with the [policy] issuers, san_patterns and keys
+// exactly as the plugin does, so that the CLI never shows or validates policy
+// content the plugin would refuse.
+func NewPolicyFetcher(
+	cfg *config.Config, cache *registry.TransportCache,
+) (*policy.OCIFetcher, error) {
 	if !cfg.Policy.SignatureVerificationRequired() {
-		return policy.NewOCIFetcher(fetcherTransportCache), nil
+		return policy.NewOCIFetcher(cache), nil
 	}
 
 	sigCfg := &policy.SignatureConfig{
@@ -190,9 +214,7 @@ func buildPolicyFetcher(
 		)
 	}
 
-	return policy.NewOCIFetcherWithSignatureVerification(
-		fetcherTransportCache, verifyFn,
-	), nil
+	return policy.NewOCIFetcherWithSignatureVerification(cache, verifyFn), nil
 }
 
 // warnPolicyModesWhileDisabled logs local policies that request warn or
