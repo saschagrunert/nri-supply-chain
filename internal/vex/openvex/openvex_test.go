@@ -35,6 +35,19 @@ const (
 	testDocID      = "doc"
 )
 
+// verifyPredicate parses a single OpenVEX predicate and evaluates it for the
+// image.
+func verifyPredicate(
+	ctx context.Context, predicate []byte, image *imagematch.Image,
+) (*openvex.Result, error) {
+	doc, err := openvex.Parse(predicate)
+	if err != nil {
+		return nil, err //nolint:wrapcheck // test helper
+	}
+
+	return openvex.Evaluate(ctx, []*openvex.Document{doc}, image) //nolint:wrapcheck // test helper
+}
+
 func testImage() *imagematch.Image {
 	return imagematch.New(testImageRef, testDigest, nil)
 }
@@ -84,7 +97,7 @@ func TestVerifyNotAffected(t *testing.T) {
 	doc := validDoc(openvexlib.StatusNotAffected)
 	data := testutil.MustMarshal(t, doc)
 
-	result, err := openvex.Verify(context.Background(), data, testImage())
+	result, err := verifyPredicate(context.Background(), data, testImage())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -100,7 +113,7 @@ func TestVerifyAffected(t *testing.T) {
 	doc := validDoc(openvexlib.StatusAffected)
 	data := testutil.MustMarshal(t, doc)
 
-	result, err := openvex.Verify(context.Background(), data, testImage())
+	result, err := verifyPredicate(context.Background(), data, testImage())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -120,7 +133,7 @@ func TestVerifyUnderInvestigation(t *testing.T) {
 	doc := validDoc(openvexlib.StatusUnderInvestigation)
 	data := testutil.MustMarshal(t, doc)
 
-	result, err := openvex.Verify(context.Background(), data, testImage())
+	result, err := verifyPredicate(context.Background(), data, testImage())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -136,7 +149,7 @@ func TestVerifyFixed(t *testing.T) {
 	doc := validDoc(openvexlib.StatusFixed)
 	data := testutil.MustMarshal(t, doc)
 
-	result, err := openvex.Verify(context.Background(), data, testImage())
+	result, err := verifyPredicate(context.Background(), data, testImage())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -149,7 +162,7 @@ func TestVerifyFixed(t *testing.T) {
 func TestVerifyInvalidJSON(t *testing.T) {
 	t.Parallel()
 
-	_, err := openvex.Verify(
+	_, err := verifyPredicate(
 		context.Background(), []byte("not json"),
 		testImage(),
 	)
@@ -168,7 +181,7 @@ func TestVerifyEmptyStatements(t *testing.T) {
 	}
 	data := testutil.MustMarshal(t, doc)
 
-	result, err := openvex.Verify(context.Background(), data, testImage())
+	result, err := verifyPredicate(context.Background(), data, testImage())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -200,7 +213,7 @@ func TestVerifyStatementWithNoProducts(t *testing.T) {
 	}
 	data := testutil.MustMarshal(t, doc)
 
-	result, err := openvex.Verify(context.Background(), data, testImage())
+	result, err := verifyPredicate(context.Background(), data, testImage())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -257,7 +270,7 @@ func TestVerifyMultipleStatementsMixedStatuses(t *testing.T) {
 	}
 	data := testutil.MustMarshal(t, doc)
 
-	result, err := openvex.Verify(context.Background(), data, testImage())
+	result, err := verifyPredicate(context.Background(), data, testImage())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -390,7 +403,7 @@ func TestVerifyProductIdentityMatching(t *testing.T) {
 				}},
 			}
 
-			result, err := openvex.Verify(
+			result, err := verifyPredicate(
 				context.Background(), testutil.MustMarshal(t, doc), testImage(),
 			)
 			if err != nil {
@@ -472,7 +485,7 @@ func TestEvaluateStatusPrecedence(t *testing.T) {
 				Statements: test.statements,
 			}
 
-			result, err := openvex.Verify(
+			result, err := verifyPredicate(
 				context.Background(), testutil.MustMarshal(t, doc), testImage(),
 			)
 			if err != nil {
@@ -556,7 +569,7 @@ func TestVerifyProductDoesNotMatchDigest(t *testing.T) {
 	}
 	data := testutil.MustMarshal(t, doc)
 
-	result, err := openvex.Verify(context.Background(), data, testImage())
+	result, err := verifyPredicate(context.Background(), data, testImage())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -584,7 +597,7 @@ func TestVerifyVulnerabilityWithNoName(t *testing.T) {
 	}
 	data := testutil.MustMarshal(t, doc)
 
-	result, err := openvex.Verify(context.Background(), data, testImage())
+	result, err := verifyPredicate(context.Background(), data, testImage())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -698,7 +711,7 @@ func TestEvaluateMatchStrengthPrecedence(t *testing.T) {
 				Statements: test.statements,
 			}
 
-			result, err := openvex.Verify(
+			result, err := verifyPredicate(
 				context.Background(), testutil.MustMarshal(t, doc), testImage(),
 			)
 			if err != nil {
@@ -809,7 +822,7 @@ func TestEvaluateIgnoresUnjustifiedNotAffected(t *testing.T) {
 				Statements: test.statements,
 			}
 
-			result, err := openvex.Verify(
+			result, err := verifyPredicate(
 				context.Background(),
 				testutil.MustMarshal(t, doc),
 				testImage(),
@@ -882,7 +895,7 @@ func TestEvaluateHashOfOtherManifestRaisesSeverity(t *testing.T) {
 				Statements: []openvexlib.Statement{stmt},
 			}
 
-			result, err := openvex.Verify(
+			result, err := verifyPredicate(
 				context.Background(), testutil.MustMarshal(t, doc),
 				imagematch.New(testImageRef, test.imageDigest, nil),
 			)
@@ -995,7 +1008,7 @@ func TestEvaluateProductClassification(t *testing.T) {
 				Statements: test.statements,
 			}
 
-			result, err := openvex.Verify(
+			result, err := verifyPredicate(
 				context.Background(), testutil.MustMarshal(t, doc), testImage(),
 			)
 			if err != nil {

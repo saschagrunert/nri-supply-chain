@@ -78,15 +78,6 @@ func Info() checker.Info {
 	return spec.Info
 }
 
-// Verify checks a single release attestation against the given policy.
-func Verify(
-	ctx context.Context,
-	att []byte, pol *policy.Policy, imageDigest string,
-) (*types.CheckResult, error) {
-	//nolint:wrapcheck // the generic checker returns domain errors
-	return spec.Verify(ctx, att, pol, imageDigest)
-}
-
 // VerifyMultiple checks multiple release attestations, accepting if any valid one passes.
 func VerifyMultiple(
 	ctx context.Context,

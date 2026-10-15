@@ -20,7 +20,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/saschagrunert/nri-supply-chain/internal/intoto"
+	"github.com/saschagrunert/nri-supply-chain/internal/checker/checkertest"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/release"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
@@ -129,7 +129,12 @@ func TestVerify(t *testing.T) {
 
 			att := testutil.WrapInToto(t, test.doc, testDigest, testPredicateType)
 
-			result, err := release.Verify(context.Background(), att, test.pol, testDigest)
+			result, err := release.VerifyMultiple(
+				context.Background(),
+				[][]byte{att},
+				test.pol,
+				testDigest,
+			)
 			testutil.AssertNoError(t, err)
 
 			testutil.AssertEqual(t, test.wantPassed, result.Passed)
@@ -138,23 +143,17 @@ func TestVerify(t *testing.T) {
 	}
 }
 
-func TestVerifyCheckType(t *testing.T) {
-	t.Parallel()
-
-	att := testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType)
-
-	result, err := release.Verify(context.Background(), att, &policy.Policy{}, testDigest)
-	testutil.AssertNoError(t, err)
-
-	testutil.AssertEqual(t, types.CheckType("release"), result.Type)
-}
-
 func TestVerifyMetadata(t *testing.T) {
 	t.Parallel()
 
 	att := testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType)
 
-	result, err := release.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+	result, err := release.VerifyMultiple(
+		context.Background(),
+		[][]byte{att},
+		&policy.Policy{},
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	if result.Metadata == nil {
@@ -170,68 +169,6 @@ func TestVerifyMetadata(t *testing.T) {
 	if !ok || packageID != testPackageID {
 		t.Errorf("packageId = %v, want %s", result.Metadata["packageId"], testPackageID)
 	}
-}
-
-func TestVerifyMalformedPayloads(t *testing.T) {
-	t.Parallel()
-
-	t.Run("empty payload", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := release.Verify(context.Background(), []byte{}, &policy.Policy{}, testDigest)
-		if !errors.Is(err, release.ErrInvalidRelease) {
-			t.Errorf("expected ErrInvalidRelease, got %v", err)
-		}
-	})
-
-	t.Run("nil payload", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := release.Verify(context.Background(), nil, &policy.Policy{}, testDigest)
-		if !errors.Is(err, release.ErrInvalidRelease) {
-			t.Errorf("expected ErrInvalidRelease, got %v", err)
-		}
-	})
-
-	t.Run("truncated JSON", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := release.Verify(
-			context.Background(), []byte(`{"subject":[`), &policy.Policy{}, testDigest,
-		)
-		if !errors.Is(err, release.ErrInvalidRelease) {
-			t.Errorf("expected ErrInvalidRelease, got %v", err)
-		}
-	})
-}
-
-func TestVerifySubjectEdgeCases(t *testing.T) {
-	t.Parallel()
-
-	t.Run("subject with mismatched digest", func(t *testing.T) {
-		t.Parallel()
-
-		att := testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType)
-
-		_, err := release.Verify(context.Background(),
-			att, &policy.Policy{},
-			"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-		)
-		if !errors.Is(err, intoto.ErrSubjectMismatch) {
-			t.Errorf("expected ErrSubjectMismatch, got %v", err)
-		}
-	})
-
-	t.Run("empty digest with subjects rejects for binding", func(t *testing.T) {
-		t.Parallel()
-
-		att := testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType)
-
-		_, err := release.Verify(context.Background(), att, &policy.Policy{}, "")
-		if !errors.Is(err, intoto.ErrNoDigestBinding) {
-			t.Errorf("expected ErrNoDigestBinding, got %v", err)
-		}
-	})
 }
 
 func TestVerifyMultiple(t *testing.T) {
@@ -400,10 +337,13 @@ func TestVerifyEmptyPURL(t *testing.T) {
 
 			att := testutil.WrapInToto(t, tc.predicate, testDigest, testPredicateType)
 
-			_, err := release.Verify(context.Background(), att, &policy.Policy{}, testDigest)
-			if !errors.Is(err, release.ErrInvalidRelease) {
-				t.Fatalf("expected ErrInvalidRelease, got %v", err)
-			}
+			result, err := release.VerifyMultiple(
+				context.Background(),
+				[][]byte{att},
+				&policy.Policy{},
+				testDigest,
+			)
+			checkertest.AssertFailed(t, result, err, release.ErrInvalidRelease)
 		})
 	}
 }
@@ -413,7 +353,7 @@ func TestVerifyUntrustedRegistryDetailMessage(t *testing.T) {
 
 	att := testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType)
 
-	result, err := release.Verify(context.Background(), att, &policy.Policy{
+	result, err := release.VerifyMultiple(context.Background(), [][]byte{att}, &policy.Policy{
 		Release: &policy.ReleasePolicy{
 			TrustedRegistries: []string{"pkg:npm/*"},
 		},
@@ -424,30 +364,7 @@ func TestVerifyUntrustedRegistryDetailMessage(t *testing.T) {
 		t.Fatal("expected fail")
 	}
 
-	if result.Metadata == nil {
-		t.Fatal("expected metadata on failed result")
-	}
-
-	purl, ok := result.Metadata["purl"].(string)
-	if !ok || purl != testPURL {
-		t.Errorf("purl metadata = %v, want %s", result.Metadata["purl"], testPURL)
-	}
-}
-
-func TestVerifyCancelledContext(t *testing.T) {
-	t.Parallel()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err := release.Verify(ctx, nil, nil, "")
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-
-	if !errors.Is(err, context.Canceled) {
-		t.Errorf("expected context.Canceled, got: %v", err)
-	}
+	testutil.AssertContains(t, result.Detail, testPURL)
 }
 
 func TestVerifyMultipleCancelledContext(t *testing.T) {
@@ -537,9 +454,14 @@ func TestVerifyTrustedRegistryMatchesParsedPURL(t *testing.T) {
 			att := testutil.WrapInToto(t, relPredicate{PURL: test.purl, PackageID: testPackageID},
 				testDigest, testPredicateType)
 
-			result, err := release.Verify(context.Background(), att, &policy.Policy{
-				Release: &policy.ReleasePolicy{TrustedRegistries: []string{test.pattern}},
-			}, testDigest)
+			result, err := release.VerifyMultiple(
+				context.Background(),
+				[][]byte{att},
+				&policy.Policy{
+					Release: &policy.ReleasePolicy{TrustedRegistries: []string{test.pattern}},
+				},
+				testDigest,
+			)
 			testutil.AssertNoError(t, err)
 
 			if result.Passed != test.wantPass {

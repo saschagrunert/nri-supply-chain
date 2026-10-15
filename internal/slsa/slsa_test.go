@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
+	"github.com/saschagrunert/nri-supply-chain/internal/checker/checkertest"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/slsa"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
@@ -65,6 +66,7 @@ func validStatementV02() slsa.StatementV02 {
 				ConfigSource: slsa.ConfigSourceV02{
 					URI: testSourceV02,
 				},
+				Parameters: nil,
 			},
 			Materials: []slsa.MaterialV02{
 				{URI: testSourceV02},
@@ -894,12 +896,16 @@ func TestVerify(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			result, err := slsa.Verify(context.Background(), test.data(t), test.policy, test.digest)
+			result, err := slsa.VerifyMultipleWithOptions(
+				context.Background(),
+				[]attestation.VerifiedAttestation{{Payload: test.data(t)}},
+				test.policy,
+				test.digest,
+				nil,
+			)
 
 			if test.wantErr != nil {
-				if !errors.Is(err, test.wantErr) {
-					t.Fatalf("expected %v, got %v", test.wantErr, err)
-				}
+				checkertest.AssertFailed(t, result, err, test.wantErr)
 
 				return
 			}
@@ -930,22 +936,23 @@ func TestVerifyEdgeCases(t *testing.T) {
 	t.Run("empty payload", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := slsa.Verify(context.Background(), []byte{}, &policy.Policy{}, testDigest)
-		testutil.AssertError(t, err)
-
-		if !errors.Is(err, slsa.ErrInvalidProvenance) {
-			t.Errorf("expected ErrInvalidProvenance, got %v", err)
-		}
+		result, err := slsa.VerifyMultipleWithOptions(
+			context.Background(),
+			[]attestation.VerifiedAttestation{{Payload: []byte{}}},
+			&policy.Policy{},
+			testDigest,
+			nil,
+		)
+		checkertest.AssertFailed(t, result, err, slsa.ErrInvalidProvenance)
 	})
 
 	t.Run("nil policy trust section", func(t *testing.T) {
 		t.Parallel()
 
-		result, err := slsa.Verify(context.Background(),
-			testutil.MustMarshal(t, validStatement()),
+		result, err := slsa.VerifyMultipleWithOptions(context.Background(),
+			[]attestation.VerifiedAttestation{{Payload: testutil.MustMarshal(t, validStatement())}},
 			&policy.Policy{},
-			testDigest,
-		)
+			testDigest, nil)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, true, result.Passed)
 	})
@@ -953,11 +960,14 @@ func TestVerifyEdgeCases(t *testing.T) {
 	t.Run("empty JSON object", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := slsa.Verify(context.Background(), []byte("{}"), &policy.Policy{}, testDigest)
-
-		if !errors.Is(err, slsa.ErrInvalidProvenance) {
-			t.Errorf("expected ErrInvalidProvenance for empty JSON object, got %v", err)
-		}
+		result, err := slsa.VerifyMultipleWithOptions(
+			context.Background(),
+			[]attestation.VerifiedAttestation{{Payload: []byte("{}")}},
+			&policy.Policy{},
+			testDigest,
+			nil,
+		)
+		checkertest.AssertFailed(t, result, err, slsa.ErrInvalidProvenance)
 	})
 
 	t.Run("empty subjects list", func(t *testing.T) {
@@ -966,12 +976,11 @@ func TestVerifyEdgeCases(t *testing.T) {
 		stmt := validStatement()
 		stmt.Subject = []slsa.Subject{}
 
-		result, err := slsa.Verify(
+		result, err := slsa.VerifyMultipleWithOptions(
 			context.Background(),
-			testutil.MustMarshal(t, stmt),
+			[]attestation.VerifiedAttestation{{Payload: testutil.MustMarshal(t, stmt)}},
 			&policy.Policy{},
-			testDigest,
-		)
+			testDigest, nil)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, false, result.Passed)
 		testutil.AssertEqual(t, types.StatusFail, result.Status)
@@ -988,12 +997,11 @@ func TestVerifyEdgeCases(t *testing.T) {
 			},
 		}
 
-		result, err := slsa.Verify(
+		result, err := slsa.VerifyMultipleWithOptions(
 			context.Background(),
-			testutil.MustMarshal(t, stmt),
+			[]attestation.VerifiedAttestation{{Payload: testutil.MustMarshal(t, stmt)}},
 			&policy.Policy{},
-			testDigest,
-		)
+			testDigest, nil)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, false, result.Passed)
 	})
@@ -1009,12 +1017,11 @@ func TestVerifyEdgeCases(t *testing.T) {
 			},
 		}
 
-		result, err := slsa.Verify(
+		result, err := slsa.VerifyMultipleWithOptions(
 			context.Background(),
-			testutil.MustMarshal(t, stmt),
+			[]attestation.VerifiedAttestation{{Payload: testutil.MustMarshal(t, stmt)}},
 			&policy.Policy{},
-			testDigest,
-		)
+			testDigest, nil)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, false, result.Passed)
 	})
@@ -1022,12 +1029,11 @@ func TestVerifyEdgeCases(t *testing.T) {
 	t.Run("empty digest string", func(t *testing.T) {
 		t.Parallel()
 
-		result, err := slsa.Verify(
+		result, err := slsa.VerifyMultipleWithOptions(
 			context.Background(),
-			testutil.MustMarshal(t, validStatement()),
+			[]attestation.VerifiedAttestation{{Payload: testutil.MustMarshal(t, validStatement())}},
 			&policy.Policy{},
-			"",
-		)
+			"", nil)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, false, result.Passed)
 	})
@@ -1035,10 +1041,9 @@ func TestVerifyEdgeCases(t *testing.T) {
 	t.Run("digest with empty hash", func(t *testing.T) {
 		t.Parallel()
 
-		result, err := slsa.Verify(context.Background(),
-			testutil.MustMarshal(t, validStatement()),
-			&policy.Policy{}, "sha256:",
-		)
+		result, err := slsa.VerifyMultipleWithOptions(context.Background(),
+			[]attestation.VerifiedAttestation{{Payload: testutil.MustMarshal(t, validStatement())}},
+			&policy.Policy{}, "sha256:", nil)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, false, result.Passed)
 	})
@@ -1046,8 +1051,14 @@ func TestVerifyEdgeCases(t *testing.T) {
 	t.Run("digest with empty algorithm", func(t *testing.T) {
 		t.Parallel()
 
-		result, err := slsa.Verify(context.Background(),
-			testutil.MustMarshal(t, validStatement()), &policy.Policy{}, ":abc123",
+		result, err := slsa.VerifyMultipleWithOptions(
+			context.Background(),
+			[]attestation.VerifiedAttestation{
+				{Payload: testutil.MustMarshal(t, validStatement())},
+			},
+			&policy.Policy{},
+			":abc123",
+			nil,
 		)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, false, result.Passed)
@@ -1059,16 +1070,15 @@ func TestVerifyEdgeCases(t *testing.T) {
 		stmt := validStatement()
 		stmt.Predicate.BuildDefinition.ExternalParameters = map[string]any{}
 
-		result, err := slsa.Verify(
+		result, err := slsa.VerifyMultipleWithOptions(
 			context.Background(),
-			testutil.MustMarshal(t, stmt),
+			[]attestation.VerifiedAttestation{{Payload: testutil.MustMarshal(t, stmt)}},
 			&policy.Policy{
 				SLSA: &policy.SLSAPolicy{
 					RejectUnknownParameters: true,
 				},
 			},
-			testDigest,
-		)
+			testDigest, nil)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, true, result.Passed)
 	})
@@ -1079,12 +1089,11 @@ func TestVerifyEdgeCases(t *testing.T) {
 		stmt := validStatement()
 		stmt.Predicate.BuildDefinition.ExternalParameters["extra"] = "data"
 
-		result, err := slsa.Verify(
+		result, err := slsa.VerifyMultipleWithOptions(
 			context.Background(),
-			testutil.MustMarshal(t, stmt),
+			[]attestation.VerifiedAttestation{{Payload: testutil.MustMarshal(t, stmt)}},
 			&policy.Policy{},
-			testDigest,
-		)
+			testDigest, nil)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, true, result.Passed)
 	})
@@ -1092,8 +1101,8 @@ func TestVerifyEdgeCases(t *testing.T) {
 	t.Run("multiple builders with one matching", func(t *testing.T) {
 		t.Parallel()
 
-		result, err := slsa.Verify(context.Background(),
-			testutil.MustMarshal(t, validStatement()),
+		result, err := slsa.VerifyMultipleWithOptions(context.Background(),
+			[]attestation.VerifiedAttestation{{Payload: testutil.MustMarshal(t, validStatement())}},
 			&policy.Policy{
 				Trust: &policy.TrustPolicy{
 					Builders: []policy.TrustedBuilder{
@@ -1103,8 +1112,7 @@ func TestVerifyEdgeCases(t *testing.T) {
 					},
 				},
 			},
-			testDigest,
-		)
+			testDigest, nil)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, true, result.Passed)
 	})
@@ -1115,8 +1123,8 @@ func TestVerifyEdgeCases(t *testing.T) {
 		stmt := validStatement()
 		stmt.Predicate.RunDetails.Builder.ID = ""
 
-		result, err := slsa.Verify(context.Background(),
-			testutil.MustMarshal(t, stmt),
+		result, err := slsa.VerifyMultipleWithOptions(context.Background(),
+			[]attestation.VerifiedAttestation{{Payload: testutil.MustMarshal(t, stmt)}},
 			&policy.Policy{
 				Trust: &policy.TrustPolicy{
 					Builders: []policy.TrustedBuilder{
@@ -1124,8 +1132,7 @@ func TestVerifyEdgeCases(t *testing.T) {
 					},
 				},
 			},
-			testDigest,
-		)
+			testDigest, nil)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, false, result.Passed)
 	})
@@ -1133,8 +1140,8 @@ func TestVerifyEdgeCases(t *testing.T) {
 	t.Run("multiple source patterns with later match", func(t *testing.T) {
 		t.Parallel()
 
-		result, err := slsa.Verify(context.Background(),
-			testutil.MustMarshal(t, validStatement()),
+		result, err := slsa.VerifyMultipleWithOptions(context.Background(),
+			[]attestation.VerifiedAttestation{{Payload: testutil.MustMarshal(t, validStatement())}},
 			&policy.Policy{
 				Trust: &policy.TrustPolicy{
 					Sources: []string{
@@ -1144,8 +1151,7 @@ func TestVerifyEdgeCases(t *testing.T) {
 					},
 				},
 			},
-			testDigest,
-		)
+			testDigest, nil)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, true, result.Passed)
 	})
@@ -1156,15 +1162,14 @@ func TestVerifyEdgeCases(t *testing.T) {
 		stmt := validStatement()
 		stmt.Predicate.BuildDefinition.ExternalParameters[testKeySource] = "https://github.com/example/repo/subdir"
 
-		result, err := slsa.Verify(context.Background(),
-			testutil.MustMarshal(t, stmt),
+		result, err := slsa.VerifyMultipleWithOptions(context.Background(),
+			[]attestation.VerifiedAttestation{{Payload: testutil.MustMarshal(t, stmt)}},
 			&policy.Policy{
 				Trust: &policy.TrustPolicy{
 					Sources: []string{testSourceGlob},
 				},
 			},
-			testDigest,
-		)
+			testDigest, nil)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, false, result.Passed)
 	})
@@ -1172,13 +1177,12 @@ func TestVerifyEdgeCases(t *testing.T) {
 	t.Run("no build types configured allows any", func(t *testing.T) {
 		t.Parallel()
 
-		result, err := slsa.Verify(context.Background(),
-			testutil.MustMarshal(t, validStatement()),
+		result, err := slsa.VerifyMultipleWithOptions(context.Background(),
+			[]attestation.VerifiedAttestation{{Payload: testutil.MustMarshal(t, validStatement())}},
 			&policy.Policy{
 				Trust: &policy.TrustPolicy{},
 			},
-			testDigest,
-		)
+			testDigest, nil)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, true, result.Passed)
 	})
@@ -1186,8 +1190,8 @@ func TestVerifyEdgeCases(t *testing.T) {
 	t.Run("multiple build types with match", func(t *testing.T) {
 		t.Parallel()
 
-		result, err := slsa.Verify(context.Background(),
-			testutil.MustMarshal(t, validStatement()),
+		result, err := slsa.VerifyMultipleWithOptions(context.Background(),
+			[]attestation.VerifiedAttestation{{Payload: testutil.MustMarshal(t, validStatement())}},
 			&policy.Policy{
 				Trust: &policy.TrustPolicy{
 					BuildTypes: []string{
@@ -1196,8 +1200,7 @@ func TestVerifyEdgeCases(t *testing.T) {
 					},
 				},
 			},
-			testDigest,
-		)
+			testDigest, nil)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, true, result.Passed)
 	})
@@ -1205,16 +1208,12 @@ func TestVerifyEdgeCases(t *testing.T) {
 	t.Run("truncated JSON", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := slsa.Verify(
+		result, err := slsa.VerifyMultipleWithOptions(
 			context.Background(),
-			[]byte(`{"_type":"https://in-toto`),
+			[]attestation.VerifiedAttestation{{Payload: []byte(`{"_type":"https://in-toto`)}},
 			&policy.Policy{},
-			testDigest,
-		)
-
-		if !errors.Is(err, slsa.ErrInvalidProvenance) {
-			t.Errorf("expected ErrInvalidProvenance, got %v", err)
-		}
+			testDigest, nil)
+		checkertest.AssertFailed(t, result, err, slsa.ErrInvalidProvenance)
 	})
 
 	t.Run("multiple subjects none matching", func(t *testing.T) {
@@ -1236,12 +1235,11 @@ func TestVerifyEdgeCases(t *testing.T) {
 			},
 		}
 
-		result, err := slsa.Verify(
+		result, err := slsa.VerifyMultipleWithOptions(
 			context.Background(),
-			testutil.MustMarshal(t, stmt),
+			[]attestation.VerifiedAttestation{{Payload: testutil.MustMarshal(t, stmt)}},
 			&policy.Policy{},
-			testDigest,
-		)
+			testDigest, nil)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, false, result.Passed)
 	})
@@ -1249,15 +1247,14 @@ func TestVerifyEdgeCases(t *testing.T) {
 	t.Run("source with exact match no glob", func(t *testing.T) {
 		t.Parallel()
 
-		result, err := slsa.Verify(context.Background(),
-			testutil.MustMarshal(t, validStatement()),
+		result, err := slsa.VerifyMultipleWithOptions(context.Background(),
+			[]attestation.VerifiedAttestation{{Payload: testutil.MustMarshal(t, validStatement())}},
 			&policy.Policy{
 				Trust: &policy.TrustPolicy{
 					Sources: []string{testSource},
 				},
 			},
-			testDigest,
-		)
+			testDigest, nil)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, true, result.Passed)
 	})
@@ -1268,15 +1265,14 @@ func TestVerifyEdgeCases(t *testing.T) {
 		stmt := validStatement()
 		stmt.Predicate.BuildDefinition.ExternalParameters[testKeySource] = ""
 
-		result, err := slsa.Verify(context.Background(),
-			testutil.MustMarshal(t, stmt),
+		result, err := slsa.VerifyMultipleWithOptions(context.Background(),
+			[]attestation.VerifiedAttestation{{Payload: testutil.MustMarshal(t, stmt)}},
 			&policy.Policy{
 				Trust: &policy.TrustPolicy{
 					Sources: []string{testSourceGlob},
 				},
 			},
-			testDigest,
-		)
+			testDigest, nil)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, false, result.Passed)
 	})
@@ -1317,12 +1313,11 @@ func TestVerifyV02SourceNormalization(t *testing.T) {
 			stmt.Predicate.Invocation.ConfigSource.URI = test.uri
 			stmt.Predicate.Materials = nil
 
-			result, err := slsa.Verify(
+			result, err := slsa.VerifyMultipleWithOptions(
 				context.Background(),
-				testutil.MustMarshal(t, stmt),
+				[]attestation.VerifiedAttestation{{Payload: testutil.MustMarshal(t, stmt)}},
 				pol,
-				testDigest,
-			)
+				testDigest, nil)
 			testutil.AssertNoError(t, err)
 
 			if result.Passed != test.wantPass {
@@ -1503,9 +1498,8 @@ func TestVerifyMultiple(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			result, err := slsa.VerifyMultiple(context.Background(),
-				test.attestations(t), test.policy, testDigest,
-			)
+			result, err := slsa.VerifyMultipleWithOptions(context.Background(),
+				test.attestations(t), test.policy, testDigest, nil)
 			testutil.AssertNoError(t, err)
 
 			if result.Passed != test.wantPass {
@@ -1530,7 +1524,13 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 	t.Run("nil attestation slice", func(t *testing.T) {
 		t.Parallel()
 
-		result, err := slsa.VerifyMultiple(context.Background(), nil, &policy.Policy{}, testDigest)
+		result, err := slsa.VerifyMultipleWithOptions(
+			context.Background(),
+			nil,
+			&policy.Policy{},
+			testDigest,
+			nil,
+		)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, false, result.Passed)
 
@@ -1558,13 +1558,13 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 			},
 		}
 
-		result, err := slsa.VerifyMultiple(context.Background(), atts, &policy.Policy{
+		result, err := slsa.VerifyMultipleWithOptions(context.Background(), atts, &policy.Policy{
 			Trust: &policy.TrustPolicy{
 				Builders: []policy.TrustedBuilder{
 					{ID: testBuilderID, MaxLevel: 2},
 				},
 			},
-		}, testDigest)
+		}, testDigest, nil)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, false, result.Passed)
 
@@ -1591,7 +1591,13 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 			},
 		}
 
-		result, err := slsa.VerifyMultiple(context.Background(), atts, &policy.Policy{}, testDigest)
+		result, err := slsa.VerifyMultipleWithOptions(
+			context.Background(),
+			atts,
+			&policy.Policy{},
+			testDigest,
+			nil,
+		)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, true, result.Passed)
 	})
@@ -1609,7 +1615,13 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 			},
 		}
 
-		result, err := slsa.VerifyMultiple(context.Background(), atts, &policy.Policy{}, testDigest)
+		result, err := slsa.VerifyMultipleWithOptions(
+			context.Background(),
+			atts,
+			&policy.Policy{},
+			testDigest,
+			nil,
+		)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, true, result.Passed)
 	})
@@ -1636,13 +1648,13 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 			},
 		}
 
-		result, err := slsa.VerifyMultiple(context.Background(), atts, &policy.Policy{
+		result, err := slsa.VerifyMultipleWithOptions(context.Background(), atts, &policy.Policy{
 			Trust: &policy.TrustPolicy{
 				Builders: []policy.TrustedBuilder{
 					{ID: testBuilderID, MaxLevel: 2},
 				},
 			},
-		}, testDigest)
+		}, testDigest, nil)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, false, result.Passed)
 
@@ -1659,7 +1671,13 @@ func TestVerifyCancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := slsa.Verify(ctx, nil, nil, "")
+	_, err := slsa.VerifyMultipleWithOptions(
+		ctx,
+		[]attestation.VerifiedAttestation{{Payload: nil}},
+		nil,
+		"",
+		nil,
+	)
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
 	}
@@ -1677,7 +1695,7 @@ func TestVerifyMultipleCancelledContext(t *testing.T) {
 
 	atts := []attestation.VerifiedAttestation{{Payload: []byte("a")}}
 
-	_, err := slsa.VerifyMultiple(ctx, atts, nil, "")
+	_, err := slsa.VerifyMultipleWithOptions(ctx, atts, nil, "", nil)
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
 	}

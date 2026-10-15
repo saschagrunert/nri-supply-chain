@@ -90,15 +90,6 @@ type spdxChecksum struct {
 	Value     string `json:"checksumValue"`
 }
 
-func parseSPDX(data []byte) (sbomData, error) {
-	raw, err := decodeRawSBOM(data)
-	if err != nil {
-		return sbomData{}, err
-	}
-
-	return spdxFromRaw(raw)
-}
-
 func spdxFromRaw(raw *rawSBOM) (sbomData, error) {
 	doc := spdxDocument{
 		SPDXVersion:       raw.SPDXVersion,
@@ -177,6 +168,7 @@ func buildSPDXPackage(pkg *spdxPackage) sbomPackage {
 		PURL:      findSPDXPURL(pkg.ExternalRefs),
 		Licenses:  collectSPDXLicensePair(pkg.LicenseConcluded, pkg.LicenseDeclared),
 		Checksums: buildChecksumMap(pkg.Checksums),
+		exempt:    false,
 	}
 }
 
@@ -236,17 +228,6 @@ func (d *sbomData) addPURLs(pkg *spdxPackage) {
 	}
 }
 
-// spdx3Document is the SPDX 3 JSON-LD serialization. Both the 3.0 draft
-// shapes ("@type", "declaredLicense") and the 3.0.1 shapes ("type",
-// "software_packageVersion", license Relationship elements) are accepted.
-type spdx3Document struct {
-	Context  string         `json:"@context,omitempty"`
-	Type     string         `json:"@type,omitempty"`
-	SpdxID   string         `json:"spdxId,omitempty"` //nolint:tagliatelle // SPDX spec field name
-	SpecVer  string         `json:"specVersion,omitempty"`
-	Elements []spdx3Element `json:"@graph,omitempty"`
-}
-
 //nolint:tagliatelle // SPDX 3 JSON-LD property names
 type spdx3Element struct {
 	Type                string               `json:"@type,omitempty"`
@@ -293,15 +274,6 @@ func (e *spdx3Element) elementType() string {
 	}
 
 	return e.Type
-}
-
-func parseSPDX3(data []byte) (sbomData, error) {
-	raw, err := decodeRawSBOM(data)
-	if err != nil {
-		return sbomData{}, err
-	}
-
-	return spdx3FromRaw(raw)
 }
 
 func spdx3FromRaw(raw *rawSBOM) (sbomData, error) {
@@ -379,6 +351,7 @@ func buildSPDX3Package(elem *spdx3Element, graph *spdx3Graph, result *sbomData) 
 		PURL:      elem.PackageURL,
 		Licenses:  nil,
 		Checksums: buildSPDX3Checksums(elem.VerifiedUsing),
+		exempt:    false,
 	}
 
 	if sbomPkg.Version == "" {
@@ -459,8 +432,8 @@ func (g *spdx3Graph) resolveLicense(elementID string, depth int) []licenseEntry 
 // graph: a listed license IRI, a NoAssertion or None individual, or an
 // unresolvable reference.
 func externalLicense(elementID string) []licenseEntry {
-	if isNoLicenseIndividual(elementID) {
-		return nil
+	if entries, matched := noLicenseEntries(elementID); matched {
+		return entries
 	}
 
 	if entries := licenseFromIRI(elementID); entries != nil {
@@ -492,13 +465,24 @@ func orLater(entries []licenseEntry) []licenseEntry {
 	return entries
 }
 
-func isNoLicenseIndividual(id string) bool {
-	return strings.HasSuffix(id, "NoAssertionLicense") || strings.HasSuffix(id, "NoneLicense")
+// noLicenseEntries resolves the SPDX 3 NoneLicense individual to NONE, like
+// the SPDX 2 NONE value, and the NoAssertionLicense individual to no license.
+// A package left without licenses is checked as NOASSERTION (see
+// sbomData.addPackage).
+func noLicenseEntries(id string) (entries []licenseEntry, matched bool) {
+	switch {
+	case strings.HasSuffix(id, "NoneLicense"):
+		return []licenseEntry{{value: noneLicense, expression: true}}, true
+	case strings.HasSuffix(id, "NoAssertionLicense"):
+		return nil, true
+	default:
+		return nil, false
+	}
 }
 
 func licenseFromIRI(id string) []licenseEntry {
-	if isNoLicenseIndividual(id) {
-		return nil
+	if entries, matched := noLicenseEntries(id); matched {
+		return entries
 	}
 
 	if after, found := strings.CutPrefix(id, spdxListedLicensesIRI); found && after != "" {

@@ -23,13 +23,13 @@ import (
 	"net/url"
 	"path"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/checker"
 	"github.com/saschagrunert/nri-supply-chain/internal/glob"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
+	"github.com/saschagrunert/nri-supply-chain/internal/purl"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
@@ -111,9 +111,10 @@ var spec = &checker.Spec[runtimeTracePredicate]{
 
 			return &pol.RuntimeTrace.MaxAgeDuration
 		},
-		Label:     "build finished",
-		ErrStale:  ErrStaleRuntimeTrace,
-		ErrFuture: ErrFutureTimestamp,
+		Label:       "build finished",
+		ErrStale:    ErrStaleRuntimeTrace,
+		ErrFuture:   ErrFutureTimestamp,
+		Superseding: false,
 	},
 	Rules: []checker.Rule[runtimeTracePredicate]{
 		checkMonitorType,
@@ -131,15 +132,6 @@ var spec = &checker.Spec[runtimeTracePredicate]{
 // Info returns the check type and label of the runtime trace check.
 func Info() checker.Info {
 	return spec.Info
-}
-
-// Verify checks a single runtime trace attestation against the given policy.
-func Verify(
-	ctx context.Context,
-	att []byte, pol *policy.Policy, imageDigest string,
-) (*types.CheckResult, error) {
-	//nolint:wrapcheck // the generic checker returns domain errors
-	return spec.Verify(ctx, att, pol, imageDigest)
 }
 
 // VerifyMultiple checks multiple runtime trace attestations. Any policy
@@ -292,7 +284,7 @@ func decodedPaths(raw string) (paths []string, derived bool) {
 		if err == nil {
 			filePath := parsed.Path
 			if filePath == "" && parsed.Opaque != "" {
-				filePath = lenientUnescape(parsed.Opaque)
+				filePath = purl.LenientUnescape(parsed.Opaque)
 			}
 
 			add(filePath)
@@ -300,13 +292,13 @@ func decodedPaths(raw string) (paths []string, derived bool) {
 
 		manual := fileURLPath(rest)
 		add(manual)
-		add(lenientUnescape(manual))
+		add(purl.LenientUnescape(manual))
 
 		return paths, len(paths) > 0
 	}
 
 	add(raw)
-	add(lenientUnescape(raw))
+	add(purl.LenientUnescape(raw))
 
 	return paths, true
 }
@@ -346,34 +338,6 @@ func cleanedPathForms(value string) []string {
 	}
 
 	return forms
-}
-
-// lenientUnescape decodes valid %XX escapes and keeps invalid ones verbatim.
-func lenientUnescape(value string) string {
-	if !strings.Contains(value, "%") {
-		return value
-	}
-
-	var builder strings.Builder
-
-	builder.Grow(len(value))
-
-	for idx := 0; idx < len(value); idx++ {
-		if value[idx] == '%' && idx+2 < len(value) {
-			decoded, err := strconv.ParseUint(value[idx+1:idx+3], 16, 8)
-			if err == nil {
-				builder.WriteByte(byte(decoded))
-
-				idx += 2
-
-				continue
-			}
-		}
-
-		builder.WriteByte(value[idx])
-	}
-
-	return builder.String()
 }
 
 func matchForbidden(candidate string, patterns []string) string {

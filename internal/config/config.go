@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -28,6 +29,9 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/fileutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
+
+// schemeHTTPS is the URL scheme required for remote endpoints in enforce mode.
+const schemeHTTPS = "https"
 
 // VerificationMode controls the supply chain verification behavior.
 type VerificationMode string
@@ -325,6 +329,13 @@ func (p *PolicyConfig) SignatureVerificationRequired() bool {
 	return len(p.Issuers) > 0 || len(p.Keys) > 0
 }
 
+// IssuersWithoutSANPatterns returns true when OCI policy signatures are
+// accepted from any identity of the configured issuers, because no SAN
+// patterns restrict them.
+func (p *PolicyConfig) IssuersWithoutSANPatterns() bool {
+	return len(p.Issuers) > 0 && len(p.SANPatterns) == 0
+}
+
 // Config represents the operational configuration for the NRI supply chain plugin.
 type Config struct {
 	// ConfigVersion is the schema version of this config file.
@@ -452,6 +463,18 @@ type GUACConfig struct {
 // Enabled returns true when GUAC is configured (endpoint is set).
 func (g *GUACConfig) Enabled() bool {
 	return g.Endpoint != ""
+}
+
+// CleartextEndpoint returns true when GUAC is enabled with an endpoint that
+// does not use HTTPS, so auth tokens and queries travel in cleartext.
+func (g *GUACConfig) CleartextEndpoint() bool {
+	if !g.Enabled() {
+		return false
+	}
+
+	parsed, err := url.Parse(g.Endpoint)
+
+	return err == nil && parsed.Scheme != schemeHTTPS
 }
 
 // GUACValidChecks is the set of recognized GUAC check names.

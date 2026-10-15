@@ -16,10 +16,10 @@ package buildenv_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/buildenv"
+	"github.com/saschagrunert/nri-supply-chain/internal/checker/checkertest"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
@@ -55,10 +55,13 @@ func TestVerifyConflictingPropertyValuesInDocument(t *testing.T) {
 
 			att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-			_, err := buildenv.Verify(context.Background(), att, &policy.Policy{}, testDigest)
-			if !errors.Is(err, buildenv.ErrInvalidBuildEnv) {
-				t.Fatalf("expected ErrInvalidBuildEnv, got %v", err)
-			}
+			result, err := buildenv.VerifyMultiple(
+				context.Background(),
+				[][]byte{att},
+				&policy.Policy{},
+				testDigest,
+			)
+			checkertest.AssertFailed(t, result, err, buildenv.ErrInvalidBuildEnv)
 		})
 	}
 }
@@ -75,7 +78,12 @@ func TestVerifyRepeatedPropertySameValueInDocument(t *testing.T) {
 
 	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-	result, err := buildenv.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+	result, err := buildenv.VerifyMultiple(
+		context.Background(),
+		[][]byte{att},
+		&policy.Policy{},
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 	testutil.AssertTrue(t, result.Passed)
 }
@@ -91,7 +99,12 @@ func TestVerifyPropertyValuesTrimNames(t *testing.T) {
 
 	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-	result, err := buildenv.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+	result, err := buildenv.VerifyMultiple(
+		context.Background(),
+		[][]byte{att},
+		&policy.Policy{},
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 	testutil.AssertTrue(t, result.Passed)
 
@@ -233,7 +246,7 @@ func TestVerifyConflictingPropertiesEmptyForSingleDocument(t *testing.T) {
 
 	for name, verify := range map[string]func() (*types.CheckResult, error){
 		"verify": func() (*types.CheckResult, error) {
-			return buildenv.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+			return buildenv.VerifyMultiple(context.Background(), [][]byte{att}, &policy.Policy{}, testDigest)
 		},
 		"verify multiple": func() (*types.CheckResult, error) {
 			return buildenv.VerifyMultiple(

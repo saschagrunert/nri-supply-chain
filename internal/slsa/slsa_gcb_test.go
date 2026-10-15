@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/slsa"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
@@ -98,8 +99,13 @@ func TestVerifyGCBSpecExample(t *testing.T) {
 
 	att := []byte(strings.Replace(gcbSpecExample, "%DIGEST%", testDigestHash, 1))
 
-	result, err := slsa.Verify(context.Background(), att,
-		gcbPolicy("https://github.com/GoogleCloudPlatform/*"), testDigest)
+	result, err := slsa.VerifyMultipleWithOptions(
+		context.Background(),
+		[]attestation.VerifiedAttestation{{Payload: att}},
+		gcbPolicy("https://github.com/GoogleCloudPlatform/*"),
+		testDigest,
+		nil,
+	)
 	testutil.AssertNoError(t, err)
 	testutil.AssertTrue(t, result.Passed)
 	testutil.AssertEqual[any](t, testGCBRepository, result.Metadata[testKeySource])
@@ -191,8 +197,15 @@ func TestVerifyGCBSourceLayouts(t *testing.T) {
 
 			stmt := rawStatement(slsa.BuildTypeGCBTriggered, tc.params, tc.deps)
 
-			result, err := slsa.Verify(context.Background(),
-				testutil.MustMarshal(t, stmt), sourcePolicy(), testDigest)
+			result, err := slsa.VerifyMultipleWithOptions(
+				context.Background(),
+				[]attestation.VerifiedAttestation{
+					{Payload: testutil.MustMarshal(t, stmt)},
+				},
+				sourcePolicy(),
+				testDigest,
+				nil,
+			)
 			testutil.AssertNoError(t, err)
 			testutil.AssertEqual(t, tc.wantPass, result.Passed)
 
@@ -221,8 +234,15 @@ func TestVerifyGCBConfigSourceAtAnotherRef(t *testing.T) {
 		},
 	}, nil)
 
-	result, err := slsa.Verify(context.Background(),
-		testutil.MustMarshal(t, stmt), gcbPolicy("git+"+testSource+"@refs/tags/*"), testDigest)
+	result, err := slsa.VerifyMultipleWithOptions(
+		context.Background(),
+		[]attestation.VerifiedAttestation{
+			{Payload: testutil.MustMarshal(t, stmt)},
+		},
+		gcbPolicy("git+"+testSource+"@refs/tags/*"),
+		testDigest,
+		nil,
+	)
 	testutil.AssertNoError(t, err)
 
 	if result.Passed {
@@ -270,8 +290,15 @@ func TestVerifySCPStyleGitSources(t *testing.T) {
 
 			stmt := rawStatement("https://example.com/custom-build/v1", tc.params, nil)
 
-			result, err := slsa.Verify(context.Background(),
-				testutil.MustMarshal(t, stmt), gcbPolicy(tc.pattern), testDigest)
+			result, err := slsa.VerifyMultipleWithOptions(
+				context.Background(),
+				[]attestation.VerifiedAttestation{
+					{Payload: testutil.MustMarshal(t, stmt)},
+				},
+				gcbPolicy(tc.pattern),
+				testDigest,
+				nil,
+			)
 			testutil.AssertNoError(t, err)
 			testutil.AssertEqual(t, tc.wantPass, result.Passed)
 		})
@@ -292,8 +319,15 @@ func TestVerifyObjectShapedSourceParameter(t *testing.T) {
 		nil,
 	)
 
-	result, err := slsa.Verify(context.Background(),
-		testutil.MustMarshal(t, stmt), sourcePolicy(), testDigest)
+	result, err := slsa.VerifyMultipleWithOptions(
+		context.Background(),
+		[]attestation.VerifiedAttestation{
+			{Payload: testutil.MustMarshal(t, stmt)},
+		},
+		sourcePolicy(),
+		testDigest,
+		nil,
+	)
 	testutil.AssertNoError(t, err)
 	testutil.AssertTrue(t, result.Passed)
 	testutil.AssertEqual[any](t, testSource, result.Metadata[testKeySource])
@@ -339,8 +373,15 @@ func TestVerifyRefPinnedSourcePatterns(t *testing.T) {
 
 			stmt := rawStatement(slsa.BuildTypeGitHubActionsWorkflow, tc.params, nil)
 
-			result, err := slsa.Verify(context.Background(),
-				testutil.MustMarshal(t, stmt), gcbPolicy(tagPattern), testDigest)
+			result, err := slsa.VerifyMultipleWithOptions(
+				context.Background(),
+				[]attestation.VerifiedAttestation{
+					{Payload: testutil.MustMarshal(t, stmt)},
+				},
+				gcbPolicy(tagPattern),
+				testDigest,
+				nil,
+			)
 			testutil.AssertNoError(t, err)
 			testutil.AssertEqual(t, tc.wantPass, result.Passed)
 		})
@@ -391,8 +432,15 @@ func TestVerifyResolvedDependencyRefKinds(t *testing.T) {
 			stmt := rawStatement(slsa.BuildTypeGitHubActionsWorkflow,
 				workflowParams(testSource, tc.sourceRef), dep(tc.depRef))
 
-			result, err := slsa.Verify(context.Background(),
-				testutil.MustMarshal(t, stmt), sourcePolicy(), testDigest)
+			result, err := slsa.VerifyMultipleWithOptions(
+				context.Background(),
+				[]attestation.VerifiedAttestation{
+					{Payload: testutil.MustMarshal(t, stmt)},
+				},
+				sourcePolicy(),
+				testDigest,
+				nil,
+			)
 			testutil.AssertNoError(t, err)
 			testutil.AssertEqual(t, tc.wantPass, result.Passed)
 		})
@@ -416,7 +464,13 @@ func TestVerifyZeroStartedOnTreatedAsAbsent(t *testing.T) {
 			Trust: &policy.TrustPolicy{Builders: []policy.TrustedBuilder{{ID: testBuilderID}}},
 		}
 
-		result, verifyErr := slsa.Verify(context.Background(), payload, pol, testDigest)
+		result, verifyErr := slsa.VerifyMultipleWithOptions(
+			context.Background(),
+			[]attestation.VerifiedAttestation{{Payload: payload}},
+			pol,
+			testDigest,
+			nil,
+		)
 		testutil.AssertNoError(t, verifyErr)
 		testutil.AssertTrue(t, result.Passed)
 	})
@@ -429,7 +483,13 @@ func TestVerifyZeroStartedOnTreatedAsAbsent(t *testing.T) {
 			SLSA:  &policy.SLSAPolicy{MaxAge: testMaxAge, MaxAgeDuration: 24 * time.Hour},
 		}
 
-		result, verifyErr := slsa.Verify(context.Background(), payload, pol, testDigest)
+		result, verifyErr := slsa.VerifyMultipleWithOptions(
+			context.Background(),
+			[]attestation.VerifiedAttestation{{Payload: payload}},
+			pol,
+			testDigest,
+			nil,
+		)
 		testutil.AssertNoError(t, verifyErr)
 		testutil.AssertEqual(t, false, result.Passed)
 		testutil.AssertContains(t, result.Detail, "no built timestamp")

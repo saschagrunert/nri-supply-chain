@@ -66,11 +66,10 @@ func TestVerifyMultipleVEXOnlyCycloneDXIsNotAnSBOM(t *testing.T) {
 func TestVerifyMultipleSkipsVEXOnlyDocumentsNextToSBOMs(t *testing.T) {
 	t.Parallel()
 
-	result, err := sbom.VerifyMultiple(
+	result, err := sbom.VerifyMultipleWithBaseline(
 		context.Background(),
-		[][]byte{wrapRaw(t, vexOnlyCycloneDX), wrapRaw(t, twoComponentCycloneDX)},
-		&policy.Policy{}, testDigest,
-	)
+		[][]byte{wrapRaw(t, vexOnlyCycloneDX), wrapRaw(t, twoComponentCycloneDX)}, nil,
+		&policy.Policy{}, testDigest)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -87,15 +86,14 @@ func TestVerifyMultipleSkipsVEXOnlyDocumentsNextToSBOMs(t *testing.T) {
 func TestVerifyMultipleAggregatesDocumentMetadata(t *testing.T) {
 	t.Parallel()
 
-	result, err := sbom.VerifyMultiple(
+	result, err := sbom.VerifyMultipleWithBaseline(
 		context.Background(),
 		[][]byte{
 			wrapRaw(t, twoComponentCycloneDX),
 			wrapRaw(t, threeComponentCycloneDX),
 			testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType),
-		},
-		&policy.Policy{}, testDigest,
-	)
+		}, nil,
+		&policy.Policy{}, testDigest)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -121,12 +119,11 @@ func TestVerifyMetadataPURLsKeepUppercaseUpstream(t *testing.T) {
 	predicate := `{"bomFormat":"CycloneDX","components":[` +
 		`{"name":"libc6","purl":"pkg:deb/debian/libc6@2.36-9?UPSTREAM=glibc&arch=amd64"}]}`
 
-	result, err := sbom.Verify(
+	result, err := sbom.VerifyMultipleWithBaseline(
 		context.Background(),
-		wrapRaw(t, predicate),
+		[][]byte{wrapRaw(t, predicate)}, nil,
 		&policy.Policy{},
-		testDigest,
-	)
+		testDigest)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -144,9 +141,11 @@ func vdrCycloneDX(state string, score float64) string {
 	}
 
 	scoreJSON, _ := json.Marshal(score) //nolint:errchkjson // float64 never fails
+	rank, _ := types.SeverityRankFromCVSS(score)
 
 	return `{"bomFormat":"CycloneDX","vulnerabilities":[{"id":"CVE-2024-9",` +
-		`"ratings":[{"score":` + string(scoreJSON) + `,"severity":"critical"}]` + analysis + `}]}`
+		`"ratings":[{"score":` + string(scoreJSON) + `,"severity":"` + types.SeverityName(rank) + `"}]` +
+		analysis + `}]}`
 }
 
 func cvssPolicy(maxScore float64) *policy.Policy {
@@ -161,11 +160,10 @@ func TestVerifyMultipleVulnerabilityOnlyCycloneDXIsEvaluatedForCVSS(t *testing.T
 	spdx := testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType)
 
 	for _, state := range []string{"", "in_triage", "exploitable"} {
-		result, err := sbom.VerifyMultiple(
+		result, err := sbom.VerifyMultipleWithBaseline(
 			context.Background(),
-			[][]byte{wrapRaw(t, vdrCycloneDX(state, 9.8)), spdx},
-			cvssPolicy(7), testDigest,
-		)
+			[][]byte{wrapRaw(t, vdrCycloneDX(state, 9.8)), spdx}, nil,
+			cvssPolicy(7), testDigest)
 		if err != nil {
 			t.Fatalf("state %q: unexpected error: %v", state, err)
 		}
@@ -181,11 +179,10 @@ func TestVerifyMultipleVulnerabilityOnlyCycloneDXIsEvaluatedForCVSS(t *testing.T
 func TestVerifyMultipleVulnerabilityOnlyAloneExceedingCVSSFails(t *testing.T) {
 	t.Parallel()
 
-	result, err := sbom.VerifyMultiple(
+	result, err := sbom.VerifyMultipleWithBaseline(
 		context.Background(),
-		[][]byte{wrapRaw(t, vdrCycloneDX("", 9.8))},
-		cvssPolicy(7), testDigest,
-	)
+		[][]byte{wrapRaw(t, vdrCycloneDX("", 9.8))}, nil,
+		cvssPolicy(7), testDigest)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -198,11 +195,10 @@ func TestVerifyMultipleVulnerabilityOnlyAloneExceedingCVSSFails(t *testing.T) {
 func TestVerifyMultipleVulnerabilityOnlyUnjustifiedNotAffectedFails(t *testing.T) {
 	t.Parallel()
 
-	result, err := sbom.VerifyMultiple(
+	result, err := sbom.VerifyMultipleWithBaseline(
 		context.Background(),
-		[][]byte{wrapRaw(t, vdrCycloneDX("not_affected", 9.8))},
-		cvssPolicy(7), testDigest,
-	)
+		[][]byte{wrapRaw(t, vdrCycloneDX("not_affected", 9.8))}, nil,
+		cvssPolicy(7), testDigest)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -224,9 +220,8 @@ func TestVerifyMultipleVulnerabilityOnlyWithinCVSSIsNotAnSBOM(t *testing.T) {
 	for _, predicate := range []string{
 		vdrCycloneDX("", 5.0), vdrCycloneDX("resolved", 9.8), vdrCycloneDX("false_positive", 9.8), justified,
 	} {
-		_, err := sbom.VerifyMultiple(
-			context.Background(), [][]byte{wrapRaw(t, predicate)}, cvssPolicy(7), testDigest,
-		)
+		_, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(), [][]byte{wrapRaw(t, predicate)}, nil, cvssPolicy(7), testDigest)
 		if !errors.Is(err, types.ErrNotApplicable) {
 			t.Errorf("expected %q to be not applicable as an SBOM, got %v", predicate, err)
 		}
@@ -236,10 +231,15 @@ func TestVerifyMultipleVulnerabilityOnlyWithinCVSSIsNotAnSBOM(t *testing.T) {
 func TestVerifyMultipleVulnerabilityOnlyDoesNotChangeInventoryMetadata(t *testing.T) {
 	t.Parallel()
 
-	result, err := sbom.VerifyMultiple(
+	result, err := sbom.VerifyMultipleWithBaseline(
 		context.Background(),
-		[][]byte{wrapRaw(t, vdrCycloneDX("in_triage", 5.0)), wrapRaw(t, twoComponentCycloneDX)},
-		cvssPolicy(7), testDigest,
+		[][]byte{
+			wrapRaw(t, vdrCycloneDX("in_triage", 5.0)),
+			wrapRaw(t, twoComponentCycloneDX),
+		},
+		nil,
+		cvssPolicy(7),
+		testDigest,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -268,9 +268,8 @@ func TestVerifyEmptyBOMWithSubjectIsAnSBOM(t *testing.T) {
 	predicate := `{"bomFormat":"CycloneDX",` +
 		`"metadata":{"component":{"type":"container","name":"scratch"}},"components":[]}`
 
-	result, err := sbom.VerifyMultiple(
-		context.Background(), [][]byte{wrapRaw(t, predicate)}, &policy.Policy{}, testDigest,
-	)
+	result, err := sbom.VerifyMultipleWithBaseline(
+		context.Background(), [][]byte{wrapRaw(t, predicate)}, nil, &policy.Policy{}, testDigest)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

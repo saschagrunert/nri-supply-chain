@@ -17,12 +17,11 @@ package testresult_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/saschagrunert/nri-supply-chain/internal/intoto"
+	"github.com/saschagrunert/nri-supply-chain/internal/checker/checkertest"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/testresult"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
@@ -218,7 +217,12 @@ func TestVerify(t *testing.T) {
 
 			att := testutil.WrapInToto(t, test.doc, testDigest, testPredicateType)
 
-			result, err := testresult.Verify(context.Background(), att, test.pol, testDigest)
+			result, err := testresult.VerifyMultiple(
+				context.Background(),
+				[][]byte{att},
+				test.pol,
+				testDigest,
+			)
 			testutil.AssertNoError(t, err)
 
 			testutil.AssertEqual(t, test.wantPassed, result.Passed)
@@ -227,23 +231,17 @@ func TestVerify(t *testing.T) {
 	}
 }
 
-func TestVerifyCheckType(t *testing.T) {
-	t.Parallel()
-
-	att := testutil.WrapInToto(t, validDoc(), testDigest, testPredicateType)
-
-	result, err := testresult.Verify(context.Background(), att, &policy.Policy{}, testDigest)
-	testutil.AssertNoError(t, err)
-
-	testutil.AssertEqual(t, types.CheckType("testresult"), result.Type)
-}
-
 func TestVerifyMetadata(t *testing.T) {
 	t.Parallel()
 
 	att := testutil.WrapInToto(t, validDoc(), testDigest, testPredicateType)
 
-	result, err := testresult.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+	result, err := testresult.VerifyMultiple(
+		context.Background(),
+		[][]byte{att},
+		&policy.Policy{},
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	if result.Metadata == nil {
@@ -284,74 +282,17 @@ func TestVerifyMetadata(t *testing.T) {
 	}
 }
 
-func TestVerifyMalformedPayloads(t *testing.T) {
-	t.Parallel()
-
-	t.Run("empty payload", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := testresult.Verify(context.Background(), []byte{}, &policy.Policy{}, testDigest)
-		if !errors.Is(err, testresult.ErrInvalidTestResult) {
-			t.Errorf("expected ErrInvalidTestResult, got %v", err)
-		}
-	})
-
-	t.Run("nil payload", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := testresult.Verify(context.Background(), nil, &policy.Policy{}, testDigest)
-		if !errors.Is(err, testresult.ErrInvalidTestResult) {
-			t.Errorf("expected ErrInvalidTestResult, got %v", err)
-		}
-	})
-
-	t.Run("truncated JSON", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := testresult.Verify(
-			context.Background(), []byte(`{"subject":[`), &policy.Policy{}, testDigest,
-		)
-		if !errors.Is(err, testresult.ErrInvalidTestResult) {
-			t.Errorf("expected ErrInvalidTestResult, got %v", err)
-		}
-	})
-}
-
-func TestVerifySubjectEdgeCases(t *testing.T) {
-	t.Parallel()
-
-	t.Run("subject with mismatched digest", func(t *testing.T) {
-		t.Parallel()
-
-		att := testutil.WrapInToto(t, validDoc(), testDigest, testPredicateType)
-
-		_, err := testresult.Verify(context.Background(),
-			att, &policy.Policy{},
-			"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-		)
-		if !errors.Is(err, intoto.ErrSubjectMismatch) {
-			t.Errorf("expected ErrSubjectMismatch, got %v", err)
-		}
-	})
-
-	t.Run("empty digest with subjects rejects for binding", func(t *testing.T) {
-		t.Parallel()
-
-		att := testutil.WrapInToto(t, validDoc(), testDigest, testPredicateType)
-
-		_, err := testresult.Verify(context.Background(), att, &policy.Policy{}, "")
-		if !errors.Is(err, intoto.ErrNoDigestBinding) {
-			t.Errorf("expected ErrNoDigestBinding, got %v", err)
-		}
-	})
-}
-
 func TestVerifyFailedDetailMessage(t *testing.T) {
 	t.Parallel()
 
 	att := testutil.WrapInToto(t, failedDoc(), testDigest, testPredicateType)
 
-	result, err := testresult.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+	result, err := testresult.VerifyMultiple(
+		context.Background(),
+		[][]byte{att},
+		&policy.Policy{},
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	if result.Passed {
@@ -372,7 +313,7 @@ func TestVerifyRequiredSuiteDetailMessage(t *testing.T) {
 
 	att := testutil.WrapInToto(t, validDoc(), testDigest, testPredicateType)
 
-	result, err := testresult.Verify(context.Background(), att, &policy.Policy{
+	result, err := testresult.VerifyMultiple(context.Background(), [][]byte{att}, &policy.Policy{
 		TestResult: &policy.TestResultPolicy{
 			RequiredSuites: []string{testSuiteE2E},
 		},
@@ -404,7 +345,12 @@ func TestVerifyEmptySuites(t *testing.T) {
 	t.Run("empty suites with no policy passes", func(t *testing.T) {
 		t.Parallel()
 
-		result, err := testresult.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+		result, err := testresult.VerifyMultiple(
+			context.Background(),
+			[][]byte{att},
+			&policy.Policy{},
+			testDigest,
+		)
 		testutil.AssertNoError(t, err)
 
 		if !result.Passed {
@@ -420,11 +366,16 @@ func TestVerifyEmptySuites(t *testing.T) {
 	t.Run("empty suites with required suite fails", func(t *testing.T) {
 		t.Parallel()
 
-		result, err := testresult.Verify(context.Background(), att, &policy.Policy{
-			TestResult: &policy.TestResultPolicy{
-				RequiredSuites: []string{testSuiteUnit},
+		result, err := testresult.VerifyMultiple(
+			context.Background(),
+			[][]byte{att},
+			&policy.Policy{
+				TestResult: &policy.TestResultPolicy{
+					RequiredSuites: []string{testSuiteUnit},
+				},
 			},
-		}, testDigest)
+			testDigest,
+		)
 		testutil.AssertNoError(t, err)
 
 		if result.Passed {
@@ -603,12 +554,11 @@ func TestVerifyPassedWithReportedFailures(t *testing.T) {
 
 			att := testutil.WrapInToto(t, tc.predicate, testDigest, testPredicateType)
 
-			result, err := testresult.Verify(
+			result, err := testresult.VerifyMultiple(
 				context.Background(),
-				att,
+				[][]byte{att},
 				&policy.Policy{},
-				testDigest,
-			)
+				testDigest)
 			testutil.AssertNoError(t, err)
 			testutil.AssertEqual(t, false, result.Passed)
 			testutil.AssertContains(t, result.Detail, tc.wantInErr)
@@ -623,7 +573,7 @@ func TestVerifySpecFormat(t *testing.T) {
 		`{"result":"PASSED","configuration":[{"uri":"https://ci.example.com"}],"passedTests":["unit","e2e"]}`,
 	), testDigest, testPredicateType)
 
-	result, err := testresult.Verify(context.Background(), att, &policy.Policy{
+	result, err := testresult.VerifyMultiple(context.Background(), [][]byte{att}, &policy.Policy{
 		TestResult: &policy.TestResultPolicy{
 			RequiredSuites: []string{testSuiteE2E},
 		},
@@ -646,10 +596,13 @@ func TestVerifyRejectsIncompletePredicates(t *testing.T) {
 
 			att := testutil.WrapInToto(t, json.RawMessage(predicate), testDigest, testPredicateType)
 
-			_, err := testresult.Verify(context.Background(), att, &policy.Policy{}, testDigest)
-			if !errors.Is(err, testresult.ErrInvalidTestResult) {
-				t.Fatalf("expected ErrInvalidTestResult, got %v", err)
-			}
+			result, err := testresult.VerifyMultiple(
+				context.Background(),
+				[][]byte{att},
+				&policy.Policy{},
+				testDigest,
+			)
+			checkertest.AssertFailed(t, result, err, testresult.ErrInvalidTestResult)
 		})
 	}
 }
@@ -740,7 +693,12 @@ func TestVerifyFailedSuiteCollection(t *testing.T) {
 	}
 	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-	result, err := testresult.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+	result, err := testresult.VerifyMultiple(
+		context.Background(),
+		[][]byte{att},
+		&policy.Policy{},
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	if result.Passed {
@@ -770,7 +728,12 @@ func TestVerifyNilCountFields(t *testing.T) {
 	}
 	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-	result, err := testresult.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+	result, err := testresult.VerifyMultiple(
+		context.Background(),
+		[][]byte{att},
+		&policy.Policy{},
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	if !result.Passed {
@@ -861,7 +824,12 @@ func TestVerifyFreshness(t *testing.T) {
 
 			att := testutil.WrapInToto(t, test.doc, testDigest, testPredicateType)
 
-			result, err := testresult.Verify(context.Background(), att, test.pol, testDigest)
+			result, err := testresult.VerifyMultiple(
+				context.Background(),
+				[][]byte{att},
+				test.pol,
+				testDigest,
+			)
 			testutil.AssertNoError(t, err)
 
 			testutil.AssertEqual(t, test.wantPassed, result.Passed)
@@ -870,22 +838,6 @@ func TestVerifyFreshness(t *testing.T) {
 				t.Errorf("expected detail to contain %q, got %q", test.wantSubstr, result.Detail)
 			}
 		})
-	}
-}
-
-func TestVerifyCancelledContext(t *testing.T) {
-	t.Parallel()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err := testresult.Verify(ctx, nil, nil, "")
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-
-	if !errors.Is(err, context.Canceled) {
-		t.Errorf("expected context.Canceled, got: %v", err)
 	}
 }
 
@@ -900,10 +852,13 @@ func TestVerifyRejectsNegativeSuiteCounts(t *testing.T) {
 				field + `":-1}]}`
 			att := testutil.WrapInToto(t, json.RawMessage(predicate), testDigest, testPredicateType)
 
-			_, err := testresult.Verify(context.Background(), att, &policy.Policy{}, testDigest)
-			if !errors.Is(err, testresult.ErrInvalidTestResult) {
-				t.Errorf("expected ErrInvalidTestResult, got %v", err)
-			}
+			result, err := testresult.VerifyMultiple(
+				context.Background(),
+				[][]byte{att},
+				&policy.Policy{},
+				testDigest,
+			)
+			checkertest.AssertFailed(t, result, err, testresult.ErrInvalidTestResult)
 		})
 	}
 }
@@ -922,7 +877,12 @@ func TestVerifyRequiredSuiteReportedTwice(t *testing.T) {
 		predicate := `{"result":"PASSED","suites":` + suites + `}`
 		att := testutil.WrapInToto(t, json.RawMessage(predicate), testDigest, testPredicateType)
 
-		result, err := testresult.Verify(context.Background(), att, pol, testDigest)
+		result, err := testresult.VerifyMultiple(
+			context.Background(),
+			[][]byte{att},
+			pol,
+			testDigest,
+		)
 		testutil.AssertNoError(t, err)
 
 		if result.Passed {

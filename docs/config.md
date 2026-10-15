@@ -96,7 +96,7 @@ circuit_breaker_cooldown = "30s"
 | `circuit_breaker_cooldown`  | `30s`                            | Duration the circuit breaker stays open before allowing a probe. Max 10m.                                                                                                                                                                                                                                                                         |
 | `verification_timeout`      | `5m`                             | Maximum time for a single image verification. Must be positive, maximum 30m.                                                                                                                                                                                                                                                                      |
 | `check_timeout`             | `2m`                             | Maximum time for a single attestation check (e.g. SLSA, VEX, SBOM) within a verification. Must not exceed `verification_timeout`.                                                                                                                                                                                                                 |
-| `fetch_rate_limit`          | `0` (unlimited)                  | Maximum registry fetch requests per second (max 10,000)                                                                                                                                                                                                                                                                                           |
+| `fetch_rate_limit`          | `0` (unlimited)                  | Maximum registry fetch requests per second (max 10,000, `nan` rejected)                                                                                                                                                                                                                                                                           |
 | `max_attestation_size`      | `10485760` (10 MiB)              | Maximum allowed size in bytes for a single attestation bundle. Min 1 MiB, max 100 MiB.                                                                                                                                                                                                                                                            |
 | `cache_max_entries`         | `10000`                          | Maximum number of entries in the verification result cache. Min 100, max 1,000,000.                                                                                                                                                                                                                                                               |
 | `allowlist_digests`         | `[]`                             | Global list of trusted image digests that skip verification in all namespaces, overriding per-namespace policies. Accepts bare digests (`sha256:...`) or full references (`image@sha256:...`). Reloaded with the config on SIGHUP.                                                                                                                |
@@ -181,7 +181,10 @@ endpoint = "https://guac.internal:8443"
 # checks = ["certify_vuln", "certify_scorecard", "is_dependency"]
 ```
 
-GUAC is enabled when `endpoint` is set (no separate toggle).
+GUAC is enabled when `endpoint` is set (no separate toggle). An endpoint
+without HTTPS is rejected in `enforce` mode and when any loaded policy sets
+`"mode": "enforce"`, because auth tokens and queries would travel in
+cleartext; in other modes a warning is logged.
 
 | Field              | Default                                                  | Description                                                                                                                                        |
 | ------------------ | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -661,8 +664,10 @@ modes a warning is logged.
 The `issuers` and `keys` fields are mutually exclusive: set `issuers` for
 keyless (OIDC-based) verification or `keys` for key-based verification, but not
 both. The `san_patterns` field requires `issuers` to be set. In enforce mode,
-configuring `issuers` without `san_patterns` is rejected at validation. Key
-paths must be absolute.
+and when any loaded policy sets `"mode": "enforce"`, configuring `issuers`
+without `san_patterns` is rejected, because any identity of the issuers could
+then sign the policy artifact. Key paths must be absolute and are compared in
+their cleaned form when checking for duplicates.
 
 When trust material is configured but the policy source is not `oci`, a warning
 is logged but no error is returned (signature verification only applies to OCI
@@ -680,7 +685,9 @@ policy types are skipped. The accepted media types are:
 `application/vnd.oci.image.layer.v1.tar+gzip`,
 `application/vnd.oci.image.layer.v1.tar`, and empty (unset). Layers with a
 generic media type are skipped when they have no title or a title that does
-not end in `.json`.
+not end in `.json`. The extension is compared case-insensitively, like in the
+policy directory, so a layer titled `prod.JSON` is an invalid file name that
+rejects the artifact; earlier releases skipped it silently.
 
 Every layer identified as a policy must be valid: an invalid policy, an
 invalid file name, an untitled layer with the policy media type, two layers

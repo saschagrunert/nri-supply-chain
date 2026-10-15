@@ -153,19 +153,29 @@ const (
 )
 
 func validateCVSSPolicy(cvss *SBOMCVSSPolicy) []error {
+	return validateSeverityThresholds(
+		"sbom.cvss", cvss.MaxScore, cvss.MinSeverity, cvss.IgnoreCVEs,
+		ErrCVSSMaxScoreRange, ErrCVSSMinSeverityInvalid,
+	)
+}
+
+// validateSeverityThresholds checks the vulnerability thresholds shared by
+// sbom.cvss and vulnScan.
+func validateSeverityThresholds(
+	section string, maxScore *float64, minSeverity string, ignoreCVEs []string,
+	errMaxScore, errMinSeverity error,
+) []error {
 	var errs []error
 
-	if cvss.MaxScore != nil {
-		if *cvss.MaxScore < 0 || *cvss.MaxScore > cvssMaxScoreUpper {
-			errs = append(errs, ErrCVSSMaxScoreRange)
-		}
+	if maxScore != nil && (*maxScore < 0 || *maxScore > cvssMaxScoreUpper) {
+		errs = append(errs, errMaxScore)
 	}
 
-	if cvss.MinSeverity != "" && !isValidSeverity(cvss.MinSeverity) {
-		errs = append(errs, ErrCVSSMinSeverityInvalid)
+	if minSeverity != "" && !isValidSeverity(minSeverity) {
+		errs = append(errs, errMinSeverity)
 	}
 
-	err := validateNonEmpty("sbom.cvss.ignoreCVEs", cvss.IgnoreCVEs)
+	err := validateNonEmpty(section+".ignoreCVEs", ignoreCVEs)
 	if err != nil {
 		errs = append(errs, err)
 	}
@@ -226,16 +236,18 @@ func (s *Sections) validateBuildEnv() error {
 	)
 }
 
-// validateOverlaps rejects entries that are both required and forbidden.
-// Rules are checked on the effective policy they produce, because a rule
-// only overrides the fields it sets: a rule forbidding an attribute the base
-// policy requires yields an overlap neither section has on its own.
+// validateOverlaps rejects entries that are both required and forbidden, and
+// verifier keys shared with other verifiers or builders. Rules are checked on
+// the effective policy they produce, because a rule only overrides the fields
+// it sets: a rule forbidding an attribute the base policy requires, or a rule
+// verifier using a base builder key, yields an overlap neither section has on
+// its own.
 func (p *Policy) validateOverlaps() error {
 	errs := []error{sectionOverlaps(&p.Sections)}
 
 	for idx := range p.Rules {
 		rule := &p.Rules[idx]
-		if rule.SCAI == nil && rule.BuildEnv == nil {
+		if rule.SCAI == nil && rule.BuildEnv == nil && rule.Trust == nil {
 			continue
 		}
 
@@ -250,6 +262,10 @@ func (p *Policy) validateOverlaps() error {
 
 func sectionOverlaps(sections *Sections) error {
 	var errs []error
+
+	if sections.Trust != nil {
+		errs = append(errs, validateNoDuplicateKeys(sections.Trust))
+	}
 
 	if sections.SCAI != nil {
 		errs = append(errs, validateNoOverlap(
@@ -292,21 +308,10 @@ func validateNoOverlap(required, forbidden []string, sentinel error) error {
 }
 
 func (s *Sections) validateVulnScan() error {
-	var errs []error
-
-	if s.VulnScan.MaxScore != nil {
-		if *s.VulnScan.MaxScore < 0 || *s.VulnScan.MaxScore > cvssMaxScoreUpper {
-			errs = append(errs, ErrVulnScanMaxScoreRange)
-		}
-	}
-
-	if s.VulnScan.MinSeverity != "" && !isValidSeverity(s.VulnScan.MinSeverity) {
-		errs = append(errs, ErrVulnScanMinSeverityInvalid)
-	}
-
-	errs = append(errs, validateNonEmpty("vulnScan.ignoreCVEs", s.VulnScan.IgnoreCVEs))
-
-	return errors.Join(errs...)
+	return errors.Join(validateSeverityThresholds(
+		"vulnScan", s.VulnScan.MaxScore, s.VulnScan.MinSeverity, s.VulnScan.IgnoreCVEs,
+		ErrVulnScanMaxScoreRange, ErrVulnScanMinSeverityInvalid,
+	)...)
 }
 
 func (s *Sections) validateTestResult() error {
@@ -314,20 +319,13 @@ func (s *Sections) validateTestResult() error {
 }
 
 func (s *Sections) validateRelease() error {
-	return errors.Join(
-		validateNonEmpty("release.trustedRegistries", s.Release.TrustedRegistries),
-		validateGlobPatterns("release.trustedRegistries", s.Release.TrustedRegistries),
-	)
+	return validatePatterns("release.trustedRegistries", s.Release.TrustedRegistries)
 }
 
 func (s *Sections) validateRuntimeTrace() error {
 	return errors.Join(
-		validateNonEmpty("runtimeTrace.trustedMonitors", s.RuntimeTrace.TrustedMonitors),
-		validateGlobPatterns("runtimeTrace.trustedMonitors", s.RuntimeTrace.TrustedMonitors),
-		validateNonEmpty(
-			"runtimeTrace.forbiddenFilePatterns", s.RuntimeTrace.ForbiddenFilePatterns,
-		),
-		validateGlobPatterns(
+		validatePatterns("runtimeTrace.trustedMonitors", s.RuntimeTrace.TrustedMonitors),
+		validatePatterns(
 			"runtimeTrace.forbiddenFilePatterns", s.RuntimeTrace.ForbiddenFilePatterns,
 		),
 	)
@@ -383,15 +381,12 @@ func (p *Policy) validateRule(idx int) []error {
 
 	var errs []error
 
-	err := validateNonEmpty(fmt.Sprintf("rules[%d].images", idx), rule.Images)
-	if err != nil {
-		errs = append(errs, err)
-	}
+	field := fmt.Sprintf("rules[%d].images", idx)
 
-	warnTagScopedPatterns(fmt.Sprintf("rules[%d].images", idx), rule.Images)
-	warnUppercasePatterns(fmt.Sprintf("rules[%d].images", idx), rule.Images)
+	warnTagScopedPatterns(field, rule.Images)
+	warnUppercasePatterns(field, rule.Images)
 
-	err = validateGlobPatterns(fmt.Sprintf("rules[%d].images", idx), rule.Images)
+	err := validatePatterns(field, rule.Images)
 	if err != nil {
 		errs = append(errs, err)
 	}

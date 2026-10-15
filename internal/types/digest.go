@@ -95,3 +95,15 @@ func isHex(s string) bool {
 
 	return true
 }
+
+// algorithmSeparators drops the separators of hash algorithm names.
+//
+//nolint:gochecknoglobals // immutable replacer
+var algorithmSeparators = strings.NewReplacer("-", "", "_", "")
+
+// NormalizeAlgorithm converts hash algorithm names to a lowercase form without
+// hyphens or underscores, so the spellings of SPDX 2 ("SHA256"), SPDX 3
+// ("sha256"), CycloneDX ("SHA-256") and "sha_256" compare equal.
+func NormalizeAlgorithm(algorithm string) string {
+	return strings.ToLower(algorithmSeparators.Replace(algorithm))
+}

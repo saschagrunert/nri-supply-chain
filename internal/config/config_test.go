@@ -1295,6 +1295,21 @@ func TestConfigValidateFetchRateLimit(t *testing.T) {
 
 		testutil.AssertNoError(t, cfg.Validate())
 	})
+
+	for value, want := range map[string]error{
+		"nan":  config.ErrFetchRateLimitNegative,
+		"inf":  config.ErrFetchRateLimitTooHigh,
+		"-inf": config.ErrFetchRateLimitNegative,
+	} {
+		t.Run("rate limit "+value+" rejected", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := config.LoadFromString(
+				"verification = \"warn\"\nfetch_rate_limit = " + value + "\n",
+			)
+			testutil.AssertErrorIs(t, err, want)
+		})
+	}
 }
 
 func TestConfigValidateLogLevel(t *testing.T) {
@@ -2526,6 +2541,19 @@ func TestConfigValidatePolicySignatureFields(t *testing.T) {
 				c.Policy.Source = config.PolicySourceOCI
 				c.Policy.OCIRef = testOCIRef
 				c.Policy.Keys = []string{testKeyPath, testKeyPath}
+			},
+			wantErr:     true,
+			expectedErr: config.ErrPolicySignatureKeyDuplicate,
+		},
+		{
+			name: "duplicate key path spelled differently rejected",
+			modify: func(c *config.Config) {
+				c.Policy.Source = config.PolicySourceOCI
+				c.Policy.OCIRef = testOCIRef
+				c.Policy.Keys = []string{
+					testKeyPath,
+					filepath.Dir(testKeyPath) + "/./" + filepath.Base(testKeyPath),
+				}
 			},
 			wantErr:     true,
 			expectedErr: config.ErrPolicySignatureKeyDuplicate,

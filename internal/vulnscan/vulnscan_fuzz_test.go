@@ -95,7 +95,7 @@ func FuzzVerify(f *testing.F) {
 	}
 
 	f.Fuzz(func(_ *testing.T, data []byte) {
-		vulnscan.Verify(context.Background(), data, &policy.Policy{}, testDigest)
-		vulnscan.Verify(context.Background(), data, strictPolicy, testDigest)
+		vulnscan.VerifyMultiple(context.Background(), [][]byte{data}, &policy.Policy{}, testDigest)
+		vulnscan.VerifyMultiple(context.Background(), [][]byte{data}, strictPolicy, testDigest)
 	})
 }

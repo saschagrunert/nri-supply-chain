@@ -17,6 +17,7 @@ package openvex
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -26,8 +27,15 @@ import (
 	openvex "github.com/openvex/go-vex/pkg/vex"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/purl"
+	"github.com/saschagrunert/nri-supply-chain/internal/types"
 	"github.com/saschagrunert/nri-supply-chain/internal/vex/imagematch"
 )
+
+// ErrFutureTimestamp indicates a document or statement timestamp beyond the
+// clock skew tolerance. Statement precedence follows timestamps, so a future
+// date (for example a year typo) would otherwise win over every later
+// statement indefinitely.
+var ErrFutureTimestamp = errors.New("OpenVEX timestamp is in the future")
 
 // Result holds the outcome of an OpenVEX verification.
 type Result struct {
@@ -55,17 +63,44 @@ func Parse(predicate []byte) (*Document, error) {
 		return nil, fmt.Errorf("parsing OpenVEX: %w", err)
 	}
 
-	return &Document{doc: doc}, nil
-}
-
-// Verify parses a single OpenVEX predicate and evaluates it for the image.
-func Verify(ctx context.Context, predicate []byte, image *imagematch.Image) (*Result, error) {
-	doc, err := Parse(predicate)
+	err = checkTimestamps(doc, time.Now())
 	if err != nil {
 		return nil, err
 	}
 
-	return Evaluate(ctx, []*Document{doc}, image)
+	return &Document{doc: doc}, nil
+}
+
+// checkTimestamps rejects document and statement timestamps more than the
+// clock skew tolerance in the future, like the other checkers do.
+func checkTimestamps(doc *openvex.VEX, now time.Time) error {
+	limit := now.Add(types.ClockSkewTolerance)
+
+	check := func(field string, timestamp *time.Time) error {
+		if timestamp != nil && timestamp.After(limit) {
+			return fmt.Errorf(
+				"%w: %s %s",
+				ErrFutureTimestamp,
+				field,
+				timestamp.Format(time.RFC3339Nano),
+			)
+		}
+
+		return nil
+	}
+
+	errs := make([]error, 0, 2+2*len(doc.Statements)) //nolint:mnd // two timestamps per entry
+	errs = append(errs, check("timestamp", doc.Timestamp), check("last_updated", doc.LastUpdated))
+
+	for idx := range doc.Statements {
+		stmt := &doc.Statements[idx]
+		errs = append(errs,
+			check(fmt.Sprintf("statements[%d].timestamp", idx), stmt.Timestamp),
+			check(fmt.Sprintf("statements[%d].last_updated", idx), stmt.LastUpdated),
+		)
+	}
+
+	return errors.Join(errs...)
 }
 
 // candidate is a statement that applies to the image, reduced to what

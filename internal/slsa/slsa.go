@@ -16,11 +16,13 @@
 package slsa
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/url"
 	"slices"
 	"strings"
@@ -179,21 +181,6 @@ type sourceInfo struct {
 // builderBinder binds a matched builder to the attestation being verified.
 type builderBinder func(matched []policy.TrustedBuilder) error
 
-// Verify checks a SLSA provenance attestation against the given policy.
-func Verify(
-	ctx context.Context, att []byte, pol *policy.Policy, imageDigest string,
-) (*types.CheckResult, error) {
-	return verify(ctx, att, pol, imageDigest, nil)
-}
-
-// VerifyMultiple checks multiple provenance attestations, accepting if any valid one passes.
-func VerifyMultiple(
-	ctx context.Context,
-	attestations []attestation.VerifiedAttestation, pol *policy.Policy, imageDigest string,
-) (*types.CheckResult, error) {
-	return VerifyMultipleWithOptions(ctx, attestations, pol, imageDigest, nil)
-}
-
 // VerifyMultipleWithOptions checks multiple provenance attestations with
 // optional verification hooks, accepting if any valid one passes.
 func VerifyMultipleWithOptions(
@@ -325,6 +312,10 @@ type MetadataV02 struct {
 // InvocationV02 holds v0.2 invocation metadata.
 type InvocationV02 struct {
 	ConfigSource ConfigSourceV02 `json:"configSource"`
+	// Parameters holds the build parameters, the v0.2 counterpart of the v1
+	// externalParameters. It is only decoded when unknown parameters are
+	// rejected.
+	Parameters json.RawMessage `json:"parameters,omitempty"`
 }
 
 // ConfigSourceV02 identifies the source of a v0.2 build invocation.
@@ -352,13 +343,12 @@ func verifyV02(
 	sourceURI, sourceRef := normalizeSourceURI(sourceV02(&stmt.Predicate))
 	source := sourceInfo{URI: sourceURI, Ref: sourceRef, Digest: "", Config: nil}
 
-	// v0.2 has no externalParameters, so rejectUnknownParameters does not
-	// apply. Parameter validation is only meaningful for v1 provenance.
 	checks := []func() error{
 		func() error { return verifySubjectDigest(stmt.Subject, imageDigest) },
 		func() error { return verifyBuilder(ctx, stmt.Predicate.Builder, pol, bind) },
 		func() error { return verifyBuildType(stmt.Predicate.BuildType, pol) },
 		func() error { return verifySource(&source, pol) },
+		func() error { return verifyParametersV02(stmt.Predicate.Invocation.Parameters, pol) },
 		func() error { return verifyFreshness(stmt.Predicate.Metadata.BuildStartedOn, pol) },
 	}
 
@@ -993,13 +983,38 @@ func verifyParameters(params map[string]any, pol *policy.Policy) error {
 		known = defaultKnownParameters()
 	}
 
-	for paramKey := range params {
+	// Keys are checked in sorted order, so the reported parameter does not
+	// depend on map iteration order when several are unknown.
+	for _, paramKey := range slices.Sorted(maps.Keys(params)) {
 		if !slices.Contains(known, paramKey) {
 			return fmt.Errorf("%w: %q", ErrUnknownParameters, paramKey)
 		}
 	}
 
 	return nil
+}
+
+// verifyParametersV02 applies rejectUnknownParameters to the
+// invocation.parameters of v0.2 provenance. Parameters that are not a JSON
+// object cannot be checked and are rejected.
+func verifyParametersV02(raw json.RawMessage, pol *policy.Policy) error {
+	if pol.SLSA == nil || !pol.SLSA.RejectUnknownParameters {
+		return nil
+	}
+
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil
+	}
+
+	var params map[string]any
+
+	err := json.Unmarshal(trimmed, &params)
+	if err != nil {
+		return fmt.Errorf("%w: invocation.parameters is not an object", ErrUnknownParameters)
+	}
+
+	return verifyParameters(params, pol)
 }
 
 func defaultKnownParameters() []string {
@@ -1051,9 +1066,10 @@ func verifyFreshness(buildStarted *time.Time, pol *policy.Policy) error {
 
 			return &pol.SLSA.MaxAgeDuration
 		},
-		Label:     "built",
-		ErrStale:  ErrStaleProvenance,
-		ErrFuture: ErrFutureTimestamp,
+		Label:       "built",
+		ErrStale:    ErrStaleProvenance,
+		ErrFuture:   ErrFutureTimestamp,
+		Superseding: false,
 	}
 
 	//nolint:wrapcheck // Check wraps the caller's sentinel errors

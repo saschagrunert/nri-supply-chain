@@ -57,7 +57,7 @@ func FuzzVerify(f *testing.F) {
 	}
 
 	f.Fuzz(func(_ *testing.T, data []byte) {
-		scorecard.Verify(context.Background(), data, &policy.Policy{}, testDigest)
-		scorecard.Verify(context.Background(), data, sourcesPolicy, testDigest)
+		scorecard.VerifyMultiple(context.Background(), [][]byte{data}, &policy.Policy{}, testDigest)
+		scorecard.VerifyMultiple(context.Background(), [][]byte{data}, sourcesPolicy, testDigest)
 	})
 }

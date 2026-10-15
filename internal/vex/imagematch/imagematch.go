@@ -273,10 +273,10 @@ func (img *Image) MatchesHash(algorithm, value string) bool {
 		value = after
 	}
 
-	normalized := NormalizeAlgorithm(algorithm)
+	normalized := types.NormalizeAlgorithm(algorithm)
 
 	for _, candidate := range img.digests {
-		if NormalizeAlgorithm(candidate.algorithm) == normalized && value == candidate.hex {
+		if types.NormalizeAlgorithm(candidate.algorithm) == normalized && value == candidate.hex {
 			return true
 		}
 	}
@@ -288,23 +288,15 @@ func (img *Image) MatchesHash(algorithm, value string) bool {
 // digest but equals none of the image digests, so it identifies a different
 // image. Hashes using other algorithms never conflict.
 func (img *Image) ConflictsByHash(algorithm, value string) bool {
-	normalized := NormalizeAlgorithm(algorithm)
+	normalized := types.NormalizeAlgorithm(algorithm)
 
 	for _, candidate := range img.digests {
-		if NormalizeAlgorithm(candidate.algorithm) == normalized {
+		if types.NormalizeAlgorithm(candidate.algorithm) == normalized {
 			return !img.MatchesHash(algorithm, value)
 		}
 	}
 
 	return false
-}
-
-// NormalizeAlgorithm converts hash algorithm names to a lowercase form without
-// hyphens or underscores so "SHA-256", "sha_256", and "sha256" compare equal.
-func NormalizeAlgorithm(algorithm string) string {
-	replacer := strings.NewReplacer("-", "", "_", "")
-
-	return strings.ToLower(replacer.Replace(algorithm))
 }
 
 func (img *Image) classifyPURL(identifier string) (Kind, Strength) {

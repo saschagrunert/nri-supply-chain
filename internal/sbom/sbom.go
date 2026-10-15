@@ -37,6 +37,7 @@ const (
 	checkType = types.CheckTypeSBOM
 
 	noAssertionLicense = "NOASSERTION"
+	noneLicense        = "NONE"
 
 	formatSPDX      = "spdx"
 	formatCycloneDX = "cyclonedx"
@@ -63,6 +64,8 @@ var (
 
 	// ErrUnsupportedFormat indicates the SBOM format is not recognized.
 	ErrUnsupportedFormat = errors.New("unsupported SBOM format")
+
+	errAmbiguousFormat = errors.New("document matches more than one SBOM format")
 )
 
 type sbomPackage struct {
@@ -71,6 +74,11 @@ type sbomPackage struct {
 	Version   string
 	Licenses  []string
 	Checksums map[string]string
+	// exempt marks the document subject and components that are not
+	// packages (files, operating systems, lock files). Without a purl they
+	// are left out of drift, so for example the subject of an image SBOM,
+	// whose version is the image digest, is not modified by every build.
+	exempt bool
 }
 
 // licenseEntry is a license value found in an SBOM. Expressions are SPDX
@@ -89,7 +97,7 @@ type sbomData struct {
 	format         string
 	componentCount int
 	licenseCount   int
-	vulns          []cyclonedxVulnerability
+	vulns          []types.Finding
 	// missingPURL lists names of package components without a purl that
 	// are not exempt (operating systems, files, document subjects).
 	missingPURL []string
@@ -130,60 +138,34 @@ func (d *sbomData) addLicense(value string, expression bool) {
 	d.licenseCount = len(d.uniqueLicenses)
 }
 
-func (d *sbomData) addPackage(pkg *sbomPackage, exemptFromPURL bool) {
-	if pkg.PURL == "" && !exemptFromPURL {
+// addPackage records a package. Exempt components (the document subject and
+// components that are not packages, such as files or operating systems) are
+// not expected to carry a purl or a license. Any other package without a
+// license is checked against the license lists as NOASSERTION, so a license
+// allow list fails closed on packages without license data in every format
+// unless it lists NOASSERTION.
+func (d *sbomData) addPackage(pkg *sbomPackage, exempt bool) {
+	if pkg.PURL == "" && !exempt {
 		d.missingPURL = append(d.missingPURL, pkg.Name)
 	}
 
+	if len(pkg.Licenses) == 0 && !exempt {
+		d.licenses = append(d.licenses, licenseEntry{value: noAssertionLicense, expression: false})
+	}
+
+	pkg.exempt = exempt
 	d.Packages = append(d.Packages, *pkg)
 }
 
-// Verify checks a single SBOM attestation against the given policy.
-func Verify(
-	ctx context.Context,
-	att []byte, pol *policy.Policy, imageDigest string,
-) (*types.CheckResult, error) {
-	ctxErr := ctx.Err()
-	if ctxErr != nil {
-		return nil, fmt.Errorf("verification cancelled: %w", ctxErr)
-	}
-
-	predicate, err := intoto.VerifySubjectAndExtractPredicate(att, imageDigest)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidSBOM, err)
-	}
-
-	result, _, err := verifySBOMPredicateWithData(predicate, pol)
-	if err != nil {
-		return nil, err
-	}
-
-	finalizeMetadata(result.Metadata)
-
-	return result, nil
-}
-
-// VerifyMultiple checks multiple SBOM attestations. Every document must parse
+// VerifyMultipleWithBaseline checks multiple SBOM attestations and performs
+// drift detection against baseline SBOM documents. Every document must parse
 // and pass; any denied license or component in any document causes failure.
+// When drift thresholds are configured, a missing or unparsable baseline
+// fails the check.
 //
 // CycloneDX documents without components and subject (for example VEX-only
 // documents) are skipped. When no attestation is an SBOM, the returned error
 // wraps types.ErrNotApplicable so the missing policy applies.
-func VerifyMultiple(
-	ctx context.Context,
-	attestations [][]byte, pol *policy.Policy, imageDigest string,
-) (*types.CheckResult, error) {
-	verifyResult, err := verifyAllAttestations(ctx, attestations, pol, imageDigest)
-	if err != nil {
-		return nil, err
-	}
-
-	return verifyResult.checkResult(), nil
-}
-
-// VerifyMultipleWithBaseline checks multiple SBOM attestations and performs
-// drift detection against baseline SBOM documents. When drift thresholds are
-// configured, a missing or unparsable baseline fails the check.
 func VerifyMultipleWithBaseline(
 	ctx context.Context,
 	attestations, baselinePayloads [][]byte,
@@ -525,6 +507,10 @@ func decodeRawSBOM(predicate []byte) (*rawSBOM, error) {
 	return &raw, nil
 }
 
+// extractSBOMData parses the predicate as SPDX 3, SPDX 2 or CycloneDX. A
+// document that parses as more than one format is rejected: its checks would
+// depend on which format is tried first, so for example CycloneDX
+// vulnerabilities next to an SPDX inventory would never be evaluated.
 func extractSBOMData(
 	predicate []byte, pol *policy.Policy,
 ) (sbomData, error) {
@@ -534,34 +520,37 @@ func extractSBOMData(
 	}
 
 	spdx3, spdx3Err := spdx3FromRaw(raw)
-	if spdx3Err == nil {
+	spdx, spdxErr := spdxFromRaw(raw)
+	cdx, cdxErr := cyclonedxFromRaw(raw)
+
+	err = checkUnambiguous(map[string]bool{
+		"SPDX 3.0":  spdx3Err == nil,
+		"SPDX 2.x":  spdxErr == nil,
+		"CycloneDX": cdxErr == nil || errors.Is(cdxErr, types.ErrNotApplicable),
+	})
+	if err != nil {
+		return sbomData{}, err
+	}
+
+	switch {
+	case spdx3Err == nil:
 		err = setFormat(&spdx3, formatSPDX, pol)
 
 		return spdx3, err
-	}
-
-	spdx, spdxErr := spdxFromRaw(raw)
-	if spdxErr == nil {
+	case spdxErr == nil:
 		err = setFormat(&spdx, formatSPDX, pol)
 
 		return spdx, err
-	}
-
-	cdx, cdxErr := cyclonedxFromRaw(raw)
-	if cdxErr == nil && cdx.vulnerabilityOnly {
+	case cdxErr == nil && cdx.vulnerabilityOnly:
 		// Not an SBOM, so the allowed SBOM formats don't apply.
 		cdx.format = formatCycloneDX
 
 		return cdx, nil
-	}
-
-	if cdxErr == nil {
+	case cdxErr == nil:
 		err = setFormat(&cdx, formatCycloneDX, pol)
 
 		return cdx, err
-	}
-
-	if errors.Is(cdxErr, types.ErrNotApplicable) {
+	case errors.Is(cdxErr, types.ErrNotApplicable):
 		return sbomData{}, cdxErr
 	}
 
@@ -569,6 +558,25 @@ func extractSBOMData(
 		"%w: not valid SPDX 3.0 (%w), SPDX 2.x (%w), or CycloneDX (%w)",
 		ErrInvalidSBOM, spdx3Err, spdxErr, cdxErr,
 	)
+}
+
+// checkUnambiguous fails when more than one format matched a document.
+func checkUnambiguous(matched map[string]bool) error {
+	var formats []string
+
+	for format, ok := range matched {
+		if ok {
+			formats = append(formats, format)
+		}
+	}
+
+	if len(formats) <= 1 {
+		return nil
+	}
+
+	slices.Sort(formats)
+
+	return fmt.Errorf("%w: %w: %s", ErrInvalidSBOM, errAmbiguousFormat, strings.Join(formats, ", "))
 }
 
 func setFormat(data *sbomData, format string, pol *policy.Policy) error {
@@ -1056,7 +1064,7 @@ func firstRawDenied(invalid []string, denyList []componentEntry) string {
 // a list entry. PyPI names are normalized like parsed ones (see
 // purl.NormalizeName), so "Foo_Bar" cannot evade a "foo-bar" entry.
 func normalizeRawPURL(raw string) string {
-	normalized := strings.ToLower(lenientUnescape(strings.TrimSpace(raw)))
+	normalized := strings.ToLower(purl.LenientUnescape(strings.TrimSpace(raw)))
 
 	rest, found := strings.CutPrefix(normalized, "pkg:")
 	if !found {
@@ -1200,30 +1208,6 @@ func versionMatches(entry, component string) bool {
 	}
 
 	return rest == "" || strings.ContainsRune(".-+", rune(rest[0]))
-}
-
-// lenientUnescape decodes every valid %XX escape and keeps the others.
-func lenientUnescape(value string) string {
-	const escapeLen = 3
-
-	var builder strings.Builder
-
-	for idx := 0; idx < len(value); idx++ {
-		if value[idx] == '%' && idx+escapeLen <= len(value) {
-			decoded, err := url.PathUnescape(value[idx : idx+escapeLen])
-			if err == nil {
-				builder.WriteString(decoded)
-
-				idx += escapeLen - 1
-
-				continue
-			}
-		}
-
-		builder.WriteByte(value[idx])
-	}
-
-	return builder.String()
 }
 
 // matchesRaw compares a normalized purl that cannot be parsed against the

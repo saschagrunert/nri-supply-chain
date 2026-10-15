@@ -216,14 +216,15 @@ func TestVerify(t *testing.T) {
 			wantErr:    nil,
 		},
 		{
-			name: "empty SLSA version",
+			// slsaVersion is optional in the VSA v1 specification.
+			name: "omitted SLSA version",
 			modify: func(s *vsa.Statement) {
 				s.Predicate.SLSAVersion = ""
 			},
 			pol:        trustedPolicy(),
-			wantPassed: false,
+			wantPassed: true,
 			wantReject: false,
-			wantStatus: types.StatusFail,
+			wantStatus: types.StatusPass,
 			wantErr:    nil,
 		},
 		{

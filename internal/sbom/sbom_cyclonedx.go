@@ -25,13 +25,8 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
-// severityUnknown is the CycloneDX severity of an unrated vulnerability.
+// severityUnknown is the CycloneDX severity of an unscored vulnerability.
 const severityUnknown = "unknown"
-
-// maxComponentDepth bounds recursion into nested CycloneDX components. A
-// document nesting components deeper is rejected rather than truncated, so
-// deeply nested components cannot escape the license and component lists.
-const maxComponentDepth = 32
 
 const (
 	// formatCycloneDXName is the bomFormat value of CycloneDX documents.
@@ -47,10 +42,6 @@ const (
 
 var (
 	errNotCycloneDX = errors.New("no components found, not a valid CycloneDX document")
-
-	errComponentsTooDeep = fmt.Errorf(
-		"components nested deeper than %d levels", maxComponentDepth,
-	)
 
 	// errNoSBOMContent marks a CycloneDX document without components and
 	// without a subject, such as a VEX-only document. It is not an SBOM, so
@@ -71,11 +62,6 @@ var cyclonedxExemptTypes = map[string]struct{}{ //nolint:gochecknoglobals // imm
 	"firmware":            {},
 	"platform":            {},
 	"cryptographic-asset": {},
-}
-
-type cyclonedxBOM struct {
-	Components      []cyclonedxComponent     `json:"components"`
-	Vulnerabilities []cyclonedxVulnerability `json:"vulnerabilities"`
 }
 
 type cyclonedxVulnerability struct {
@@ -150,22 +136,14 @@ type cyclonedxLicenseRef struct {
 	Name string `json:"name,omitempty"`
 }
 
-func parseCycloneDX(data []byte) (sbomData, error) {
-	raw, err := decodeRawSBOM(data)
-	if err != nil {
-		return sbomData{}, err
-	}
-
-	return cyclonedxFromRaw(raw)
-}
-
 // cyclonedxFromRaw extracts SBOM data from a CycloneDX BOM. A BOM declaring
 // bomFormat CycloneDX (or carrying a components array) without components is
 // an SBOM only when it names its subject (metadata.component), which is
 // normal for scratch and static images. Without components and subject, the
 // document carries no inventory (for example a VEX-only document) and
 // errNoSBOMContent is returned. The licenses of the document subject are
-// checked like component licenses.
+// checked like component licenses, and the components nested in the subject
+// (an assembly) are part of the inventory like top-level components.
 func cyclonedxFromRaw(raw *rawSBOM) (sbomData, error) {
 	if raw.Components == nil && !strings.EqualFold(raw.BOMFormat, formatCycloneDXName) {
 		return sbomData{}, errNotCycloneDX
@@ -177,6 +155,11 @@ func cyclonedxFromRaw(raw *rawSBOM) (sbomData, error) {
 
 	if hasSubject {
 		addCycloneDXLicenses(raw.Metadata.Component, &result)
+
+		err := walkCycloneDXComponents(raw.Metadata.Component.Components, 1, &result)
+		if err != nil {
+			return sbomData{}, err
+		}
 	}
 
 	err := walkCycloneDXComponents(raw.Components, 0, &result)
@@ -189,20 +172,19 @@ func cyclonedxFromRaw(raw *rawSBOM) (sbomData, error) {
 	}
 
 	result.componentCount = len(result.Packages)
-	result.vulns = unresolvedRatedVulnerabilities(raw.Vulnerabilities)
+	result.vulns = unresolvedFindings(raw.Vulnerabilities)
 
 	return result, nil
 }
 
-// vulnerabilityOnlyData returns the unresolved, rated vulnerabilities of a
+// vulnerabilityOnlyData returns the unresolved vulnerabilities of a
 // CycloneDX document without components and subject (a vulnerability
 // disclosure report or VEX document). Such a document is not an SBOM, but its
 // unresolved findings must still be evaluated against sbom.cvss, otherwise
 // moving them into a separate document would hide them. Without unresolved
-// rated findings there is nothing to evaluate and errNoSBOMContent is
-// returned.
+// findings there is nothing to evaluate and errNoSBOMContent is returned.
 func vulnerabilityOnlyData(vulns []cyclonedxVulnerability) (sbomData, error) {
-	unresolved := unresolvedRatedVulnerabilities(vulns)
+	unresolved := unresolvedFindings(vulns)
 	if len(unresolved) == 0 {
 		return sbomData{}, errNoSBOMContent
 	}
@@ -213,18 +195,18 @@ func vulnerabilityOnlyData(vulns []cyclonedxVulnerability) (sbomData, error) {
 	}, nil
 }
 
-// unresolvedRatedVulnerabilities returns the vulnerabilities that carry a
-// rating and whose analysis state does not resolve them. SBOMs and
-// vulnerability-only documents are evaluated against sbom.cvss alike.
-func unresolvedRatedVulnerabilities(vulns []cyclonedxVulnerability) []cyclonedxVulnerability {
-	var unresolved []cyclonedxVulnerability
+// unresolvedFindings rates the vulnerabilities whose analysis state does not
+// resolve them. SBOMs and vulnerability-only documents are evaluated against
+// sbom.cvss alike.
+func unresolvedFindings(vulns []cyclonedxVulnerability) []types.Finding {
+	var unresolved []types.Finding
 
 	for idx := range vulns {
-		if vulnerabilityResolved(&vulns[idx]) || !vulnerabilityRated(&vulns[idx]) {
+		if vulnerabilityResolved(&vulns[idx]) {
 			continue
 		}
 
-		unresolved = append(unresolved, vulns[idx])
+		unresolved = append(unresolved, rateVulnerability(&vulns[idx]))
 	}
 
 	return unresolved
@@ -251,41 +233,13 @@ func vulnerabilityResolved(vuln *cyclonedxVulnerability) bool {
 		strings.TrimSpace(vuln.Analysis.Detail) != ""
 }
 
-// vulnerabilityRated reports whether a vulnerability carries a rating. A
-// rating without score whose severity is empty, "unknown", or "none" (in any
-// case, including the aliases "info" and "informational") says nothing about
-// the impact; scanners such as Trivy and Grype emit
-// it for unscored findings, so it counts as no rating. Any other severity,
-// including an unrecognized one, makes the vulnerability rated, and an
-// unrecognized severity then fails the thresholds closed.
-func vulnerabilityRated(vuln *cyclonedxVulnerability) bool {
-	for idx := range vuln.Ratings {
-		if vuln.Ratings[idx].Score != nil || !unratedSeverity(vuln.Ratings[idx].Severity) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func unratedSeverity(severity string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(severity))
-	if normalized == "" || normalized == severityUnknown {
-		return true
-	}
-
-	rank, known := types.SeverityRankOf(normalized)
-
-	return known && rank == types.SeverityRankNone
-}
-
 // walkCycloneDXComponents flattens nested components into result. It fails
-// when components are nested deeper than maxComponentDepth.
+// when components are nested deeper than types.MaxComponentDepth.
 func walkCycloneDXComponents(
 	components []cyclonedxComponent, depth int, result *sbomData,
 ) error {
-	if len(components) > 0 && depth > maxComponentDepth {
-		return errComponentsTooDeep
+	if len(components) > 0 && depth > types.MaxComponentDepth {
+		return types.ErrComponentsTooDeep
 	}
 
 	for idx := range components {
@@ -346,6 +300,7 @@ func buildCycloneDXPackage(comp *cyclonedxComponent, result *sbomData) sbomPacka
 		PURL:      comp.PURL,
 		Licenses:  nil,
 		Checksums: nil,
+		exempt:    false,
 	}
 
 	for lidx := range comp.Licenses {
@@ -391,30 +346,19 @@ func cyclonedxLicenseValue(lic *cyclonedxLicense) (value string, expression bool
 	}
 }
 
-// vulnAggregate is the combined rating of a vulnerability. The rank is the
-// most severe of the textual severities and the severities derived from the
-// scores; score is nil when no rating carries a valid CVSS base score.
-type vulnAggregate struct {
-	score *float64
-	rank  int
-}
+func checkCVSSThresholds(
+	vulns []types.Finding, cvssPolicy *policy.SBOMCVSSPolicy,
+) *types.CheckResult {
+	meta := cvssMeta(vulns)
 
-// effectiveScore returns the score, or for vulnerabilities without a numeric
-// score the lowest score of their severity.
-func (a *vulnAggregate) effectiveScore() float64 {
-	if a.score != nil {
-		return *a.score
+	thresholds := types.SeverityThresholds{
+		Label:       "CVSS",
+		MaxScore:    cvssPolicy.MaxScore,
+		MinSeverity: cvssPolicy.MinSeverity,
+		IgnoreCVEs:  cvssPolicy.IgnoreCVEs,
 	}
 
-	return types.SeverityMinimumCVSS(a.rank)
-}
-
-func checkCVSSThresholds(
-	vulns []cyclonedxVulnerability, cvssPolicy *policy.SBOMCVSSPolicy,
-) *types.CheckResult {
-	cached, meta := computeVulnAggregates(vulns)
-
-	violation := findThresholdViolation(vulns, cached, cvssPolicy)
+	violation := thresholds.Violation(vulns)
 	if violation != "" {
 		result := check.Fail(violation)
 		result.Metadata = meta
@@ -428,11 +372,9 @@ func checkCVSSThresholds(
 	return result
 }
 
-// computeVulnAggregates computes statistics across ALL vulnerabilities,
-// including ignored CVEs, so they remain visible in CEL rules.
-func computeVulnAggregates(
-	vulns []cyclonedxVulnerability,
-) (cached []vulnAggregate, meta map[string]any) {
+// cvssMeta computes statistics across ALL vulnerabilities, including ignored
+// CVEs, so they remain visible in CEL rules.
+func cvssMeta(vulns []types.Finding) map[string]any {
 	var (
 		globalMaxScore float64
 		criticalCount  int64
@@ -440,14 +382,10 @@ func computeVulnAggregates(
 		mediumCount    int64
 	)
 
-	cached = make([]vulnAggregate, len(vulns))
-
 	for idx := range vulns {
-		cached[idx] = aggregateRatings(vulns[idx].Ratings)
+		globalMaxScore = max(globalMaxScore, vulns[idx].EffectiveScore())
 
-		globalMaxScore = max(globalMaxScore, cached[idx].effectiveScore())
-
-		switch cached[idx].rank {
+		switch vulns[idx].Rank {
 		case types.SeverityRankCritical:
 			criticalCount++
 		case types.SeverityRankHigh:
@@ -458,119 +396,38 @@ func computeVulnAggregates(
 		}
 	}
 
-	meta = map[string]any{
+	return map[string]any{
 		"cvssMax":           globalMaxScore,
 		"cvssCriticalCount": criticalCount,
 		"cvssHighCount":     highCount,
 		"cvssMediumCount":   mediumCount,
 	}
-
-	return cached, meta
 }
 
-// findThresholdViolation applies maxScore and minSeverity. A score without
-// severity is ranked by its CVSS range and a severity without score is
-// compared against maxScore with the lowest score of its range. When a
-// threshold is configured, a vulnerability whose severity cannot be
-// determined fails closed; it can be accepted explicitly through ignoreCVEs.
-func findThresholdViolation(
-	vulns []cyclonedxVulnerability,
-	cached []vulnAggregate,
-	cvssPolicy *policy.SBOMCVSSPolicy,
-) string {
-	if cvssPolicy.MaxScore == nil && cvssPolicy.MinSeverity == "" {
-		return ""
-	}
-
-	ignoredCVEs := make(map[string]bool, len(cvssPolicy.IgnoreCVEs))
-	for _, cve := range cvssPolicy.IgnoreCVEs {
-		ignoredCVEs[cve] = true
-	}
-
-	for idx := range vulns {
-		if ignoredCVEs[vulns[idx].ID] {
-			continue
-		}
-
-		violation := cached[idx].thresholdViolation(vulns[idx].ID, cvssPolicy)
-		if violation != "" {
-			return violation
-		}
-	}
-
-	return ""
-}
-
-// thresholdViolation evaluates one vulnerability against maxScore and
-// minSeverity. An unknown rank fails closed.
-func (a *vulnAggregate) thresholdViolation(
-	vulnID string,
-	cvssPolicy *policy.SBOMCVSSPolicy,
-) string {
-	if a.rank == types.SeverityRankUnknown {
-		return fmt.Sprintf(
-			"CVSS threshold cannot be evaluated: %s has no recognizable severity or score", vulnID,
-		)
-	}
-
-	exceeded := cvssPolicy.MaxScore != nil && a.effectiveScore() > *cvssPolicy.MaxScore
-
-	if cvssPolicy.MinSeverity != "" {
-		// Policy validation rejects unknown severities; one that slips
-		// through flags every vulnerability.
-		minRank, known := types.SeverityRankOf(cvssPolicy.MinSeverity)
-		if !known || a.rank >= minRank {
-			exceeded = true
-		}
-	}
-
-	if !exceeded {
-		return ""
-	}
-
-	return fmt.Sprintf(
-		"CVSS threshold exceeded: %s (score %.1f, severity %s)",
-		vulnID, a.effectiveScore(), types.SeverityName(a.rank),
-	)
-}
-
-// aggregateRatings combines the ratings of a vulnerability, keeping the
+// rateVulnerability combines the ratings of a vulnerability, keeping the
 // highest valid score and the most severe rank. Scores outside the CVSS range
 // and unrecognized severities (including "unknown") are ignored, so a
-// vulnerability rated only by them has an unknown rank.
-func aggregateRatings(ratings []cyclonedxRating) vulnAggregate {
-	agg := vulnAggregate{score: nil, rank: types.SeverityRankUnknown}
+// vulnerability rated only by them, or without ratings, has an unknown rank.
+func rateVulnerability(vuln *cyclonedxVulnerability) types.Finding {
+	finding := types.NewFinding(vuln.ID)
 
-	for idx := range ratings {
-		rating := &ratings[idx]
+	for idx := range vuln.Ratings {
+		rating := &vuln.Ratings[idx]
 
 		if rating.Score != nil {
-			if rank, valid := types.SeverityRankFromCVSS(*rating.Score); valid {
-				if agg.score == nil || *rating.Score > *agg.score {
-					agg.score = rating.Score
-				}
-
-				agg.rank = max(agg.rank, rank)
-			}
+			finding.AddScore(*rating.Score)
 		}
 
-		if rating.Severity == "" {
+		if rating.Severity == "" || finding.AddSeverity(rating.Severity) {
 			continue
 		}
 
-		rank, known := types.SeverityRankOf(rating.Severity)
-		if !known {
-			if !strings.EqualFold(rating.Severity, severityUnknown) {
-				slog.Warn("Unrecognized CVSS severity", "severity", rating.Severity)
-			}
-
-			continue
+		if !strings.EqualFold(strings.TrimSpace(rating.Severity), severityUnknown) {
+			slog.Warn("Unrecognized CVSS severity", "severity", rating.Severity)
 		}
-
-		agg.rank = max(agg.rank, rank)
 	}
 
-	return agg
+	return finding
 }
 
 func mergeCVSSMeta(dst, src map[string]any) { //nolint:cyclop // type assertions on known keys

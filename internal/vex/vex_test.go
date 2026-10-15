@@ -26,6 +26,7 @@ import (
 	cdx "github.com/CycloneDX/cyclonedx-go"
 	openvex "github.com/openvex/go-vex/pkg/vex"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/checker/checkertest"
 	"github.com/saschagrunert/nri-supply-chain/internal/intoto"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
@@ -38,6 +39,7 @@ const (
 	testDigest        = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
 	testVEXContext    = "https://openvex.dev/ns/v0.2.0"
 	testPredicateType = "https://openvex.dev/ns"
+	testCycloneDXType = "https://cyclonedx.org/bom"
 )
 
 func validVEXDoc(status openvex.Status) openvex.VEX {
@@ -243,11 +245,10 @@ func TestVerify(t *testing.T) {
 			// subject binding requirements when digest is provided.
 			att := testutil.WrapInToto(t, test.doc, testDigest, testPredicateType)
 
-			result, err := vex.Verify(
-				context.Background(), att,
+			result, err := vex.VerifyMultiple(
+				context.Background(), [][]byte{att},
 				test.pol, testImageRef, testDigest,
-				nil,
-			)
+				nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -270,74 +271,53 @@ func TestVerifyMalformedPayloads(t *testing.T) {
 	t.Run("empty payload", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := vex.Verify(
-			context.Background(), []byte{},
+		result, err := vex.VerifyMultiple(
+			context.Background(), [][]byte{{}},
 			&policy.Policy{}, testImageRef, testDigest,
-			nil,
-		)
-
-		if !errors.Is(err, vex.ErrInvalidVEX) {
-			t.Errorf("expected ErrInvalidVEX, got %v", err)
-		}
+			nil)
+		checkertest.AssertFailed(t, result, err, vex.ErrInvalidVEX)
 	})
 
 	t.Run("nil payload", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := vex.Verify(
-			context.Background(), nil,
+		result, err := vex.VerifyMultiple(
+			context.Background(), [][]byte{nil},
 			&policy.Policy{}, testImageRef, testDigest,
-			nil,
-		)
-
-		if !errors.Is(err, vex.ErrInvalidVEX) {
-			t.Errorf("expected ErrInvalidVEX, got %v", err)
-		}
+			nil)
+		checkertest.AssertFailed(t, result, err, vex.ErrInvalidVEX)
 	})
 
 	t.Run("truncated JSON", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := vex.Verify(
-			context.Background(), []byte(`{"subject":[`),
+		result, err := vex.VerifyMultiple(
+			context.Background(), [][]byte{[]byte(`{"subject":[`)},
 			&policy.Policy{}, testImageRef, testDigest,
-			nil,
-		)
-
-		if !errors.Is(err, vex.ErrInvalidVEX) {
-			t.Errorf("expected ErrInvalidVEX, got %v", err)
-		}
+			nil)
+		checkertest.AssertFailed(t, result, err, vex.ErrInvalidVEX)
 	})
 
 	t.Run("empty JSON object with digest triggers empty subjects", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := vex.Verify(
-			context.Background(), []byte("{}"),
+		result, err := vex.VerifyMultiple(
+			context.Background(), [][]byte{[]byte("{}")},
 			&policy.Policy{}, testImageRef, testDigest,
-			nil,
-		)
-
-		if !errors.Is(err, intoto.ErrEmptySubjects) {
-			t.Errorf("expected ErrEmptySubjects, got %v", err)
-		}
+			nil)
+		checkertest.AssertFailed(t, result, err, intoto.ErrEmptySubjects)
 	})
 
-	t.Run("empty JSON object without digest skips subject check", func(t *testing.T) {
+	t.Run("empty JSON object without digest is not applicable", func(t *testing.T) {
 		t.Parallel()
 
-		result, err := vex.Verify(
-			context.Background(), []byte("{}"),
+		// Without a digest the subject check is skipped, and the empty
+		// document makes no VEX statement.
+		_, err := vex.VerifyMultiple(
+			context.Background(), [][]byte{[]byte("{}")},
 			&policy.Policy{}, testImageRef, "",
-			nil,
-		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if !result.Passed {
-			t.Errorf("expected pass with empty doc and no digest, got: %s", result.Detail)
-		}
+			nil)
+		testutil.AssertErrorIs(t, err, types.ErrNotApplicable)
 	})
 
 	t.Run("predicate is not embedded uses full attestation", func(t *testing.T) {
@@ -346,11 +326,10 @@ func TestVerifyMalformedPayloads(t *testing.T) {
 		doc := validVEXDoc(openvex.StatusFixed)
 		att := testutil.MustMarshal(t, doc)
 
-		result, err := vex.Verify(
-			context.Background(), att,
+		result, err := vex.VerifyMultiple(
+			context.Background(), [][]byte{att},
 			&policy.Policy{}, testImageRef, "",
-			nil,
-		)
+			nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -370,15 +349,11 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 		doc := validVEXDoc(openvex.StatusNotAffected)
 		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-		_, err := vex.Verify(
-			context.Background(), att,
+		result, err := vex.VerifyMultiple(
+			context.Background(), [][]byte{att},
 			&policy.Policy{}, testImageRef, "nocolon",
-			nil,
-		)
-
-		if !errors.Is(err, intoto.ErrSubjectMismatch) {
-			t.Errorf("expected ErrSubjectMismatch for invalid digest format, got %v", err)
-		}
+			nil)
+		checkertest.AssertFailed(t, result, err, intoto.ErrSubjectMismatch)
 	})
 
 	t.Run("multiple subjects with one matching", func(t *testing.T) {
@@ -407,11 +382,10 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 
 		att := testutil.MustMarshal(t, wrapper)
 
-		result, err := vex.Verify(
-			context.Background(), att,
+		result, err := vex.VerifyMultiple(
+			context.Background(), [][]byte{att},
 			&policy.Policy{}, testImageRef, testDigest,
-			nil,
-		)
+			nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -445,15 +419,11 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 
 		att := testutil.MustMarshal(t, wrapper)
 
-		_, err := vex.Verify(
-			context.Background(), att,
+		result, err := vex.VerifyMultiple(
+			context.Background(), [][]byte{att},
 			&policy.Policy{}, testImageRef, testDigest,
-			nil,
-		)
-
-		if !errors.Is(err, intoto.ErrSubjectMismatch) {
-			t.Errorf("expected ErrSubjectMismatch, got %v", err)
-		}
+			nil)
+		checkertest.AssertFailed(t, result, err, intoto.ErrSubjectMismatch)
 	})
 }
 
@@ -506,11 +476,10 @@ func TestVerifyStatementEdgeCases(t *testing.T) {
 
 		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-		result, err := vex.Verify(
-			context.Background(), att,
+		result, err := vex.VerifyMultiple(
+			context.Background(), [][]byte{att},
 			&policy.Policy{}, testImageRef, testDigest,
-			nil,
-		)
+			nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -530,11 +499,10 @@ func TestVerifyStatementEdgeCases(t *testing.T) {
 		doc := multiStatusVEXDoc(openvex.StatusNotAffected, openvex.StatusAffected)
 		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-		result, err := vex.Verify(
-			context.Background(), att,
+		result, err := vex.VerifyMultiple(
+			context.Background(), [][]byte{att},
 			&policy.Policy{}, testImageRef, testDigest,
-			nil,
-		)
+			nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -550,11 +518,10 @@ func TestVerifyStatementEdgeCases(t *testing.T) {
 		doc := multiStatusVEXDoc(openvex.StatusUnderInvestigation, openvex.StatusAffected)
 		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-		result, err := vex.Verify(
-			context.Background(), att,
+		result, err := vex.VerifyMultiple(
+			context.Background(), [][]byte{att},
 			&policy.Policy{}, testImageRef, testDigest,
-			nil,
-		)
+			nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -574,14 +541,13 @@ func TestVerifyStatementEdgeCases(t *testing.T) {
 		doc := validVEXDoc(openvex.StatusUnderInvestigation)
 		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-		result, err := vex.Verify(
-			context.Background(), att,
+		result, err := vex.VerifyMultiple(
+			context.Background(), [][]byte{att},
 			&policy.Policy{
 				VEX: &policy.VEXPolicy{UnderInvestigationPolicy: "unknown_action"},
 			},
 			testImageRef, testDigest,
-			nil,
-		)
+			nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -601,11 +567,10 @@ func TestVerifyStatementEdgeCases(t *testing.T) {
 		doc := multiStatusVEXDoc(openvex.StatusAffected, openvex.StatusAffected)
 		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-		result, err := vex.Verify(
-			context.Background(), att,
+		result, err := vex.VerifyMultiple(
+			context.Background(), [][]byte{att},
 			&policy.Policy{}, testImageRef, testDigest,
-			nil,
-		)
+			nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -752,14 +717,11 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 func TestVerifyInvalidJSON(t *testing.T) {
 	t.Parallel()
 
-	_, err := vex.Verify(
-		context.Background(), []byte("not json"),
+	result, err := vex.VerifyMultiple(
+		context.Background(), [][]byte{[]byte("not json")},
 		&policy.Policy{}, testImageRef, testDigest,
-		nil,
-	)
-	if !errors.Is(err, vex.ErrInvalidVEX) {
-		t.Errorf("expected ErrInvalidVEX, got %v", err)
-	}
+		nil)
+	checkertest.AssertFailed(t, result, err, vex.ErrInvalidVEX)
 }
 
 func TestVerifyCheckType(t *testing.T) {
@@ -767,11 +729,10 @@ func TestVerifyCheckType(t *testing.T) {
 
 	doc := validVEXDoc(openvex.StatusAffected)
 
-	result, err := vex.Verify(
-		context.Background(), testutil.WrapInToto(t, doc, testDigest, testPredicateType),
+	result, err := vex.VerifyMultiple(
+		context.Background(), [][]byte{testutil.WrapInToto(t, doc, testDigest, testPredicateType)},
 		&policy.Policy{}, testImageRef, testDigest,
-		nil,
-	)
+		nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -805,11 +766,10 @@ func TestVerifyPURLSingleSegmentRepo(t *testing.T) {
 		},
 	}
 
-	result, err := vex.Verify(
-		context.Background(), testutil.WrapInToto(t, doc, digest, testPredicateType),
+	result, err := vex.VerifyMultiple(
+		context.Background(), [][]byte{testutil.WrapInToto(t, doc, digest, testPredicateType)},
 		&policy.Policy{}, imageRef, digest,
-		nil,
-	)
+		nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -964,20 +924,8 @@ func TestVerifyStatusMetadata(t *testing.T) {
 			wantPassed: true,
 		},
 		{
-			name:       "null predicate reports no_match",
-			att:        wrapRawPredicate(t, []byte("null")),
-			wantStatus: vex.StatusNoMatch,
-			wantPassed: true,
-		},
-		{
 			name:       "statements for another image report no_match",
 			att:        testutil.WrapInToto(t, otherImageDoc, testDigest, testPredicateType),
-			wantStatus: vex.StatusNoMatch,
-			wantPassed: true,
-		},
-		{
-			name:       "cyclonedx SBOM without vulnerabilities reports no_match",
-			att:        wrapCycloneDXInToto(t, cdx.NewBOM(), testDigest),
 			wantStatus: vex.StatusNoMatch,
 			wantPassed: true,
 		},
@@ -1006,17 +954,100 @@ func TestVerifyStatusMetadata(t *testing.T) {
 	}
 }
 
+func TestVerifyMultipleCycloneDXSBOMIsNotVEX(t *testing.T) {
+	t.Parallel()
+
+	sbomOnly := cdx.NewBOM()
+	sbomOnly.Components = &[]cdx.Component{
+		{Type: cdx.ComponentTypeLibrary, Name: "a", PackageURL: "pkg:npm/a@1"},
+	}
+	sbomOnly.Vulnerabilities = &[]cdx.Vulnerability{{ID: "CVE-2024-1"}}
+
+	sbomAtt := wrapCycloneDXInToto(t, sbomOnly, testDigest)
+
+	for _, attestations := range [][][]byte{
+		{wrapCycloneDXInToto(t, cdx.NewBOM(), testDigest)},
+		{sbomAtt, sbomAtt},
+	} {
+		_, err := vex.VerifyMultiple(
+			context.Background(), attestations, &policy.Policy{}, testImageRef, testDigest, nil,
+		)
+		testutil.AssertErrorIs(t, err, types.ErrNotApplicable)
+	}
+
+	// An OpenVEX document next to the SBOM is evaluated.
+	result, err := vex.VerifyMultiple(
+		context.Background(),
+		[][]byte{
+			sbomAtt,
+			testutil.WrapInToto(
+				t,
+				validVEXDoc(openvex.StatusNotAffected),
+				testDigest,
+				testPredicateType,
+			),
+		},
+		&policy.Policy{}, testImageRef, testDigest, nil,
+	)
+	testutil.AssertNoError(t, err)
+	testutil.AssertTrue(t, result.Passed)
+	testutil.AssertEqual[any](t, "not_affected", result.Metadata["status"])
+}
+
+// TestVerifyMultipleEmptyPredicatesNotApplicable covers empty predicates of
+// both VEX predicate types: they make no VEX statement, so they must not
+// satisfy the missing policy like a document without matches.
+func TestVerifyMultipleEmptyPredicatesNotApplicable(t *testing.T) {
+	t.Parallel()
+
+	wrapCycloneDXRaw := func(predicate string) []byte {
+		return testutil.MustMarshal(t, testutil.InTotoWrapper{
+			Type: testutil.InTotoStatementType,
+			Subject: []testutil.InTotoSubj{{
+				Name: testutil.TestSubjectName,
+				Digest: map[string]string{
+					testutil.TestDigestAlgo: testDigest[len(testutil.TestDigestAlgo)+1:],
+				},
+			}},
+			PredicateType: testCycloneDXType,
+			Predicate:     []byte(predicate),
+		})
+	}
+
+	for _, att := range [][]byte{
+		wrapRawPredicate(t, []byte("{ }")),
+		wrapCycloneDXRaw("{}"),
+	} {
+		_, err := vex.VerifyMultiple(
+			context.Background(), [][]byte{att, att},
+			&policy.Policy{}, testImageRef, testDigest, nil,
+		)
+		testutil.AssertErrorIs(t, err, types.ErrNotApplicable)
+	}
+
+	// Next to a VEX document, an empty document is skipped.
+	result, err := vex.VerifyMultiple(
+		context.Background(),
+		[][]byte{
+			wrapCycloneDXRaw("null"),
+			testutil.WrapInToto(
+				t, validVEXDoc(openvex.StatusAffected), testDigest, testPredicateType,
+			),
+		},
+		&policy.Policy{}, testImageRef, testDigest, nil,
+	)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqual(t, false, result.Passed)
+}
+
 func TestVerifyUnrecognizedPredicateFails(t *testing.T) {
 	t.Parallel()
 
 	att := wrapRawPredicate(t, []byte(`{"foo":"bar"}`))
 
-	_, err := vex.Verify(
-		context.Background(), att, &policy.Policy{}, testImageRef, testDigest, nil,
-	)
-	if !errors.Is(err, vex.ErrInvalidVEX) {
-		t.Errorf("expected ErrInvalidVEX for unrecognized predicate, got %v", err)
-	}
+	result, err := vex.VerifyMultiple(
+		context.Background(), [][]byte{att}, &policy.Policy{}, testImageRef, testDigest, nil)
+	checkertest.AssertFailed(t, result, err, vex.ErrInvalidVEX)
 }
 
 func TestVerifyMultipleMergesOpenVEXDocuments(t *testing.T) {
@@ -1123,16 +1154,13 @@ func TestVerifyInTotoWrapped(t *testing.T) {
 
 			att := testutil.WrapInToto(t, test.doc, testDigest, testPredicateType)
 
-			result, err := vex.Verify(
-				context.Background(), att,
+			result, err := vex.VerifyMultiple(
+				context.Background(), [][]byte{att},
 				&policy.Policy{}, testImageRef, test.digest,
-				nil,
-			)
+				nil)
 
 			if test.wantErr != nil {
-				if !errors.Is(err, test.wantErr) {
-					t.Fatalf("expected %v, got %v", test.wantErr, err)
-				}
+				checkertest.AssertFailed(t, result, err, test.wantErr)
 
 				return
 			}
@@ -1163,17 +1191,11 @@ func TestVerifyInTotoEmptySubjectWithDigest(t *testing.T) {
 
 	att := testutil.MustMarshal(t, wrapper)
 
-	_, err := vex.Verify(
-		context.Background(), att,
+	result, err := vex.VerifyMultiple(
+		context.Background(), [][]byte{att},
 		&policy.Policy{}, testImageRef, testDigest,
-		nil,
-	)
-	if !errors.Is(err, intoto.ErrEmptySubjects) {
-		t.Errorf(
-			"expected ErrEmptySubjects when digest is available but subjects are empty, got: %v",
-			err,
-		)
-	}
+		nil)
+	checkertest.AssertFailed(t, result, err, intoto.ErrEmptySubjects)
 }
 
 func TestVerifyInTotoEmptySubjectWithoutDigest(t *testing.T) {
@@ -1192,11 +1214,10 @@ func TestVerifyInTotoEmptySubjectWithoutDigest(t *testing.T) {
 	att := testutil.MustMarshal(t, wrapper)
 
 	// When no digest is available, empty subjects should be allowed (skip subject binding).
-	result, err := vex.Verify(
-		context.Background(), att,
+	result, err := vex.VerifyMultiple(
+		context.Background(), [][]byte{att},
 		&policy.Policy{}, testImageRef, "",
-		nil,
-	)
+		nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1225,14 +1246,11 @@ func TestVerifyInTotoNilSubjectWithDigest(t *testing.T) {
 	att := testutil.MustMarshal(t, wrapper)
 
 	// nil subject with a digest available should be rejected
-	_, err := vex.Verify(
-		context.Background(), att,
+	result, err := vex.VerifyMultiple(
+		context.Background(), [][]byte{att},
 		&policy.Policy{}, testImageRef, testDigest,
-		nil,
-	)
-	if !errors.Is(err, intoto.ErrEmptySubjects) {
-		t.Errorf("expected ErrEmptySubjects for nil subjects with digest, got: %v", err)
-	}
+		nil)
+	checkertest.AssertFailed(t, result, err, intoto.ErrEmptySubjects)
 }
 
 func TestVerifySubjectsWithoutDigestRejected(t *testing.T) {
@@ -1255,17 +1273,11 @@ func TestVerifySubjectsWithoutDigestRejected(t *testing.T) {
 
 	att := testutil.MustMarshal(t, wrapper)
 
-	_, err := vex.Verify(
-		context.Background(), att,
+	result, err := vex.VerifyMultiple(
+		context.Background(), [][]byte{att},
 		&policy.Policy{}, testImageRef, "",
-		nil,
-	)
-	if !errors.Is(err, intoto.ErrNoDigestBinding) {
-		t.Errorf(
-			"expected ErrNoDigestBinding when subjects present but no digest, got: %v",
-			err,
-		)
-	}
+		nil)
+	checkertest.AssertFailed(t, result, err, intoto.ErrNoDigestBinding)
 }
 
 func TestVerifyMultipleAllInvalid(t *testing.T) {
@@ -1350,7 +1362,7 @@ func wrapCycloneDXInToto(t *testing.T, bom *cdx.BOM, digest string) []byte {
 				},
 			},
 		},
-		PredicateType: "https://cyclonedx.org/bom",
+		PredicateType: testCycloneDXType,
 		Predicate:     predBytes,
 	}
 
@@ -1405,11 +1417,10 @@ func TestVerifyCycloneDXFormatDetection(t *testing.T) {
 			bom := cycloneDXBOM(test.state)
 			att := wrapCycloneDXInToto(t, bom, testDigest)
 
-			result, err := vex.Verify(
-				context.Background(), att,
+			result, err := vex.VerifyMultiple(
+				context.Background(), [][]byte{att},
 				&policy.Policy{}, testImageRef, testDigest,
-				nil,
-			)
+				nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -1432,10 +1443,9 @@ func TestVerifyCycloneDXFormatCaseInsensitive(t *testing.T) {
 	bom := cycloneDXBOM(cdx.IASNotAffected)
 	bom.BOMFormat = "cyclonedx"
 
-	result, err := vex.Verify(
-		context.Background(), wrapCycloneDXInToto(t, bom, testDigest),
-		&policy.Policy{}, testImageRef, testDigest, nil,
-	)
+	result, err := vex.VerifyMultiple(
+		context.Background(), [][]byte{wrapCycloneDXInToto(t, bom, testDigest)},
+		&policy.Policy{}, testImageRef, testDigest, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1445,10 +1455,10 @@ func TestVerifyCycloneDXFormatCaseInsensitive(t *testing.T) {
 	}
 }
 
-// TestVerifyCycloneDXScannerFindingsNoMatch covers a CycloneDX SBOM with
+// TestVerifyCycloneDXScannerFindingsNotApplicable covers a CycloneDX SBOM with
 // rated scanner findings and no analysis state. The findings are gated by the
 // sbom.cvss policy, so the VEX check must not deny the image for them.
-func TestVerifyCycloneDXScannerFindingsNoMatch(t *testing.T) {
+func TestVerifyCycloneDXScannerFindingsNotApplicable(t *testing.T) {
 	t.Parallel()
 
 	score := 3.5
@@ -1463,20 +1473,11 @@ func TestVerifyCycloneDXScannerFindingsNoMatch(t *testing.T) {
 
 	att := wrapCycloneDXInToto(t, bom, testDigest)
 
-	result, err := vex.Verify(
-		context.Background(), att, &policy.Policy{}, testImageRef, testDigest, nil,
-	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !result.Passed {
-		t.Errorf("expected scanner findings not to fail the VEX check, got %s", result.Detail)
-	}
-
-	if got := result.Metadata["status"]; got != vex.StatusNoMatch {
-		t.Errorf("expected status %q, got %v", vex.StatusNoMatch, got)
-	}
+	// The document carries no analysis state, so it is no VEX document and
+	// the VEX missing policy applies instead.
+	_, err := vex.VerifyMultiple(
+		context.Background(), [][]byte{att}, &policy.Policy{}, testImageRef, testDigest, nil)
+	testutil.AssertErrorIs(t, err, types.ErrNotApplicable)
 }
 
 func TestVerifyCycloneDXInTriageWithDenyPolicy(t *testing.T) {
@@ -1485,14 +1486,13 @@ func TestVerifyCycloneDXInTriageWithDenyPolicy(t *testing.T) {
 	bom := cycloneDXBOM(cdx.IASInTriage)
 	att := wrapCycloneDXInToto(t, bom, testDigest)
 
-	result, err := vex.Verify(
-		context.Background(), att,
+	result, err := vex.VerifyMultiple(
+		context.Background(), [][]byte{att},
 		&policy.Policy{
 			VEX: &policy.VEXPolicy{UnderInvestigationPolicy: types.ActionDeny},
 		},
 		testImageRef, testDigest,
-		nil,
-	)
+		nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1512,18 +1512,11 @@ func TestVerifyCycloneDXEmptyVulnerabilities(t *testing.T) {
 	bom := cdx.NewBOM()
 	att := wrapCycloneDXInToto(t, bom, testDigest)
 
-	result, err := vex.Verify(
-		context.Background(), att,
+	_, err := vex.VerifyMultiple(
+		context.Background(), [][]byte{att},
 		&policy.Policy{}, testImageRef, testDigest,
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !result.Passed {
-		t.Errorf("expected pass for CycloneDX BOM without vulnerabilities, got: %s", result.Detail)
-	}
+		nil)
+	testutil.AssertErrorIs(t, err, types.ErrNotApplicable)
 }
 
 func TestVerifyCycloneDXCheckType(t *testing.T) {
@@ -1532,11 +1525,10 @@ func TestVerifyCycloneDXCheckType(t *testing.T) {
 	bom := cycloneDXBOM(cdx.IASExploitable)
 	att := wrapCycloneDXInToto(t, bom, testDigest)
 
-	result, err := vex.Verify(
-		context.Background(), att,
+	result, err := vex.VerifyMultiple(
+		context.Background(), [][]byte{att},
 		&policy.Policy{}, testImageRef, testDigest,
-		nil,
-	)
+		nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1602,7 +1594,7 @@ func TestVerifyCancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := vex.Verify(ctx, nil, nil, "", "", nil)
+	_, err := vex.VerifyMultiple(ctx, [][]byte{nil}, nil, "", "", nil)
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
 	}

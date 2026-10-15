@@ -43,8 +43,10 @@ import (
 const (
 	testDefaultJSON     = "default.json"
 	testTitleAnnotation = "org.opencontainers.image.title"
-	testWarnPolicyJSON  = `{"slsa":{"missingPolicy":"warn"}}`
-	testDenyPolicyJSON  = `{"slsa":{"missingPolicy":"deny"}}`
+
+	testGenericJSONMediaType = "application/json"
+	testWarnPolicyJSON       = `{"slsa":{"missingPolicy":"warn"}}`
+	testDenyPolicyJSON       = `{"slsa":{"missingPolicy":"deny"}}`
 )
 
 func TestFetchFromOCIWithMockRegistry(t *testing.T) {
@@ -616,7 +618,7 @@ func TestFetchFromOCIRejectsInvalidLayers(t *testing.T) {
 				valid,
 				{
 					title:     "prod.json",
-					mediaType: "application/json",
+					mediaType: testGenericJSONMediaType,
 					content:   `{"slsa": {"bogus": true}}`,
 				},
 			},
@@ -629,6 +631,18 @@ func TestFetchFromOCIRejectsInvalidLayers(t *testing.T) {
 				{
 					title:     "Prod.json",
 					mediaType: policy.PolicyMediaType,
+					content:   testWarnPolicyJSON,
+				},
+			},
+			wantErr: policy.ErrInvalidPolicyFilename,
+		},
+		{
+			name: "upper-case extension on a generic layer",
+			layers: []testLayer{
+				valid,
+				{
+					title:     "prod.JSON",
+					mediaType: testGenericJSONMediaType,
 					content:   testWarnPolicyJSON,
 				},
 			},
@@ -674,7 +688,7 @@ func TestFetchFromOCISkipsUntitledGenericLayers(t *testing.T) {
 	img := buildLayeredImage(t, []testLayer{
 		{title: testDefaultJSON, mediaType: policy.PolicyMediaType, content: testWarnPolicyJSON},
 		{title: "", mediaType: "application/vnd.oci.image.layer.v1.tar", content: "not json"},
-		{title: "README.md", mediaType: "application/json", content: "# docs"},
+		{title: "README.md", mediaType: testGenericJSONMediaType, content: "# docs"},
 	}, "")
 
 	result, err := fetcherForImage(staticImage(img)).FetchFromOCI(t.Context(), testOCIRef)

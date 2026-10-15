@@ -66,6 +66,12 @@ func BenchmarkVerify(b *testing.B) {
 	b.ResetTimer()
 
 	for range b.N {
-		_, _ = sbom.Verify(context.Background(), att, pol, testDigest)
+		_, _ = sbom.VerifyMultipleWithBaseline(
+			context.Background(),
+			[][]byte{att},
+			nil,
+			pol,
+			testDigest,
+		)
 	}
 }

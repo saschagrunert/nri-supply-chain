@@ -15,9 +15,11 @@
 package config
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
@@ -176,7 +178,7 @@ func (c *Config) validateFetchAndCache() error {
 		"fetch_failure_policy", c.FetchFailurePolicy,
 	)
 	if err != nil {
-		errs = append(errs, fmt.Errorf("validating config: %w", err))
+		errs = append(errs, err)
 	}
 
 	if c.Verification == ModeEnforce && c.FetchFailurePolicy == types.ActionAllow {
@@ -341,6 +343,17 @@ func validateRanges[T int | int64 | float64 | time.Duration](ranges ...numericRa
 	for idx := range ranges {
 		bounds := &ranges[idx]
 
+		// NaN compares false against both bounds, so it is rejected
+		// explicitly.
+		if isNaN(bounds.value) {
+			errs = append(
+				errs,
+				fmt.Errorf("%w: got %v", cmp.Or(bounds.errBelow, bounds.errAbove), bounds.value),
+			)
+
+			continue
+		}
+
 		if bounds.errBelow != nil && bounds.value < bounds.minimum {
 			if bounds.showMinimum {
 				errs = append(errs, fmt.Errorf(
@@ -359,6 +372,12 @@ func validateRanges[T int | int64 | float64 | time.Duration](ranges ...numericRa
 	}
 
 	return errs
+}
+
+func isNaN[T int | int64 | float64 | time.Duration](value T) bool {
+	float, ok := any(value).(float64)
+
+	return ok && math.IsNaN(float)
 }
 
 func (c *Config) validateAllowlistDigests() []error {

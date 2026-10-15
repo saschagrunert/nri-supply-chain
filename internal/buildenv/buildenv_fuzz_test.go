@@ -72,6 +72,6 @@ func FuzzVerify(f *testing.F) {
 		`}`))
 
 	f.Fuzz(func(_ *testing.T, data []byte) {
-		buildenv.Verify(context.Background(), data, &policy.Policy{}, testDigest)
+		buildenv.VerifyMultiple(context.Background(), [][]byte{data}, &policy.Policy{}, testDigest)
 	})
 }

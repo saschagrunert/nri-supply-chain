@@ -16,6 +16,8 @@ package sbom //nolint:testpackage // needs access to unexported drift types
 
 import (
 	"encoding/json"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
@@ -51,6 +53,7 @@ func testPkg(purl, name, version string) sbomPackage {
 		Version:   version,
 		Licenses:  nil,
 		Checksums: nil,
+		exempt:    false,
 	}
 }
 
@@ -64,6 +67,7 @@ func testPkgWithLicenses(
 		Version:   version,
 		Licenses:  licenses,
 		Checksums: checksums,
+		exempt:    false,
 	}
 }
 
@@ -92,6 +96,38 @@ func zeroDrift() driftResult {
 		ModifiedCount: 0,
 		Score:         0,
 	}
+}
+
+func TestComputeDriftPackagesWithoutPURL(t *testing.T) {
+	t.Parallel()
+
+	baseline := []sbomPackage{testPkg("", "app.jar", "1.0"), testPkg("", "config", "")}
+
+	result := computeDrift(
+		baseline,
+		[]sbomPackage{testPkg("", "app.jar", "2.0"), testPkg("", "config", "")},
+	)
+	testutil.AssertEqual(t, 0, result.AddedCount)
+	testutil.AssertEqual(t, 0, result.RemovedCount)
+	testutil.AssertEqual(t, 1, result.ModifiedCount)
+
+	result = computeDrift(baseline, append(slices.Clone(baseline), testPkg("", "payload", "1")))
+	testutil.AssertEqual(t, 1, result.AddedCount)
+	added, _ := result.ToMetadata()["addedPackages"].([]string)
+	testutil.AssertEqual(t, "name:payload@1", strings.Join(added, ","))
+
+	// Exempt components without purl (the document subject, files,
+	// operating systems) are left out, so a subject versioned by the image
+	// digest does not count as modified in every build.
+	subject := testPkg("", "ghcr.io/org/app", "sha256:1")
+	subject.exempt = true
+	rebuilt := subject
+	rebuilt.Version = "sha256:2"
+
+	result = computeDrift(
+		append(slices.Clone(baseline), subject), append(slices.Clone(baseline), rebuilt),
+	)
+	testutil.AssertEqual(t, 0, result.AddedCount+result.RemovedCount+result.ModifiedCount)
 }
 
 func TestComputeDrift(t *testing.T) {
@@ -212,8 +248,17 @@ func TestComputeDrift(t *testing.T) {
 			wantScorePositive: false,
 		},
 		{
-			name:              "packages without PURLs are ignored",
+			name:              "packages without PURLs are tracked by name",
 			current:           []sbomPackage{testPkg("", "no-purl", testVer10)},
+			useNilBaseline:    false,
+			wantAdded:         1,
+			wantRemoved:       3,
+			wantModified:      0,
+			wantScorePositive: true,
+		},
+		{
+			name:              "packages without PURL and name are ignored",
+			current:           []sbomPackage{testPkg("", "", testVer10)},
 			useNilBaseline:    false,
 			wantAdded:         0,
 			wantRemoved:       3,

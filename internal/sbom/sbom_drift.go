@@ -25,10 +25,14 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
-// unparsedIdentityPrefix keys packages whose purl cannot be parsed. Identity
-// keys never contain a colon before their first slash, so the keys of parsed
-// and unparsed purls cannot collide.
-const unparsedIdentityPrefix = "unparsed:"
+// unparsedIdentityPrefix keys packages whose purl cannot be parsed, and
+// namedIdentityPrefix packages without purl. Identity keys of parsed purls
+// never contain a colon before their first slash, so the keys of parsed,
+// unparsed and missing purls cannot collide.
+const (
+	unparsedIdentityPrefix = "unparsed:"
+	namedIdentityPrefix    = "name:"
+)
 
 const (
 	driftWeightAdded    = 3
@@ -65,9 +69,9 @@ func computeDrift(baseline, current []sbomPackage) driftResult {
 		}
 	}
 
-	slices.SortFunc(result.Added, cmpByPURL)
-	slices.SortFunc(result.Removed, cmpByPURL)
-	slices.SortFunc(result.Modified, cmpByPURL)
+	slices.SortFunc(result.Added, cmpByKey)
+	slices.SortFunc(result.Removed, cmpByKey)
+	slices.SortFunc(result.Modified, cmpByKey)
 
 	result.AddedCount = len(result.Added)
 	result.RemovedCount = len(result.Removed)
@@ -86,23 +90,23 @@ func computeDrift(baseline, current []sbomPackage) driftResult {
 }
 
 // diffIdentity compares the baseline and current packages sharing one
-// versionless identity. Packages with the same purl are compared directly;
-// the remaining ones are paired in purl order as modified (for example a
+// versionless identity. Packages with the same key are compared directly;
+// the remaining ones are paired in key order as modified (for example a
 // version bump), and any surplus counts as added or removed.
 func diffIdentity(baseline, current []sbomPackage) (added, removed, modified []sbomPackage) {
 	var unmatchedBase, unmatchedCur []sbomPackage
 
-	baseByPURL := make(map[string]*sbomPackage, len(baseline))
+	baseByKey := make(map[string]*sbomPackage, len(baseline))
 	for idx := range baseline {
-		baseByPURL[baseline[idx].PURL] = &baseline[idx]
+		baseByKey[baseline[idx].driftKey()] = &baseline[idx]
 	}
 
-	curByPURL := make(map[string]struct{}, len(current))
+	curByKey := make(map[string]struct{}, len(current))
 
 	for idx := range current {
-		curByPURL[current[idx].PURL] = struct{}{}
+		curByKey[current[idx].driftKey()] = struct{}{}
 
-		base, found := baseByPURL[current[idx].PURL]
+		base, found := baseByKey[current[idx].driftKey()]
 		if !found {
 			unmatchedCur = append(unmatchedCur, current[idx])
 
@@ -115,7 +119,7 @@ func diffIdentity(baseline, current []sbomPackage) (added, removed, modified []s
 	}
 
 	for idx := range baseline {
-		if _, found := curByPURL[baseline[idx].PURL]; !found {
+		if _, found := curByKey[baseline[idx].driftKey()]; !found {
 			unmatchedBase = append(unmatchedBase, baseline[idx])
 		}
 	}
@@ -128,52 +132,80 @@ func diffIdentity(baseline, current []sbomPackage) (added, removed, modified []s
 	return added, removed, modified
 }
 
-// indexByIdentity groups packages by their versionless purl identity
-// (purl.PURL.Key), so a version change is detected as a modification rather
-// than an addition and a removal. Packages with an unparsable purl are keyed
-// by the purl itself. Duplicate purls are counted once. The second return
-// value is the number of distinct purls.
+// indexByIdentity groups packages by their versionless identity: the
+// versionless purl (purl.PURL.Key), so a version change is detected as a
+// modification rather than an addition and a removal. Packages with an
+// unparsable purl are keyed by the purl itself, and packages without purl by
+// their name, except exempt components (the document subject and components
+// that are not packages). Duplicate keys are counted once. The second return
+// value is the number of distinct keys.
 func indexByIdentity(pkgs []sbomPackage) (index map[string][]sbomPackage, count int) {
-	byPURL := make(map[string]sbomPackage, len(pkgs))
+	byKey := make(map[string]sbomPackage, len(pkgs))
 
 	skipped := 0
 
 	for idx := range pkgs {
-		if pkgs[idx].PURL != "" {
-			byPURL[pkgs[idx].PURL] = pkgs[idx]
-		} else {
-			skipped++
+		if pkgs[idx].PURL == "" && pkgs[idx].exempt {
+			// Subjects and non-package components without purl were never
+			// tracked: the subject of an image SBOM changes with every build.
+			continue
 		}
+
+		if pkgs[idx].PURL == "" && pkgs[idx].Name == "" {
+			skipped++
+
+			continue
+		}
+
+		byKey[pkgs[idx].driftKey()] = pkgs[idx]
 	}
 
 	if skipped > 0 {
-		slog.Warn("Packages without PURL excluded from drift tracking",
+		slog.Warn("Packages without PURL and name excluded from drift tracking",
 			"skipped", skipped, "total", len(pkgs))
 	}
 
-	index = make(map[string][]sbomPackage, len(byPURL))
+	index = make(map[string][]sbomPackage, len(byKey))
 
-	for purlValue, pkg := range byPURL {
-		identity := unparsedIdentityPrefix + purlValue
-
-		parsed, err := purl.Parse(purlValue)
-		if err == nil {
-			identity = parsed.Key()
-		}
-
+	for _, pkg := range byKey {
+		identity := pkg.driftIdentity()
 		index[identity] = append(index[identity], pkg)
 	}
 
 	for identity := range index {
-		slices.SortFunc(index[identity], cmpByPURL)
+		slices.SortFunc(index[identity], cmpByKey)
 	}
 
-	return index, len(byPURL)
+	return index, len(byKey)
+}
+
+// driftKey identifies a package version: its purl, or for a package without
+// purl its name and version.
+func (p *sbomPackage) driftKey() string {
+	if p.PURL != "" {
+		return p.PURL
+	}
+
+	return namedIdentityPrefix + p.Name + "@" + p.Version
+}
+
+// driftIdentity identifies a package independently of its version.
+func (p *sbomPackage) driftIdentity() string {
+	if p.PURL == "" {
+		return namedIdentityPrefix + p.Name
+	}
+
+	parsed, err := purl.Parse(p.PURL)
+	if err != nil {
+		return unparsedIdentityPrefix + p.PURL
+	}
+
+	return parsed.Key()
 }
 
 //nolint:gocritic // required by slices.SortFunc signature
-func cmpByPURL(left, right sbomPackage) int {
-	return strings.Compare(left.PURL, right.PURL)
+func cmpByKey(left, right sbomPackage) int {
+	return strings.Compare(left.driftKey(), right.driftKey())
 }
 
 func packageModified(base, cur *sbomPackage) bool {
@@ -227,18 +259,13 @@ func checksumsEqual(baseline, current map[string]string) bool {
 	return true
 }
 
-// checksumAlgorithmReplacer drops the separators of checksum algorithm names.
-//
-//nolint:gochecknoglobals // immutable replacer
-var checksumAlgorithmReplacer = strings.NewReplacer("-", "", "_", "")
-
 // normalizeChecksums keys checksums by their lowercase algorithm name without
 // separators.
 func normalizeChecksums(checksums map[string]string) map[string]string {
 	normalized := make(map[string]string, len(checksums))
 
 	for algo, value := range checksums {
-		normalized[strings.ToLower(checksumAlgorithmReplacer.Replace(algo))] = value
+		normalized[types.NormalizeAlgorithm(algo)] = value
 	}
 
 	return normalized
@@ -263,9 +290,10 @@ func licenseSet(licenses []string) []string {
 }
 
 func (d *driftResult) ToMetadata() map[string]any {
+	// Packages without purl are listed by their name and version.
 	addedPURLs := make([]string, 0, d.AddedCount)
 	for idx := range d.Added {
-		addedPURLs = append(addedPURLs, d.Added[idx].PURL)
+		addedPURLs = append(addedPURLs, d.Added[idx].driftKey())
 	}
 
 	return map[string]any{

@@ -17,10 +17,10 @@ package scorecard_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"strings"
 	"testing"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/checker/checkertest"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/scorecard"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
@@ -186,7 +186,12 @@ func TestVerify(t *testing.T) {
 			t.Parallel()
 
 			att := wrapInToto(t, test.doc, testDigest)
-			result, err := scorecard.Verify(context.Background(), att, test.pol, testDigest)
+			result, err := scorecard.VerifyMultiple(
+				context.Background(),
+				[][]byte{att},
+				test.pol,
+				testDigest,
+			)
 			testutil.AssertNoError(t, err)
 
 			testutil.AssertEqual(t, test.wantPassed, result.Passed)
@@ -201,8 +206,11 @@ func TestVerify(t *testing.T) {
 func TestVerifyMetadata(t *testing.T) {
 	t.Parallel()
 
-	result, err := scorecard.Verify(
-		context.Background(), wrapInToto(t, validDoc(), testDigest), &policy.Policy{}, testDigest,
+	result, err := scorecard.VerifyMultiple(
+		context.Background(),
+		[][]byte{wrapInToto(t, validDoc(), testDigest)},
+		&policy.Policy{},
+		testDigest,
 	)
 	testutil.AssertNoError(t, err)
 
@@ -226,8 +234,11 @@ func TestVerifyInconclusiveCheck(t *testing.T) {
 	doc := validDoc()
 	doc.Checks[0].Score = -1
 
-	result, err := scorecard.Verify(
-		context.Background(), wrapInToto(t, doc, testDigest), &policy.Policy{}, testDigest,
+	result, err := scorecard.VerifyMultiple(
+		context.Background(),
+		[][]byte{wrapInToto(t, doc, testDigest)},
+		&policy.Policy{},
+		testDigest,
 	)
 	testutil.AssertNoError(t, err)
 
@@ -247,8 +258,11 @@ func TestVerifyDuplicateCheckUsesLowestScore(t *testing.T) {
 		Name: testCodeReview, Score: 3, Reason: "", Details: nil,
 	})
 
-	result, err := scorecard.Verify(
-		context.Background(), wrapInToto(t, doc, testDigest), &policy.Policy{}, testDigest,
+	result, err := scorecard.VerifyMultiple(
+		context.Background(),
+		[][]byte{wrapInToto(t, doc, testDigest)},
+		&policy.Policy{},
+		testDigest,
 	)
 	testutil.AssertNoError(t, err)
 
@@ -336,12 +350,9 @@ func TestVerifyInvalid(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := scorecard.Verify(
-				context.Background(), test.att(t), &policy.Policy{}, testDigest,
-			)
-			if !errors.Is(err, scorecard.ErrInvalidScorecard) {
-				t.Errorf("error = %v, want ErrInvalidScorecard", err)
-			}
+			result, err := scorecard.VerifyMultiple(
+				context.Background(), [][]byte{test.att(t)}, &policy.Policy{}, testDigest)
+			checkertest.AssertFailed(t, result, err, scorecard.ErrInvalidScorecard)
 		})
 	}
 }
@@ -525,12 +536,11 @@ func TestVerifyTrustedRepository(t *testing.T) {
 			doc := validDoc()
 			doc.Repo.Commit = tc.commit
 
-			result, err := scorecard.Verify(
+			result, err := scorecard.VerifyMultiple(
 				context.Background(),
-				wrapInToto(t, doc, testDigest),
+				[][]byte{wrapInToto(t, doc, testDigest)},
 				pol,
-				testDigest,
-			)
+				testDigest)
 			testutil.AssertNoError(t, err)
 			testutil.AssertEqual(t, tc.wantPassed, result.Passed)
 
@@ -563,16 +573,13 @@ func TestVerifyDate(t *testing.T) {
 			doc := validDoc()
 			doc.Date = tc.date
 
-			result, err := scorecard.Verify(
+			result, err := scorecard.VerifyMultiple(
 				context.Background(),
-				wrapInToto(t, doc, testDigest),
+				[][]byte{wrapInToto(t, doc, testDigest)},
 				&policy.Policy{},
-				testDigest,
-			)
+				testDigest)
 			if tc.wantErr {
-				if !errors.Is(err, scorecard.ErrInvalidScorecard) {
-					t.Fatalf("expected ErrInvalidScorecard, got %v", err)
-				}
+				checkertest.AssertFailed(t, result, err, scorecard.ErrInvalidScorecard)
 
 				return
 			}

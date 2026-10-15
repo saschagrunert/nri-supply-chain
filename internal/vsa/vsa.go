@@ -333,9 +333,12 @@ func parseDigestRef(ref string, parsed name.Reference) (name.Digest, error) {
 	return digest, nil
 }
 
+// verifySLSAVersion checks the optional slsaVersion of a VSA. The VSA v1
+// specification marks the field optional, and the v1 predicate type already
+// implies SLSA v1 level semantics, so an omitted version is accepted.
 func verifySLSAVersion(ver string) error {
 	if ver == "" {
-		return fmt.Errorf("%w: empty version", ErrSLSAVersionTooOld)
+		return nil
 	}
 
 	if compareVersions(ver, minSLSAVersion) < 0 {

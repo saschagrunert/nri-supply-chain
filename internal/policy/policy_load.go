@@ -321,9 +321,10 @@ func checkPolicyFile(resolvedDir, fullPath string) error {
 // is at least as strict as the global mode). Keyless verifiers and Notation
 // trust store references of inheriting policies are validated here, on the
 // merged policy, because they may rely on the default policy's trust.issuers
-// and trust stores. Required and forbidden SCAI attributes
-// and build environment properties are checked here too, because the
-// default policy may require what the namespace forbids.
+// and trust stores. Required and forbidden SCAI attributes, build
+// environment properties and verifier keys shared with builders are checked
+// here too, because the default policy may require what the namespace
+// forbids or trust a builder key the namespace uses for a verifier.
 func applyInheritance(policies map[string]*Policy) error {
 	defaultPol := policies[""]
 
@@ -347,6 +348,8 @@ func applyInheritance(policies map[string]*Policy) error {
 		}
 
 		if inherits {
+			pol.warnTrust()
+
 			err := errors.Join(
 				pol.validateKeylessVerifiers(),
 				pol.validateNotationStoreRefs(),

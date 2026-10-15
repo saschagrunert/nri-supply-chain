@@ -19,6 +19,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/slsa"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 )
@@ -111,8 +112,15 @@ func TestVerifySourcePatternMatching(t *testing.T) {
 
 			stmt := rawStatement(tc.buildType, tc.params, nil)
 
-			result, err := slsa.Verify(context.Background(),
-				testutil.MustMarshal(t, stmt), gcbPolicy(tc.pattern), testDigest)
+			result, err := slsa.VerifyMultipleWithOptions(
+				context.Background(),
+				[]attestation.VerifiedAttestation{
+					{Payload: testutil.MustMarshal(t, stmt)},
+				},
+				gcbPolicy(tc.pattern),
+				testDigest,
+				nil,
+			)
 			testutil.AssertNoError(t, err)
 			testutil.AssertEqual(t, tc.wantPass, result.Passed)
 		})
@@ -184,8 +192,15 @@ func TestVerifyGCBConfigAndSourceRepositories(t *testing.T) {
 				testKeySourceToBuild: tc.built,
 			}, tc.deps)
 
-			result, err := slsa.Verify(context.Background(),
-				testutil.MustMarshal(t, stmt), sourcePolicy(), testDigest)
+			result, err := slsa.VerifyMultipleWithOptions(
+				context.Background(),
+				[]attestation.VerifiedAttestation{
+					{Payload: testutil.MustMarshal(t, stmt)},
+				},
+				sourcePolicy(),
+				testDigest,
+				nil,
+			)
 			testutil.AssertNoError(t, err)
 			testutil.AssertEqual(t, tc.wantPass, result.Passed)
 		})
@@ -244,8 +259,15 @@ func TestVerifyCommitDigestMatchesRefLength(t *testing.T) {
 				testKeyDigest: tc.digest,
 			}})
 
-			result, err := slsa.Verify(context.Background(),
-				testutil.MustMarshal(t, stmt), sourcePolicy(), testDigest)
+			result, err := slsa.VerifyMultipleWithOptions(
+				context.Background(),
+				[]attestation.VerifiedAttestation{
+					{Payload: testutil.MustMarshal(t, stmt)},
+				},
+				sourcePolicy(),
+				testDigest,
+				nil,
+			)
 			testutil.AssertNoError(t, err)
 			testutil.AssertEqual(t, tc.wantPass, result.Passed)
 		})
@@ -306,8 +328,15 @@ func TestVerifySourceDigestMatchesCommitAliases(t *testing.T) {
 				testKeyDigest: map[string]string{tc.depKey: tc.depValue},
 			}})
 
-			result, err := slsa.Verify(context.Background(),
-				testutil.MustMarshal(t, stmt), sourcePolicy(), testDigest)
+			result, err := slsa.VerifyMultipleWithOptions(
+				context.Background(),
+				[]attestation.VerifiedAttestation{
+					{Payload: testutil.MustMarshal(t, stmt)},
+				},
+				sourcePolicy(),
+				testDigest,
+				nil,
+			)
 			testutil.AssertNoError(t, err)
 			testutil.AssertEqual(t, tc.wantPass, result.Passed)
 		})
@@ -366,8 +395,15 @@ func TestVerifySourceDigestCommitAliasesOnlyForGit(t *testing.T) {
 			pol := sourcePolicy()
 			pol.Trust.Sources = []string{tc.pattern}
 
-			result, err := slsa.Verify(context.Background(),
-				testutil.MustMarshal(t, stmt), pol, testDigest)
+			result, err := slsa.VerifyMultipleWithOptions(
+				context.Background(),
+				[]attestation.VerifiedAttestation{
+					{Payload: testutil.MustMarshal(t, stmt)},
+				},
+				pol,
+				testDigest,
+				nil,
+			)
 			testutil.AssertNoError(t, err)
 			testutil.AssertEqual(t, tc.wantPass, result.Passed)
 
@@ -412,8 +448,15 @@ func TestVerifyGitCommitSourceDigestOnSelfHostedServer(t *testing.T) {
 			pol := sourcePolicy()
 			pol.Trust.Sources = []string{repository}
 
-			result, err := slsa.Verify(context.Background(),
-				testutil.MustMarshal(t, stmt), pol, testDigest)
+			result, err := slsa.VerifyMultipleWithOptions(
+				context.Background(),
+				[]attestation.VerifiedAttestation{
+					{Payload: testutil.MustMarshal(t, stmt)},
+				},
+				pol,
+				testDigest,
+				nil,
+			)
 			testutil.AssertNoError(t, err)
 			testutil.AssertEqual(t, tc.wantPass, result.Passed)
 

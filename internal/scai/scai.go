@@ -54,10 +54,37 @@ type attributeReport struct {
 	Producer   *resourceDescriptor `json:"producer,omitempty"`
 }
 
-// attribute represents a single SCAI attribute with optional evidence.
+// attribute represents a single SCAI attribute assertion with optional
+// target and evidence. Its conditions describe how the attribute arose (for
+// example the compiler flags of WITH_STACK_PROTECTION in the SCAI
+// specification) and do not change what it applies to, so they are not
+// decoded.
 type attribute struct {
-	Attribute string          `json:"attribute"`
-	Evidence  json.RawMessage `json:"evidence,omitempty"`
+	Attribute string `json:"attribute"`
+	// Target names the artifact the attribute applies to; without it the
+	// attribute applies to the attestation subject.
+	Target   json.RawMessage `json:"target,omitempty"`
+	Evidence json.RawMessage `json:"evidence,omitempty"`
+}
+
+// aboutSubject reports whether the assertion applies to the attestation
+// subject. An assertion about another target (for example a dependency)
+// does not establish the attribute for the image.
+func (a *attribute) aboutSubject() bool {
+	return isAbsent(a.Target)
+}
+
+// isAbsent reports whether an optional JSON field is missing, null, or an
+// empty object.
+func isAbsent(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return true
+	}
+
+	var fields map[string]json.RawMessage
+
+	return json.Unmarshal(trimmed, &fields) == nil && len(fields) == 0
 }
 
 //nolint:gochecknoglobals // immutable check declaration
@@ -82,15 +109,6 @@ var spec = &checker.Spec[attributeReport]{
 // Info returns the check type and label of the SCAI check.
 func Info() checker.Info {
 	return spec.Info
-}
-
-// Verify checks a single SCAI attestation against the given policy.
-func Verify(
-	ctx context.Context,
-	att []byte, pol *policy.Policy, imageDigest string,
-) (*types.CheckResult, error) {
-	//nolint:wrapcheck // the generic checker returns domain errors
-	return spec.Verify(ctx, att, pol, imageDigest)
 }
 
 // VerifyMultiple checks multiple SCAI attestations. Any policy violation or
@@ -119,14 +137,18 @@ func validateReport(report *attributeReport) error {
 	return nil
 }
 
+// reportMeta exposes the attributes asserted for the subject, the ones that
+// satisfy requiredAttributes.
 func reportMeta(report *attributeReport) map[string]any {
 	attrNames := make([]string, 0, len(report.Attributes))
 	for idx := range report.Attributes {
-		attrNames = append(attrNames, report.Attributes[idx].Attribute)
+		if report.Attributes[idx].aboutSubject() {
+			attrNames = append(attrNames, report.Attributes[idx].Attribute)
+		}
 	}
 
 	return map[string]any{
-		"attributeCount": int64(len(report.Attributes)),
+		"attributeCount": int64(len(attrNames)),
 		"attributes":     strings.Join(attrNames, ","),
 		"hasEvidence":    allHaveEvidence(report.Attributes),
 	}
@@ -137,14 +159,25 @@ func checkAttributePolicy(report *attributeReport, pol *policy.Policy) string {
 		return ""
 	}
 
+	// A required attribute must be asserted for the subject, while a
+	// forbidden attribute fails the check in any assertion, whatever its
+	// target.
 	for _, required := range pol.SCAI.RequiredAttributes {
-		if !containsAttribute(report.Attributes, required) {
-			return fmt.Sprintf("%s: %q", errMissingAttribute, required)
+		if containsAttribute(report.Attributes, required, true) {
+			continue
 		}
+
+		if containsAttribute(report.Attributes, required, false) {
+			return fmt.Sprintf(
+				"%s: %q (only asserted for another target)", errMissingAttribute, required,
+			)
+		}
+
+		return fmt.Sprintf("%s: %q", errMissingAttribute, required)
 	}
 
 	for _, forbidden := range pol.SCAI.ForbiddenAttributes {
-		if containsAttribute(report.Attributes, forbidden) {
+		if containsAttribute(report.Attributes, forbidden, false) {
 			return fmt.Sprintf("%s: %q", errForbiddenAttribute, forbidden)
 		}
 	}
@@ -156,8 +189,14 @@ func checkAttributePolicy(report *attributeReport, pol *policy.Policy) string {
 	return ""
 }
 
-func containsAttribute(attrs []attribute, name string) bool {
+// containsAttribute reports whether an assertion names the attribute. With
+// subjectOnly, only assertions about the subject count.
+func containsAttribute(attrs []attribute, name string, subjectOnly bool) bool {
 	for idx := range attrs {
+		if subjectOnly && !attrs[idx].aboutSubject() {
+			continue
+		}
+
 		if strings.EqualFold(strings.TrimSpace(attrs[idx].Attribute), strings.TrimSpace(name)) {
 			return true
 		}

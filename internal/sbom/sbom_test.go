@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/checker/checkertest"
 	"github.com/saschagrunert/nri-supply-chain/internal/intoto"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/sbom"
@@ -308,7 +309,13 @@ func TestVerify(t *testing.T) {
 
 			att := testutil.WrapInToto(t, test.doc, testDigest, testPredicateType)
 
-			result, err := sbom.Verify(context.Background(), att, test.pol, testDigest)
+			result, err := sbom.VerifyMultipleWithBaseline(
+				context.Background(),
+				[][]byte{att},
+				nil,
+				test.pol,
+				testDigest,
+			)
 
 			if test.wantPassed {
 				testutil.AssertNoError(t, err)
@@ -340,39 +347,53 @@ func TestVerifyMalformedPayloads(t *testing.T) {
 	t.Run("empty payload", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := sbom.Verify(context.Background(), []byte{}, &policy.Policy{}, testDigest)
-		if !errors.Is(err, sbom.ErrInvalidSBOM) {
-			t.Errorf("expected ErrInvalidSBOM, got %v", err)
-		}
+		result, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(),
+			[][]byte{{}},
+			nil,
+			&policy.Policy{},
+			testDigest,
+		)
+		checkertest.AssertFailed(t, result, err, sbom.ErrInvalidSBOM)
 	})
 
 	t.Run("nil payload", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := sbom.Verify(context.Background(), nil, &policy.Policy{}, testDigest)
-		if !errors.Is(err, sbom.ErrInvalidSBOM) {
-			t.Errorf("expected ErrInvalidSBOM, got %v", err)
-		}
+		result, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(),
+			[][]byte{nil},
+			nil,
+			&policy.Policy{},
+			testDigest,
+		)
+		checkertest.AssertFailed(t, result, err, sbom.ErrInvalidSBOM)
 	})
 
 	t.Run("truncated JSON", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := sbom.Verify(
-			context.Background(), []byte(`{"subject":[`), &policy.Policy{}, testDigest,
+		result, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(),
+			[][]byte{[]byte(`{"subject":[`)},
+			nil,
+			&policy.Policy{},
+			testDigest,
 		)
-		if !errors.Is(err, sbom.ErrInvalidSBOM) {
-			t.Errorf("expected ErrInvalidSBOM, got %v", err)
-		}
+		checkertest.AssertFailed(t, result, err, sbom.ErrInvalidSBOM)
 	})
 
 	t.Run("empty JSON object with digest triggers empty subjects", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := sbom.Verify(context.Background(), []byte("{}"), &policy.Policy{}, testDigest)
-		if !errors.Is(err, intoto.ErrEmptySubjects) {
-			t.Errorf("expected ErrEmptySubjects, got %v", err)
-		}
+		result, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(),
+			[][]byte{[]byte("{}")},
+			nil,
+			&policy.Policy{},
+			testDigest,
+		)
+		checkertest.AssertFailed(t, result, err, intoto.ErrEmptySubjects)
 	})
 
 	t.Run("empty JSON object without digest skips subject check", func(t *testing.T) {
@@ -380,10 +401,14 @@ func TestVerifyMalformedPayloads(t *testing.T) {
 
 		// Without a digest, subject binding is skipped. The bare {} is not
 		// a valid SPDX or CycloneDX document, so it fails to parse.
-		_, err := sbom.Verify(context.Background(), []byte("{}"), &policy.Policy{}, "")
-		if err == nil {
-			t.Error("expected parse error for empty object, got nil")
-		}
+		result, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(),
+			[][]byte{[]byte("{}")},
+			nil,
+			&policy.Policy{},
+			"",
+		)
+		checkertest.AssertFailed(t, result, err, sbom.ErrInvalidSBOM)
 	})
 }
 
@@ -396,13 +421,10 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 		doc := validSPDXDoc()
 		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-		_, err := sbom.Verify(context.Background(),
-			att, &policy.Policy{},
-			"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-		)
-		if !errors.Is(err, intoto.ErrSubjectMismatch) {
-			t.Errorf("expected ErrSubjectMismatch, got %v", err)
-		}
+		result, err := sbom.VerifyMultipleWithBaseline(context.Background(),
+			[][]byte{att}, nil, &policy.Policy{},
+			"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+		checkertest.AssertFailed(t, result, err, intoto.ErrSubjectMismatch)
 	})
 
 	t.Run("subject with invalid digest format", func(t *testing.T) {
@@ -411,10 +433,14 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 		doc := validSPDXDoc()
 		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-		_, err := sbom.Verify(context.Background(), att, &policy.Policy{}, "nocolon")
-		if !errors.Is(err, intoto.ErrSubjectMismatch) {
-			t.Errorf("expected ErrSubjectMismatch for invalid digest, got %v", err)
-		}
+		result, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(),
+			[][]byte{att},
+			nil,
+			&policy.Policy{},
+			"nocolon",
+		)
+		checkertest.AssertFailed(t, result, err, intoto.ErrSubjectMismatch)
 	})
 
 	t.Run("empty digest with subjects rejects for binding", func(t *testing.T) {
@@ -423,10 +449,14 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 		doc := validSPDXDoc()
 		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-		_, err := sbom.Verify(context.Background(), att, &policy.Policy{}, "")
-		if !errors.Is(err, intoto.ErrNoDigestBinding) {
-			t.Errorf("expected ErrNoDigestBinding, got %v", err)
-		}
+		result, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(),
+			[][]byte{att},
+			nil,
+			&policy.Policy{},
+			"",
+		)
+		checkertest.AssertFailed(t, result, err, intoto.ErrNoDigestBinding)
 	})
 
 	t.Run("multiple subjects with one matching", func(t *testing.T) {
@@ -455,7 +485,13 @@ func TestVerifySubjectEdgeCases(t *testing.T) {
 
 		att := testutil.MustMarshal(t, wrapper)
 
-		result, err := sbom.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+		result, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(),
+			[][]byte{att},
+			nil,
+			&policy.Policy{},
+			testDigest,
+		)
 		testutil.AssertNoError(t, err)
 
 		if !result.Passed {
@@ -484,13 +520,19 @@ func TestVerifySPDXLicenseFields(t *testing.T) {
 
 		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			SBOM: &policy.SBOMPolicy{
-				License: &policy.SBOMLicensePolicy{
-					Deny: []string{"GPL-3.0"},
+		result, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(),
+			[][]byte{att},
+			nil,
+			&policy.Policy{
+				SBOM: &policy.SBOMPolicy{
+					License: &policy.SBOMLicensePolicy{
+						Deny: []string{"GPL-3.0"},
+					},
 				},
 			},
-		}, testDigest)
+			testDigest,
+		)
 		testutil.AssertNoError(t, err)
 
 		if result.Passed {
@@ -498,7 +540,7 @@ func TestVerifySPDXLicenseFields(t *testing.T) {
 		}
 	})
 
-	t.Run("NOASSERTION is ignored", func(t *testing.T) {
+	t.Run("NOASSERTION is checked as the package license", func(t *testing.T) {
 		t.Parallel()
 
 		doc := spdxDoc{
@@ -515,17 +557,23 @@ func TestVerifySPDXLicenseFields(t *testing.T) {
 
 		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			SBOM: &policy.SBOMPolicy{
-				License: &policy.SBOMLicensePolicy{
-					Deny: []string{testLicenseNone},
+		result, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(),
+			[][]byte{att},
+			nil,
+			&policy.Policy{
+				SBOM: &policy.SBOMPolicy{
+					License: &policy.SBOMLicensePolicy{
+						Deny: []string{testLicenseNone},
+					},
 				},
 			},
-		}, testDigest)
+			testDigest,
+		)
 		testutil.AssertNoError(t, err)
 
-		if !result.Passed {
-			t.Errorf("expected pass, NOASSERTION should be ignored, got: %s", result.Detail)
+		if result.Passed {
+			t.Error("expected a NOASSERTION deny entry to deny a package without license data")
 		}
 	})
 
@@ -546,13 +594,19 @@ func TestVerifySPDXLicenseFields(t *testing.T) {
 
 		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			SBOM: &policy.SBOMPolicy{
-				License: &policy.SBOMLicensePolicy{
-					Deny: []string{testLicenseGPL3Only},
+		result, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(),
+			[][]byte{att},
+			nil,
+			&policy.Policy{
+				SBOM: &policy.SBOMPolicy{
+					License: &policy.SBOMLicensePolicy{
+						Deny: []string{testLicenseGPL3Only},
+					},
 				},
 			},
-		}, testDigest)
+			testDigest,
+		)
 		testutil.AssertNoError(t, err)
 
 		if result.Passed {
@@ -577,13 +631,19 @@ func TestVerifySPDXLicenseFields(t *testing.T) {
 
 		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			SBOM: &policy.SBOMPolicy{
-				License: &policy.SBOMLicensePolicy{
-					Deny: []string{testLicenseGPL3Only},
+		result, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(),
+			[][]byte{att},
+			nil,
+			&policy.Policy{
+				SBOM: &policy.SBOMPolicy{
+					License: &policy.SBOMLicensePolicy{
+						Deny: []string{testLicenseGPL3Only},
+					},
 				},
 			},
-		}, testDigest)
+			testDigest,
+		)
 		testutil.AssertNoError(t, err)
 
 		if result.Passed {
@@ -608,13 +668,19 @@ func TestVerifySPDXLicenseFields(t *testing.T) {
 
 		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			SBOM: &policy.SBOMPolicy{
-				License: &policy.SBOMLicensePolicy{
-					Deny: []string{testLicenseGPL2Only},
+		result, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(),
+			[][]byte{att},
+			nil,
+			&policy.Policy{
+				SBOM: &policy.SBOMPolicy{
+					License: &policy.SBOMLicensePolicy{
+						Deny: []string{testLicenseGPL2Only},
+					},
 				},
 			},
-		}, testDigest)
+			testDigest,
+		)
 		testutil.AssertNoError(t, err)
 
 		if result.Passed {
@@ -639,13 +705,19 @@ func TestVerifySPDXLicenseFields(t *testing.T) {
 
 		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			SBOM: &policy.SBOMPolicy{
-				License: &policy.SBOMLicensePolicy{
-					Allow: []string{testLicenseGPL2Only},
+		result, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(),
+			[][]byte{att},
+			nil,
+			&policy.Policy{
+				SBOM: &policy.SBOMPolicy{
+					License: &policy.SBOMLicensePolicy{
+						Allow: []string{testLicenseGPL2Only},
+					},
 				},
 			},
-		}, testDigest)
+			testDigest,
+		)
 		testutil.AssertNoError(t, err)
 
 		if !result.Passed {
@@ -670,13 +742,19 @@ func TestVerifySPDXLicenseFields(t *testing.T) {
 
 		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			SBOM: &policy.SBOMPolicy{
-				License: &policy.SBOMLicensePolicy{
-					Deny: []string{testLicenseGPL3Only},
+		result, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(),
+			[][]byte{att},
+			nil,
+			&policy.Policy{
+				SBOM: &policy.SBOMPolicy{
+					License: &policy.SBOMLicensePolicy{
+						Deny: []string{testLicenseGPL3Only},
+					},
 				},
 			},
-		}, testDigest)
+			testDigest,
+		)
 		testutil.AssertNoError(t, err)
 
 		if result.Passed {
@@ -704,13 +782,19 @@ func TestVerifyCycloneDXLicenseName(t *testing.T) {
 
 	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-		SBOM: &policy.SBOMPolicy{
-			License: &policy.SBOMLicensePolicy{
-				Deny: []string{"GNU General Public License v3.0"},
+	result, err := sbom.VerifyMultipleWithBaseline(
+		context.Background(),
+		[][]byte{att},
+		nil,
+		&policy.Policy{
+			SBOM: &policy.SBOMPolicy{
+				License: &policy.SBOMLicensePolicy{
+					Deny: []string{"GNU General Public License v3.0"},
+				},
 			},
 		},
-	}, testDigest)
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	if result.Passed {
@@ -723,65 +807,52 @@ func TestVerifyCheckType(t *testing.T) {
 
 	att := testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType)
 
-	result, err := sbom.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+	result, err := sbom.VerifyMultipleWithBaseline(
+		context.Background(),
+		[][]byte{att},
+		nil,
+		&policy.Policy{},
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	testutil.AssertEqual(t, types.CheckType("sbom"), result.Type)
 }
 
-func TestVerifySPDXMetadata(t *testing.T) {
+func TestVerifyFormatMetadata(t *testing.T) {
 	t.Parallel()
 
-	att := testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType)
-
-	result, err := sbom.Verify(context.Background(), att, &policy.Policy{}, testDigest)
-	testutil.AssertNoError(t, err)
-
-	if result.Metadata == nil {
-		t.Fatal("expected metadata on SBOM result")
+	tests := []struct {
+		format string
+		doc    any
+	}{
+		{format: testFormatSPDX, doc: validSPDXDoc()},
+		{format: testFormatCycloneDX, doc: validCycloneDXDoc()},
 	}
 
-	format, ok := result.Metadata["format"].(string)
-	if !ok || format != testFormatSPDX {
-		t.Errorf("format = %q, want %q", format, testFormatSPDX)
-	}
+	for _, test := range tests {
+		t.Run(test.format, func(t *testing.T) {
+			t.Parallel()
 
-	componentCount, ok := result.Metadata["componentCount"].(int64)
-	if !ok || componentCount != 1 {
-		t.Errorf("componentCount = %v, want 1", result.Metadata["componentCount"])
-	}
+			att := testutil.WrapInToto(t, test.doc, testDigest, testPredicateType)
 
-	licenseCount, ok := result.Metadata["licenseCount"].(int64)
-	if !ok || licenseCount != 1 {
-		t.Errorf("licenseCount = %v, want 1", result.Metadata["licenseCount"])
-	}
-}
+			result, err := sbom.VerifyMultipleWithBaseline(
+				context.Background(),
+				[][]byte{att},
+				nil,
+				&policy.Policy{},
+				testDigest,
+			)
+			testutil.AssertNoError(t, err)
+			testutil.AssertEqual[any](t, test.format, result.Metadata["format"])
+			testutil.AssertEqual[any](t, int64(1), result.Metadata["componentCount"])
+			testutil.AssertEqual[any](t, int64(1), result.Metadata["licenseCount"])
 
-func TestVerifyCycloneDXMetadata(t *testing.T) {
-	t.Parallel()
-
-	att := testutil.WrapInToto(t, validCycloneDXDoc(), testDigest, testPredicateType)
-
-	result, err := sbom.Verify(context.Background(), att, &policy.Policy{}, testDigest)
-	testutil.AssertNoError(t, err)
-
-	if result.Metadata == nil {
-		t.Fatal("expected metadata on SBOM result")
-	}
-
-	format, ok := result.Metadata["format"].(string)
-	if !ok || format != testFormatCycloneDX {
-		t.Errorf("format = %q, want %q", format, testFormatCycloneDX)
-	}
-
-	componentCount, ok := result.Metadata["componentCount"].(int64)
-	if !ok || componentCount != 1 {
-		t.Errorf("componentCount = %v, want 1", result.Metadata["componentCount"])
-	}
-
-	licenseCount, ok := result.Metadata["licenseCount"].(int64)
-	if !ok || licenseCount != 1 {
-		t.Errorf("licenseCount = %v, want 1", result.Metadata["licenseCount"])
+			// Drift and CVSS metadata only exist when the policy configures
+			// them.
+			checkertest.AssertCELMetadata(t, result, "drift", "cvssMax",
+				"cvssCriticalCount", "cvssHighCount", "cvssMediumCount")
+		})
 	}
 }
 
@@ -792,9 +863,8 @@ func TestVerifyMultipleMetadataPropagation(t *testing.T) {
 		testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType),
 	}
 
-	result, err := sbom.VerifyMultiple(
-		context.Background(), attestations, &policy.Policy{}, testDigest,
-	)
+	result, err := sbom.VerifyMultipleWithBaseline(
+		context.Background(), attestations, nil, &policy.Policy{}, testDigest)
 	testutil.AssertNoError(t, err)
 
 	if result.Metadata == nil {
@@ -860,12 +930,11 @@ func TestVerifyMultiple(t *testing.T) {
 				)
 			}
 
-			result, err := sbom.VerifyMultiple(
+			result, err := sbom.VerifyMultipleWithBaseline(
 				context.Background(),
-				attestations,
+				attestations, nil,
 				test.pol,
-				testDigest,
-			)
+				testDigest)
 			testutil.AssertNoError(t, err)
 
 			testutil.AssertEqual(t, test.wantPassed, result.Passed)
@@ -880,7 +949,13 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 	t.Run("nil attestation slice", func(t *testing.T) {
 		t.Parallel()
 
-		result, err := sbom.VerifyMultiple(context.Background(), nil, &policy.Policy{}, testDigest)
+		result, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(),
+			nil,
+			nil,
+			&policy.Policy{},
+			testDigest,
+		)
 		testutil.AssertNoError(t, err)
 
 		if !result.Passed {
@@ -896,12 +971,11 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 			[]byte("bad json 2"),
 		}
 
-		result, err := sbom.VerifyMultiple(
+		result, err := sbom.VerifyMultipleWithBaseline(
 			context.Background(),
-			attestations,
+			attestations, nil,
 			&policy.Policy{},
-			testDigest,
-		)
+			testDigest)
 		testutil.AssertNoError(t, err)
 
 		if result.Passed {
@@ -919,11 +993,17 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 			testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType),
 		}
 
-		result, err := sbom.VerifyMultiple(context.Background(), attestations, &policy.Policy{
-			SBOM: &policy.SBOMPolicy{
-				Formats: []string{testFormatCycloneDX},
+		result, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(),
+			attestations,
+			nil,
+			&policy.Policy{
+				SBOM: &policy.SBOMPolicy{
+					Formats: []string{testFormatCycloneDX},
+				},
 			},
-		}, testDigest)
+			testDigest,
+		)
 		testutil.AssertNoError(t, err)
 
 		if result.Passed {
@@ -945,12 +1025,11 @@ func TestVerifyMultipleEdgeCases(t *testing.T) {
 			testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType),
 		}
 
-		result, err := sbom.VerifyMultiple(
+		result, err := sbom.VerifyMultipleWithBaseline(
 			context.Background(),
-			attestations,
+			attestations, nil,
 			&policy.Policy{},
-			testDigest,
-		)
+			testDigest)
 		testutil.AssertNoError(t, err)
 
 		if result.Passed {
@@ -976,7 +1055,13 @@ func TestVerifyCycloneDXNilLicense(t *testing.T) {
 
 	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-	result, err := sbom.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+	result, err := sbom.VerifyMultipleWithBaseline(
+		context.Background(),
+		[][]byte{att},
+		nil,
+		&policy.Policy{},
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	if !result.Passed {
@@ -992,13 +1077,19 @@ func TestVerifyLicenseAllowList(t *testing.T) {
 
 		att := testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType)
 
-		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			SBOM: &policy.SBOMPolicy{
-				License: &policy.SBOMLicensePolicy{
-					Allow: []string{testLicenseMIT, testLicenseApache2},
+		result, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(),
+			[][]byte{att},
+			nil,
+			&policy.Policy{
+				SBOM: &policy.SBOMPolicy{
+					License: &policy.SBOMLicensePolicy{
+						Allow: []string{testLicenseMIT, testLicenseApache2},
+					},
 				},
 			},
-		}, testDigest)
+			testDigest,
+		)
 		testutil.AssertNoError(t, err)
 
 		if !result.Passed {
@@ -1011,13 +1102,19 @@ func TestVerifyLicenseAllowList(t *testing.T) {
 
 		att := testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType)
 
-		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			SBOM: &policy.SBOMPolicy{
-				License: &policy.SBOMLicensePolicy{
-					Allow: []string{testLicenseApache2, "BSD-3-Clause"},
+		result, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(),
+			[][]byte{att},
+			nil,
+			&policy.Policy{
+				SBOM: &policy.SBOMPolicy{
+					License: &policy.SBOMLicensePolicy{
+						Allow: []string{testLicenseApache2, "BSD-3-Clause"},
+					},
 				},
 			},
-		}, testDigest)
+			testDigest,
+		)
 		testutil.AssertNoError(t, err)
 
 		if result.Passed {
@@ -1034,14 +1131,20 @@ func TestVerifyLicenseAllowList(t *testing.T) {
 
 		att := testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType)
 
-		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			SBOM: &policy.SBOMPolicy{
-				License: &policy.SBOMLicensePolicy{
-					Deny:  []string{testLicenseMIT},
-					Allow: []string{testLicenseMIT},
+		result, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(),
+			[][]byte{att},
+			nil,
+			&policy.Policy{
+				SBOM: &policy.SBOMPolicy{
+					License: &policy.SBOMLicensePolicy{
+						Deny:  []string{testLicenseMIT},
+						Allow: []string{testLicenseMIT},
+					},
 				},
 			},
-		}, testDigest)
+			testDigest,
+		)
 		testutil.AssertNoError(t, err)
 
 		if result.Passed {
@@ -1058,13 +1161,19 @@ func TestVerifyLicenseAllowList(t *testing.T) {
 
 		att := testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType)
 
-		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			SBOM: &policy.SBOMPolicy{
-				License: &policy.SBOMLicensePolicy{
-					Allow: []string{},
+		result, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(),
+			[][]byte{att},
+			nil,
+			&policy.Policy{
+				SBOM: &policy.SBOMPolicy{
+					License: &policy.SBOMLicensePolicy{
+						Allow: []string{},
+					},
 				},
 			},
-		}, testDigest)
+			testDigest,
+		)
 		testutil.AssertNoError(t, err)
 
 		if !result.Passed {
@@ -1077,13 +1186,19 @@ func TestVerifyLicenseAllowList(t *testing.T) {
 
 		att := testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType)
 
-		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			SBOM: &policy.SBOMPolicy{
-				License: &policy.SBOMLicensePolicy{
-					Allow: []string{"mit"},
+		result, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(),
+			[][]byte{att},
+			nil,
+			&policy.Policy{
+				SBOM: &policy.SBOMPolicy{
+					License: &policy.SBOMLicensePolicy{
+						Allow: []string{"mit"},
+					},
 				},
 			},
-		}, testDigest)
+			testDigest,
+		)
 		testutil.AssertNoError(t, err)
 
 		if !result.Passed {
@@ -1100,13 +1215,19 @@ func TestVerifyComponentAllowList(t *testing.T) {
 
 		att := testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType)
 
-		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			SBOM: &policy.SBOMPolicy{
-				Component: &policy.SBOMComponentPolicy{
-					Allow: []string{testLibPURL},
+		result, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(),
+			[][]byte{att},
+			nil,
+			&policy.Policy{
+				SBOM: &policy.SBOMPolicy{
+					Component: &policy.SBOMComponentPolicy{
+						Allow: []string{testLibPURL},
+					},
 				},
 			},
-		}, testDigest)
+			testDigest,
+		)
 		testutil.AssertNoError(t, err)
 
 		if !result.Passed {
@@ -1119,13 +1240,19 @@ func TestVerifyComponentAllowList(t *testing.T) {
 
 		att := testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType)
 
-		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			SBOM: &policy.SBOMPolicy{
-				Component: &policy.SBOMComponentPolicy{
-					Allow: []string{"pkg:npm/other@2.0.0"},
+		result, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(),
+			[][]byte{att},
+			nil,
+			&policy.Policy{
+				SBOM: &policy.SBOMPolicy{
+					Component: &policy.SBOMComponentPolicy{
+						Allow: []string{"pkg:npm/other@2.0.0"},
+					},
 				},
 			},
-		}, testDigest)
+			testDigest,
+		)
 		testutil.AssertNoError(t, err)
 
 		if result.Passed {
@@ -1142,14 +1269,20 @@ func TestVerifyComponentAllowList(t *testing.T) {
 
 		att := testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType)
 
-		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			SBOM: &policy.SBOMPolicy{
-				Component: &policy.SBOMComponentPolicy{
-					Deny:  []string{testLibPURL},
-					Allow: []string{testLibPURL},
+		result, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(),
+			[][]byte{att},
+			nil,
+			&policy.Policy{
+				SBOM: &policy.SBOMPolicy{
+					Component: &policy.SBOMComponentPolicy{
+						Deny:  []string{testLibPURL},
+						Allow: []string{testLibPURL},
+					},
 				},
 			},
-		}, testDigest)
+			testDigest,
+		)
 		testutil.AssertNoError(t, err)
 
 		if result.Passed {
@@ -1166,13 +1299,19 @@ func TestVerifyComponentAllowList(t *testing.T) {
 
 		att := testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType)
 
-		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			SBOM: &policy.SBOMPolicy{
-				Component: &policy.SBOMComponentPolicy{
-					Allow: []string{"pkg:npm/mylib"},
+		result, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(),
+			[][]byte{att},
+			nil,
+			&policy.Policy{
+				SBOM: &policy.SBOMPolicy{
+					Component: &policy.SBOMComponentPolicy{
+						Allow: []string{"pkg:npm/mylib"},
+					},
 				},
 			},
-		}, testDigest)
+			testDigest,
+		)
 		testutil.AssertNoError(t, err)
 
 		if !result.Passed {
@@ -1185,13 +1324,19 @@ func TestVerifyComponentAllowList(t *testing.T) {
 
 		att := testutil.WrapInToto(t, validSPDXDoc(), testDigest, testPredicateType)
 
-		result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-			SBOM: &policy.SBOMPolicy{
-				Component: &policy.SBOMComponentPolicy{
-					Allow: []string{},
+		result, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(),
+			[][]byte{att},
+			nil,
+			&policy.Policy{
+				SBOM: &policy.SBOMPolicy{
+					Component: &policy.SBOMComponentPolicy{
+						Allow: []string{},
+					},
 				},
 			},
-		}, testDigest)
+			testDigest,
+		)
 		testutil.AssertNoError(t, err)
 
 		if !result.Passed {
@@ -1221,13 +1366,19 @@ func TestVerifyCVSSThresholdExceeded(t *testing.T) {
 
 	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-		SBOM: &policy.SBOMPolicy{
-			CVSS: &policy.SBOMCVSSPolicy{
-				MaxScore: new(7.0),
+	result, err := sbom.VerifyMultipleWithBaseline(
+		context.Background(),
+		[][]byte{att},
+		nil,
+		&policy.Policy{
+			SBOM: &policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{
+					MaxScore: new(7.0),
+				},
 			},
 		},
-	}, testDigest)
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	if result.Passed {
@@ -1257,13 +1408,19 @@ func TestVerifyCVSSThresholdUnder(t *testing.T) {
 
 	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-		SBOM: &policy.SBOMPolicy{
-			CVSS: &policy.SBOMCVSSPolicy{
-				MaxScore: new(7.0),
+	result, err := sbom.VerifyMultipleWithBaseline(
+		context.Background(),
+		[][]byte{att},
+		nil,
+		&policy.Policy{
+			SBOM: &policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{
+					MaxScore: new(7.0),
+				},
 			},
 		},
-	}, testDigest)
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	if !result.Passed {
@@ -1285,14 +1442,20 @@ func TestVerifyCVSSIgnoredCVE(t *testing.T) {
 
 	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-		SBOM: &policy.SBOMPolicy{
-			CVSS: &policy.SBOMCVSSPolicy{
-				MaxScore:   new(7.0),
-				IgnoreCVEs: []string{"CVE-2024-9999"},
+	result, err := sbom.VerifyMultipleWithBaseline(
+		context.Background(),
+		[][]byte{att},
+		nil,
+		&policy.Policy{
+			SBOM: &policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{
+					MaxScore:   new(7.0),
+					IgnoreCVEs: []string{"CVE-2024-9999"},
+				},
 			},
 		},
-	}, testDigest)
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	if !result.Passed {
@@ -1315,14 +1478,20 @@ func TestVerifyCVSSOrLogicScoreOnly(t *testing.T) {
 	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 	// Exceeds maxScore but not minSeverity, should still flag.
-	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-		SBOM: &policy.SBOMPolicy{
-			CVSS: &policy.SBOMCVSSPolicy{
-				MaxScore:    new(7.0),
-				MinSeverity: testSeverityCritical,
+	result, err := sbom.VerifyMultipleWithBaseline(
+		context.Background(),
+		[][]byte{att},
+		nil,
+		&policy.Policy{
+			SBOM: &policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{
+					MaxScore:    new(7.0),
+					MinSeverity: testSeverityCritical,
+				},
 			},
 		},
-	}, testDigest)
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	if result.Passed {
@@ -1345,14 +1514,20 @@ func TestVerifyCVSSOrLogicSeverityOnly(t *testing.T) {
 	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 	// Does not exceed maxScore but exceeds minSeverity, should flag.
-	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-		SBOM: &policy.SBOMPolicy{
-			CVSS: &policy.SBOMCVSSPolicy{
-				MaxScore:    new(7.0),
-				MinSeverity: testSeverityHigh,
+	result, err := sbom.VerifyMultipleWithBaseline(
+		context.Background(),
+		[][]byte{att},
+		nil,
+		&policy.Policy{
+			SBOM: &policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{
+					MaxScore:    new(7.0),
+					MinSeverity: testSeverityHigh,
+				},
 			},
 		},
-	}, testDigest)
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	if result.Passed {
@@ -1367,13 +1542,19 @@ func TestVerifyCVSSEmptyVulnerabilities(t *testing.T) {
 
 	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-		SBOM: &policy.SBOMPolicy{
-			CVSS: &policy.SBOMCVSSPolicy{
-				MaxScore: new(7.0),
+	result, err := sbom.VerifyMultipleWithBaseline(
+		context.Background(),
+		[][]byte{att},
+		nil,
+		&policy.Policy{
+			SBOM: &policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{
+					MaxScore: new(7.0),
+				},
 			},
 		},
-	}, testDigest)
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	if !result.Passed {
@@ -1389,13 +1570,19 @@ func TestVerifyCVSSSkippedForSPDX(t *testing.T) {
 	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 	// CVSS settings are present but should be ignored for SPDX.
-	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-		SBOM: &policy.SBOMPolicy{
-			CVSS: &policy.SBOMCVSSPolicy{
-				MaxScore: new(0.0),
+	result, err := sbom.VerifyMultipleWithBaseline(
+		context.Background(),
+		[][]byte{att},
+		nil,
+		&policy.Policy{
+			SBOM: &policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{
+					MaxScore: new(0.0),
+				},
 			},
 		},
-	}, testDigest)
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	if !result.Passed {
@@ -1430,13 +1617,19 @@ func TestVerifyCVSSMetadataPopulated(t *testing.T) {
 	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
 	// Use a high threshold so all pass, but metadata still gets populated.
-	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-		SBOM: &policy.SBOMPolicy{
-			CVSS: &policy.SBOMCVSSPolicy{
-				MaxScore: new(10.0),
+	result, err := sbom.VerifyMultipleWithBaseline(
+		context.Background(),
+		[][]byte{att},
+		nil,
+		&policy.Policy{
+			SBOM: &policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{
+					MaxScore: new(10.0),
+				},
 			},
 		},
-	}, testDigest)
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	if !result.Passed {
@@ -1493,15 +1686,21 @@ func TestVerifyCVSSEmptyRatings(t *testing.T) {
 
 	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-		SBOM: &policy.SBOMPolicy{
-			CVSS: &policy.SBOMCVSSPolicy{MaxScore: new(7.0)},
+	result, err := sbom.VerifyMultipleWithBaseline(
+		context.Background(),
+		[][]byte{att},
+		nil,
+		&policy.Policy{
+			SBOM: &policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{MaxScore: new(7.0)},
+			},
 		},
-	}, testDigest)
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
-	if !result.Passed {
-		t.Errorf("expected pass for vuln with empty ratings, got: %s", result.Detail)
+	if result.Passed {
+		t.Error("expected a vuln with empty ratings to fail the threshold closed")
 	}
 }
 
@@ -1531,11 +1730,17 @@ func TestVerifyMultipleCVSSMetadata(t *testing.T) {
 		testutil.WrapInToto(t, doc2, testDigest, testPredicateType),
 	}
 
-	result, err := sbom.VerifyMultiple(context.Background(), attestations, &policy.Policy{
-		SBOM: &policy.SBOMPolicy{
-			CVSS: &policy.SBOMCVSSPolicy{MaxScore: new(10.0)},
+	result, err := sbom.VerifyMultipleWithBaseline(
+		context.Background(),
+		attestations,
+		nil,
+		&policy.Policy{
+			SBOM: &policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{MaxScore: new(10.0)},
+			},
 		},
-	}, testDigest)
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	if !result.Passed {
@@ -1588,13 +1793,19 @@ func TestVerifyCVSSMinSeverityOnly(t *testing.T) {
 
 	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-		SBOM: &policy.SBOMPolicy{
-			CVSS: &policy.SBOMCVSSPolicy{
-				MinSeverity: testSeverityHigh,
+	result, err := sbom.VerifyMultipleWithBaseline(
+		context.Background(),
+		[][]byte{att},
+		nil,
+		&policy.Policy{
+			SBOM: &policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{
+					MinSeverity: testSeverityHigh,
+				},
 			},
 		},
-	}, testDigest)
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	if result.Passed {
@@ -1617,13 +1828,19 @@ func TestVerifyCVSSMultiRatingAggregation(t *testing.T) {
 
 	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-		SBOM: &policy.SBOMPolicy{
-			CVSS: &policy.SBOMCVSSPolicy{
-				MaxScore: new(7.0),
+	result, err := sbom.VerifyMultipleWithBaseline(
+		context.Background(),
+		[][]byte{att},
+		nil,
+		&policy.Policy{
+			SBOM: &policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{
+					MaxScore: new(7.0),
+				},
 			},
 		},
-	}, testDigest)
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	if result.Passed {
@@ -1649,28 +1866,30 @@ func TestVerifyCVSSNilScoreSeverityOnly(t *testing.T) {
 
 	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-		SBOM: &policy.SBOMPolicy{
-			CVSS: &policy.SBOMCVSSPolicy{
-				MinSeverity: testSeverityHigh,
+	result, err := sbom.VerifyMultipleWithBaseline(
+		context.Background(),
+		[][]byte{att},
+		nil,
+		&policy.Policy{
+			SBOM: &policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{
+					MinSeverity: testSeverityHigh,
+				},
 			},
 		},
-	}, testDigest)
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	if result.Passed {
 		t.Error("expected fail: severity-only rating should still trigger minSeverity")
 	}
 
-	if !strings.Contains(result.Detail, "severity high") {
-		t.Errorf("expected detail to mention severity, got %q", result.Detail)
-	}
-
-	// Without a score, cvssMax reports the lowest score of the severity so
-	// CEL rules on cvssMax cannot be bypassed by omitting scores.
-	cvssMax, ok := result.Metadata["cvssMax"].(float64)
-	if !ok || cvssMax != 7 {
-		t.Errorf("expected cvssMax 7 for nil-score high rating, got %v", cvssMax)
+	// Without a score, the lowest score of the severity is reported so
+	// thresholds and CEL rules on cvssMax cannot be bypassed by omitting
+	// scores.
+	if !strings.Contains(result.Detail, "score 7.0, severity high") {
+		t.Errorf("expected detail to mention score and severity, got %q", result.Detail)
 	}
 }
 
@@ -1688,13 +1907,19 @@ func TestVerifyCVSSUnrecognizedSeverity(t *testing.T) {
 
 	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-	result, err := sbom.Verify(context.Background(), att, &policy.Policy{
-		SBOM: &policy.SBOMPolicy{
-			CVSS: &policy.SBOMCVSSPolicy{
-				MaxScore: new(7.0),
+	result, err := sbom.VerifyMultipleWithBaseline(
+		context.Background(),
+		[][]byte{att},
+		nil,
+		&policy.Policy{
+			SBOM: &policy.SBOMPolicy{
+				CVSS: &policy.SBOMCVSSPolicy{
+					MaxScore: new(7.0),
+				},
 			},
 		},
-	}, testDigest)
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	if !result.Passed {
@@ -1709,7 +1934,7 @@ func TestVerifyCancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := sbom.Verify(ctx, nil, nil, "")
+	_, err := sbom.VerifyMultipleWithBaseline(ctx, [][]byte{nil}, nil, nil, "")
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
 	}
@@ -1725,7 +1950,7 @@ func TestVerifyMultipleCancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := sbom.VerifyMultiple(ctx, [][]byte{[]byte("a")}, nil, "")
+	_, err := sbom.VerifyMultipleWithBaseline(ctx, [][]byte{[]byte("a")}, nil, nil, "")
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
 	}
@@ -1775,9 +2000,8 @@ func TestVerifySPDX3Packages(t *testing.T) {
 
 	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-	result, err := sbom.Verify(
-		context.Background(), att, &policy.Policy{}, testDigest,
-	)
+	result, err := sbom.VerifyMultipleWithBaseline(
+		context.Background(), [][]byte{att}, nil, &policy.Policy{}, testDigest)
 	testutil.AssertNoError(t, err)
 
 	if !result.Passed {
@@ -1814,7 +2038,13 @@ func TestVerifySPDX3LicenseDenyList(t *testing.T) {
 		},
 	}
 
-	result, err := sbom.Verify(context.Background(), att, pol, testDigest)
+	result, err := sbom.VerifyMultipleWithBaseline(
+		context.Background(),
+		[][]byte{att},
+		nil,
+		pol,
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	if result.Passed {
@@ -1843,10 +2073,14 @@ func TestVerifySPDX3NoPackagesRejected(t *testing.T) {
 
 	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-	_, err := sbom.Verify(context.Background(), att, &policy.Policy{}, testDigest)
-	if err == nil {
-		t.Error("expected error for SPDX 3.0 doc with no packages")
-	}
+	result, err := sbom.VerifyMultipleWithBaseline(
+		context.Background(),
+		[][]byte{att},
+		nil,
+		&policy.Policy{},
+		testDigest,
+	)
+	checkertest.AssertFailed(t, result, err, sbom.ErrInvalidSBOM)
 }
 
 func TestVerifySPDX3ContextDetection(t *testing.T) {
@@ -1870,9 +2104,8 @@ func TestVerifySPDX3ContextDetection(t *testing.T) {
 
 	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-	result, err := sbom.Verify(
-		context.Background(), att, &policy.Policy{}, testDigest,
-	)
+	result, err := sbom.VerifyMultipleWithBaseline(
+		context.Background(), [][]byte{att}, nil, &policy.Policy{}, testDigest)
 	testutil.AssertNoError(t, err)
 
 	if !result.Passed {
@@ -1880,7 +2113,7 @@ func TestVerifySPDX3ContextDetection(t *testing.T) {
 	}
 }
 
-func TestVerifySPDX3NoAssertionLicenseSkipped(t *testing.T) {
+func TestVerifySPDX3NoAssertionLicenseChecked(t *testing.T) {
 	t.Parallel()
 
 	doc := spdx3Doc{
@@ -1909,11 +2142,19 @@ func TestVerifySPDX3NoAssertionLicenseSkipped(t *testing.T) {
 		},
 	}
 
-	result, err := sbom.Verify(context.Background(), att, pol, testDigest)
+	result, err := sbom.VerifyMultipleWithBaseline(
+		context.Background(),
+		[][]byte{att},
+		nil,
+		pol,
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
-	if !result.Passed {
-		t.Error("NOASSERTION should be skipped, not treated as denied license")
+	// A package without license data is checked as NOASSERTION, which an
+	// explicit deny entry denies.
+	if result.Passed {
+		t.Error("expected a package without license data to match a NOASSERTION deny entry")
 	}
 }
 

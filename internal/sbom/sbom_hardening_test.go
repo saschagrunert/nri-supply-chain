@@ -48,7 +48,13 @@ func verifyRaw(t *testing.T, predicate string, pol *policy.Policy) (passed bool,
 
 	att := testutil.WrapInToto(t, json.RawMessage(predicate), testDigest, testPredicateType)
 
-	result, err := sbom.Verify(context.Background(), att, pol, testDigest)
+	result, err := sbom.VerifyMultipleWithBaseline(
+		context.Background(),
+		[][]byte{att},
+		nil,
+		pol,
+		testDigest,
+	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -358,9 +364,8 @@ func TestVerifySPDX301(t *testing.T) {
 			testPredicateType,
 		)
 
-		result, err := sbom.Verify(
-			context.Background(), att, allowComponentPolicy("pkg:npm/"), testDigest,
-		)
+		result, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(), [][]byte{att}, nil, allowComponentPolicy("pkg:npm/"), testDigest)
 		testutil.AssertNoError(t, err)
 
 		if !result.Passed {
@@ -512,7 +517,13 @@ func TestVerifyMetadataPURLsCompacted(t *testing.T) {
 
 	att := testutil.WrapInToto(t, json.RawMessage(predicate), testDigest, testPredicateType)
 
-	result, err := sbom.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+	result, err := sbom.VerifyMultipleWithBaseline(
+		context.Background(),
+		[][]byte{att},
+		nil,
+		&policy.Policy{},
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	purls, ok := result.Metadata["purls"].([]string)
@@ -529,7 +540,13 @@ func TestVerifyMetadataPURLsKeepUpstream(t *testing.T) {
 
 	att := testutil.WrapInToto(t, json.RawMessage(predicate), testDigest, testPredicateType)
 
-	result, err := sbom.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+	result, err := sbom.VerifyMultipleWithBaseline(
+		context.Background(),
+		[][]byte{att},
+		nil,
+		&policy.Policy{},
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	purls, ok := result.Metadata["purls"].([]string)
@@ -559,9 +576,8 @@ func TestVerifyMetadataPURLsCapped(t *testing.T) {
 
 	att := testutil.WrapInToto(t, json.RawMessage(builder.String()), testDigest, testPredicateType)
 
-	result, err := sbom.VerifyMultiple(
-		context.Background(), [][]byte{att}, &policy.Policy{}, testDigest,
-	)
+	result, err := sbom.VerifyMultipleWithBaseline(
+		context.Background(), [][]byte{att}, nil, &policy.Policy{}, testDigest)
 	testutil.AssertNoError(t, err)
 
 	purls, ok := result.Metadata["purls"].([]string)

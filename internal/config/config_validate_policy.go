@@ -200,17 +200,10 @@ func validatePolicySignatureEntries(pol *PolicyConfig) []error {
 		errs = append(errs, ErrPolicySANPatternEmpty)
 	}
 
-	for _, pattern := range pol.SANPatterns {
-		err := glob.Validate(pattern)
+	for idx, pattern := range pol.SANPatterns {
+		err := glob.ValidateField(fmt.Sprintf("policy.san_patterns[%d]", idx), pattern)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%w: %q: %w", ErrPolicySANPatternInvalid, pattern, err))
-		}
-
-		if glob.HasBangNegation(pattern) {
-			slog.Warn("policy.san_patterns entry uses a \"[!...]\" character class, "+
-				"which negates the class; earlier releases matched \"!\" literally",
-				"pattern", pattern,
-			)
 		}
 	}
 
@@ -233,13 +226,17 @@ func validatePolicyKeyPaths(keys []string) []error {
 			))
 		}
 
-		if _, dup := seen[keyPath]; dup {
+		// Paths are compared in their cleaned form, like the policy
+		// package compares trust keys.
+		cleaned := filepath.Clean(keyPath)
+
+		if _, dup := seen[cleaned]; dup {
 			errs = append(errs, fmt.Errorf(
 				"%w: %q", ErrPolicySignatureKeyDuplicate, keyPath,
 			))
 		}
 
-		seen[keyPath] = struct{}{}
+		seen[cleaned] = struct{}{}
 	}
 
 	return errs
@@ -265,7 +262,7 @@ func warnOrRejectIssuersWithoutSANPatterns(cfg *Config, valid bool) error {
 		return nil
 	}
 
-	if len(cfg.Policy.Issuers) > 0 && len(cfg.Policy.SANPatterns) == 0 {
+	if cfg.Policy.IssuersWithoutSANPatterns() {
 		if cfg.Verification == ModeEnforce {
 			return ErrIssuersWithoutSANPatternsInEnforce
 		}

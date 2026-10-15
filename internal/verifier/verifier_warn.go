@@ -17,6 +17,7 @@ package verifier
 import (
 	"context"
 	"log/slog"
+	"slices"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
@@ -122,90 +123,56 @@ func warnPermissiveFetchPolicy(ctx context.Context, cfg *config.Config) {
 	}
 }
 
-//nolint:funlen // one entry per check type
+// alwaysWarnedCheckTypes are the checks whose permissive missing policy is
+// reported even without a policy section, because provenance and VEX are
+// the attestations every policy is expected to cover.
+//
+//nolint:gochecknoglobals // immutable lookup table
+var alwaysWarnedCheckTypes = []types.CheckType{types.CheckTypeSLSA, types.CheckTypeVEX}
+
+// missingPolicyArtifacts names the attestations each check type admits
+// images without, for the artifact field of the missing policy warning.
+//
+//nolint:gochecknoglobals // immutable lookup table
+var missingPolicyArtifacts = map[types.CheckType]string{
+	types.CheckTypeSLSA:         "SLSA provenance attestations",
+	types.CheckTypeVEX:          "VEX attestations",
+	types.CheckTypeVSA:          "VSA attestations",
+	types.CheckTypeNotation:     "Notation signatures",
+	types.CheckTypeSBOM:         "SBOM attestations",
+	types.CheckTypeSCAI:         "SCAI attestations",
+	types.CheckTypeSource:       "source attestations",
+	types.CheckTypeBuildEnv:     "build environment attestations",
+	types.CheckTypeVulnScan:     "vulnerability scan attestations",
+	types.CheckTypeTestResult:   "test result attestations",
+	types.CheckTypeRelease:      "release attestations",
+	types.CheckTypeRuntimeTrace: "runtime trace attestations",
+	types.CheckTypeScorecard:    "OpenSSF Scorecard attestations",
+}
+
+// warnPermissiveMissingPolicies warns about attestation sections of an
+// enforcing policy whose missingPolicy admits images without the
+// attestation. The sections come from the policy section registry, so every
+// attestation type is covered.
 func warnPermissiveMissingPolicies(ctx context.Context, label string, pol *policy.Policy) {
-	type checkEntry struct {
-		name, artifact, logKey, setting string
-		enabled                         bool
-		checkType                       types.CheckType
-	}
+	for _, section := range policy.AttestationSections() {
+		if !pol.HasSection(section.CheckType) &&
+			!slices.Contains(alwaysWarnedCheckTypes, section.CheckType) {
+			continue
+		}
 
-	checks := []checkEntry{
-		{
-			"SLSA", "SLSA provenance attestations",
-			"slsa_missing_policy", "missingPolicy",
-			true, types.CheckTypeSLSA,
-		},
-		{
-			"VEX", "VEX attestations",
-			"vex_missing_policy", "vex.missingPolicy",
-			true, types.CheckTypeVEX,
-		},
-		{
-			"Notation", "Notation signatures",
-			"notation_missing_policy", "notation.missingPolicy",
-			pol.Notation != nil, types.CheckTypeNotation,
-		},
-		{
-			"SBOM", "SBOM attestations",
-			"sbom_missing_policy", "sbom.missingPolicy",
-			pol.SBOM != nil, types.CheckTypeSBOM,
-		},
-		{
-			"VSA", "VSA attestations",
-			"vsa_missing_policy", "vsa.missingPolicy",
-			pol.VSA != nil, types.CheckTypeVSA,
-		},
-		{
-			"SCAI", "SCAI attestations",
-			"scai_missing_policy", "scai.missingPolicy",
-			pol.SCAI != nil, types.CheckTypeSCAI,
-		},
-		{
-			"Source", "source attestations",
-			"source_missing_policy", "source.missingPolicy",
-			pol.Source != nil, types.CheckTypeSource,
-		},
-		{
-			"BuildEnv", "build environment attestations",
-			"buildenv_missing_policy", "buildEnv.missingPolicy",
-			pol.BuildEnv != nil, types.CheckTypeBuildEnv,
-		},
-		{
-			"VulnScan", "vulnerability scan attestations",
-			"vulnscan_missing_policy", "vulnScan.missingPolicy",
-			pol.VulnScan != nil, types.CheckTypeVulnScan,
-		},
-		{
-			"TestResult", "test result attestations",
-			"testresult_missing_policy", "testResult.missingPolicy",
-			pol.TestResult != nil, types.CheckTypeTestResult,
-		},
-		{
-			"Release", "release attestations",
-			"release_missing_policy", "release.missingPolicy",
-			pol.Release != nil, types.CheckTypeRelease,
-		},
-		{
-			"RuntimeTrace", "runtime trace attestations",
-			"runtimetrace_missing_policy", "runtimeTrace.missingPolicy",
-			pol.RuntimeTrace != nil, types.CheckTypeRuntimeTrace,
-		},
-	}
-
-	for _, chk := range checks {
-		action := pol.MissingPolicyFor(chk.checkType)
-		if !chk.enabled || action != types.ActionAllow {
+		action := pol.MissingPolicyFor(section.CheckType)
+		if action != types.ActionAllow {
 			continue
 		}
 
 		slog.WarnContext(ctx,
 			"enforce mode with default missing_policy=allow allows containers without attestation",
-			"check", chk.name,
-			"artifact", chk.artifact,
-			"setting", chk.setting,
+			"check", string(section.CheckType),
+			"artifact", missingPolicyArtifacts[section.CheckType],
+			"setting", section.Name+".missingPolicy",
 			"policy", label,
-			chk.logKey, action,
+			string(section.CheckType)+"_missing_policy", action,
 		)
 	}
 }

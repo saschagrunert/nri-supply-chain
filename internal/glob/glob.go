@@ -18,6 +18,7 @@ package glob
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 	"sync"
@@ -241,6 +242,26 @@ func writeClassOpening(builder *strings.Builder, runes []rune) int {
 	}
 
 	return start
+}
+
+// ValidateField validates the pattern of a configuration field like Validate
+// and warns when it negates a character class with '!', whose meaning changed
+// from earlier releases.
+func ValidateField(field, pattern string) error {
+	err := Validate(pattern)
+	if err != nil {
+		return err
+	}
+
+	if HasBangNegation(pattern) {
+		slog.Warn("Pattern uses a \"[!...]\" character class, which negates the class; "+
+			"earlier releases matched \"!\" literally",
+			"field", field,
+			"pattern", pattern,
+		)
+	}
+
+	return nil
 }
 
 // HasBangNegation reports whether pattern contains a character class negated

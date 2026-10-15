@@ -20,9 +20,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/checker/checkertest"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/sbom"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
+	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
 const (
@@ -87,19 +89,39 @@ func TestVerifyCVSSPartialRatings(t *testing.T) {
 			wantPass:      false,
 		},
 		{
-			name:          "unknown severity without score is unrated",
+			name:          "unknown severity without score fails closed",
 			vulnerability: `{"id":"CVE-1","ratings":[{"severity":"unknown"}]}`,
 			pol:           cvssThresholdPolicy(&maxScore, ""),
-			wantPass:      true,
+			wantPass:      false,
 		},
 		{
-			name:          "uppercase UNKNOWN severity is unrated for minSeverity",
+			name:          "uppercase UNKNOWN severity fails closed for minSeverity",
 			vulnerability: `{"id":"CVE-1","ratings":[{"severity":"UNKNOWN"}]}`,
 			pol:           cvssThresholdPolicy(nil, "low"),
-			wantPass:      true,
+			wantPass:      false,
 		},
 		{
-			name:          "none severity without score is unrated",
+			name:          "missing ratings fail closed",
+			vulnerability: `{"id":"CVE-1"}`,
+			pol:           cvssThresholdPolicy(&maxScore, ""),
+			wantPass:      false,
+		},
+		{
+			name:          "textual critical is not outweighed by a lower score",
+			vulnerability: `{"id":"CVE-1","ratings":[{"method":"CVSSv31","score":5.3},{"severity":"critical"}]}`,
+			pol:           cvssThresholdPolicy(&maxScore, ""),
+			wantPass:      false,
+		},
+		{
+			name:          "unrated finding accepted through ignoreCVEs",
+			vulnerability: `{"id":"CVE-1","ratings":[{"severity":"unknown"}]}`,
+			pol: &policy.Policy{SBOM: &policy.SBOMPolicy{CVSS: &policy.SBOMCVSSPolicy{
+				MaxScore: &maxScore, IgnoreCVEs: []string{"CVE-1"},
+			}}},
+			wantPass: true,
+		},
+		{
+			name:          "none severity without score is rated none",
 			vulnerability: `{"id":"CVE-1","ratings":[{"severity":"None"},{"severity":"informational"}]}`,
 			pol:           cvssThresholdPolicy(&maxScore, "low"),
 			wantPass:      true,
@@ -471,10 +493,14 @@ func TestVerifyComponentListDeeplyNestedComponents(t *testing.T) {
 	// Deeper nesting must not hide the denied component.
 	att := testutil.WrapInToto(t, json.RawMessage(nested(40)), testDigest, testPredicateType)
 
-	_, err := sbom.Verify(context.Background(), att, pol, testDigest)
-	if err == nil || !strings.Contains(err.Error(), "nested deeper") {
-		t.Errorf("expected a nesting error, got %v", err)
-	}
+	result, err := sbom.VerifyMultipleWithBaseline(
+		context.Background(),
+		[][]byte{att},
+		nil,
+		pol,
+		testDigest,
+	)
+	checkertest.AssertFailed(t, result, err, types.ErrComponentsTooDeep)
 }
 
 func TestVerifyComponentListSPDXReferenceTypeCase(t *testing.T) {

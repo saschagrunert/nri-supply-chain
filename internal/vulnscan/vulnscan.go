@@ -64,7 +64,7 @@ type vulnScanPredicate struct {
 	Result *legacyResult `json:"result,omitempty"`
 
 	// vulns holds the normalized findings of both layouts, set during validation.
-	vulns []vulnerability
+	vulns []types.Finding
 }
 
 type scanner struct {
@@ -175,13 +175,6 @@ type legacyVulnerability struct {
 	Score    *float64 `json:"score,omitempty"`
 }
 
-// vulnerability is a finding normalized from either predicate layout.
-type vulnerability struct {
-	ID    string
-	Score *float64
-	Rank  int
-}
-
 //nolint:gochecknoglobals // immutable check declaration
 var spec = &checker.Spec[vulnScanPredicate]{
 	Info: checker.Info{
@@ -204,6 +197,8 @@ var spec = &checker.Spec[vulnScanPredicate]{
 		Label:     "scanned",
 		ErrStale:  ErrStaleVulnScan,
 		ErrFuture: ErrFutureTimestamp,
+		// A rescan replaces the previous scan of the image.
+		Superseding: true,
 	},
 	Rules: []checker.Rule[vulnScanPredicate]{checkThresholds},
 	Merge: map[string]checker.MergeFunc{
@@ -235,15 +230,6 @@ func severityOrder(rank int) int {
 // Info returns the check type and label of the vulnerability scan check.
 func Info() checker.Info {
 	return spec.Info
-}
-
-// Verify checks a single vulnerability scan attestation against the given policy.
-func Verify(
-	ctx context.Context,
-	att []byte, pol *policy.Policy, imageDigest string,
-) (*types.CheckResult, error) {
-	//nolint:wrapcheck // the generic checker returns domain errors
-	return spec.Verify(ctx, att, pol, imageDigest)
 }
 
 // VerifyMultiple checks multiple vulnerability scan attestations. Any policy
@@ -321,8 +307,8 @@ func normalizeLegacyResults(pred *vulnScanPredicate) error {
 // of its severity entries, keeping the most severe. Numeric scores are read
 // as CVSS base scores; textual scores as qualitative severities. Entries that
 // are neither (for example CVSS vectors) and EPSS probabilities are ignored.
-func normalizeSpecResult(result *specResult) vulnerability {
-	vuln := vulnerability{ID: result.ID, Score: nil, Rank: types.SeverityRankUnknown}
+func normalizeSpecResult(result *specResult) types.Finding {
+	vuln := types.NewFinding(result.ID)
 
 	for idx := range result.Severity {
 		entry := &result.Severity[idx]
@@ -334,44 +320,26 @@ func normalizeSpecResult(result *specResult) vulnerability {
 
 		score, err := strconv.ParseFloat(raw, 64)
 		if err == nil {
-			vuln.addScore(score)
+			vuln.AddScore(score)
 
 			continue
 		}
 
-		if rank, known := types.SeverityRankOf(raw); known {
-			vuln.Rank = max(vuln.Rank, rank)
-		}
+		vuln.AddSeverity(raw)
 	}
 
 	return vuln
 }
 
-func normalizeLegacy(legacy *legacyVulnerability) vulnerability {
-	vuln := vulnerability{ID: legacy.ID, Score: nil, Rank: types.SeverityRankUnknown}
-
-	if rank, known := types.SeverityRankOf(legacy.Severity); known {
-		vuln.Rank = rank
-	}
+func normalizeLegacy(legacy *legacyVulnerability) types.Finding {
+	vuln := types.NewFinding(legacy.ID)
+	vuln.AddSeverity(legacy.Severity)
 
 	if legacy.Score != nil {
-		vuln.addScore(*legacy.Score)
+		vuln.AddScore(*legacy.Score)
 	}
 
 	return vuln
-}
-
-func (v *vulnerability) addScore(score float64) {
-	rank, valid := types.SeverityRankFromCVSS(score)
-	if !valid {
-		return
-	}
-
-	if v.Score == nil || score > *v.Score {
-		v.Score = &score
-	}
-
-	v.Rank = max(v.Rank, rank)
 }
 
 func scanTimestamp(pred *vulnScanPredicate) *time.Time {
@@ -404,7 +372,7 @@ func predicateMeta(pred *vulnScanPredicate) map[string]any {
 	for idx := range pred.vulns {
 		vuln := &pred.vulns[idx]
 
-		maxScore = max(maxScore, vuln.effectiveScore())
+		maxScore = max(maxScore, vuln.EffectiveScore())
 
 		if severityOrder(vuln.Rank) > severityOrder(maxRank) {
 			maxRank = vuln.Rank
@@ -436,65 +404,16 @@ func predicateMeta(pred *vulnScanPredicate) map[string]any {
 // threshold is configured, a finding whose severity cannot be determined
 // fails closed; it can be accepted explicitly through ignoreCVEs.
 func checkThresholds(pred *vulnScanPredicate, pol *policy.Policy) string {
-	if pol.VulnScan == nil || (pol.VulnScan.MaxScore == nil && pol.VulnScan.MinSeverity == "") {
+	if pol.VulnScan == nil {
 		return ""
 	}
 
-	ignored := make(map[string]struct{}, len(pol.VulnScan.IgnoreCVEs))
-	for _, cve := range pol.VulnScan.IgnoreCVEs {
-		ignored[cve] = struct{}{}
+	thresholds := types.SeverityThresholds{
+		Label:       "vulnerability",
+		MaxScore:    pol.VulnScan.MaxScore,
+		MinSeverity: pol.VulnScan.MinSeverity,
+		IgnoreCVEs:  pol.VulnScan.IgnoreCVEs,
 	}
 
-	for idx := range pred.vulns {
-		vuln := &pred.vulns[idx]
-		if _, skip := ignored[vuln.ID]; skip {
-			continue
-		}
-
-		violation := vuln.thresholdViolation(pol.VulnScan)
-		if violation != "" {
-			return violation
-		}
-	}
-
-	return ""
-}
-
-func (v *vulnerability) thresholdViolation(pol *policy.VulnScanPolicy) string {
-	if v.Rank == types.SeverityRankUnknown {
-		return fmt.Sprintf(
-			"vulnerability threshold cannot be evaluated: %s has no recognizable severity or score",
-			v.ID,
-		)
-	}
-
-	exceeded := pol.MaxScore != nil && v.effectiveScore() > *pol.MaxScore
-
-	if pol.MinSeverity != "" {
-		// Policy validation rejects unknown severities; one that slips
-		// through flags every vulnerability.
-		minRank, known := types.SeverityRankOf(pol.MinSeverity)
-		if !known || v.Rank >= minRank {
-			exceeded = true
-		}
-	}
-
-	if !exceeded {
-		return ""
-	}
-
-	return fmt.Sprintf(
-		"vulnerability threshold exceeded: %s (score %.1f, severity %s)",
-		v.ID, v.effectiveScore(), types.SeverityName(v.Rank),
-	)
-}
-
-// effectiveScore returns the score, or for findings without a numeric score
-// the lowest score of their severity.
-func (v *vulnerability) effectiveScore() float64 {
-	if v.Score != nil {
-		return *v.Score
-	}
-
-	return types.SeverityMinimumCVSS(v.Rank)
+	return thresholds.Violation(pred.vulns)
 }

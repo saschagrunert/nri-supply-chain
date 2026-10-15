@@ -17,12 +17,11 @@ package runtimetrace_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/saschagrunert/nri-supply-chain/internal/intoto"
+	"github.com/saschagrunert/nri-supply-chain/internal/checker/checkertest"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/runtimetrace"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
@@ -152,7 +151,12 @@ func TestVerify(t *testing.T) {
 
 			att := testutil.WrapInToto(t, test.doc, testDigest, testPredicateType)
 
-			result, err := runtimetrace.Verify(context.Background(), att, test.pol, testDigest)
+			result, err := runtimetrace.VerifyMultiple(
+				context.Background(),
+				[][]byte{att},
+				test.pol,
+				testDigest,
+			)
 			testutil.AssertNoError(t, err)
 
 			testutil.AssertEqual(t, test.wantPassed, result.Passed)
@@ -161,23 +165,17 @@ func TestVerify(t *testing.T) {
 	}
 }
 
-func TestVerifyCheckType(t *testing.T) {
-	t.Parallel()
-
-	att := testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType)
-
-	result, err := runtimetrace.Verify(context.Background(), att, &policy.Policy{}, testDigest)
-	testutil.AssertNoError(t, err)
-
-	testutil.AssertEqual(t, types.CheckType("runtimetrace"), result.Type)
-}
-
 func TestVerifyMetadata(t *testing.T) {
 	t.Parallel()
 
 	att := testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType)
 
-	result, err := runtimetrace.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+	result, err := runtimetrace.VerifyMultiple(
+		context.Background(),
+		[][]byte{att},
+		&policy.Policy{},
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	if result.Metadata == nil {
@@ -216,68 +214,6 @@ func TestVerifyMetadata(t *testing.T) {
 	if !strings.Contains(fileNames, "/tmp/build/output.o") {
 		t.Errorf("fileNames = %q, want to contain /tmp/build/output.o", fileNames)
 	}
-}
-
-func TestVerifyMalformedPayloads(t *testing.T) {
-	t.Parallel()
-
-	t.Run("empty payload", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := runtimetrace.Verify(context.Background(), []byte{}, &policy.Policy{}, testDigest)
-		if !errors.Is(err, runtimetrace.ErrInvalidRuntimeTrace) {
-			t.Errorf("expected ErrInvalidRuntimeTrace, got %v", err)
-		}
-	})
-
-	t.Run("nil payload", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := runtimetrace.Verify(context.Background(), nil, &policy.Policy{}, testDigest)
-		if !errors.Is(err, runtimetrace.ErrInvalidRuntimeTrace) {
-			t.Errorf("expected ErrInvalidRuntimeTrace, got %v", err)
-		}
-	})
-
-	t.Run("truncated JSON", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := runtimetrace.Verify(
-			context.Background(), []byte(`{"subject":[`), &policy.Policy{}, testDigest,
-		)
-		if !errors.Is(err, runtimetrace.ErrInvalidRuntimeTrace) {
-			t.Errorf("expected ErrInvalidRuntimeTrace, got %v", err)
-		}
-	})
-}
-
-func TestVerifySubjectEdgeCases(t *testing.T) {
-	t.Parallel()
-
-	t.Run("subject with mismatched digest", func(t *testing.T) {
-		t.Parallel()
-
-		att := testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType)
-
-		_, err := runtimetrace.Verify(context.Background(),
-			att, &policy.Policy{},
-			"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-		)
-		if !errors.Is(err, intoto.ErrSubjectMismatch) {
-			t.Errorf("expected ErrSubjectMismatch, got %v", err)
-		}
-	})
-
-	t.Run("empty digest with subjects rejects for binding", func(t *testing.T) {
-		t.Parallel()
-
-		att := testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType)
-
-		_, err := runtimetrace.Verify(context.Background(), att, &policy.Policy{}, "")
-		if !errors.Is(err, intoto.ErrNoDigestBinding) {
-			t.Errorf("expected ErrNoDigestBinding, got %v", err)
-		}
-	})
 }
 
 func TestVerifyMultiple(t *testing.T) {
@@ -499,10 +435,13 @@ func TestVerifyRejectsIncompletePredicates(t *testing.T) {
 
 			att := testutil.WrapInToto(t, tc.predicate, testDigest, testPredicateType)
 
-			_, err := runtimetrace.Verify(context.Background(), att, &policy.Policy{}, testDigest)
-			if !errors.Is(err, runtimetrace.ErrInvalidRuntimeTrace) {
-				t.Fatalf("expected ErrInvalidRuntimeTrace, got %v", err)
-			}
+			result, err := runtimetrace.VerifyMultiple(
+				context.Background(),
+				[][]byte{att},
+				&policy.Policy{},
+				testDigest,
+			)
+			checkertest.AssertFailed(t, result, err, runtimetrace.ErrInvalidRuntimeTrace)
 		})
 	}
 }
@@ -529,11 +468,16 @@ func TestVerifyForbiddenURIWithBenignName(t *testing.T) {
 			doc.MonitorLog.FileAccess = []traceFileAccess{tc.file}
 			att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-			result, err := runtimetrace.Verify(context.Background(), att, &policy.Policy{
-				RuntimeTrace: &policy.RuntimeTracePolicy{
-					ForbiddenFilePatterns: []string{"/etc/**"},
+			result, err := runtimetrace.VerifyMultiple(
+				context.Background(),
+				[][]byte{att},
+				&policy.Policy{
+					RuntimeTrace: &policy.RuntimeTracePolicy{
+						ForbiddenFilePatterns: []string{"/etc/**"},
+					},
 				},
-			}, testDigest)
+				testDigest,
+			)
 			testutil.AssertNoError(t, err)
 			testutil.AssertEqual(t, false, result.Passed)
 			testutil.AssertContains(t, result.Detail, "/etc/shadow")
@@ -549,7 +493,12 @@ func TestVerifyFutureTimestampWithoutMaxAge(t *testing.T) {
 	doc.Metadata = &traceMetadata{BuildStartedOn: nil, BuildFinishedOn: &future}
 	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-	result, err := runtimetrace.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+	result, err := runtimetrace.VerifyMultiple(
+		context.Background(),
+		[][]byte{att},
+		&policy.Policy{},
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 	testutil.AssertEqual(t, false, result.Passed)
 	testutil.AssertContains(t, result.Detail, "future")
@@ -641,7 +590,12 @@ func TestVerifyFreshness(t *testing.T) {
 
 			att := testutil.WrapInToto(t, test.doc, testDigest, testPredicateType)
 
-			result, err := runtimetrace.Verify(context.Background(), att, test.pol, testDigest)
+			result, err := runtimetrace.VerifyMultiple(
+				context.Background(),
+				[][]byte{att},
+				test.pol,
+				testDigest,
+			)
 			testutil.AssertNoError(t, err)
 
 			testutil.AssertEqual(t, test.wantPassed, result.Passed)
@@ -658,7 +612,7 @@ func TestVerifyUntrustedMonitorDetailMessage(t *testing.T) {
 
 	att := testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType)
 
-	result, err := runtimetrace.Verify(context.Background(), att, &policy.Policy{
+	result, err := runtimetrace.VerifyMultiple(context.Background(), [][]byte{att}, &policy.Policy{
 		RuntimeTrace: &policy.RuntimeTracePolicy{
 			TrustedMonitors: []string{"https://other.com/*"},
 		},
@@ -683,7 +637,7 @@ func TestVerifyForbiddenFileDetailMessage(t *testing.T) {
 
 	att := testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType)
 
-	result, err := runtimetrace.Verify(context.Background(), att, &policy.Policy{
+	result, err := runtimetrace.VerifyMultiple(context.Background(), [][]byte{att}, &policy.Policy{
 		RuntimeTrace: &policy.RuntimeTracePolicy{
 			ForbiddenFilePatterns: []string{testForbiddenTmpGlob},
 		},
@@ -719,7 +673,7 @@ func TestVerifyFileAccessURI(t *testing.T) {
 	}
 	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-	result, err := runtimetrace.Verify(context.Background(), att, &policy.Policy{
+	result, err := runtimetrace.VerifyMultiple(context.Background(), [][]byte{att}, &policy.Policy{
 		RuntimeTrace: &policy.RuntimeTracePolicy{
 			ForbiddenFilePatterns: []string{"file:///etc/*"},
 		},
@@ -730,24 +684,5 @@ func TestVerifyFileAccessURI(t *testing.T) {
 		t.Fatal("expected fail for forbidden URI-based file access")
 	}
 
-	fileNames, ok := result.Metadata["fileNames"].(string)
-	if !ok || !strings.Contains(fileNames, "file:///etc/passwd") {
-		t.Errorf("fileNames = %v, want to contain file:///etc/passwd", result.Metadata["fileNames"])
-	}
-}
-
-func TestVerifyCancelledContext(t *testing.T) {
-	t.Parallel()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err := runtimetrace.Verify(ctx, nil, nil, "")
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-
-	if !errors.Is(err, context.Canceled) {
-		t.Errorf("expected context.Canceled, got: %v", err)
-	}
+	testutil.AssertContains(t, result.Detail, "file:///etc/passwd")
 }

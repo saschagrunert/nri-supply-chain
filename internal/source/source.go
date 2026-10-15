@@ -89,9 +89,10 @@ var spec = &checker.Spec[sourcePredicate]{
 
 			return &pol.Source.MaxAgeDuration
 		},
-		Label:     "verified",
-		ErrStale:  ErrStaleSource,
-		ErrFuture: ErrFutureTimestamp,
+		Label:       "verified",
+		ErrStale:    ErrStaleSource,
+		ErrFuture:   ErrFutureTimestamp,
+		Superseding: false,
 	},
 	Rules: []checker.Rule[sourcePredicate]{
 		checkTrustedSource,
@@ -103,15 +104,6 @@ var spec = &checker.Spec[sourcePredicate]{
 // Info returns the check type and label of the source check.
 func Info() checker.Info {
 	return spec.Info
-}
-
-// Verify checks a single source attestation against the given policy.
-func Verify(
-	ctx context.Context,
-	att []byte, pol *policy.Policy, imageDigest string,
-) (*types.CheckResult, error) {
-	//nolint:wrapcheck // the generic checker returns domain errors
-	return spec.Verify(ctx, att, pol, imageDigest)
 }
 
 // VerifyMultiple checks multiple source attestations, accepting if any valid one passes.

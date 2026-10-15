@@ -29,52 +29,36 @@ type MergeFunc func(existing, incoming any) (any, bool)
 
 // Sum adds int64 or float64 values.
 func Sum() MergeFunc {
-	return func(existing, incoming any) (any, bool) {
-		switch dst := existing.(type) {
-		case int64:
-			src, ok := incoming.(int64)
-
-			return dst + src, ok
-		case float64:
-			src, ok := incoming.(float64)
-
-			return dst + src, ok
-		default:
-			return nil, false
-		}
-	}
+	return numeric(func(dst, src int64) int64 { return dst + src },
+		func(dst, src float64) float64 { return dst + src })
 }
 
 // Max keeps the larger of two int64 or float64 values.
 func Max() MergeFunc {
-	return func(existing, incoming any) (any, bool) {
-		switch dst := existing.(type) {
-		case int64:
-			src, ok := incoming.(int64)
-
-			return max(dst, src), ok
-		case float64:
-			src, ok := incoming.(float64)
-
-			return max(dst, src), ok
-		default:
-			return nil, false
-		}
-	}
+	return numeric(func(dst, src int64) int64 { return max(dst, src) },
+		func(dst, src float64) float64 { return max(dst, src) })
 }
 
 // Min keeps the smaller of two int64 or float64 values.
 func Min() MergeFunc {
+	return numeric(func(dst, src int64) int64 { return min(dst, src) },
+		func(dst, src float64) float64 { return min(dst, src) })
+}
+
+// numeric merges int64 or float64 values of the same type.
+func numeric(
+	combineInt func(dst, src int64) int64, combineFloat func(dst, src float64) float64,
+) MergeFunc {
 	return func(existing, incoming any) (any, bool) {
 		switch dst := existing.(type) {
 		case int64:
 			src, ok := incoming.(int64)
 
-			return min(dst, src), ok
+			return combineInt(dst, src), ok
 		case float64:
 			src, ok := incoming.(float64)
 
-			return min(dst, src), ok
+			return combineFloat(dst, src), ok
 		default:
 			return nil, false
 		}

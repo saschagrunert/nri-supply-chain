@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/slsa"
 )
@@ -42,6 +43,12 @@ func BenchmarkVerify(b *testing.B) {
 	b.ResetTimer()
 
 	for range b.N {
-		_, _ = slsa.Verify(context.Background(), data, pol, testDigest)
+		_, _ = slsa.VerifyMultipleWithOptions(
+			context.Background(),
+			[]attestation.VerifiedAttestation{{Payload: data}},
+			pol,
+			testDigest,
+			nil,
+		)
 	}
 }

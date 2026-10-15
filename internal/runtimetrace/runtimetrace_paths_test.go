@@ -52,11 +52,16 @@ func TestVerifyForbiddenFileEncodings(t *testing.T) {
 				`"monitorLog":{"fileAccess":[` + file + `]}}`
 			att := testutil.WrapInToto(t, json.RawMessage(predicate), testDigest, testPredicateType)
 
-			result, err := runtimetrace.Verify(context.Background(), att, &policy.Policy{
-				RuntimeTrace: &policy.RuntimeTracePolicy{
-					ForbiddenFilePatterns: []string{testShadowPath},
+			result, err := runtimetrace.VerifyMultiple(
+				context.Background(),
+				[][]byte{att},
+				&policy.Policy{
+					RuntimeTrace: &policy.RuntimeTracePolicy{
+						ForbiddenFilePatterns: []string{testShadowPath},
+					},
 				},
-			}, testDigest)
+				testDigest,
+			)
 			testutil.AssertNoError(t, err)
 			testutil.AssertEqual(t, false, result.Passed)
 			testutil.AssertContains(t, result.Detail, testShadowPath)
@@ -105,11 +110,16 @@ func TestVerifyForbiddenFileUnparsableURLs(t *testing.T) {
 				`"monitorLog":{"fileAccess":[` + test.file + `]}}`
 			att := testutil.WrapInToto(t, json.RawMessage(predicate), testDigest, testPredicateType)
 
-			result, err := runtimetrace.Verify(context.Background(), att, &policy.Policy{
-				RuntimeTrace: &policy.RuntimeTracePolicy{
-					ForbiddenFilePatterns: []string{test.pattern},
+			result, err := runtimetrace.VerifyMultiple(
+				context.Background(),
+				[][]byte{att},
+				&policy.Policy{
+					RuntimeTrace: &policy.RuntimeTracePolicy{
+						ForbiddenFilePatterns: []string{test.pattern},
+					},
 				},
-			}, testDigest)
+				testDigest,
+			)
 			testutil.AssertNoError(t, err)
 			testutil.AssertEqual(t, false, result.Passed)
 		})
@@ -124,7 +134,7 @@ func TestVerifyAllowedFileEncodings(t *testing.T) {
 		`{"name":"/usr/bin/gcc","downloadLocation":"https://example.com/gcc"}]}}`
 	att := testutil.WrapInToto(t, json.RawMessage(predicate), testDigest, testPredicateType)
 
-	result, err := runtimetrace.Verify(context.Background(), att, &policy.Policy{
+	result, err := runtimetrace.VerifyMultiple(context.Background(), [][]byte{att}, &policy.Policy{
 		RuntimeTrace: &policy.RuntimeTracePolicy{
 			ForbiddenFilePatterns: []string{testShadowPath},
 		},
