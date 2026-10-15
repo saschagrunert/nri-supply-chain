@@ -28,7 +28,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/daemon"
 )
 
-var version = "v0.7.0"
+var version = "0.7.0"
 
 const (
 	exitSuccess = 0
@@ -43,6 +43,7 @@ const (
 	outputFormatQuiet = "quiet"
 
 	defaultConfigPath = daemon.DefaultConfigPath
+	flagConfig        = "config"
 
 	cmdVersion    = "version"
 	cmdVerify     = "verify"
@@ -131,7 +132,7 @@ func newRootCmd() *cobra.Command { //nolint:funlen // cobra command setup
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cmd.SilenceUsage = true
 
-			servePath := serveConfigPath(configPath, cmd.Flags().Changed("config"))
+			servePath := serveConfigPath(configPath, configFlagSet(cmd))
 
 			cfg, err := setupServeConfig(servePath)
 			if err != nil {
@@ -161,7 +162,7 @@ func newRootCmd() *cobra.Command { //nolint:funlen // cobra command setup
 	// means --verbose on the verify subcommand.
 	root.Flags().Bool("version", false, "print the version")
 
-	root.PersistentFlags().StringVarP(&configPath, "config", "c",
+	root.PersistentFlags().StringVarP(&configPath, flagConfig, "c",
 		defaultConfigPath, "path to TOML config file (the plugin uses the configuration "+
 			"passed by the runtime when empty, or when unset and the default file does not exist)")
 	root.PersistentFlags().StringVarP(&logLevel, "log-level", "l", "",

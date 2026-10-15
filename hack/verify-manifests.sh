@@ -12,7 +12,10 @@ HELM="${HELM:-build/helm}"
 KUBECONFORM="${KUBECONFORM:-build/kubeconform}"
 CHART="deploy/helm/nri-supply-chain"
 RAW_MANIFESTS=(deploy/kubernetes/daemonset.yaml deploy/kubernetes/monitoring.yaml)
-CRD_SCHEMA_LOCATION='https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+# Pinned to a commit, so that the result does not change without a change in
+# this repository.
+CRDS_CATALOG_COMMIT=63669a570e231d4f1f8396d229a1de512bcf0a34
+CRD_SCHEMA_LOCATION="https://raw.githubusercontent.com/datreeio/CRDs-catalog/$CRDS_CATALOG_COMMIT/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
 
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
@@ -130,6 +133,17 @@ render_chart "$TMP_DIR/helm-trust-options.yaml" \
 	--set 'config.sigstore.roots[0].tufMirror=https://tuf-repo.github.com' \
 	--set "config.sigstore.roots[0].issuers[0]=$TRUST_ISSUER"
 
+# Policy keys become file names in the policy directory and keys of the
+# ConfigMap that also holds config.toml. The value is a plain string: "{}"
+# would be parsed as a list, which the schema rejects for any key.
+render_chart "$TMP_DIR/helm-policy-key.yaml" --set-string 'policies.prod-ns\.json=x' ||
+	fail "Helm chart rejects the policy key prod-ns.json"
+for key in 'config\.toml' 'prod' 'Prod\.json'; do
+	if render_chart "$TMP_DIR/helm-bad-policy-key.yaml" --set-string "policies.$key=x" 2>/dev/null; then
+		fail "Helm chart accepts the policy key $key"
+	fi
+done
+
 TEST_DIGEST="sha256:$(printf '%064d' 0)"
 render_chart "$TMP_DIR/helm-digest.yaml" --set "image.digest=$TEST_DIGEST"
 grep -qF "image: \"ghcr.io/saschagrunert/nri-supply-chain@$TEST_DIGEST\"" "$TMP_DIR/helm-digest.yaml" ||
@@ -192,6 +206,20 @@ audit_line=$(grep -n '^audit_log = ' "$TMP_DIR/helm-extra/config.toml" | head -1
 if [[ -n "$first_table" && "$audit_line" -gt "$first_table" ]]; then
 	fail "extraConfig is rendered after a TOML table, top-level keys would be misplaced"
 fi
+
+# volume_mount prints the volumeMounts entry named $2 of the manifest $1.
+volume_mount() {
+	awk -v name="$2" '
+		$0 ~ "^ +- name: " name "$" && !found { inmount = 1; found = 1; indent = index($0, "-"); print; next }
+		inmount && (index($0, "-") == indent || $0 !~ /^ +[a-zA-Z]/) { exit }
+		inmount { print }
+	' "$1"
+}
+
+for manifest in "${RAW_MANIFESTS[0]}" "$TMP_DIR/helm.yaml"; do
+	volume_mount "$manifest" nri-socket | grep -q 'readOnly: true' ||
+		fail "$manifest must mount the NRI socket directory read-only"
+done
 
 echo "Checking raw manifest and Helm chart for drift"
 for policy in "$TMP_DIR"/raw/policies/*.json; do

@@ -153,8 +153,6 @@ linters:
             - github.com/notaryproject/notation-go
             - github.com/opencontainers/go-digest
             - github.com/opencontainers/image-spec
-            - github.com/olekukonko/tablewriter
-            - github.com/olekukonko/tablewriter/tw
             - github.com/openvex/go-vex
             - github.com/package-url/packageurl-go
             - github.com/prometheus/client_golang
@@ -181,7 +179,6 @@ linters:
         - 'github\.com/opencontainers/image-spec/specs-go/v1\.Descriptor'
         - 'github\.com/openvex/go-vex/.*'
         - 'github\.com/prometheus/client_golang/prometheus\..*'
-        - 'github\.com/olekukonko/tablewriter/tw\..*'
         - 'github\.com/prometheus/client_golang/prometheus/promhttp\..*'
         - 'github\.com/saschagrunert/nri-supply-chain/internal/attestation\.FetchOptions'
         - 'github\.com/saschagrunert/nri-supply-chain/internal/attestation\.TrustedKeyRef'

@@ -15,7 +15,10 @@
 package verifier
 
 import (
+	"encoding/pem"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -87,5 +90,52 @@ func TestLoadAndHashPoliciesCommitsOCIRollbackGuard(t *testing.T) {
 			want,
 			got,
 		)
+	}
+}
+
+// TestLoadAndHashPoliciesUsesRegistriesWithoutOCIFetcher verifies that OCI
+// policies are pulled with the configured registry settings also when the
+// attestation fetcher has no transport cache, as in offline mode.
+func TestLoadAndHashPoliciesUsesRegistriesWithoutOCIFetcher(t *testing.T) {
+	t.Parallel()
+
+	img, err := mutate.Append(empty.Image, mutate.Addendum{
+		Layer: static.NewLayer(
+			[]byte(`{"slsa": {"missingPolicy": "warn"}}`),
+			ociTypes.MediaType(policy.PolicyMediaType),
+		),
+		Annotations: map[string]string{"org.opencontainers.image.title": "default.json"},
+	})
+	testutil.AssertNoError(t, err)
+
+	srv := httptest.NewTLSServer(registry.New())
+	t.Cleanup(srv.Close)
+
+	host := strings.TrimPrefix(srv.URL, "https://")
+	ociRef := host + "/org/policies:v1"
+
+	ref, err := name.ParseReference(ociRef)
+	testutil.AssertNoError(t, err)
+	testutil.AssertNoError(t, remote.Write(ref, img, remote.WithTransport(srv.Client().Transport)))
+
+	caPath := filepath.Join(t.TempDir(), "ca.pem")
+	testutil.AssertNoError(t, os.WriteFile(caPath, pem.EncodeToMemory(&pem.Block{
+		Type: "CERTIFICATE", Headers: nil, Bytes: srv.Certificate().Raw,
+	}), 0o600))
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.Offline.Mode = config.OfflineModeOffline
+	cfg.Policy.Source = config.PolicySourceOCI
+	cfg.Policy.OCIRef = ociRef
+	cfg.Registries = []config.Registry{{Prefix: host, Mirror: "", CACert: caPath, Insecure: false}}
+
+	// No OCI attestation fetcher, so no transport cache to share: the
+	// registry's ca_cert must still apply to the policy pull.
+	loaded, err := loadAndHashPolicies(t.Context(), cfg, nil, time.Time{})
+	testutil.AssertNoError(t, err)
+
+	if len(loaded.policies) != 1 {
+		t.Fatalf("loaded %d policies, want 1", len(loaded.policies))
 	}
 }

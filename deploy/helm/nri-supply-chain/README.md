@@ -11,6 +11,11 @@ that connects to the host NRI socket and verifies container-image attestations.
 
 ## Install
 
+The chart installs into the release namespace, or into `namespaceOverride`
+when set. Create that namespace with the `privileged` Pod Security level
+yourself, as below, or set `namespace.create=true` to let the chart create it
+with these labels.
+
 Create a values file containing your policy. The default policy deliberately
 contains `myorg` placeholders and is suitable only as a starting point.
 
@@ -39,8 +44,9 @@ helm template nri-supply-chain deploy/helm/nri-supply-chain \
 
 ## Policies and configuration
 
-`policies` is a map of `<namespace>.json` policy files. `default.json` is
-required for local policy mode. Set `config.policy.source=oci` and
+`policies` is a map of `<namespace>.json` policy files, where the namespace is
+a lowercase RFC 1123 label. The values schema rejects other keys. `default.json`
+is required for local policy mode. Set `config.policy.source=oci` and
 `config.policy.ociRef` for OCI-distributed policies; local policy entries are
 then not used by the plugin, and an empty `policies` map mounts an empty
 policy directory.
@@ -52,11 +58,30 @@ configuration change instead. `daemonSet.terminationGracePeriodSeconds`
 (default `45`, at least `40`) leaves room for the plugin's 30s bound on
 in-flight verifications at shutdown.
 
-All standard operational settings are exposed below `config`, including
-timeouts, cache limits, registry mirrors, Sigstore roots, and the policy
-source. `config.extraConfig` inserts TOML verbatim for forward-compatible
-fields; it is rendered before any TOML table, so top-level keys work. `config.allowlistDigests` bypasses verification for explicitly trusted
-digests. For policy/config semantics, see the repository's [`docs/config.md`](../../../docs/config.md).
+`config` exposes the common operational settings: timeouts, cache limits,
+registry mirrors, Sigstore roots, GUAC, and the policy source.
+`config.allowlistDigests` bypasses verification for explicitly trusted digests.
+Every other setting goes into `config.extraConfig`, which is inserted into
+`config.toml` verbatim. It is rendered before any TOML table the chart
+generates, so top-level keys work; place them before any table inside
+`extraConfig`. Settings that are only available this way include
+`check_timeout`, `audit_log`, and the `[offline]` and `[remediation]` tables:
+
+```yaml
+config:
+  extraConfig: |
+    check_timeout = "10s"
+    audit_log = "/var/log/nri-supply-chain/audit.json"
+
+    [remediation]
+    mode = "warn"
+```
+
+An `audit_log` path must be writable: mount a volume there with
+`extraVolumes` and `extraVolumeMounts`, since the root filesystem is
+read-only. The chart's remediation alerts only fire with remediation enabled.
+For policy and config semantics, see the repository's
+[`docs/config.md`](../../../docs/config.md).
 
 Private Sigstore roots and custom registry CAs should be supplied through a
 Secret or ConfigMap using `extraVolumes` and `extraVolumeMounts`, then referred
@@ -91,6 +116,10 @@ disconnects, verification failures, circuit breaker trips, fetch errors,
 interrupted verifications, admission latency, config reloads, cache hit ratio,
 degraded containers, remediation errors, and continuous verifier staleness).
 Both are opt-in so the chart can install on clusters without those CRDs.
+The plugin availability alert matches the scrape job of the chart's
+ServiceMonitor. When the plugin is scraped another way, set
+`monitoring.prometheusRule.job` to that job; without a ServiceMonitor or a job,
+the alert is left out, since it would fire permanently.
 
 `monitoring.prometheusRule.verificationLatencyThresholdSeconds` and
 `verificationLatencyFor` are deprecated and ignored. The latency alert now
@@ -108,8 +137,10 @@ application's listening port.
 
 ## Security notes
 
-The DaemonSet mounts `/var/run/nri` from the host. This is necessary to enforce
-runtime verification and should be treated as privileged node-level access.
+The DaemonSet mounts `/var/run/nri` from the host, read-only: connecting to the
+runtime's socket needs no write access, and the plugin cannot replace the
+socket. The mount is necessary to enforce runtime verification and should be
+treated as privileged node-level access.
 The NRI socket is owned by root, so the container runs as UID 0, but it drops
 all capabilities, disallows privilege escalation, uses the `RuntimeDefault`
 seccomp profile, and has a read-only root filesystem with `emptyDir` volumes

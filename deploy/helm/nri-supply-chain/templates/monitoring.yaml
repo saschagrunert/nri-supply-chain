@@ -26,7 +26,11 @@ spec:
       honorLabels: {{ .Values.monitoring.serviceMonitor.honorLabels }}
 {{- end }}
 {{- if .Values.monitoring.prometheusRule.enabled }}
-{{- $job := include "nri-supply-chain.fullname" . }}
+{{- /* The plugin's scrape job: the chart's ServiceMonitor names it after the
+Service, other scrape setups set monitoring.prometheusRule.job. Without a known
+job, absent(up{...}) would fire forever, so the PluginDown alert is left out. */}}
+{{- $job := .Values.monitoring.prometheusRule.job | default (include "nri-supply-chain.fullname" .) }}
+{{- $jobKnown := or .Values.monitoring.serviceMonitor.enabled .Values.monitoring.prometheusRule.job }}
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
@@ -42,12 +46,14 @@ spec:
   groups:
     - name: nri-supply-chain
       rules:
+        {{- if $jobKnown }}
         - alert: NRISupplyChainPluginDown
           expr: up{job="{{ $job }}"} == 0 or absent(up{job="{{ $job }}"})
           for: {{ .Values.monitoring.prometheusRule.pluginDownFor }}
           labels: {severity: critical}
           annotations:
             summary: Supply-chain plugin is not running or not scraped; containers on affected nodes are not verified unless the runtime requires the plugin.
+        {{- end }}
         - alert: NRISupplyChainNRIDisconnected
           expr: nri_supply_chain_nri_connected == 0
           for: {{ .Values.monitoring.prometheusRule.nriDisconnectedFor }}

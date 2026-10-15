@@ -293,9 +293,9 @@ JSON to a dedicated file instead of the application logger (see
   mode. Unknown or renamed fields cause a parse error, falling back to the
   previous config. Run `nri-supply-chain validate -c config.toml` before
   deploying config changes. Check logs for "unknown config keys" messages.
-- **Continuous verifier not running**: Confirm that `remediation.mode` is set to
-  a value other than `disabled` and that the NRI stub is connected (check
-  `/readyz`). The `nri_supply_chain_continuous_verifier_last_run` metric should
+- **Continuous verifier not running**: Confirm that `remediation.mode` is set
+  (`warn`, `throttle` or `evict`; an empty mode disables remediation) and that
+  the NRI stub is connected (check `/readyz`). The `nri_supply_chain_continuous_verifier_last_run` metric should
   update at the configured interval.
 - **GUAC queries failing**: Verify that the GUAC endpoint is reachable from the
   node. Check `nri_supply_chain_guac_query_duration_seconds` for latency. If
@@ -607,6 +607,16 @@ Validate policies and configuration with `nri-supply-chain validate` and run
   `prod.JSON` fails the load instead of being skipped.
 - **Missing config file.** An explicit `--config` path that does not exist
   makes the plugin exit with code 2 instead of starting with verification
+  disabled. The other subcommands also fail for it instead of using the
+  built-in defaults.
+- **Previews in warn mode.** `preview` judges images as enforce mode would, so
+  an image that fails its checks in warn mode counts as denied and `preview`
+  exits with 1. The `verify` and `preview` JSON output adds `mode` and
+  `passed`.
+- **CLI audit log.** The CLI commands no longer write to the configured
+  `audit_log`.
+- **Packages.** The DEB and RPM packages install the binary to `/usr/bin`
+  instead of `/usr/local/bin`, and an upgrade keeps a disabled service
   disabled.
 - **Bundle failures.** A missing or invalid bundle manifest signature, a stale
   bundle with `bundle_expiry_policy = "deny"`, a bundle store replaced while

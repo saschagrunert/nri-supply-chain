@@ -77,7 +77,7 @@ func TestSetupServeConfigWithoutFile(t *testing.T) {
 	}
 
 	// The other subcommands keep rejecting an empty config path.
-	_, err = setupConfig("")
+	_, err = setupConfig("", true)
 	testutil.AssertError(t, err)
 }
 

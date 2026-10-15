@@ -6,7 +6,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/nri-supply-chain --config /etc/nri-supply-chain/config.toml
+ExecStart=/usr/bin/nri-supply-chain --config /etc/nri-supply-chain/config.toml
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5s
@@ -18,26 +18,42 @@ TasksMax=1024
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-# /var/cache/nri-supply-chain holds the Sigstore TUF cache (under $HOME) and
+# /var/cache/nri-supply-chain holds the Sigstore TUF cache (under $HOME),
 # /var/lib/nri-supply-chain the offline attestation store
-# (offline.attestation_store defaults to /var/lib/nri-supply-chain/bundles).
+# (offline.attestation_store defaults to /var/lib/nri-supply-chain/bundles) and
+# /var/log/nri-supply-chain is the place for a dedicated audit_log.
 CacheDirectory=nri-supply-chain
 StateDirectory=nri-supply-chain
+LogsDirectory=nri-supply-chain
+UMask=0077
 Environment=HOME=/var/cache/nri-supply-chain
-ReadWritePaths=/var/run/nri
+# The plugin only connects to the runtime's NRI socket, which works on a
+# read-only file system, so /var/run/nri stays read-only like the rest of the
+# system and a compromised plugin cannot replace the socket.
 ReadOnlyPaths=/etc/nri-supply-chain
 PrivateTmp=true
 PrivateDevices=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
+ProtectKernelLogs=true
 ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+# No ProcSubset=pid: the process metrics read the boot time from /proc/stat
+# for process_start_time_seconds.
+ProtectProc=invisible
 RestrictSUIDSGID=true
 MemoryDenyWriteExecute=true
 LockPersonality=true
 RestrictNamespaces=true
 RestrictRealtime=true
+# The NRI socket (AF_UNIX), registries, Sigstore, GUAC and the metrics and
+# health endpoints (AF_INET, AF_INET6) are the only sockets the plugin uses.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
 CapabilityBoundingSet=
 
 [Install]

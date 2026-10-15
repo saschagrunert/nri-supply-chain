@@ -166,7 +166,7 @@ released version (replace `X.Y.Z`):
 ```console
 cosign verify ghcr.io/saschagrunert/charts/nri-supply-chain:X.Y.Z \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp '^https://github.com/saschagrunert/nri-supply-chain/'
+  --certificate-identity-regexp '^https://github\.com/saschagrunert/nri-supply-chain/\.github/workflows/release\.yml@refs/tags/v'
 helm upgrade --install nri-supply-chain \
   oci://ghcr.io/saschagrunert/charts/nri-supply-chain --version X.Y.Z \
   --namespace nri-supply-chain --create-namespace
@@ -206,12 +206,18 @@ systemctl daemon-reload
 systemctl enable --now nri-supply-chain
 ```
 
-The unit runs with a read-only file system. systemd creates the only writable
-directories besides the NRI socket directory: `/var/cache/nri-supply-chain`
-(the service's `HOME`, which holds the Sigstore TUF cache) and
+The unit runs `/usr/bin/nri-supply-chain`, where the DEB/RPM packages install
+it. For a binary installed elsewhere (`make install` uses `/usr/local/bin`),
+override `ExecStart` with a drop-in (`systemctl edit nri-supply-chain`).
+
+The unit runs with a read-only file system, including the NRI socket
+directory: connecting to the runtime's socket does not need write access.
+systemd creates the only writable directories: `/var/cache/nri-supply-chain`
+(the service's `HOME`, which holds the Sigstore TUF cache),
 `/var/lib/nri-supply-chain` (the default offline attestation store
-`/var/lib/nri-supply-chain/bundles`). The memory limit (`MemoryMax=512M`) matches
-the Kubernetes manifests.
+`/var/lib/nri-supply-chain/bundles`) and `/var/log/nri-supply-chain` (for a
+dedicated `audit_log`, such as `/var/log/nri-supply-chain/audit.json`). The
+memory limit (`MemoryMax=512M`) matches the Kubernetes manifests.
 
 Reload configuration without restarting (see
 [operations.md](operations.md#config-reload) for reload behavior details):
@@ -222,8 +228,9 @@ systemctl reload nri-supply-chain
 
 ## DEB/RPM Packages
 
-Release builds include `.deb` and `.rpm` packages that install the binary,
-systemd unit, and example configuration. Install with your package manager:
+Release builds include `.deb` and `.rpm` packages that install the binary
+(`/usr/bin/nri-supply-chain`), systemd unit, and example configuration. Install
+with your package manager:
 
 ```console
 # Debian/Ubuntu
@@ -233,7 +240,11 @@ sudo dpkg -i nri-supply-chain_*.deb
 sudo rpm -i nri-supply-chain-*.rpm
 ```
 
-The packages enable the systemd service on install and stop it on removal.
+The packages enable the systemd service on a fresh install and stop and
+disable it on removal. An upgrade restarts a running service and keeps a
+disabled service disabled. dpkg reports reinstalling a DEB package that was
+removed but not purged as an upgrade, so enable the service again after such a
+reinstall.
 
 ## Container Image
 
@@ -245,8 +256,10 @@ built on distroless for a minimal attack surface.
   without the `v` prefix of the Git tag (`1.0.0` for `v1.0.0`)
 - **`latest`** points to the tagged release with the highest version, and only
   moves after that release image was scanned, attested, and verified by the
-  release workflow. Prereleases (such as `v1.0.0-rc.1`) and patch releases of
-  an older release line do not move it
+  release workflow. Prereleases (such as `v1.0.0-rc.1`) and releases with a
+  lower version than an existing release do not move it. The release workflow
+  only releases tags on commits of `main` whose CI run for a push to `main`
+  succeeded, so there are no patch releases from release branches
 - **`main`** points to the most recent verified build of the main branch: the
   tag only moves after the image was scanned, attested, and verified, and only
   if its commit is still the head of main at that point, so a slower build of

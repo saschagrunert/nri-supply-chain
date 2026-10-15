@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -62,7 +63,7 @@ func newVerifyCmd( //nolint:funlen // cobra command setup
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 
-			cfg, err := setupConfig(*configPath)
+			cfg, err := setupConfig(*configPath, configFlagSet(cmd))
 			if err != nil {
 				slog.Error("Setup failed", "error", err)
 
@@ -131,17 +132,22 @@ func runVerifyCmd(
 }
 
 type verifyOutput struct {
-	Image         string              `json:"image"`
-	Digest        string              `json:"digest"`
-	Namespace     string              `json:"namespace"`
-	PolicyFile    string              `json:"-"`
-	Mode          string              `json:"-"`
-	PreviewPolicy string              `json:"previewPolicy,omitempty"`
-	Allowed       bool                `json:"allowed"`
-	Reason        string              `json:"reason,omitempty"`
-	CheckResults  []types.CheckResult `json:"checkResults,omitempty"`
+	Image         string `json:"image"`
+	Digest        string `json:"digest"`
+	Namespace     string `json:"namespace"`
+	PolicyFile    string `json:"-"`
+	Mode          string `json:"mode,omitempty"`
+	PreviewPolicy string `json:"previewPolicy,omitempty"`
+	// Allowed reports the admission decision in Mode. In warn mode an
+	// image that fails verification is still allowed.
+	Allowed bool `json:"allowed"`
+	// Passed reports whether the image passes verification, so that enforce
+	// mode would allow it.
+	Passed       bool                `json:"passed"`
+	Reason       string              `json:"reason,omitempty"`
+	CheckResults []types.CheckResult `json:"checkResults,omitempty"`
 	// errored reports that the image could not be verified (exit code
-	// exitError), as opposed to being denied.
+	// exitError in enforce mode), as opposed to being denied.
 	errored bool
 }
 
@@ -242,7 +248,13 @@ func withVerifier(
 	return execute(ctx, writer, verif, cache)
 }
 
-const batchConcurrency = 10
+const (
+	batchConcurrency = 10
+
+	// defaultPolicyFile is the policy file of the default namespace in a
+	// local policy directory.
+	defaultPolicyFile = "default.json"
+)
 
 func executeBatchVerify(
 	ctx context.Context, writer io.Writer,
@@ -339,7 +351,7 @@ func verifySingleImage(
 	cfg *config.Config, verif *verifier.Verifier,
 	cache *registry.TransportCache, previewPolicy string,
 ) (int, *verifyOutput) {
-	policyFile := resolvePolicyFile(cfg.PolicyDir, namespace)
+	policyFile := describePolicy(cfg, verif, namespace)
 
 	resolved, err := resolveDigest(ctx, imageRef, cfg.FetchTimeout.Duration, cache)
 	if err != nil {
@@ -374,7 +386,11 @@ func verifySingleImage(
 	}
 
 	out.Allowed = result.Allowed
+	out.Passed = verificationPassed(result)
 	out.Reason = result.Reason
+	// A verification error admitted outside enforce mode is an error in
+	// enforce mode, where it returns an error instead of a result.
+	out.errored = hasVerificationError(result)
 
 	if !result.Allowed {
 		return exitDenied, out
@@ -439,17 +455,23 @@ func verifyErrorExit(out *verifyOutput, err error) (int, *verifyOutput) {
 	return code, out
 }
 
+// newVerifier creates a verifier for a CLI run. The CLI never writes to the
+// configured audit_log: its decisions are dry runs, not admissions, so they
+// are logged to stderr instead.
 func newVerifier(
 	ctx context.Context, cfg *config.Config, cache *registry.TransportCache,
 ) (*verifier.Verifier, error) {
 	met := metrics.New()
 
-	fetcher, err := verifier.NewFetcher(ctx, cfg, cache)
+	cliCfg := *cfg
+	cliCfg.AuditLog = ""
+
+	fetcher, err := verifier.NewFetcher(ctx, &cliCfg, cache)
 	if err != nil {
 		return nil, fmt.Errorf("creating fetcher: %w", err)
 	}
 
-	v, err := verifier.New(ctx, cfg, met, fetcher)
+	v, err := verifier.New(ctx, &cliCfg, met, fetcher)
 	if err != nil {
 		return nil, fmt.Errorf("creating verifier: %w", err)
 	}
@@ -472,12 +494,62 @@ func resolveDigest(
 	return resolvedDigest{digest: digest, indexDigest: indexDigest}, nil
 }
 
+// verificationPassed reports whether result passes verification, so that
+// enforce mode would admit the image. In warn mode a failed verification is
+// admitted with Allowed set; its failed checks, or Verified being false for a
+// complete result, still show the failure. A verification that ended with an
+// error never passes: enforce mode denies the image.
+func verificationPassed(result *types.Result) bool {
+	if !result.Allowed || hasVerificationError(result) {
+		return false
+	}
+
+	for idx := range result.CheckResults {
+		if !result.CheckResults[idx].Passed {
+			return false
+		}
+	}
+
+	// A result admitted despite attestations that could not be fetched
+	// (fetch_failure_policy) passes without being verified.
+	return result.Verified || result.Incomplete()
+}
+
+// hasVerificationError reports whether result admits an image whose
+// verification ended with an error, which only happens outside enforce mode.
+func hasVerificationError(result *types.Result) bool {
+	for idx := range result.CheckResults {
+		if result.CheckResults[idx].Type == types.CheckTypeInternal &&
+			result.CheckResults[idx].Passed {
+			return true
+		}
+	}
+
+	return false
+}
+
 func checksFrom(result *types.Result) []types.CheckResult {
 	if result != nil {
 		return result.CheckResults
 	}
 
 	return nil
+}
+
+// describePolicy names the policy that applies to namespace: the local
+// policy file, or for an OCI policy source the OCI reference and the policy
+// file in the artifact.
+func describePolicy(cfg *config.Config, verif *verifier.Verifier, namespace string) string {
+	if cfg.Policy.Source != config.PolicySourceOCI {
+		return resolvePolicyFile(cfg.PolicyDir, namespace)
+	}
+
+	filename := defaultPolicyFile
+	if slices.Contains(verif.Status().Policies.Namespaces, namespace) {
+		filename = filepath.Base(namespace) + ".json"
+	}
+
+	return cfg.Policy.OCIRef + " (" + filename + ")"
 }
 
 func resolvePolicyFile(policyDir, namespace string) string {
@@ -491,7 +563,7 @@ func resolvePolicyFile(policyDir, namespace string) string {
 	slog.Debug("Namespace policy not found, falling back to default",
 		"namespace", namespace, "tried", nsFile)
 
-	return filepath.Join(policyDir, "default.json")
+	return filepath.Join(policyDir, defaultPolicyFile)
 }
 
 func newVerifyOutput(
@@ -505,6 +577,7 @@ func newVerifyOutput(
 		Mode:          "",
 		PreviewPolicy: "",
 		Allowed:       false,
+		Passed:        false,
 		Reason:        "",
 		CheckResults:  nil,
 		errored:       false,
@@ -564,8 +637,11 @@ func outputVerifyTable(writer io.Writer, out *verifyOutput) error {
 
 	resultText := colorGreen.Sprint("ALLOWED")
 
-	if !out.Allowed {
+	switch {
+	case !out.Allowed:
 		resultText = colorRed.Sprint("DENIED")
+	case !out.Passed:
+		resultText = colorYellow.Sprint("ALLOWED (verification failed, " + out.Mode + " mode)")
 	}
 
 	_, _ = fmt.Fprintf(writer, "%s %s\n", colorBold.Sprint("Result:"), resultText)
@@ -594,14 +670,11 @@ func renderCheckTable(writer io.Writer, checks []types.CheckResult) error {
 
 		status := colorStatus(check.Status)
 
-		err := table.Append([]string{
+		table.Append([]string{
 			strings.ToUpper(string(check.Type)),
 			status,
 			detail,
 		})
-		if err != nil {
-			return fmt.Errorf("appending table row: %w", err)
-		}
 	}
 
 	err := table.Render()
@@ -653,7 +726,7 @@ func colorMode(mode string) string {
 func applyPreviewPolicy(
 	cfg *config.Config, previewPolicy, namespace string,
 ) (cleanup func(), err error) {
-	tmpDir, err := setupPreviewPolicyDir(previewPolicy, namespace)
+	tmpDir, err := setupPreviewPolicyDir(cfg, previewPolicy, namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -677,10 +750,25 @@ func usePreviewPolicyDir(cfg *config.Config, dir string) {
 	cfg.Policy.Source = config.PolicySourceLocal
 }
 
-func setupPreviewPolicyDir(previewPolicyPath, namespace string) (string, error) {
+// setupPreviewPolicyDir creates a temporary policy directory holding the
+// preview policy for namespace. For a namespace other than the default one,
+// the configured local default policy is copied next to it, so that a preview
+// policy with "inherits" is evaluated as it would be in production.
+func setupPreviewPolicyDir(
+	cfg *config.Config, previewPolicyPath, namespace string,
+) (string, error) {
 	data, err := fileutil.ReadLimited(previewPolicyPath, fileutil.MaxCredentialFileSize)
 	if err != nil {
 		return "", fmt.Errorf("reading preview policy %q: %w", previewPolicyPath, err)
+	}
+
+	var defaultData []byte
+
+	if namespace != policy.DefaultPolicyLabel {
+		defaultData, err = readConfiguredDefaultPolicy(cfg)
+		if err != nil {
+			return "", err
+		}
 	}
 
 	tmpDir, err := os.MkdirTemp("", "nri-supply-chain-preview-*")
@@ -690,18 +778,58 @@ func setupPreviewPolicyDir(previewPolicyPath, namespace string) (string, error) 
 
 	filename := filepath.Base(namespace) + ".json"
 	if namespace == policy.DefaultPolicyLabel {
-		filename = "default.json"
+		filename = defaultPolicyFile
 	}
 
-	//nolint:mnd // permission is intentional
-	err = os.WriteFile(filepath.Join(tmpDir, filename), data, 0o600)
+	err = writePreviewPolicyFile(tmpDir, filename, data)
+	if err == nil && defaultData != nil {
+		err = writePreviewPolicyFile(tmpDir, defaultPolicyFile, defaultData)
+	}
+
 	if err != nil {
 		_ = os.RemoveAll(tmpDir)
 
-		return "", fmt.Errorf("writing preview policy: %w", err)
+		return "", err
 	}
 
 	return tmpDir, nil
+}
+
+// readConfiguredDefaultPolicy returns the configured local default policy,
+// or nil when there is none. An OCI policy source has no local default policy
+// to copy, so a preview policy inheriting from it is evaluated without it.
+func readConfiguredDefaultPolicy(cfg *config.Config) ([]byte, error) {
+	if cfg.Policy.Source == config.PolicySourceOCI {
+		slog.Warn("The preview policy is evaluated without the default policy of the " +
+			"configured OCI policy source; a policy with \"inherits\" inherits nothing")
+
+		return nil, nil
+	}
+
+	path := filepath.Join(cfg.PolicyDir, defaultPolicyFile)
+
+	data, err := fileutil.ReadLimited(path, fileutil.MaxCredentialFileSize)
+	if errors.Is(err, fs.ErrNotExist) {
+		slog.Debug("No default policy to inherit from", "path", path)
+
+		return nil, nil
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("reading default policy %q: %w", path, err)
+	}
+
+	return data, nil
+}
+
+func writePreviewPolicyFile(dir, filename string, data []byte) error {
+	//nolint:mnd // permission is intentional
+	err := os.WriteFile(filepath.Join(dir, filename), data, 0o600)
+	if err != nil {
+		return fmt.Errorf("writing preview policy: %w", err)
+	}
+
+	return nil
 }
 
 func colorStatus(status types.CheckStatus) string {

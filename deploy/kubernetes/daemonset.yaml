@@ -191,8 +191,11 @@ spec:
               drop:
                 - ALL
           volumeMounts:
+            # Connecting to the runtime's NRI socket works on a read-only
+            # mount, and the plugin cannot replace the socket on the host.
             - name: nri-socket
               mountPath: /var/run/nri
+              readOnly: true
             - name: config
               mountPath: /etc/nri-supply-chain/config
               readOnly: true

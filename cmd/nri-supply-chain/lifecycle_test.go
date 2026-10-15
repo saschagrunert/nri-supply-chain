@@ -130,12 +130,16 @@ func TestRunValidationDisabledValidatesPolicies(t *testing.T) {
 func TestRequireConfigFile(t *testing.T) {
 	t.Parallel()
 
-	testutil.AssertNoError(t, requireConfigFile(defaultConfigPath, true))
-	testutil.AssertNoError(t, requireConfigFile(filepath.Join(t.TempDir(), "custom.toml"), false))
+	testutil.AssertNoError(t, requireConfigFile(defaultConfigPath, false, true))
+	testutil.AssertNoError(
+		t, requireConfigFile(filepath.Join(t.TempDir(), "custom.toml"), false, false),
+	)
 
 	_, statErr := os.Stat(defaultConfigPath)
 	if os.IsNotExist(statErr) {
-		testutil.AssertErrorIs(t, requireConfigFile(defaultConfigPath, false), errConfigNotFound)
+		testutil.AssertErrorIs(
+			t, requireConfigFile(defaultConfigPath, false, false), errConfigNotFound,
+		)
 	}
 }
 

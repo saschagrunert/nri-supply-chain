@@ -63,7 +63,7 @@ func newEffectivePolicyCmd(configPath, logLevel *string) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cmd.SilenceUsage = true
 
-			cfg, err := setupConfig(*configPath)
+			cfg, err := setupConfig(*configPath, configFlagSet(cmd))
 			if err != nil {
 				slog.Error("Setup failed", "error", err)
 

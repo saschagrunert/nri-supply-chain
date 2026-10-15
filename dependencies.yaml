@@ -24,8 +24,6 @@ dependencies:
         match: "^version:"
       - path: deploy/helm/nri-supply-chain/Chart.yaml
         match: ^appVersion
-      - path: internal/registry/registry_bench_test.go
-        match: "imageRef.*nri-supply-chain:"
 
   - name: helm
     version: 4.3.0
@@ -48,7 +46,7 @@ dependencies:
         match: "FROM gcr.io/distroless/static-"
 
   - name: golang
-    version: 1.27.1
+    version: 1.27.2
     refPaths:
       - path: Dockerfile
         match: "FROM golang:"
@@ -154,6 +152,12 @@ dependencies:
     refPaths:
       - path: Makefile
         match: ^DASHBOARD_LINTER_VERSION
+
+  - name: crds-catalog
+    version: 63669a570e231d4f1f8396d229a1de512bcf0a34
+    refPaths:
+      - path: hack/verify-manifests.sh
+        match: ^CRDS_CATALOG_COMMIT=
 
   - name: pause
     version: 3.10.2

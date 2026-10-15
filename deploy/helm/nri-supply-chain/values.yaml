@@ -257,6 +257,10 @@ monitoring:
   prometheusRule:
     enabled: false
     labels: {}
+    # Prometheus job label of the plugin's scrape target, used by the
+    # PluginDown alert. Empty uses the job of the chart's ServiceMonitor; the
+    # alert is left out when the ServiceMonitor is disabled and no job is set.
+    job: ""
     failureRateThreshold: 0
     circuitBreakerFor: 5m
     fetchErrorRateThreshold: 0.1

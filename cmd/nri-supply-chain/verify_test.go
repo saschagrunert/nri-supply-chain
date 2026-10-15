@@ -1509,7 +1509,18 @@ func TestSetupPreviewPolicyDirHappyPath(t *testing.T) {
 		t.Fatalf("writing test policy: %v", err)
 	}
 
-	tmpDir, err := setupPreviewPolicyDir(policyFile, "production")
+	// The configured default policy is copied next to the preview policy,
+	// so that a preview policy with "inherits" inherits from it.
+	cfg := config.DefaultConfig()
+	cfg.PolicyDir = t.TempDir()
+	defaultContent := `{"slsa":{"missingPolicy":"deny"}}`
+
+	err = os.WriteFile(filepath.Join(cfg.PolicyDir, "default.json"), []byte(defaultContent), 0o600)
+	if err != nil {
+		t.Fatalf("writing default policy: %v", err)
+	}
+
+	tmpDir, err := setupPreviewPolicyDir(cfg, policyFile, "production")
 	if err != nil {
 		t.Fatalf("setupPreviewPolicyDir failed: %v", err)
 	}
@@ -1523,6 +1534,15 @@ func TestSetupPreviewPolicyDirHappyPath(t *testing.T) {
 
 	if string(data) != policyContent {
 		t.Errorf("policy content = %q, want %q", string(data), policyContent)
+	}
+
+	data, err = os.ReadFile(filepath.Join(tmpDir, "default.json")) //nolint:gosec // test file
+	if err != nil {
+		t.Fatalf("reading copied default policy: %v", err)
+	}
+
+	if string(data) != defaultContent {
+		t.Errorf("default policy content = %q, want %q", string(data), defaultContent)
 	}
 }
 
@@ -1538,7 +1558,10 @@ func TestSetupPreviewPolicyDirDefaultNamespace(t *testing.T) {
 		t.Fatalf("writing test policy: %v", err)
 	}
 
-	tmpDir, err := setupPreviewPolicyDir(policyFile, policy.DefaultPolicyLabel)
+	cfg := config.DefaultConfig()
+	cfg.PolicyDir = t.TempDir()
+
+	tmpDir, err := setupPreviewPolicyDir(cfg, policyFile, policy.DefaultPolicyLabel)
 	if err != nil {
 		t.Fatalf("setupPreviewPolicyDir failed: %v", err)
 	}
@@ -1554,7 +1577,9 @@ func TestSetupPreviewPolicyDirDefaultNamespace(t *testing.T) {
 func TestSetupPreviewPolicyDirNonexistentFile(t *testing.T) {
 	t.Parallel()
 
-	_, err := setupPreviewPolicyDir("/nonexistent/path/policy.json", testNamespaceDefault)
+	_, err := setupPreviewPolicyDir(
+		config.DefaultConfig(), "/nonexistent/path/policy.json", testNamespaceDefault,
+	)
 	if err == nil {
 		t.Fatal("expected error for nonexistent policy file")
 	}

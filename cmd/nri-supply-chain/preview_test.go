@@ -134,6 +134,7 @@ func TestAggregateResults(t *testing.T) {
 			Image:   testImgV1,
 			Digest:  testDigestAAA,
 			Allowed: true,
+			Passed:  true,
 			CheckResults: []types.CheckResult{
 				*types.PassResult(types.CheckTypeSLSA, "ok"),
 				*types.PassResult(types.CheckTypeVEX, "ok"),
@@ -143,6 +144,7 @@ func TestAggregateResults(t *testing.T) {
 			Image:   testImgV2,
 			Digest:  testDigestBBB,
 			Allowed: false,
+			Passed:  false,
 			CheckResults: []types.CheckResult{
 				*types.FailResult(types.CheckTypeSLSA, "missing", nil),
 				*types.PassResult(types.CheckTypeVEX, "ok"),
@@ -345,7 +347,7 @@ func TestRunPreviewExitCodes(t *testing.T) {
 		wantCode      int
 	}{
 		{"all allowed", config.ModeWarn, testActionWarn, exitSuccess},
-		{"warn mode does not deny", config.ModeWarn, testActionDeny, exitSuccess},
+		{"warn mode failures would be denied", config.ModeWarn, testActionDeny, exitDenied},
 		{"any denied", config.ModeEnforce, testActionDeny, exitDenied},
 	}
 
@@ -493,13 +495,13 @@ func TestBuildDiffOutput(t *testing.T) {
 	t.Parallel()
 
 	current := []*verifyOutput{
-		{Image: testImgV1, Digest: testDigestAAA, Allowed: true},
-		{Image: testImgV2, Digest: testDigestBBB, Allowed: true},
+		{Image: testImgV1, Digest: testDigestAAA, Allowed: true, Passed: true},
+		{Image: testImgV2, Digest: testDigestBBB, Allowed: true, Passed: true},
 	}
 
 	proposed := []*verifyOutput{
-		{Image: testImgV1, Digest: testDigestAAA, Allowed: false},
-		{Image: testImgV2, Digest: testDigestBBB, Allowed: true},
+		{Image: testImgV1, Digest: testDigestAAA, Allowed: false, Passed: false},
+		{Image: testImgV2, Digest: testDigestBBB, Allowed: true, Passed: true},
 	}
 
 	out := buildDiffOutput(current, proposed)
@@ -537,11 +539,11 @@ func TestBuildDiffOutputNewAllow(t *testing.T) {
 	t.Parallel()
 
 	current := []*verifyOutput{
-		{Image: testImgV1, Digest: testDigestAAA, Allowed: false},
+		{Image: testImgV1, Digest: testDigestAAA, Allowed: false, Passed: false},
 	}
 
 	proposed := []*verifyOutput{
-		{Image: testImgV1, Digest: testDigestAAA, Allowed: true},
+		{Image: testImgV1, Digest: testDigestAAA, Allowed: true, Passed: true},
 	}
 
 	out := buildDiffOutput(current, proposed)
@@ -563,6 +565,7 @@ func TestBuildDiffOutputCheckLevelChange(t *testing.T) {
 			Image:   testImgV1,
 			Digest:  testDigestAAA,
 			Allowed: true,
+			Passed:  true,
 			CheckResults: []types.CheckResult{
 				*types.PassResult(types.CheckTypeSLSA, "ok"),
 			},
@@ -574,6 +577,7 @@ func TestBuildDiffOutputCheckLevelChange(t *testing.T) {
 			Image:   testImgV1,
 			Digest:  testDigestAAA,
 			Allowed: true,
+			Passed:  true,
 			CheckResults: []types.CheckResult{
 				*types.FailResult(types.CheckTypeSLSA, "missing", nil),
 			},
@@ -596,12 +600,12 @@ func TestBuildDiffOutputMismatchedLengths(t *testing.T) {
 	t.Parallel()
 
 	current := []*verifyOutput{
-		{Image: testImgV1, Digest: testDigestAAA, Allowed: true},
-		{Image: testImgV2, Digest: testDigestBBB, Allowed: true},
+		{Image: testImgV1, Digest: testDigestAAA, Allowed: true, Passed: true},
+		{Image: testImgV2, Digest: testDigestBBB, Allowed: true, Passed: true},
 	}
 
 	proposed := []*verifyOutput{
-		{Image: testImgV1, Digest: testDigestAAA, Allowed: false},
+		{Image: testImgV1, Digest: testDigestAAA, Allowed: false, Passed: false},
 	}
 
 	out := buildDiffOutput(current, proposed)
@@ -638,9 +642,11 @@ func TestRunPreviewDiffViaRoot(t *testing.T) {
 		pushTestImage(t, "preview-diff-root"),
 	})
 
-	err := cmd.Execute()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	// The proposed policy set denies the image in enforce mode, also when the
+	// config runs in warn mode.
+	code := exitCodeFor(cmd.Execute())
+	if code != exitDenied {
+		t.Fatalf("exit code = %d, want %d", code, exitDenied)
 	}
 }
 
@@ -765,6 +771,7 @@ func TestCheckStatusesChangedProposedDuplicates(t *testing.T) {
 		Mode:          "",
 		PreviewPolicy: "",
 		Allowed:       true,
+		Passed:        true,
 		Reason:        "",
 		CheckResults: []types.CheckResult{
 			*types.PassResult(types.CheckTypeSLSA, "ok"),
@@ -780,6 +787,7 @@ func TestCheckStatusesChangedProposedDuplicates(t *testing.T) {
 		Mode:          "",
 		PreviewPolicy: "",
 		Allowed:       true,
+		Passed:        true,
 		Reason:        "",
 		CheckResults: []types.CheckResult{
 			*types.PassResult(types.CheckTypeSLSA, "ok"),
@@ -837,6 +845,7 @@ func TestOutputPreviewTableBasic(t *testing.T) {
 				PolicyFile:   "/etc/policies/default.json",
 				Mode:         daemon.LogLevelWarn,
 				Allowed:      true,
+				Passed:       true,
 				Reason:       "",
 				CheckResults: nil,
 			},
@@ -956,6 +965,37 @@ func TestRenderPreviewSummaryWithChecks(t *testing.T) {
 	output := buf.String()
 	if !strings.Contains(output, "SLSA") {
 		t.Error("expected check type in summary table")
+	}
+}
+
+func TestRenderPreviewSummaryWithoutAttestationChecks(t *testing.T) {
+	t.Parallel()
+
+	out := &previewOutput{
+		Images: nil,
+		Summary: previewSummary{
+			Total:   1,
+			Allowed: 0,
+			Denied:  0,
+			Errors:  1,
+			Checks: map[string]checkSummary{
+				string(types.CheckTypeInternal): {Pass: 0, Warn: 1, Fail: 0},
+			},
+		},
+		Suggestions: nil,
+	}
+
+	var buf bytes.Buffer
+
+	err := renderPreviewSummary(&buf, out)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The check table lists only attestation checks, so it is left out
+	// instead of printing a header without rows.
+	if strings.Contains(buf.String(), "CHECK") {
+		t.Errorf("unexpected empty check table in summary:\n%s", buf.String())
 	}
 }
 
