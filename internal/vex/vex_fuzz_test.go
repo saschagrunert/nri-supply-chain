@@ -111,11 +111,10 @@ func FuzzVerify(f *testing.F) {
 		`}`))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		result, err := vex.Verify(
-			context.Background(), data, &policy.Policy{},
+		result, err := vex.VerifyMultiple(
+			context.Background(), [][]byte{data}, &policy.Policy{},
 			"docker.io/library/nginx:latest", testDigest,
-			nil,
-		)
+			nil)
 		if err == nil && result == nil {
 			t.Error("Verify returned nil result and nil error")
 		}

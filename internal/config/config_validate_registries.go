@@ -297,7 +297,7 @@ func validateTUFMirrorURL(mirror string) error {
 		return fmt.Errorf("%w: %q: %w", ErrInvalidTUFMirror, mirror, err)
 	}
 
-	if parsed.Scheme != "https" {
+	if parsed.Scheme != schemeHTTPS {
 		return fmt.Errorf(
 			"%w: %q: scheme must be https", ErrInvalidTUFMirror, mirror,
 		)

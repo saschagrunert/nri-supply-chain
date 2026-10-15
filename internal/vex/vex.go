@@ -83,36 +83,12 @@ type evaluation struct {
 	matched            int
 }
 
-// Verify checks a VEX attestation against the given policy.
-// It auto-detects whether the predicate is OpenVEX or CycloneDX format.
-// When parsedImageRef is non-nil it is used instead of re-parsing imageRef.
-func Verify(
-	ctx context.Context,
-	att []byte, pol *policy.Policy, imageRef, imageDigest string,
-	parsedImageRef name.Reference,
-) (*types.CheckResult, error) {
-	ctxErr := ctx.Err()
-	if ctxErr != nil {
-		return nil, fmt.Errorf("verification cancelled: %w", ctxErr)
-	}
-
-	docs := newCollector(imageRef, imageDigest, parsedImageRef)
-
-	err := docs.add(att)
-	if err != nil {
-		return nil, err
-	}
-
-	err = docs.evaluateOpenVEX(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	return buildResult(&docs.eval, pol), nil
-}
-
 // VerifyMultiple checks multiple VEX documents. Every document must parse
 // and bind to the image; a document that fails to parse fails the check.
+// Empty documents (a null or empty predicate) and CycloneDX documents without
+// any vulnerability analysis (plain SBOMs, which share the CycloneDX predicate
+// type) are skipped. When no attestation is a VEX document, the returned
+// error wraps types.ErrNotApplicable so the missing policy applies.
 // OpenVEX statements from all documents are merged with timestamp precedence
 // and the most restrictive outcome across formats wins.
 // When parsedImageRef is non-nil it is used instead of re-parsing imageRef.
@@ -152,6 +128,13 @@ func VerifyMultiple(
 		return buildParseFailure(&docs.eval, parseErrors, len(attestations)), nil
 	}
 
+	if len(attestations) > 0 && docs.notApplicable == len(attestations) {
+		return nil, fmt.Errorf(
+			"%w: %d empty documents or CycloneDX documents without VEX analysis",
+			types.ErrNotApplicable, docs.notApplicable,
+		)
+	}
+
 	return buildResult(&docs.eval, pol), nil
 }
 
@@ -163,16 +146,20 @@ type collector struct {
 	digest   string
 	eval     evaluation
 	openDocs []*openvex.Document
+	// notApplicable counts empty documents and CycloneDX documents without
+	// VEX data.
+	notApplicable int
 }
 
 func newCollector(
 	imageRef, imageDigest string, parsedImageRef name.Reference, relatedDigests ...string,
 ) *collector {
 	return &collector{
-		image:    imagematch.New(imageRef, imageDigest, parsedImageRef, relatedDigests...),
-		digest:   imageDigest,
-		eval:     evaluation{affectedNames: nil, underInvestigation: false, matched: 0},
-		openDocs: nil,
+		image:         imagematch.New(imageRef, imageDigest, parsedImageRef, relatedDigests...),
+		digest:        imageDigest,
+		eval:          evaluation{affectedNames: nil, underInvestigation: false, matched: 0},
+		openDocs:      nil,
+		notApplicable: 0,
 	}
 }
 
@@ -186,18 +173,13 @@ func (c *collector) add(att []byte) error {
 
 	switch detectFormat(predicate) {
 	case formatCDX:
-		result, cdxErr := cyclonedxvex.Verify(predicate, c.image)
-		if cdxErr != nil {
-			return fmt.Errorf("%w: %w", ErrInvalidVEX, cdxErr)
-		}
-
-		c.eval.affectedNames = append(c.eval.affectedNames, result.AffectedNames...)
-		c.eval.underInvestigation = c.eval.underInvestigation || result.HasUnderInvestigation
-		c.eval.matched += result.MatchedVulnerabilities
-
-		return nil
+		return c.addCycloneDX(predicate)
 
 	case formatEmpty:
+		// An empty document makes no VEX statement, so it does not count as
+		// a VEX document and cannot satisfy the missing policy.
+		c.notApplicable++
+
 		return nil
 
 	case formatOpenVEX:
@@ -216,6 +198,28 @@ func (c *collector) add(att []byte) error {
 	default:
 		return fmt.Errorf("%w: %w", ErrInvalidVEX, errUnrecognizedFormat)
 	}
+}
+
+// addCycloneDX evaluates a CycloneDX document. CycloneDX documents are routed
+// to both the SBOM and the VEX check; a document without any analysis state
+// (a plain SBOM) is not a VEX document and does not count as one.
+func (c *collector) addCycloneDX(predicate []byte) error {
+	result, err := cyclonedxvex.Verify(predicate, c.image)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidVEX, err)
+	}
+
+	if result.Statements == 0 {
+		c.notApplicable++
+
+		return nil
+	}
+
+	c.eval.affectedNames = append(c.eval.affectedNames, result.AffectedNames...)
+	c.eval.underInvestigation = c.eval.underInvestigation || result.HasUnderInvestigation
+	c.eval.matched += result.MatchedVulnerabilities
+
+	return nil
 }
 
 func (c *collector) evaluateOpenVEX(ctx context.Context) error {
@@ -237,7 +241,8 @@ func (c *collector) evaluateOpenVEX(ctx context.Context) error {
 
 // detectFormat classifies a predicate. OpenVEX is recognized by @context or
 // statements, CycloneDX by bomFormat. A JSON null or empty object is an empty
-// document that says nothing about the image. Anything else is rejected.
+// document that says nothing about the image and is not applicable. Anything
+// else is rejected.
 func detectFormat(predicate []byte) documentFormat {
 	trimmed := bytes.TrimSpace(predicate)
 	if bytes.Equal(trimmed, []byte("null")) || isEmptyObject(trimmed) {

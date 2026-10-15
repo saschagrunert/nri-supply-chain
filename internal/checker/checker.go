@@ -83,6 +83,11 @@ type Freshness[P any] struct {
 	ErrStale error
 	// ErrFuture is returned for timestamps beyond the clock skew tolerance.
 	ErrFuture error
+	// Superseding marks documents that replace their predecessors, such as
+	// repeated vulnerability scans. With AllMustPass aggregation and a
+	// maximum age, documents older than the maximum age are then ignored
+	// as long as at least one document is within it.
+	Superseding bool
 }
 
 // Spec declares how to verify one predicate type. P is the predicate
@@ -155,8 +160,76 @@ func (s *Spec[P]) VerifyMultiple(
 
 	//nolint:wrapcheck // shared helper returns domain errors
 	return types.VerifyMultipleWithMerge(
-		ctx, s.Info.Type, s.Info.Label, s.Info.PassMessage(), attestations, verifyOne, s.mergeMeta,
+		ctx, s.Info.Type, s.Info.Label, s.Info.PassMessage(),
+		s.dropSuperseded(attestations, pol, imageDigest), verifyOne, s.mergeMeta,
 	)
+}
+
+// dropSuperseded removes the documents that are older than the maximum age
+// when the Spec's documents supersede each other and at least one document
+// is within the maximum age. Documents that cannot be parsed or carry no
+// timestamp are kept, so they still fail the aggregate. Without a fresh
+// document all documents are kept and the stale ones fail it.
+func (s *Spec[P]) dropSuperseded(
+	attestations [][]byte, pol *policy.Policy, imageDigest string,
+) [][]byte {
+	if s.Freshness == nil || !s.Freshness.Superseding || s.Freshness.MaxAge == nil {
+		return attestations
+	}
+
+	maxAge := s.Freshness.MaxAge(pol)
+	if maxAge == nil {
+		return attestations
+	}
+
+	current := make([][]byte, 0, len(attestations))
+	fresh := false
+
+	for _, att := range attestations {
+		stale, timestamped := s.stale(att, *maxAge, imageDigest)
+		if stale {
+			continue
+		}
+
+		fresh = fresh || timestamped
+
+		current = append(current, att)
+	}
+
+	if !fresh {
+		return attestations
+	}
+
+	return current
+}
+
+// stale reports whether a document carries a timestamp older than maxAge,
+// and whether it carries a usable timestamp at all.
+func (s *Spec[P]) stale(
+	att []byte, maxAge time.Duration, imageDigest string,
+) (stale, timestamped bool) {
+	predicate, err := intoto.VerifySubjectAndExtractPredicate(att, imageDigest)
+	if err != nil {
+		return false, false
+	}
+
+	pred, err := s.Parse(predicate)
+	if err != nil {
+		return false, false
+	}
+
+	timestamp := s.Freshness.Timestamp(pred)
+	if timestamp == nil || timestamp.IsZero() {
+		return false, false
+	}
+
+	// Timestamps in the future are not fresh: Evaluate rejects them.
+	age := time.Since(*timestamp)
+	if age < -types.ClockSkewTolerance {
+		return false, false
+	}
+
+	return age > maxAge, true
 }
 
 // Parse decodes and validates a raw predicate. Empty, null, and non-object

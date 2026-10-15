@@ -20,10 +20,10 @@ import (
 )
 
 const (
-	// clockSkewTolerance is the maximum acceptable clock skew for
+	// ClockSkewTolerance is the maximum acceptable clock skew for
 	// timestamp-based freshness checks. Timestamps within this window
 	// into the future are accepted to account for clock drift.
-	clockSkewTolerance = 60 * time.Second
+	ClockSkewTolerance = 60 * time.Second
 
 	// maxReasonableAge caps the computed age to prevent time.Duration
 	// overflow on crafted timestamps (e.g., year 0001). time.Duration
@@ -46,7 +46,7 @@ func VerifyFreshness(
 ) error {
 	age := time.Since(timestamp)
 
-	if age < -clockSkewTolerance {
+	if age < -ClockSkewTolerance {
 		return fmt.Errorf("%w: %s", errFuture, timestamp.Format(time.RFC3339Nano))
 	}
 

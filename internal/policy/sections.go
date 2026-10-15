@@ -146,6 +146,39 @@ func sectionForCheckType(checkType types.CheckType) *sectionSpec {
 	return nil
 }
 
+// AttestationSection names the policy section whose missingPolicy controls an
+// attestation check type.
+type AttestationSection struct {
+	// Name is the JSON field name of the section, for example "vulnScan".
+	Name string
+	// CheckType is the attestation check type of the section.
+	CheckType types.CheckType
+}
+
+// AttestationSections returns the attestation sections in registry order.
+func AttestationSections() []AttestationSection {
+	var sections []AttestationSection
+
+	for idx := range sectionRegistry {
+		if sectionRegistry[idx].checkType != "" {
+			sections = append(sections, AttestationSection{
+				Name:      sectionRegistry[idx].name,
+				CheckType: sectionRegistry[idx].checkType,
+			})
+		}
+	}
+
+	return sections
+}
+
+// HasSection reports whether the policy sets the section of an attestation
+// check type.
+func (p *Policy) HasSection(checkType types.CheckType) bool {
+	spec := sectionForCheckType(checkType)
+
+	return spec != nil && !p.section(spec.name).IsNil()
+}
+
 // missingPolicy returns the configured missingPolicy of the section or an
 // empty action when the section or the field is not set.
 func (s *Sections) missingPolicy(spec *sectionSpec) types.Action {

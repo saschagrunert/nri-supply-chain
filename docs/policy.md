@@ -1042,12 +1042,12 @@ under `registry.k8s.io` regardless of nesting depth.
 
 SLSA provenance verification settings.
 
-| Field                     | Type   | Default     | Description                                                                                                                                                                                                             |
-| ------------------------- | ------ | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `missingPolicy`           | string | `allow`     | Behavior when no provenance is found: `allow`, `warn`, `deny`                                                                                                                                                           |
-| `rejectUnknownParameters` | bool   | `false`     | Reject provenance with unrecognized `externalParameters` fields                                                                                                                                                         |
-| `knownParameters`         | array  | (see below) | Recognized `externalParameters` keys when `rejectUnknownParameters` is true. Defaults to the GitHub Actions set: `source`, `repository`, `ref`, `workflow`, `buildType`. Set this for non-GitHub Actions build systems. |
-| `maxAge`                  | string | (none)      | Maximum age of provenance build timestamp (Go duration, e.g. `720h`). Must be positive when set. Defends against tag rollback attacks by rejecting stale provenance attestations.                                       |
+| Field                     | Type   | Default     | Description                                                                                                                                                                                                                                                     |
+| ------------------------- | ------ | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `missingPolicy`           | string | `allow`     | Behavior when no provenance is found: `allow`, `warn`, `deny`                                                                                                                                                                                                   |
+| `rejectUnknownParameters` | bool   | `false`     | Reject provenance with unrecognized `externalParameters` (v1) or `invocation.parameters` (v0.2) fields                                                                                                                                                          |
+| `knownParameters`         | array  | (see below) | Recognized `externalParameters` (v1) and `invocation.parameters` (v0.2) keys when `rejectUnknownParameters` is true. Defaults to the GitHub Actions set: `source`, `repository`, `ref`, `workflow`, `buildType`. Set this for non-GitHub Actions build systems. |
+| `maxAge`                  | string | (none)      | Maximum age of provenance build timestamp (Go duration, e.g. `720h`). Must be positive when set. Defends against tag rollback attacks by rejecting stale provenance attestations.                                                                               |
 
 ### `vex` (object)
 
@@ -1167,6 +1167,23 @@ elements are resolved: `WithAdditionOperator` yields its subject license and
 references that cannot be resolved count as an unknown license, which fails
 any allow list.
 
+Packages without license data are treated alike in every format: a package
+whose licenses are absent or `NOASSERTION` (SPDX 2 `NOASSERTION`, the SPDX 3
+`NoAssertionLicense` individual, a CycloneDX component without licenses) is
+checked as `NOASSERTION`, and an explicit SPDX 2 `NONE` or SPDX 3
+`NoneLicense` as `NONE`. Both fail a non-empty allow list unless it lists
+them, and a deny list can deny them. The document subject and components that
+are not packages (for example files and operating systems) are exempt.
+Earlier releases skipped `NOASSERTION`, the SPDX 3 individuals and CycloneDX
+components without licenses, so policies with an allow list that should accept
+packages without license data must now add `NOASSERTION` (and `NONE`) to it.
+
+The inventory of a CycloneDX BOM includes the components nested in
+`metadata.component` (an assembly), so their licenses, purls and drift are
+checked like top-level components. A document that parses as more than one
+SBOM format (for example SPDX 2 fields next to a CycloneDX `bomFormat`) is
+rejected as invalid.
+
 #### `sbom.component` (object)
 
 | Field   | Type  | Default | Description                                                                 |
@@ -1232,29 +1249,35 @@ still contribute to aggregate statistics for visibility in CEL rules.
 
 Each vulnerability is rated by its highest valid score (0.0 to 10.0) and its
 most severe rating. A score without severity is ranked by its CVSS range (9.0
-and above is critical), and a severity without score is compared against
-`maxScore` with the lowest score of its range (critical counts as 9.0, high as
-7.0, medium as 4.0, low as 0.1), which is also what `cvssMax` reports for it.
-The scanner aliases `info`/`informational` (none), `negligible` (low),
-`moderate` (medium), and `important` (high) are accepted. A rating without score
-whose severity is `unknown` or `none` (in any case, including its aliases), as
-scanners such as Trivy and Grype emit for unscored findings, counts as no
-rating. When a threshold is configured, a vulnerability whose ratings carry
-neither a valid score nor a recognized severity (for example only an
-unrecognized severity string or an out-of-range score) fails closed; list it in
-`ignoreCVEs` to accept it. Vulnerabilities without ratings and vulnerabilities
-resolved by their analysis state (`false_positive`, `resolved`,
-`resolved_with_pedigree`, or `not_affected` with a non-empty
-`analysis.justification` or `analysis.detail`, compared case-sensitively) are
-not evaluated and do not count in the `cvss*` statistics, in SBOMs and
-vulnerability-only documents alike. A `not_affected` state without a
-justification or detail is an unsupported claim (like an OpenVEX `not_affected`
-statement without justification or impact statement) and the vulnerability is
-evaluated as unresolved.
+and above is critical). The score compared against `maxScore` (and reported as
+`cvssMax`) is the highest score, raised to the lowest score of the most severe
+rating (critical counts as 9.0, high as 7.0, medium as 4.0, low as 0.1), so a
+`critical` rating from one source is not outweighed by a lower numeric score
+from another. The scanner aliases `info`/`informational` (none), `negligible`
+(low), `moderate` (medium), and `important` (high) are accepted. When a
+threshold is configured, a vulnerability whose ratings carry neither a valid
+score nor a recognized severity fails closed, like in the `vulnScan` check:
+this covers vulnerabilities without ratings, ratings whose severity is
+`unknown` (as Trivy and Grype emit for unscored findings), unrecognized
+severity strings, and out-of-range scores. List such a vulnerability in
+`ignoreCVEs` to accept it. Vulnerabilities resolved by their analysis state
+(`false_positive`, `resolved`, `resolved_with_pedigree`, or `not_affected`
+with a non-empty `analysis.justification` or `analysis.detail`, compared
+case-sensitively) are not evaluated and do not count in the `cvss*`
+statistics, in SBOMs and vulnerability-only documents alike. A `not_affected`
+state without a justification or detail is an unsupported claim (like an
+OpenVEX `not_affected` statement without justification or impact statement)
+and the vulnerability is evaluated as unresolved.
+
+Note: earlier releases ignored vulnerabilities without ratings or with only an
+`unknown` or `none` severity, and compared a numeric score against `maxScore`
+even when another rating was more severe. Such findings now fail a configured
+threshold, also in CycloneDX VEX documents whose unresolved statements carry
+no ratings; accept them through `ignoreCVEs` or raise the threshold.
 
 CycloneDX documents without components and without `metadata.component`
 (vulnerability disclosure reports or VEX documents) are not SBOMs, but their
-unresolved rated vulnerabilities (analysis state `exploitable`, `in_triage`,
+unresolved vulnerabilities (analysis state `exploitable`, `in_triage`,
 `not_affected` without justification or detail, or none) are still evaluated against these
 thresholds, so moving findings into a separate document cannot hide them. Such a
 document fails the SBOM check when a finding exceeds the thresholds; otherwise
@@ -1298,6 +1321,14 @@ Without thresholds, drift is computed for information only (exposed in
 metadata and CEL) and missing or unparsable baselines are skipped. All
 thresholds must be non-negative.
 
+Packages without a purl take part in drift by their name and version, so a
+changed version of a purl-less package counts as modified and a new one as
+added (listed in `addedPackages` as `name:<name>@<version>`). Packages with
+neither a purl nor a name are left out, as are the document subject and
+components that are not packages (for example files and operating systems)
+without a purl, since the subject of an image SBOM is often versioned by the
+image digest and would otherwise count as modified in every build.
+
 Note: earlier releases matched packages by their full PURL including the
 version, so a version bump counted as one added and one removed package (drift
 score contribution 4) and was caught by `maxAdded` or `maxRemoved`. A version
@@ -1320,6 +1351,18 @@ attribute report attestations attached to container images.
 | `requiredAttributes`  | array  | (none)  | Attribute names that must be present in the report (case-insensitive) |
 | `forbiddenAttributes` | array  | (none)  | Attribute names that must not appear in the report (case-insensitive) |
 | `requireEvidence`     | bool   | `false` | Require that every attribute includes evidence (see below)            |
+
+A required attribute must be asserted for the attestation subject: an
+assertion with a `target` (an attribute of another artifact, such as a
+dependency) does not satisfy `requiredAttributes`, and only subject
+assertions are exposed as `scai.attributes` and `scai.attributeCount`. A
+forbidden attribute fails the check in any assertion, whatever its target. A
+`null` or empty `target` counts as absent. An assertion that names the image
+itself as its `target` does not count either, so producers should omit
+`target` for attributes of the subject. The `conditions` of an assertion
+describe how the attribute arose (for example the compiler flags of
+`WITH_STACK_PROTECTION`) and do not affect the check. Earlier releases
+accepted an assertion about any target.
 
 ### `source` (object)
 
@@ -1377,6 +1420,13 @@ attached to container images.
 
 When both `maxScore` and `minSeverity` are set, a vulnerability is flagged if
 either condition is met (OR logic).
+
+A rescan replaces the previous scan, so with `maxAge` set, scans older than
+`maxAge` are ignored as long as at least one scan of the image is within it;
+only when every scan is stale does the check fail. Scans that cannot be parsed
+or carry no timestamp are never ignored. Test result and runtime trace
+attestations describe separate runs, so for them every attestation must still
+be within `maxAge`.
 
 ### `testResult` (object)
 
@@ -1624,11 +1674,12 @@ require the attestation with `vulnscan.present == true`.
 | `vulnscan.highCount`           | int    | Number of high-severity vulnerabilities            |
 | `vulnscan.unknownCount`        | int    | Number of vulnerabilities with unknown severity    |
 | `testresult.verified`          | bool   | Whether test result verification passed            |
-| `testresult.result`            | string | Overall test result (e.g. `pass`, `fail`)          |
+| `testresult.result`            | string | Worst result of all documents (e.g. `WARNED`)      |
 | `testresult.suiteCount`        | int    | Number of test suites                              |
 | `testresult.suites`            | string | Comma-separated suite names                        |
 | `testresult.passed`            | int    | Total passed tests across all suites               |
 | `testresult.failed`            | int    | Total failed tests across all suites               |
+| `testresult.warned`            | int    | Total tests that passed with warnings              |
 | `release.verified`             | bool   | Whether release verification passed                |
 | `release.purl`                 | string | Package URL from the release attestation           |
 | `release.packageId`            | string | Package identifier from the release attestation    |
@@ -1657,9 +1708,10 @@ require the attestation with `vulnscan.present == true`.
 [VEX](#vex-vulnerability-exploitability-exchange) for the meaning of
 `no_match`.
 
-`vulnscan.maxScore` counts a finding without a numeric score at the lowest
-score of its severity (for example 9.0 for `critical`, 7.0 for `high`), so an
-unscored critical finding is not reported as `0`.
+`vulnscan.maxScore` counts a finding at least at the lowest score of its most
+severe rating (for example 9.0 for `critical`, 7.0 for `high`), so an
+unscored critical finding is not reported as `0` and a lower numeric score
+from another source does not hide a `critical` rating.
 
 `source.locations` is empty when a source attestation was found but did not
 verify, so a rule such as `source.locations.all(l, l.branch == "main")` passes
@@ -1795,9 +1847,16 @@ performed:
   the same repository at different refs. The digest is exposed as
   `sourceDigest` metadata.
 - **Unknown parameters**: If `slsa.rejectUnknownParameters` is enabled,
-  unrecognized `externalParameters` fields cause rejection. The recognized set
-  defaults to GitHub Actions parameters (`source`, `repository`, `ref`,
-  `workflow`, `buildType`) but can be overridden with `slsa.knownParameters`.
+  unrecognized `externalParameters` fields (v1) or `invocation.parameters`
+  fields (v0.2) cause rejection, and v0.2 parameters that are not a JSON object
+  are rejected. The recognized set defaults to GitHub Actions parameters
+  (`source`, `repository`, `ref`, `workflow`, `buildType`) but can be
+  overridden with `slsa.knownParameters`, which applies to both versions and
+  replaces the defaults, so a policy admitting GitHub Actions and other
+  provenance lists the keys of both. Earlier releases did not apply the
+  setting to v0.2 provenance, so v0.2 provenance with other parameters (for
+  example BuildKit's `frontend`, `args` and `locals`) is now rejected unless
+  `slsa.knownParameters` lists them.
 - **Timestamp sanity**: Regardless of `slsa.maxAge`, provenance build timestamps
   (`startedOn` for v1, `buildStartedOn` for v0.2) are checked for basic sanity.
   Future timestamps beyond a 60-second clock skew tolerance are rejected, as are
@@ -1967,11 +2026,25 @@ vulnerability without `affects` applies to the image.
 **Reported status:** the check metadata `status` (and the CEL variable
 `vex.status`) is `affected`, `under_investigation`, `not_affected`, or
 `no_match`. `no_match` means the VEX documents are valid but contain no
-statement about the image (for example an empty document, or a CycloneDX SBOM
-without vulnerabilities). It passes, but it is never reported as
-`not_affected`. Use a CEL rule such as `vex.status != "no_match"` to require an
-explicit statement. The metadata `matchedStatements` counts the statements
-that apply to the image.
+statement about the image (for example an OpenVEX document without
+statements, or statements about other products). It passes, but it is never
+reported as `not_affected`. Use a CEL rule such as `vex.status != "no_match"`
+to require an explicit statement. The metadata `matchedStatements` counts the
+statements that apply to the image.
+
+CycloneDX documents share their predicate type with CycloneDX SBOMs, so a
+CycloneDX document without any vulnerability analysis state (a plain SBOM,
+also one listing scanner findings) is not a VEX document. Neither is an empty
+predicate (`{}`) of either VEX predicate type. Such documents are skipped, and
+when no attestation is a VEX document the `vex.missingPolicy` applies, like for
+a missing VEX attestation. Earlier releases reported such
+documents as `no_match`, which satisfied `vex.missingPolicy: deny`.
+
+OpenVEX documents whose `timestamp` or `last_updated`, or any statement's
+`timestamp` or `last_updated`, is more than 60 seconds in the future are
+invalid, because statement precedence follows timestamps and a future date
+would win over every later statement. CycloneDX VEX documents nesting
+components deeper than 32 levels are invalid, like in the SBOM check.
 
 When multiple VEX documents exist (in either format), the most restrictive
 result wins: any effective `affected`/`exploitable` status causes failure
@@ -2002,7 +2075,8 @@ the VSA is trusted and PASSED. Checks performed:
   images may omit `library/`, so `docker.io/library/nginx@sha256:...` and
   `registry-1.docker.io/nginx@sha256:...` are equal.
 - **Subject**: A statement `subject[].digest` must match the image digest.
-- **SLSA version**: `slsaVersion` must be >= `1.0`.
+- **SLSA version**: `slsaVersion`, when present, must be >= `1.0`. The field
+  is optional in the VSA v1 specification.
 - **Policy match**: If `vsa.policy` is configured, `policy.uri` must match.
 - **Freshness**: `timeVerified` (RFC 3339, lowercase `t` and `z` accepted) must
   be within the `vsa.maxAge` window.
@@ -2413,10 +2487,13 @@ Checks performed:
 - **Required fields**: `scanner.uri` and either `scanner.result` or `result`
   must be present, and every vulnerability must have an `id`.
 - **CVSS threshold**: If `vulnScan.maxScore` is configured, no vulnerability may
-  have a CVSS score exceeding the threshold (after filtering `ignoreCVEs`). A
-  vulnerability without a numeric score is compared using the lowest score of
-  its severity, which is also what the `vulnscan.maxScore` metadata reports
-  for it.
+  have a CVSS score exceeding the threshold (after filtering `ignoreCVEs`). The
+  compared score, which the `vulnscan.maxScore` metadata also reports, is the
+  highest numeric score raised to the lowest score of the most severe entry,
+  so a vulnerability without a numeric score counts at the lowest score of its
+  severity and a `critical` entry is not outweighed by a lower score from
+  another entry. Earlier releases compared the highest numeric score alone
+  whenever one was present.
 - **Severity threshold**: If `vulnScan.minSeverity` is configured, no
   vulnerability may have a severity at or above the threshold (after filtering
   `ignoreCVEs`).
@@ -2426,6 +2503,8 @@ Checks performed:
 - **Freshness**: `scanFinishedOn` (or `scannedOn`, then `scanStartedOn`) is
   checked as described in [Predicate Validation](#predicate-validation) using
   `vulnScan.maxAge`. Zero timestamps are skipped in favor of the next one.
+  Scans older than `maxAge` are ignored while another scan of the image is
+  within it (see [`vulnScan`](#vulnscan-object)).
 
 The `maxSeverity` metadata ranks an unknown severity above `none`, so a finding
 that could not be classified is never hidden behind a clean result, and
@@ -2433,7 +2512,8 @@ that could not be classified is never hidden behind a clean result, and
 
 When both `maxScore` and `minSeverity` are set, a vulnerability is flagged if
 either condition is met (OR logic). When multiple scan attestations exist, any
-policy violation or invalid document causes failure.
+policy violation or invalid document of a scan that is not superseded causes
+failure.
 
 Example configuration:
 

@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/saschagrunert/nri-supply-chain/internal/intoto"
+	"github.com/saschagrunert/nri-supply-chain/internal/checker/checkertest"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/source"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
@@ -206,7 +206,12 @@ func TestVerify(t *testing.T) {
 
 			att := testutil.WrapInToto(t, test.doc, testDigest, testPredicateType)
 
-			result, err := source.Verify(context.Background(), att, test.pol, testDigest)
+			result, err := source.VerifyMultiple(
+				context.Background(),
+				[][]byte{att},
+				test.pol,
+				testDigest,
+			)
 			testutil.AssertNoError(t, err)
 
 			testutil.AssertEqual(t, test.wantPassed, result.Passed)
@@ -215,23 +220,17 @@ func TestVerify(t *testing.T) {
 	}
 }
 
-func TestVerifyCheckType(t *testing.T) {
-	t.Parallel()
-
-	att := testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType)
-
-	result, err := source.Verify(context.Background(), att, &policy.Policy{}, testDigest)
-	testutil.AssertNoError(t, err)
-
-	testutil.AssertEqual(t, types.CheckType("source"), result.Type)
-}
-
 func TestVerifyMetadata(t *testing.T) {
 	t.Parallel()
 
 	att := testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType)
 
-	result, err := source.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+	result, err := source.VerifyMultiple(
+		context.Background(),
+		[][]byte{att},
+		&policy.Policy{},
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	if result.Metadata == nil {
@@ -261,74 +260,12 @@ func TestVerifyMetadata(t *testing.T) {
 	}
 }
 
-func TestVerifyMalformedPayloads(t *testing.T) {
-	t.Parallel()
-
-	t.Run("empty payload", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := source.Verify(context.Background(), []byte{}, &policy.Policy{}, testDigest)
-		if !errors.Is(err, source.ErrInvalidSource) {
-			t.Errorf("expected ErrInvalidSource, got %v", err)
-		}
-	})
-
-	t.Run("nil payload", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := source.Verify(context.Background(), nil, &policy.Policy{}, testDigest)
-		if !errors.Is(err, source.ErrInvalidSource) {
-			t.Errorf("expected ErrInvalidSource, got %v", err)
-		}
-	})
-
-	t.Run("truncated JSON", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := source.Verify(
-			context.Background(), []byte(`{"subject":[`), &policy.Policy{}, testDigest,
-		)
-		if !errors.Is(err, source.ErrInvalidSource) {
-			t.Errorf("expected ErrInvalidSource, got %v", err)
-		}
-	})
-}
-
-func TestVerifySubjectEdgeCases(t *testing.T) {
-	t.Parallel()
-
-	t.Run("subject with mismatched digest", func(t *testing.T) {
-		t.Parallel()
-
-		att := testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType)
-
-		_, err := source.Verify(context.Background(),
-			att, &policy.Policy{},
-			"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-		)
-		if !errors.Is(err, intoto.ErrSubjectMismatch) {
-			t.Errorf("expected ErrSubjectMismatch, got %v", err)
-		}
-	})
-
-	t.Run("empty digest with subjects rejects for binding", func(t *testing.T) {
-		t.Parallel()
-
-		att := testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType)
-
-		_, err := source.Verify(context.Background(), att, &policy.Policy{}, "")
-		if !errors.Is(err, intoto.ErrNoDigestBinding) {
-			t.Errorf("expected ErrNoDigestBinding, got %v", err)
-		}
-	})
-}
-
 func TestVerifyUntrustedSourceDetailMessage(t *testing.T) {
 	t.Parallel()
 
 	att := testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType)
 
-	result, err := source.Verify(context.Background(), att, &policy.Policy{
+	result, err := source.VerifyMultiple(context.Background(), [][]byte{att}, &policy.Policy{
 		Trust: &policy.TrustPolicy{
 			Sources: []string{"https://github.com/other/*"},
 		},
@@ -353,7 +290,7 @@ func TestVerifyLevelDetailMessage(t *testing.T) {
 
 	att := testutil.WrapInToto(t, validPredicate(), testDigest, testPredicateType)
 
-	result, err := source.Verify(context.Background(), att, &policy.Policy{
+	result, err := source.VerifyMultiple(context.Background(), [][]byte{att}, &policy.Policy{
 		Source: &policy.SourcePolicy{
 			MinimumLevel: 3,
 		},
@@ -550,10 +487,13 @@ func TestVerifyEmptySourceLocations(t *testing.T) {
 
 			att := testutil.WrapInToto(t, tc.predicate, testDigest, testPredicateType)
 
-			_, err := source.Verify(context.Background(), att, &policy.Policy{}, testDigest)
-			if !errors.Is(err, source.ErrInvalidSource) {
-				t.Fatalf("expected ErrInvalidSource, got %v", err)
-			}
+			result, err := source.VerifyMultiple(
+				context.Background(),
+				[][]byte{att},
+				&policy.Policy{},
+				testDigest,
+			)
+			checkertest.AssertFailed(t, result, err, source.ErrInvalidSource)
 		})
 	}
 }
@@ -581,7 +521,12 @@ func TestVerifyEverySourceLocationMustBeTrusted(t *testing.T) {
 
 			att := testutil.WrapInToto(t, pred, testDigest, testPredicateType)
 
-			result, err := source.Verify(context.Background(), att, pol, testDigest)
+			result, err := source.VerifyMultiple(
+				context.Background(),
+				[][]byte{att},
+				pol,
+				testDigest,
+			)
 			testutil.AssertNoError(t, err)
 
 			if result.Passed != tc.wantPass {
@@ -604,7 +549,12 @@ func TestVerifyFutureTimestampWithoutMaxAge(t *testing.T) {
 	doc.SourceMetadata.VerifiedOn = &future
 	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-	result, err := source.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+	result, err := source.VerifyMultiple(
+		context.Background(),
+		[][]byte{att},
+		&policy.Policy{},
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 	testutil.AssertEqual(t, false, result.Passed)
 	testutil.AssertContains(t, result.Detail, "future")
@@ -696,7 +646,12 @@ func TestVerifyFreshness(t *testing.T) {
 
 			att := testutil.WrapInToto(t, test.doc, testDigest, testPredicateType)
 
-			result, err := source.Verify(context.Background(), att, test.pol, testDigest)
+			result, err := source.VerifyMultiple(
+				context.Background(),
+				[][]byte{att},
+				test.pol,
+				testDigest,
+			)
 			testutil.AssertNoError(t, err)
 
 			testutil.AssertEqual(t, test.wantPassed, result.Passed)
@@ -705,22 +660,6 @@ func TestVerifyFreshness(t *testing.T) {
 				t.Errorf("expected detail to contain %q, got %q", test.wantSubstr, result.Detail)
 			}
 		})
-	}
-}
-
-func TestVerifyCancelledContext(t *testing.T) {
-	t.Parallel()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err := source.Verify(ctx, nil, nil, "")
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-
-	if !errors.Is(err, context.Canceled) {
-		t.Errorf("expected context.Canceled, got: %v", err)
 	}
 }
 

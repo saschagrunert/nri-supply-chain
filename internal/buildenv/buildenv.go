@@ -84,22 +84,6 @@ func Info() checker.Info {
 	return spec.Info
 }
 
-// Verify checks a single build environment attestation against the given policy.
-func Verify(
-	ctx context.Context,
-	att []byte, pol *policy.Policy, imageDigest string,
-) (*types.CheckResult, error) {
-	result, err := spec.Verify(ctx, att, pol, imageDigest)
-	if err != nil {
-		//nolint:wrapcheck // the generic checker returns domain errors
-		return nil, err
-	}
-
-	checker.ResolveConflictingMap(result.Metadata, metaPropertyValues, metaConflicts)
-
-	return result, nil
-}
-
 // VerifyMultiple checks multiple build environment attestations. Any policy
 // violation or invalid document causes failure. Properties whose values
 // differ between attestations are dropped from the merged property values

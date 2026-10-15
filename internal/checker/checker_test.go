@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,6 +31,8 @@ import (
 const (
 	testDigest        = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
 	testPredicateType = "https://example.com/predicate/v1"
+	testForbiddenName = "forbidden name"
+	testDetailFuture  = "future"
 )
 
 var (
@@ -61,16 +64,17 @@ func testSpec(aggregation checker.Aggregation, maxAge *time.Duration) *checker.S
 			return map[string]any{"name": pred.Name, "count": pred.Count}
 		},
 		Freshness: &checker.Freshness[testPredicate]{
-			Timestamp: func(pred *testPredicate) *time.Time { return pred.Timestamp },
-			MaxAge:    func(_ *policy.Policy) *time.Duration { return maxAge },
-			Label:     "created",
-			ErrStale:  errTestStale,
-			ErrFuture: errTestFuture,
+			Timestamp:   func(pred *testPredicate) *time.Time { return pred.Timestamp },
+			MaxAge:      func(_ *policy.Policy) *time.Duration { return maxAge },
+			Label:       "created",
+			ErrStale:    errTestStale,
+			ErrFuture:   errTestFuture,
+			Superseding: false,
 		},
 		Rules: []checker.Rule[testPredicate]{
 			func(pred *testPredicate, _ *policy.Policy) string {
 				if pred.Name == "forbidden" {
-					return "forbidden name"
+					return testForbiddenName
 				}
 
 				return ""
@@ -142,7 +146,7 @@ func TestSpecVerify(t *testing.T) {
 			maxAge:     nil,
 			wantErr:    nil,
 			wantPassed: false,
-			wantDetail: "forbidden name",
+			wantDetail: testForbiddenName,
 		},
 		{
 			name:       "future timestamp fails without max age",
@@ -150,7 +154,7 @@ func TestSpecVerify(t *testing.T) {
 			maxAge:     nil,
 			wantErr:    nil,
 			wantPassed: false,
-			wantDetail: "future",
+			wantDetail: testDetailFuture,
 		},
 		{
 			name:       "stale timestamp fails with max age",
@@ -257,6 +261,103 @@ func TestSpecVerifyMultiple(t *testing.T) {
 		testutil.AssertNoError(t, err)
 		testutil.AssertTrue(t, result.Passed)
 	})
+}
+
+func TestSpecVerifyMultipleSuperseding(t *testing.T) {
+	t.Parallel()
+
+	day := 24 * time.Hour
+	fresh := time.Now().Add(-time.Hour)
+	stale := time.Now().Add(-48 * time.Hour)
+	future := time.Now().Add(time.Hour)
+
+	doc := func(name string, timestamp *time.Time) []byte {
+		return statement(t, testPredicate{Name: name, Count: 1, Timestamp: timestamp})
+	}
+
+	tests := []struct {
+		name       string
+		docs       [][]byte
+		wantPassed bool
+		wantDetail string
+		wantName   string
+	}{
+		{
+			name:       "stale failing document is superseded by a fresh one",
+			docs:       [][]byte{doc("forbidden", &stale), doc("fresh", &fresh)},
+			wantPassed: true,
+			wantDetail: "",
+			wantName:   "fresh",
+		},
+		{
+			name:       "only stale documents are all evaluated",
+			docs:       [][]byte{doc("old", &stale), doc("older", &stale)},
+			wantPassed: false,
+			wantDetail: "stale",
+			wantName:   "",
+		},
+		{
+			name:       "a future document is not fresh and still fails",
+			docs:       [][]byte{doc("old", &stale), doc("future", &future)},
+			wantPassed: false,
+			wantDetail: testDetailFuture,
+			wantName:   "",
+		},
+		{
+			name:       "a future document next to a fresh one still fails",
+			docs:       [][]byte{doc("fresh", &fresh), doc("future", &future)},
+			wantPassed: false,
+			wantDetail: testDetailFuture,
+			wantName:   "",
+		},
+		{
+			name:       "a fresh failing document is never superseded",
+			docs:       [][]byte{doc("fresh", &fresh), doc("forbidden", &fresh)},
+			wantPassed: false,
+			wantDetail: testForbiddenName,
+			wantName:   "",
+		},
+		{
+			name: "an unbound document is never superseded",
+			docs: [][]byte{
+				testutil.WrapInToto(t, testPredicate{Name: "x", Count: 1, Timestamp: &stale},
+					"sha256:"+strings.Repeat("f", 64), testPredicateType),
+				doc("fresh", &fresh),
+			},
+			wantPassed: false,
+			wantDetail: "failed verification",
+			wantName:   "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			spec := testSpec(checker.AllMustPass, &day)
+			spec.Freshness.Superseding = true
+
+			result, err := spec.VerifyMultiple(
+				context.Background(), tc.docs, &policy.Policy{}, testDigest,
+			)
+			testutil.AssertNoError(t, err)
+			testutil.AssertEqual(t, tc.wantPassed, result.Passed)
+			testutil.AssertContains(t, result.Detail, tc.wantDetail)
+
+			if tc.wantName != "" {
+				testutil.AssertEqual[any](t, tc.wantName, result.Metadata["name"])
+			}
+		})
+	}
+
+	// Without Superseding every document must be within the maximum age.
+	result, err := testSpec(checker.AllMustPass, &day).VerifyMultiple(
+		context.Background(), [][]byte{doc("old", &stale), doc("fresh", &fresh)},
+		&policy.Policy{}, testDigest,
+	)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqual(t, false, result.Passed)
+	testutil.AssertContains(t, result.Detail, "stale")
 }
 
 func TestMergeFuncs(t *testing.T) {

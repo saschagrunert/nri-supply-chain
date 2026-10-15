@@ -82,10 +82,12 @@ func (p *Policy) Validate() error {
 	}
 
 	// An inheriting policy may rely on the default policy's trust.issuers
-	// and notation trust stores, so its keyless verifiers and trust store
-	// references are checked after merging (applyInheritance).
+	// and notation trust stores, so its keyless verifiers, trust store
+	// references and trust warnings are checked after merging
+	// (applyInheritance).
 	if p.Inherits == nil || !*p.Inherits {
 		errs = append(errs, p.validateKeylessVerifiers(), p.validateNotationStoreRefs())
+		p.warnTrust()
 	}
 
 	celErr := p.validateAndCompileCEL()
@@ -242,14 +244,15 @@ func validateKeyFile(prefix, ownerID, keyPath string, keyIdx int) error {
 	return nil
 }
 
+// validateTrust validates the trust section of one document. Checks that
+// depend on the complete trust configuration (keys shared by verifiers and
+// builders, identity issuers missing from trust.issuers, empty trust) run on
+// the merged policy instead, see validateOverlaps and warnTrust.
 func (s *Sections) validateTrust() error {
-	warnEmptyTrust(s.Trust)
-
 	return errors.Join(
 		s.validateBuilders(),
 		s.validateTrustStringFields(),
 		s.validateVerifiers(),
-		validateNoDuplicateKeys(s.Trust),
 	)
 }
 
@@ -291,7 +294,7 @@ func (s *Sections) validateBuilders() error {
 		errs = append(errs, validateKeyPaths(
 			label, builder.ID, builder.Keys, ErrBuilderKeyNotAbsolute, ErrDuplicateBuilderKey,
 		)...)
-		errs = append(errs, validateIdentities(label, builder.Identities, s.Trust.Issuers)...)
+		errs = append(errs, validateIdentities(label, builder.Identities)...)
 
 		if !builder.Bound() {
 			slog.Warn("Trusted builder has no keys or identities; provenance claiming "+
@@ -307,11 +310,9 @@ func (s *Sections) validateBuilders() error {
 func (s *Sections) validateTrustStringFields() error {
 	return errors.Join(
 		validateNonEmpty("trust.issuers", s.Trust.Issuers),
-		validateNonEmpty("trust.sources", s.Trust.Sources),
-		validateGlobPatterns("trust.sources", s.Trust.Sources),
+		validatePatterns("trust.sources", s.Trust.Sources),
 		validateNonEmpty("trust.buildTypes", s.Trust.BuildTypes),
-		validateNonEmpty("trust.sanPatterns", s.Trust.SANPatterns),
-		validateGlobPatterns("trust.sanPatterns", s.Trust.SANPatterns),
+		validatePatterns("trust.sanPatterns", s.Trust.SANPatterns),
 	)
 }
 
@@ -343,7 +344,7 @@ func (s *Sections) validateVerifiers() error {
 
 		errs = append(errs, validateVerifierKeys(idx, verif)...)
 		errs = append(errs, validateIdentities(
-			fmt.Sprintf("trust.verifiers[%d]", idx), verif.Identities, s.Trust.Issuers,
+			fmt.Sprintf("trust.verifiers[%d]", idx), verif.Identities,
 		)...)
 
 		if !verif.Bound() {
@@ -523,11 +524,7 @@ func validateKeyPaths(
 	return errs
 }
 
-func validateIdentities(
-	label string,
-	identities []TrustedIdentity,
-	trustedIssuers []string,
-) []error {
+func validateIdentities(label string, identities []TrustedIdentity) []error {
 	var errs []error
 
 	for idx, identity := range identities {
@@ -535,11 +532,6 @@ func validateIdentities(
 
 		if identity.Issuer == "" {
 			errs = append(errs, fmt.Errorf("%w: %s", ErrIdentityIssuerRequired, field))
-		} else if len(trustedIssuers) > 0 && !slices.Contains(trustedIssuers, identity.Issuer) {
-			slog.Warn("Identity issuer is not listed in trust.issuers; certificates "+
-				"from this issuer are not accepted, so the identity never matches",
-				"identity", field, "issuer", identity.Issuer,
-			)
 		}
 
 		if identity.SANPattern == "" {
@@ -601,25 +593,20 @@ func validateVerifierTimeBounds(idx int, verif *TrustedVerifier) []error {
 	return errs
 }
 
+// validatePatterns rejects empty and invalid glob patterns of a field.
+func validatePatterns(field string, patterns []string) error {
+	return errors.Join(validateNonEmpty(field, patterns), validateGlobPatterns(field, patterns))
+}
+
 func validateGlobPatterns(field string, patterns []string) error {
 	var errs []error
 
 	for idx, pattern := range patterns {
-		err := glob.Validate(pattern)
+		err := glob.ValidateField(fmt.Sprintf("%s[%d]", field, idx), pattern)
 		if err != nil {
 			errs = append(errs, fmt.Errorf(
 				"invalid %s[%d] pattern %q: %w", field, idx, pattern, err,
 			))
-
-			continue
-		}
-
-		if glob.HasBangNegation(pattern) {
-			slog.Warn("Pattern uses a \"[!...]\" character class, which negates the class; "+
-				"earlier releases matched \"!\" literally",
-				"field", fmt.Sprintf("%s[%d]", field, idx),
-				"pattern", pattern,
-			)
 		}
 	}
 
@@ -638,19 +625,80 @@ func validateNonEmpty(field string, values []string) error {
 	return errors.Join(errs...)
 }
 
-func warnEmptyTrust(trust *TrustPolicy) {
+// warnTrust logs trust configurations that cannot verify what they declare.
+// It runs on complete policies only: an inheriting policy is checked after
+// merging and a rule on the effective policy it produces, because their
+// partial trust sections rely on the trust of their base.
+func (p *Policy) warnTrust() {
+	warnTrustSection("trust", p.Trust)
+
+	for idx := range p.Rules {
+		if p.Rules[idx].Trust == nil {
+			continue
+		}
+
+		warnTrustSection(fmt.Sprintf("rules[%d].trust", idx), ApplyRule(p, &p.Rules[idx]).Trust)
+	}
+}
+
+func warnTrustSection(label string, trust *TrustPolicy) {
+	if trust == nil {
+		return
+	}
+
 	if len(trust.Builders) == 0 && len(trust.Verifiers) == 0 && len(trust.Issuers) == 0 {
-		slog.Warn("trust section is configured but has no builders, verifiers, or issuers")
+		slog.Warn("trust section is configured but has no builders, verifiers, or issuers",
+			"section", label,
+		)
+	}
+
+	for idx := range trust.Builders {
+		warnUntrustedIssuers(
+			fmt.Sprintf(
+				"%s.builders[%d]",
+				label,
+				idx,
+			),
+			trust.Builders[idx].Identities,
+			trust.Issuers,
+		)
+	}
+
+	for idx := range trust.Verifiers {
+		warnUntrustedIssuers(
+			fmt.Sprintf(
+				"%s.verifiers[%d]",
+				label,
+				idx,
+			),
+			trust.Verifiers[idx].Identities,
+			trust.Issuers,
+		)
+	}
+}
+
+// warnUntrustedIssuers warns about identities whose issuer is not listed in
+// trust.issuers: certificates from it are not accepted, so the identity
+// never matches.
+func warnUntrustedIssuers(label string, identities []TrustedIdentity, trustedIssuers []string) {
+	if len(trustedIssuers) == 0 {
+		return
+	}
+
+	for idx, identity := range identities {
+		if identity.Issuer != "" && !slices.Contains(trustedIssuers, identity.Issuer) {
+			slog.Warn("Identity issuer is not listed in trust.issuers; certificates "+
+				"from this issuer are not accepted, so the identity never matches",
+				"identity", fmt.Sprintf("%s.identities[%d]", label, idx), "issuer", identity.Issuer,
+			)
+		}
 	}
 }
 
 func (p *Policy) validateInclude() error {
 	warnUppercasePatterns("include", p.Include)
 
-	return errors.Join(
-		validateNonEmpty("include", p.Include),
-		validateGlobPatterns("include", p.Include),
-	)
+	return validatePatterns("include", p.Include)
 }
 
 // warnUppercasePatterns warns about image patterns that never match because
@@ -693,10 +741,7 @@ func (p *Policy) validateExclude() error {
 		)
 	}
 
-	return errors.Join(
-		validateNonEmpty("exclude", p.Exclude),
-		validateGlobPatterns("exclude", p.Exclude),
-	)
+	return validatePatterns("exclude", p.Exclude)
 }
 
 // tagScopedPatterns returns the image patterns that are scoped to a tag: a

@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -132,22 +133,6 @@ func NewOCIFetcherWithSignatureVerification(
 		fetchHead:       remote.Head,
 		transportCache:  tc,
 		verifySignature: verifyFn,
-		newestCreated:   time.Time{},
-		createdMu:       sync.Mutex{},
-	}
-}
-
-// NewOCIFetcherWithImageFunc creates an OCI policy fetcher with a custom image
-// fetch function, useful for testing. CheckDigest falls back to fetching the
-// full image to derive the digest, matching the mock's behavior.
-func NewOCIFetcherWithImageFunc(
-	fn ImageFetchFunc, tc *registry.TransportCache,
-) *OCIFetcher {
-	return &OCIFetcher{
-		fetchImage:      fn,
-		fetchHead:       nil,
-		transportCache:  tc,
-		verifySignature: nil,
 		newestCreated:   time.Time{},
 		createdMu:       sync.Mutex{},
 	}
@@ -492,7 +477,10 @@ func processOCIPolicyLayer( //nolint:nonamedreturns // named returns for clarity
 		slog.Warn("Skipping untitled OCI policy layer", "index", idx, "media_type", mediaType)
 
 		return nil, "", false, nil
-	case !strings.HasSuffix(filename, policyFileExtension):
+	// The extension is compared case-insensitively, like in the policy
+	// directory, so a layer such as "prod.JSON" fails the artifact
+	// (NamespaceFromFilename rejects it) instead of silently never applying.
+	case !strings.EqualFold(path.Ext(filename), policyFileExtension):
 		return handleNonJSONLayer(strict, idx, filename)
 	}
 

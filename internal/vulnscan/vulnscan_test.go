@@ -17,12 +17,11 @@ package vulnscan_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/saschagrunert/nri-supply-chain/internal/intoto"
+	"github.com/saschagrunert/nri-supply-chain/internal/checker/checkertest"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
@@ -202,7 +201,12 @@ func TestVerify(t *testing.T) {
 
 			att := testutil.WrapInToto(t, test.doc, testDigest, testPredicateType)
 
-			result, err := vulnscan.Verify(context.Background(), att, test.pol, testDigest)
+			result, err := vulnscan.VerifyMultiple(
+				context.Background(),
+				[][]byte{att},
+				test.pol,
+				testDigest,
+			)
 			testutil.AssertNoError(t, err)
 
 			testutil.AssertEqual(t, test.wantPassed, result.Passed)
@@ -211,23 +215,17 @@ func TestVerify(t *testing.T) {
 	}
 }
 
-func TestVerifyCheckType(t *testing.T) {
-	t.Parallel()
-
-	att := testutil.WrapInToto(t, validDoc(), testDigest, testPredicateType)
-
-	result, err := vulnscan.Verify(context.Background(), att, &policy.Policy{}, testDigest)
-	testutil.AssertNoError(t, err)
-
-	testutil.AssertEqual(t, types.CheckType("vulnscan"), result.Type)
-}
-
 func TestVerifyMetadata(t *testing.T) {
 	t.Parallel()
 
 	att := testutil.WrapInToto(t, validDoc(), testDigest, testPredicateType)
 
-	result, err := vulnscan.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+	result, err := vulnscan.VerifyMultiple(
+		context.Background(),
+		[][]byte{att},
+		&policy.Policy{},
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	if result.Metadata == nil {
@@ -270,7 +268,12 @@ func TestVerifyMetadataCriticalDoc(t *testing.T) {
 
 	att := testutil.WrapInToto(t, criticalDoc(), testDigest, testPredicateType)
 
-	result, err := vulnscan.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+	result, err := vulnscan.VerifyMultiple(
+		context.Background(),
+		[][]byte{att},
+		&policy.Policy{},
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	if result.Metadata == nil {
@@ -288,74 +291,12 @@ func TestVerifyMetadataCriticalDoc(t *testing.T) {
 	}
 }
 
-func TestVerifyMalformedPayloads(t *testing.T) {
-	t.Parallel()
-
-	t.Run("empty payload", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := vulnscan.Verify(context.Background(), []byte{}, &policy.Policy{}, testDigest)
-		if !errors.Is(err, vulnscan.ErrInvalidVulnScan) {
-			t.Errorf("expected ErrInvalidVulnScan, got %v", err)
-		}
-	})
-
-	t.Run("nil payload", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := vulnscan.Verify(context.Background(), nil, &policy.Policy{}, testDigest)
-		if !errors.Is(err, vulnscan.ErrInvalidVulnScan) {
-			t.Errorf("expected ErrInvalidVulnScan, got %v", err)
-		}
-	})
-
-	t.Run("truncated JSON", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := vulnscan.Verify(
-			context.Background(), []byte(`{"subject":[`), &policy.Policy{}, testDigest,
-		)
-		if !errors.Is(err, vulnscan.ErrInvalidVulnScan) {
-			t.Errorf("expected ErrInvalidVulnScan, got %v", err)
-		}
-	})
-}
-
-func TestVerifySubjectEdgeCases(t *testing.T) {
-	t.Parallel()
-
-	t.Run("subject with mismatched digest", func(t *testing.T) {
-		t.Parallel()
-
-		att := testutil.WrapInToto(t, validDoc(), testDigest, testPredicateType)
-
-		_, err := vulnscan.Verify(context.Background(),
-			att, &policy.Policy{},
-			"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-		)
-		if !errors.Is(err, intoto.ErrSubjectMismatch) {
-			t.Errorf("expected ErrSubjectMismatch, got %v", err)
-		}
-	})
-
-	t.Run("empty digest with subjects rejects for binding", func(t *testing.T) {
-		t.Parallel()
-
-		att := testutil.WrapInToto(t, validDoc(), testDigest, testPredicateType)
-
-		_, err := vulnscan.Verify(context.Background(), att, &policy.Policy{}, "")
-		if !errors.Is(err, intoto.ErrNoDigestBinding) {
-			t.Errorf("expected ErrNoDigestBinding, got %v", err)
-		}
-	})
-}
-
 func TestVerifyThresholdDetailMessage(t *testing.T) {
 	t.Parallel()
 
 	att := testutil.WrapInToto(t, criticalDoc(), testDigest, testPredicateType)
 
-	result, err := vulnscan.Verify(context.Background(), att, &policy.Policy{
+	result, err := vulnscan.VerifyMultiple(context.Background(), [][]byte{att}, &policy.Policy{
 		VulnScan: &policy.VulnScanPolicy{
 			MaxScore: new(7.0),
 		},
@@ -380,7 +321,12 @@ func TestVerifyNoVulnerabilities(t *testing.T) {
 
 	att := testutil.WrapInToto(t, cleanDoc(), testDigest, testPredicateType)
 
-	result, err := vulnscan.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+	result, err := vulnscan.VerifyMultiple(
+		context.Background(),
+		[][]byte{att},
+		&policy.Policy{},
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	if !result.Passed {
@@ -649,7 +595,12 @@ func TestVerifyFreshness(t *testing.T) {
 
 			att := testutil.WrapInToto(t, test.doc, testDigest, testPredicateType)
 
-			result, err := vulnscan.Verify(context.Background(), att, test.pol, testDigest)
+			result, err := vulnscan.VerifyMultiple(
+				context.Background(),
+				[][]byte{att},
+				test.pol,
+				testDigest,
+			)
 			testutil.AssertNoError(t, err)
 
 			testutil.AssertEqual(t, test.wantPassed, result.Passed)
@@ -674,7 +625,7 @@ func TestVerifyScoreWithoutScoreField(t *testing.T) {
 	}
 	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-	result, err := vulnscan.Verify(context.Background(), att, &policy.Policy{
+	result, err := vulnscan.VerifyMultiple(context.Background(), [][]byte{att}, &policy.Policy{
 		VulnScan: &policy.VulnScanPolicy{
 			MinSeverity: testSevCritical,
 		},
@@ -785,7 +736,12 @@ func TestVerifyMaxScoreMetadataUsesSeverityWithoutScore(t *testing.T) {
 	}
 	att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-	result, err := vulnscan.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+	result, err := vulnscan.VerifyMultiple(
+		context.Background(),
+		[][]byte{att},
+		&policy.Policy{},
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	// A critical finding without a numeric score counts with the lowest
@@ -877,12 +833,11 @@ func TestVerifySeverityAliasesAndUnknown(t *testing.T) {
 			}
 			att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-			result, err := vulnscan.Verify(
+			result, err := vulnscan.VerifyMultiple(
 				context.Background(),
-				att,
+				[][]byte{att},
 				&policy.Policy{VulnScan: tc.pol},
-				testDigest,
-			)
+				testDigest)
 			testutil.AssertNoError(t, err)
 			testutil.AssertEqual(t, tc.wantPassed, result.Passed)
 
@@ -921,7 +876,7 @@ func TestVerifySpecPredicate(t *testing.T) {
 	t.Run("CVSS score string exceeds minSeverity high", func(t *testing.T) {
 		t.Parallel()
 
-		result, err := vulnscan.Verify(context.Background(), att, &policy.Policy{
+		result, err := vulnscan.VerifyMultiple(context.Background(), [][]byte{att}, &policy.Policy{
 			VulnScan: &policy.VulnScanPolicy{
 				MinSeverity: testSevHigh,
 			},
@@ -934,7 +889,7 @@ func TestVerifySpecPredicate(t *testing.T) {
 	t.Run("metadata derived from spec layout", func(t *testing.T) {
 		t.Parallel()
 
-		result, err := vulnscan.Verify(context.Background(), att, &policy.Policy{
+		result, err := vulnscan.VerifyMultiple(context.Background(), [][]byte{att}, &policy.Policy{
 			VulnScan: &policy.VulnScanPolicy{
 				MaxAge:         "1h",
 				MaxAgeDuration: time.Hour,
@@ -968,10 +923,13 @@ func TestVerifyRejectsIncompletePredicates(t *testing.T) {
 
 			att := testutil.WrapInToto(t, json.RawMessage(predicate), testDigest, testPredicateType)
 
-			_, err := vulnscan.Verify(context.Background(), att, &policy.Policy{}, testDigest)
-			if !errors.Is(err, vulnscan.ErrInvalidVulnScan) {
-				t.Fatalf("expected ErrInvalidVulnScan, got %v", err)
-			}
+			result, err := vulnscan.VerifyMultiple(
+				context.Background(),
+				[][]byte{att},
+				&policy.Policy{},
+				testDigest,
+			)
+			checkertest.AssertFailed(t, result, err, vulnscan.ErrInvalidVulnScan)
 		})
 	}
 }
@@ -981,7 +939,7 @@ func TestVerifyIgnoreCVEsWithMinSeverity(t *testing.T) {
 
 	att := testutil.WrapInToto(t, criticalDoc(), testDigest, testPredicateType)
 
-	result, err := vulnscan.Verify(context.Background(), att, &policy.Policy{
+	result, err := vulnscan.VerifyMultiple(context.Background(), [][]byte{att}, &policy.Policy{
 		VulnScan: &policy.VulnScanPolicy{
 			MinSeverity: testSevHigh,
 			IgnoreCVEs:  []string{testCVE3, testCVE1},
@@ -991,21 +949,5 @@ func TestVerifyIgnoreCVEsWithMinSeverity(t *testing.T) {
 
 	if !result.Passed {
 		t.Errorf("expected pass when all CVEs are ignored, got: %s", result.Detail)
-	}
-}
-
-func TestVerifyCancelledContext(t *testing.T) {
-	t.Parallel()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err := vulnscan.Verify(ctx, nil, nil, "")
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-
-	if !errors.Is(err, context.Canceled) {
-		t.Errorf("expected context.Canceled, got: %v", err)
 	}
 }

@@ -60,8 +60,11 @@ func TestVerifyDateOnlyTimezoneTolerance(t *testing.T) {
 			doc := validDoc()
 			doc.Date = tc.date
 
-			result, err := scorecard.Verify(
-				context.Background(), wrapInToto(t, doc, testDigest), &policy.Policy{}, testDigest,
+			result, err := scorecard.VerifyMultiple(
+				context.Background(),
+				[][]byte{wrapInToto(t, doc, testDigest)},
+				&policy.Policy{},
+				testDigest,
 			)
 			testutil.AssertNoError(t, err)
 			testutil.AssertEqual(t, tc.wantPassed, result.Passed)

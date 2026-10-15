@@ -154,8 +154,15 @@ func TestVerifySourceByBuildType(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			result, err := slsa.Verify(context.Background(),
-				testutil.MustMarshal(t, tc.stmt), sourcePolicy(), testDigest)
+			result, err := slsa.VerifyMultipleWithOptions(
+				context.Background(),
+				[]attestation.VerifiedAttestation{
+					{Payload: testutil.MustMarshal(t, tc.stmt)},
+				},
+				sourcePolicy(),
+				testDigest,
+				nil,
+			)
 			testutil.AssertNoError(t, err)
 			testutil.AssertEqual(t, tc.wantPass, result.Passed)
 
@@ -229,8 +236,15 @@ func TestVerifyResolvedDependencies(t *testing.T) {
 			stmt := rawStatement(slsa.BuildTypeGitHubActionsWorkflow,
 				workflowParams(testSource, testWorkflowRef), tc.deps)
 
-			result, err := slsa.Verify(context.Background(),
-				testutil.MustMarshal(t, stmt), sourcePolicy(), testDigest)
+			result, err := slsa.VerifyMultipleWithOptions(
+				context.Background(),
+				[]attestation.VerifiedAttestation{
+					{Payload: testutil.MustMarshal(t, stmt)},
+				},
+				sourcePolicy(),
+				testDigest,
+				nil,
+			)
 			testutil.AssertNoError(t, err)
 			testutil.AssertEqual(t, tc.wantPass, result.Passed)
 
@@ -246,8 +260,15 @@ func TestVerifyResolvedDependencies(t *testing.T) {
 func TestVerifyEmptyTrustWarns(t *testing.T) {
 	t.Parallel()
 
-	result, err := slsa.Verify(context.Background(),
-		testutil.MustMarshal(t, validStatement()), &policy.Policy{}, testDigest)
+	result, err := slsa.VerifyMultipleWithOptions(
+		context.Background(),
+		[]attestation.VerifiedAttestation{
+			{Payload: testutil.MustMarshal(t, validStatement())},
+		},
+		&policy.Policy{},
+		testDigest,
+		nil,
+	)
 	testutil.AssertNoError(t, err)
 	testutil.AssertTrue(t, result.Passed)
 	testutil.AssertEqual(t, types.StatusWarn, result.Status)

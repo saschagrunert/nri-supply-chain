@@ -34,7 +34,12 @@ func TestVerifyWarnedResult(t *testing.T) {
 	t.Run("passes with warned count in metadata", func(t *testing.T) {
 		t.Parallel()
 
-		result, err := testresult.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+		result, err := testresult.VerifyMultiple(
+			context.Background(),
+			[][]byte{att},
+			&policy.Policy{},
+			testDigest,
+		)
 		testutil.AssertNoError(t, err)
 		testutil.AssertTrue(t, result.Passed)
 		testutil.AssertEqual[any](t, int64(2), result.Metadata["warned"])
@@ -44,9 +49,14 @@ func TestVerifyWarnedResult(t *testing.T) {
 	t.Run("required suite found in warnedTests", func(t *testing.T) {
 		t.Parallel()
 
-		result, err := testresult.Verify(context.Background(), att, &policy.Policy{
-			TestResult: &policy.TestResultPolicy{RequiredSuites: []string{testSuiteInteg}},
-		}, testDigest)
+		result, err := testresult.VerifyMultiple(
+			context.Background(),
+			[][]byte{att},
+			&policy.Policy{
+				TestResult: &policy.TestResultPolicy{RequiredSuites: []string{testSuiteInteg}},
+			},
+			testDigest,
+		)
 		testutil.AssertNoError(t, err)
 		testutil.AssertTrue(t, result.Passed)
 	})
@@ -62,12 +72,11 @@ func TestVerifyWarnedResult(t *testing.T) {
 			testPredicateType,
 		)
 
-		result, err := testresult.Verify(
+		result, err := testresult.VerifyMultiple(
 			context.Background(),
-			failingAtt,
+			[][]byte{failingAtt},
 			&policy.Policy{},
-			testDigest,
-		)
+			testDigest)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, false, result.Passed)
 	})
@@ -89,4 +98,37 @@ func TestVerifyMultipleMergesWarnedCount(t *testing.T) {
 	testutil.AssertNoError(t, err)
 	testutil.AssertTrue(t, result.Passed)
 	testutil.AssertEqual[any](t, int64(2), result.Metadata["warned"])
+}
+
+func TestVerifyMultipleMergesWorstResult(t *testing.T) {
+	t.Parallel()
+
+	passed := testutil.WrapInToto(
+		t,
+		json.RawMessage(`{"result":"PASSED","passedTests":["unit"]}`),
+		testDigest,
+		testPredicateType,
+	)
+	warned := testutil.WrapInToto(
+		t,
+		json.RawMessage(`{"result":"WARNED","warnedTests":["e2e"]}`),
+		testDigest,
+		testPredicateType,
+	)
+
+	for _, attestations := range [][][]byte{{passed, warned}, {warned, passed}} {
+		result, err := testresult.VerifyMultiple(
+			context.Background(), attestations, &policy.Policy{}, testDigest,
+		)
+		testutil.AssertNoError(t, err)
+		testutil.AssertTrue(t, result.Passed)
+		testutil.AssertEqual[any](t, "WARNED", result.Metadata["result"])
+		testutil.AssertEqual[any](t, int64(1), result.Metadata["warned"])
+	}
+
+	result, err := testresult.VerifyMultiple(
+		context.Background(), [][]byte{passed, passed}, &policy.Policy{}, testDigest,
+	)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqual[any](t, "PASSED", result.Metadata["result"])
 }

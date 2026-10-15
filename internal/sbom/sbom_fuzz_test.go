@@ -98,7 +98,13 @@ func FuzzVerify(f *testing.F) {
 		`}`))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		result, err := sbom.Verify(context.Background(), data, &policy.Policy{}, testFuzzDigest)
+		result, err := sbom.VerifyMultipleWithBaseline(
+			context.Background(),
+			[][]byte{data},
+			nil,
+			&policy.Policy{},
+			testFuzzDigest,
+		)
 		if err == nil && result == nil {
 			t.Error("Verify returned nil result and nil error")
 		}

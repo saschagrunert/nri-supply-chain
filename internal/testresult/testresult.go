@@ -105,9 +105,10 @@ var spec = &checker.Spec[testResultPredicate]{
 
 			return &pol.TestResult.MaxAgeDuration
 		},
-		Label:     "finished",
-		ErrStale:  ErrStaleTestResult,
-		ErrFuture: ErrFutureTimestamp,
+		Label:       "finished",
+		ErrStale:    ErrStaleTestResult,
+		ErrFuture:   ErrFutureTimestamp,
+		Superseding: false,
 	},
 	Rules: []checker.Rule[testResultPredicate]{
 		checkOverallResult,
@@ -115,6 +116,10 @@ var spec = &checker.Spec[testResultPredicate]{
 		checkRequiredSuites,
 	},
 	Merge: map[string]checker.MergeFunc{
+		// The aggregate result is the worst document result, so a rule
+		// such as testresult.result == "PASSED" fails when any document
+		// only passed with warnings.
+		"result":     checker.MaxBy(resultOrder),
 		"suiteCount": checker.Sum(),
 		metaPassed:   checker.Sum(),
 		metaFailed:   checker.Sum(),
@@ -126,15 +131,6 @@ var spec = &checker.Spec[testResultPredicate]{
 // Info returns the check type and label of the test result check.
 func Info() checker.Info {
 	return spec.Info
-}
-
-// Verify checks a single test result attestation against the given policy.
-func Verify(
-	ctx context.Context,
-	att []byte, pol *policy.Policy, imageDigest string,
-) (*types.CheckResult, error) {
-	//nolint:wrapcheck // the generic checker returns domain errors
-	return spec.Verify(ctx, att, pol, imageDigest)
 }
 
 // VerifyMultiple checks multiple test result attestations. All must pass
@@ -190,6 +186,19 @@ func predicateMeta(pred *testResultPredicate) map[string]any {
 		metaPassed:   totalPassed,
 		metaFailed:   totalFailed,
 		metaWarned:   int64(len(pred.WarnedTests)),
+	}
+}
+
+// resultOrder orders results from passed to warned to anything else, which
+// fails the check.
+func resultOrder(result string) int {
+	switch strings.ToLower(result) {
+	case "pass", metaPassed:
+		return 0
+	case "warn", metaWarned:
+		return 1
+	default:
+		return 2 //nolint:mnd // ranks above warned
 	}
 }
 

@@ -78,8 +78,9 @@ func anyPolicyEnforcing(cfg *config.Config, policies map[string]*policy.Policy) 
 
 // validatePoliciesAgainstConfig applies the enforce mode safety checks of the
 // operational config to namespaces that enforce through their policy mode,
-// not only to a global enforce mode: insecure registries and unsigned OCI
-// policy artifacts are rejected as soon as any policy enforces.
+// not only to a global enforce mode: insecure registries, unsigned OCI policy
+// artifacts, policy issuers without SAN patterns, and a cleartext GUAC
+// endpoint are rejected as soon as any policy enforces.
 func validatePoliciesAgainstConfig(
 	cfg *config.Config, policies map[string]*policy.Policy,
 ) error {
@@ -103,6 +104,19 @@ func validatePoliciesAgainstConfig(
 			errs,
 			fmt.Errorf("%w (a policy enforces)", config.ErrPolicyOCIUnsignedInEnforce),
 		)
+	}
+
+	if cfg.Policy.IssuersWithoutSANPatterns() {
+		errs = append(
+			errs,
+			fmt.Errorf("%w (a policy enforces)", config.ErrIssuersWithoutSANPatternsInEnforce),
+		)
+	}
+
+	if cfg.Guac.CleartextEndpoint() {
+		errs = append(errs, fmt.Errorf(
+			"%w: %s (a policy enforces)", config.ErrGUACEndpointNotHTTPS, cfg.Guac.Endpoint,
+		))
 	}
 
 	return errors.Join(errs...)

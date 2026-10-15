@@ -19,7 +19,6 @@ import (
 	"testing"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/vex/imagematch"
-	"github.com/saschagrunert/nri-supply-chain/internal/vex/openvex"
 )
 
 func FuzzVerify(f *testing.F) {
@@ -48,7 +47,7 @@ func FuzzVerify(f *testing.F) {
 		`"status":"not_affected"}]}`))
 
 	f.Fuzz(func(_ *testing.T, data []byte) {
-		openvex.Verify(
+		verifyPredicate(
 			context.Background(),
 			data,
 			imagematch.New("docker.io/library/nginx:latest", testDigest, nil),

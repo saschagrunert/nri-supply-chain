@@ -581,7 +581,8 @@ Validate policies and configuration with `nri-supply-chain validate` and run
   that cannot be parsed fails an allow list and is compared as text against a
   deny list. See [policy.md](policy.md).
 - **SBOM drift.** A version bump of a component counts as modified instead of
-  as one removal and one addition.
+  as one removal and one addition. Packages without a purl take part by name
+  and version (except the document subject and non-package components).
 - **CLI exit codes.** `preview`, `bundle verify` and `bundle import` return the
   documented [exit codes](config.md#exit-codes): 1 for a denial or a failed
   bundle check, 2 for errors.
@@ -604,7 +605,8 @@ Validate policies and configuration with `nri-supply-chain validate` and run
   right type, and CEL `matches()` calls with an invalid regular expression fail
   at policy load instead of failing every evaluation.
 - **Policy file names.** A policy file with an upper-case extension such as
-  `prod.JSON` fails the load instead of being skipped.
+  `prod.JSON` fails the load instead of being skipped, in the policy directory
+  and as the title of an OCI policy layer.
 - **Missing config file.** An explicit `--config` path that does not exist
   makes the plugin exit with code 2 instead of starting with verification
   disabled.
@@ -632,6 +634,50 @@ Validate policies and configuration with `nri-supply-chain validate` and run
   - CycloneDX analysis states are compared exactly.
   - SBOM components nested deeper than 32 levels are rejected.
   - Empty or `null` GUAC GraphQL responses fail the check.
+- **Vulnerability ratings.** `vulnScan.maxScore` and `sbom.cvss.maxScore`
+  compare the highest score raised to the lowest score of the most severe
+  rating, so a `critical` rating is no longer outweighed by a lower numeric
+  score from another source. With an `sbom.cvss` threshold, CycloneDX
+  vulnerabilities without ratings or with only an `unknown` severity (as
+  Trivy and Grype emit) fail closed like in `vulnScan`, also in CycloneDX VEX
+  documents; list accepted ones in `ignoreCVEs`. With `vulnScan.maxAge`, scans
+  older than `maxAge` are ignored while a newer scan is within it.
+- **SBOM licenses and inventory.** Packages without license data are checked
+  as `NOASSERTION` in every format, and SPDX 3 `NoneLicense` as `NONE`, so a
+  license allow list now fails on them (common for Go modules in syft SBOMs)
+  unless it lists `NOASSERTION` (and `NONE`). Components nested in a CycloneDX
+  `metadata.component` are checked like top-level components, and a document
+  matching several SBOM formats is rejected.
+- **SLSA v0.2 parameters.** `slsa.rejectUnknownParameters` applies to v0.2
+  `invocation.parameters`. BuildKit v0.2 provenance (`frontend`, `args`,
+  `locals`) is rejected unless `slsa.knownParameters` lists these keys, and
+  since that list replaces the GitHub Actions defaults, a policy admitting both
+  lists the keys of both.
+- **SCAI required attributes.** An assertion with a `target` (an attribute of
+  another artifact) no longer satisfies `scai.requiredAttributes`, and it is
+  not counted in `scai.attributes` or `scai.attributeCount`.
+- **VEX documents.** A CycloneDX document without any analysis state (a plain
+  SBOM) and an empty predicate are not VEX documents, so `vex.missingPolicy`
+  applies when no other VEX document exists instead of passing as `no_match`.
+  OpenVEX documents with a timestamp more than 60 seconds in the future and
+  CycloneDX VEX documents nesting components deeper than 32 levels are
+  invalid.
+- **Test results.** `testresult.result` is the worst result of all documents
+  (`WARNED` over `PASSED`), and `testresult.warned` counts warned tests.
+- **VSA version.** A VSA without `slsaVersion` is accepted, since the field is
+  optional in VSA v1.
+- **Merged policy trust.** Verifier keys shared with a builder are rejected
+  also when the builder comes from the default policy or the verifier from a
+  rule, and trust warnings are logged for the merged policies.
+- **Enforcing policies.** `policy.issuers` without `policy.san_patterns` and a
+  GUAC endpoint without HTTPS are rejected as soon as any policy sets
+  `"mode": "enforce"`, not only in global `enforce` mode. A `fetch_rate_limit`
+  of `nan` is rejected, and duplicate `policy.keys` are detected in their
+  cleaned form.
+- **Missing policy warning.** The enforce mode warning about a permissive
+  `missingPolicy` reports `check` as the lowercase check type (for example
+  `slsa`, `vulnscan`) and `setting` as the full field (`slsa.missingPolicy`
+  instead of `missingPolicy`), and also covers `scorecard`.
 - **Remediation on reload.** Enabling remediation in the configuration file
   starts the continuous verifier on reload, without a restart.
 - **Metrics address.** A `metrics_addr` without a host, such as `:9090`, logs a

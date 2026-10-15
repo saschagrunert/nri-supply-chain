@@ -113,11 +113,12 @@ var spec = &checker.Spec[scorecardPredicate]{
 	// The policy has no maxAge for Scorecard results, so only future and
 	// implausibly old dates are rejected.
 	Freshness: &checker.Freshness[scorecardPredicate]{
-		Timestamp: func(pred *scorecardPredicate) *time.Time { return pred.parsedDate },
-		MaxAge:    nil,
-		Label:     "scored",
-		ErrStale:  ErrInvalidScorecard,
-		ErrFuture: ErrFutureTimestamp,
+		Timestamp:   func(pred *scorecardPredicate) *time.Time { return pred.parsedDate },
+		MaxAge:      nil,
+		Label:       "scored",
+		ErrStale:    ErrInvalidScorecard,
+		ErrFuture:   ErrFutureTimestamp,
+		Superseding: false,
 	},
 	Rules: []checker.Rule[scorecardPredicate]{
 		checkTrustedRepository,
@@ -134,15 +135,6 @@ var spec = &checker.Spec[scorecardPredicate]{
 // Info returns the check type and label of the OpenSSF Scorecard check.
 func Info() checker.Info {
 	return spec.Info
-}
-
-// Verify checks a single OpenSSF Scorecard attestation against the given policy.
-func Verify(
-	ctx context.Context,
-	att []byte, pol *policy.Policy, imageDigest string,
-) (*types.CheckResult, error) {
-	//nolint:wrapcheck // the generic checker returns domain errors
-	return spec.Verify(ctx, att, pol, imageDigest)
 }
 
 // VerifyMultiple checks multiple OpenSSF Scorecard attestations. Any policy

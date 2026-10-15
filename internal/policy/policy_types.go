@@ -509,11 +509,13 @@ type TrustedVerifier struct {
 type SLSAPolicy struct {
 	// MissingPolicy controls behavior when no provenance attestation is found.
 	MissingPolicy types.Action `json:"missingPolicy,omitempty" jsonschema:"enum=allow,enum=warn,enum=deny"`
-	// RejectUnknownParameters rejects provenance with unrecognized externalParameters fields.
+	// RejectUnknownParameters rejects provenance with unrecognized
+	// externalParameters (v1) or invocation.parameters (v0.2) fields.
 	RejectUnknownParameters bool `json:"rejectUnknownParameters,omitempty"`
-	// KnownParameters lists recognized externalParameters keys when
-	// RejectUnknownParameters is true. If empty, defaults to the GitHub
-	// Actions parameter set (source, repository, ref, workflow, buildType).
+	// KnownParameters lists recognized externalParameters (v1) and
+	// invocation.parameters (v0.2) keys when RejectUnknownParameters is
+	// true. If empty, defaults to the GitHub Actions parameter set (source,
+	// repository, ref, workflow, buildType).
 	KnownParameters []string `json:"knownParameters,omitempty"`
 	// MaxAge is the maximum age of a provenance build timestamp before it's considered stale.
 	MaxAge string `json:"maxAge,omitempty"`

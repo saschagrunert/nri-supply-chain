@@ -87,7 +87,7 @@ func (c *Config) validateGUACEndpointScheme(guacCfg *GUACConfig) []error {
 		return []error{fmt.Errorf("%w: %s", ErrGUACEndpointInvalid, guacCfg.Endpoint)}
 	}
 
-	if parsed.Scheme != "https" {
+	if parsed.Scheme != schemeHTTPS {
 		if c.Verification == ModeEnforce {
 			return []error{fmt.Errorf(
 				"%w: %s", ErrGUACEndpointNotHTTPS, guacCfg.Endpoint,

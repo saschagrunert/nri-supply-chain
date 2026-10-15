@@ -23,15 +23,13 @@ import (
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/types"
 	"github.com/saschagrunert/nri-supply-chain/internal/vex/imagematch"
 )
 
 // bomLinkPrefix identifies CycloneDX BOM-Link references, which point into a
 // BOM describing the attested image.
 const bomLinkPrefix = "urn:cdx:"
-
-// maxComponentDepth bounds recursion into nested components.
-const maxComponentDepth = 32
 
 // Result holds the outcome of a CycloneDX VEX verification.
 type Result struct {
@@ -45,6 +43,10 @@ type Result struct {
 	// that apply to the image. Zero means the document makes no VEX statement
 	// about the image.
 	MatchedVulnerabilities int
+	// Statements counts vulnerabilities with an analysis state, whether or
+	// not they apply to the image. Zero means the document carries no VEX
+	// data at all, for example a plain SBOM.
+	Statements int
 }
 
 // Verify checks a CycloneDX BOM predicate for VEX vulnerability data and
@@ -66,22 +68,29 @@ func Verify(predicate []byte, image *imagematch.Image) (*Result, error) {
 		return nil, fmt.Errorf("parsing CycloneDX BOM: %w", err)
 	}
 
-	return Evaluate(bom, image), nil
+	return Evaluate(bom, image)
 }
 
-// Evaluate classifies the vulnerabilities of a decoded BOM for the image.
-func Evaluate(bom *cdx.BOM, image *imagematch.Image) *Result {
+// Evaluate classifies the vulnerabilities of a decoded BOM for the image. A
+// BOM nesting components deeper than types.MaxComponentDepth is rejected,
+// like in the SBOM check.
+func Evaluate(bom *cdx.BOM, image *imagematch.Image) (*Result, error) {
 	result := &Result{
 		AffectedNames:          nil,
 		HasUnderInvestigation:  false,
 		MatchedVulnerabilities: 0,
+		Statements:             0,
 	}
 
 	if bom == nil || bom.Vulnerabilities == nil || len(*bom.Vulnerabilities) == 0 {
-		return result
+		return result, nil
 	}
 
-	index := buildComponentIndex(bom)
+	index, err := buildComponentIndex(bom)
+	if err != nil {
+		return nil, err
+	}
+
 	subject := subjectRef(bom)
 
 	for idx := range *bom.Vulnerabilities {
@@ -93,6 +102,8 @@ func Evaluate(bom *cdx.BOM, image *imagematch.Image) *Result {
 		if vuln.Analysis == nil || vuln.Analysis.State == "" {
 			continue
 		}
+
+		result.Statements++
 
 		if !vulnerabilityAffectsImage(vuln, index, subject, image) {
 			continue
@@ -110,7 +121,7 @@ func Evaluate(bom *cdx.BOM, image *imagematch.Image) *Result {
 		classifyVulnerability(vuln, result)
 	}
 
-	return result
+	return result, nil
 }
 
 func classifyVulnerability(vuln *cdx.Vulnerability, result *Result) {
@@ -156,25 +167,31 @@ func vulnerabilityName(vuln *cdx.Vulnerability) string {
 
 // buildComponentIndex maps BOM-refs to components, including
 // metadata.component and nested components.
-func buildComponentIndex(bom *cdx.BOM) map[string]*cdx.Component {
+func buildComponentIndex(bom *cdx.BOM) (map[string]*cdx.Component, error) {
 	index := make(map[string]*cdx.Component)
 
 	if bom.Metadata != nil && bom.Metadata.Component != nil {
-		indexComponent(index, bom.Metadata.Component, 0)
+		err := indexComponent(index, bom.Metadata.Component, 0)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if bom.Components != nil {
 		for idx := range *bom.Components {
-			indexComponent(index, &(*bom.Components)[idx], 0)
+			err := indexComponent(index, &(*bom.Components)[idx], 0)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
-	return index
+	return index, nil
 }
 
-func indexComponent(index map[string]*cdx.Component, comp *cdx.Component, depth int) {
-	if depth > maxComponentDepth {
-		return
+func indexComponent(index map[string]*cdx.Component, comp *cdx.Component, depth int) error {
+	if depth > types.MaxComponentDepth {
+		return types.ErrComponentsTooDeep
 	}
 
 	if comp.BOMRef != "" {
@@ -182,12 +199,17 @@ func indexComponent(index map[string]*cdx.Component, comp *cdx.Component, depth 
 	}
 
 	if comp.Components == nil {
-		return
+		return nil
 	}
 
 	for idx := range *comp.Components {
-		indexComponent(index, &(*comp.Components)[idx], depth+1)
+		err := indexComponent(index, &(*comp.Components)[idx], depth+1)
+		if err != nil {
+			return err
+		}
 	}
+
+	return nil
 }
 
 // vulnerabilityAffectsImage reports whether a vulnerability applies to the
@@ -321,8 +343,8 @@ func hasComparableHash(comp *cdx.Component, image *imagematch.Image) bool {
 	algorithm, _, _ := strings.Cut(image.Digest, ":")
 
 	for idx := range *comp.Hashes {
-		if imagematch.NormalizeAlgorithm(string((*comp.Hashes)[idx].Algorithm)) ==
-			imagematch.NormalizeAlgorithm(algorithm) {
+		if types.NormalizeAlgorithm(string((*comp.Hashes)[idx].Algorithm)) ==
+			types.NormalizeAlgorithm(algorithm) {
 			return true
 		}
 	}

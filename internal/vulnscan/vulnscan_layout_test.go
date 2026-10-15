@@ -17,10 +17,10 @@ package vulnscan_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"testing"
 	"time"
 
+	"github.com/saschagrunert/nri-supply-chain/internal/checker/checkertest"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/vulnscan"
@@ -96,7 +96,7 @@ func TestVerifyAttestActionPredicate(t *testing.T) {
 		t, json.RawMessage(attestActionPredicate), testDigest, testPredicateType,
 	)
 
-	result, err := vulnscan.Verify(context.Background(), att, &policy.Policy{
+	result, err := vulnscan.VerifyMultiple(context.Background(), [][]byte{att}, &policy.Policy{
 		VulnScan: &policy.VulnScanPolicy{MinSeverity: testSevHigh},
 	}, testDigest)
 	testutil.AssertNoError(t, err)
@@ -111,7 +111,7 @@ func TestVerifySpecExampleFixture(t *testing.T) {
 		t, json.RawMessage(specExamplePredicate), testDigest, testPredicateType,
 	)
 
-	result, err := vulnscan.Verify(context.Background(), att, &policy.Policy{
+	result, err := vulnscan.VerifyMultiple(context.Background(), [][]byte{att}, &policy.Policy{
 		VulnScan: &policy.VulnScanPolicy{MinSeverity: testSevHigh},
 	}, testDigest)
 	testutil.AssertNoError(t, err)
@@ -138,12 +138,15 @@ func TestVerifyRejectsLegacyResultWithoutVulnerabilities(t *testing.T) {
 			att := testutil.WrapInToto(t, json.RawMessage(predicate), testDigest, testPredicateType)
 			maxScore := 5.0
 
-			_, err := vulnscan.Verify(context.Background(), att, &policy.Policy{
-				VulnScan: &policy.VulnScanPolicy{MaxScore: &maxScore},
-			}, testDigest)
-			if !errors.Is(err, vulnscan.ErrInvalidVulnScan) {
-				t.Fatalf("expected ErrInvalidVulnScan, got %v", err)
-			}
+			result, err := vulnscan.VerifyMultiple(
+				context.Background(),
+				[][]byte{att},
+				&policy.Policy{
+					VulnScan: &policy.VulnScanPolicy{MaxScore: &maxScore},
+				},
+				testDigest,
+			)
+			checkertest.AssertFailed(t, result, err, vulnscan.ErrInvalidVulnScan)
 		})
 	}
 }
@@ -164,13 +167,18 @@ func TestVerifyNestedVulnerabilityLayout(t *testing.T) {
 
 			att := testutil.WrapInToto(t, json.RawMessage(predicate), testDigest, testPredicateType)
 
-			result, err := vulnscan.Verify(context.Background(), att, &policy.Policy{
-				VulnScan: &policy.VulnScanPolicy{MinSeverity: testSevHigh},
-			}, testDigest)
+			result, err := vulnscan.VerifyMultiple(
+				context.Background(),
+				[][]byte{att},
+				&policy.Policy{
+					VulnScan: &policy.VulnScanPolicy{MinSeverity: testSevHigh},
+				},
+				testDigest,
+			)
 			testutil.AssertNoError(t, err)
 			testutil.AssertEqual(t, false, result.Passed)
 			testutil.AssertContains(t, result.Detail, "CVE-2024-0001")
-			testutil.AssertEqual[any](t, int64(1), result.Metadata["criticalCount"])
+			testutil.AssertContains(t, result.Detail, "severity critical")
 		})
 	}
 }
@@ -201,7 +209,12 @@ func TestVerifyMultipleUnknownSeverityOutranksNone(t *testing.T) {
 		`{"id":"CVE-2024-0002","severity":[{"method":"x","score":"weird"}]}]}}`
 	att := testutil.WrapInToto(t, json.RawMessage(mixed), testDigest, testPredicateType)
 
-	result, err := vulnscan.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+	result, err := vulnscan.VerifyMultiple(
+		context.Background(),
+		[][]byte{att},
+		&policy.Policy{},
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 	testutil.AssertEqual[any](t, testSevNameUnknown, result.Metadata[testMaxSeverityKey])
 }
@@ -216,7 +229,12 @@ func TestVerifyZeroTimestampTreatedAsAbsent(t *testing.T) {
 			`"metadata":{"scanFinishedOn":"0001-01-01T00:00:00Z"}}`
 		att := testutil.WrapInToto(t, json.RawMessage(predicate), testDigest, testPredicateType)
 
-		result, err := vulnscan.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+		result, err := vulnscan.VerifyMultiple(
+			context.Background(),
+			[][]byte{att},
+			&policy.Policy{},
+			testDigest,
+		)
 		testutil.AssertNoError(t, err)
 		testutil.AssertTrue(t, result.Passed)
 	})
@@ -229,7 +247,7 @@ func TestVerifyZeroTimestampTreatedAsAbsent(t *testing.T) {
 			`"scanStartedOn":"` + started + `","scanFinishedOn":"0001-01-01T00:00:00Z"}}`
 		att := testutil.WrapInToto(t, json.RawMessage(predicate), testDigest, testPredicateType)
 
-		result, err := vulnscan.Verify(context.Background(), att, &policy.Policy{
+		result, err := vulnscan.VerifyMultiple(context.Background(), [][]byte{att}, &policy.Policy{
 			VulnScan: &policy.VulnScanPolicy{MaxAge: "1h", MaxAgeDuration: time.Hour},
 		}, testDigest)
 		testutil.AssertNoError(t, err)

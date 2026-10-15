@@ -296,6 +296,8 @@ var knownPredicateTypes = map[string]string{
 	attestation.PredicateTestResult:        "test-result",
 	attestation.PredicateRelease:           "release",
 	attestation.PredicateRuntimeTrace:      "runtime-trace",
+	attestation.PredicateScorecard:         "scorecard",
+	attestation.PredicateBaselineSBOM:      "baseline-sbom",
 	attestation.PredicateCosignSignature:   "cosign-signature",
 }
 

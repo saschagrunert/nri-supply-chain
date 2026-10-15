@@ -17,13 +17,33 @@ package policy
 import (
 	"context"
 	"crypto"
+	"sync"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	ociV1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/verify"
+
+	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 )
+
+// NewOCIFetcherWithImageFunc creates an OCI policy fetcher with a custom image
+// fetch function, CheckDigest falls back to fetching the
+// full image to derive the digest, matching the mock's behavior.
+func NewOCIFetcherWithImageFunc(
+	fn ImageFetchFunc, tc *registry.TransportCache,
+) *OCIFetcher {
+	return &OCIFetcher{
+		fetchImage:      fn,
+		fetchHead:       nil,
+		transportCache:  tc,
+		verifySignature: nil,
+		newestCreated:   time.Time{},
+		createdMu:       sync.Mutex{},
+	}
+}
 
 // SetImageFetchFunc replaces the image fetch function.
 // This is test-only and not safe for concurrent use.

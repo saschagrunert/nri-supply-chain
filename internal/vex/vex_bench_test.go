@@ -70,7 +70,7 @@ func BenchmarkVerify(b *testing.B) {
 	b.ResetTimer()
 
 	for range b.N {
-		_, _ = vex.Verify(ctx, att, pol, testImageRef, testDigest, nil)
+		_, _ = vex.VerifyMultiple(ctx, [][]byte{att}, pol, testImageRef, testDigest, nil)
 	}
 }
 
@@ -84,7 +84,7 @@ func BenchmarkVerifyCycloneDX(b *testing.B) {
 	b.ResetTimer()
 
 	for range b.N {
-		_, _ = vex.Verify(ctx, att, pol, testImageRef, testDigest, nil)
+		_, _ = vex.VerifyMultiple(ctx, [][]byte{att}, pol, testImageRef, testDigest, nil)
 	}
 }
 

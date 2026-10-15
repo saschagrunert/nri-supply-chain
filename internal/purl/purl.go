@@ -20,6 +20,7 @@ package purl
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/package-url/packageurl-go"
@@ -260,4 +261,33 @@ func StripQualifiers(raw string) string {
 	}
 
 	return raw
+}
+
+// LenientUnescape decodes valid %XX escapes and keeps invalid ones verbatim,
+// so a malformed escape cannot make a value fail to normalize.
+func LenientUnescape(value string) string {
+	if !strings.Contains(value, "%") {
+		return value
+	}
+
+	var builder strings.Builder
+
+	builder.Grow(len(value))
+
+	for idx := 0; idx < len(value); idx++ {
+		if value[idx] == '%' && idx+2 < len(value) {
+			decoded, err := strconv.ParseUint(value[idx+1:idx+3], 16, 8)
+			if err == nil {
+				builder.WriteByte(byte(decoded))
+
+				idx += 2
+
+				continue
+			}
+		}
+
+		builder.WriteByte(value[idx])
+	}
+
+	return builder.String()
 }

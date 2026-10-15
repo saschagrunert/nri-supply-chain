@@ -17,11 +17,10 @@ package scai_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"strings"
 	"testing"
 
-	"github.com/saschagrunert/nri-supply-chain/internal/intoto"
+	"github.com/saschagrunert/nri-supply-chain/internal/checker/checkertest"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/scai"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
@@ -183,7 +182,12 @@ func TestVerify(t *testing.T) {
 
 			att := testutil.WrapInToto(t, test.doc, testDigest, testPredicateType)
 
-			result, err := scai.Verify(context.Background(), att, test.pol, testDigest)
+			result, err := scai.VerifyMultiple(
+				context.Background(),
+				[][]byte{att},
+				test.pol,
+				testDigest,
+			)
 			testutil.AssertNoError(t, err)
 
 			testutil.AssertEqual(t, test.wantPassed, result.Passed)
@@ -192,23 +196,17 @@ func TestVerify(t *testing.T) {
 	}
 }
 
-func TestVerifyCheckType(t *testing.T) {
-	t.Parallel()
-
-	att := testutil.WrapInToto(t, validReport(), testDigest, testPredicateType)
-
-	result, err := scai.Verify(context.Background(), att, &policy.Policy{}, testDigest)
-	testutil.AssertNoError(t, err)
-
-	testutil.AssertEqual(t, types.CheckType("scai"), result.Type)
-}
-
 func TestVerifyMetadata(t *testing.T) {
 	t.Parallel()
 
 	att := testutil.WrapInToto(t, validReport(), testDigest, testPredicateType)
 
-	result, err := scai.Verify(context.Background(), att, &policy.Policy{}, testDigest)
+	result, err := scai.VerifyMultiple(
+		context.Background(),
+		[][]byte{att},
+		&policy.Policy{},
+		testDigest,
+	)
 	testutil.AssertNoError(t, err)
 
 	if result.Metadata == nil {
@@ -235,68 +233,6 @@ func TestVerifyMetadata(t *testing.T) {
 	}
 }
 
-func TestVerifyMalformedPayloads(t *testing.T) {
-	t.Parallel()
-
-	t.Run("empty payload", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := scai.Verify(context.Background(), []byte{}, &policy.Policy{}, testDigest)
-		if !errors.Is(err, scai.ErrInvalidSCAI) {
-			t.Errorf("expected ErrInvalidSCAI, got %v", err)
-		}
-	})
-
-	t.Run("nil payload", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := scai.Verify(context.Background(), nil, &policy.Policy{}, testDigest)
-		if !errors.Is(err, scai.ErrInvalidSCAI) {
-			t.Errorf("expected ErrInvalidSCAI, got %v", err)
-		}
-	})
-
-	t.Run("truncated JSON", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := scai.Verify(
-			context.Background(), []byte(`{"subject":[`), &policy.Policy{}, testDigest,
-		)
-		if !errors.Is(err, scai.ErrInvalidSCAI) {
-			t.Errorf("expected ErrInvalidSCAI, got %v", err)
-		}
-	})
-}
-
-func TestVerifySubjectEdgeCases(t *testing.T) {
-	t.Parallel()
-
-	t.Run("subject with mismatched digest", func(t *testing.T) {
-		t.Parallel()
-
-		att := testutil.WrapInToto(t, validReport(), testDigest, testPredicateType)
-
-		_, err := scai.Verify(context.Background(),
-			att, &policy.Policy{},
-			"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-		)
-		if !errors.Is(err, intoto.ErrSubjectMismatch) {
-			t.Errorf("expected ErrSubjectMismatch, got %v", err)
-		}
-	})
-
-	t.Run("empty digest with subjects rejects for binding", func(t *testing.T) {
-		t.Parallel()
-
-		att := testutil.WrapInToto(t, validReport(), testDigest, testPredicateType)
-
-		_, err := scai.Verify(context.Background(), att, &policy.Policy{}, "")
-		if !errors.Is(err, intoto.ErrNoDigestBinding) {
-			t.Errorf("expected ErrNoDigestBinding, got %v", err)
-		}
-	})
-}
-
 func TestVerifyEvidenceEdgeCases(t *testing.T) {
 	t.Parallel()
 
@@ -310,7 +246,7 @@ func TestVerifyEvidenceEdgeCases(t *testing.T) {
 		}
 		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-		result, err := scai.Verify(context.Background(), att, &policy.Policy{
+		result, err := scai.VerifyMultiple(context.Background(), [][]byte{att}, &policy.Policy{
 			SCAI: &policy.SCAIPolicy{RequireEvidence: true},
 		}, testDigest)
 		testutil.AssertNoError(t, err)
@@ -330,7 +266,7 @@ func TestVerifyEvidenceEdgeCases(t *testing.T) {
 		}
 		att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-		result, err := scai.Verify(context.Background(), att, &policy.Policy{
+		result, err := scai.VerifyMultiple(context.Background(), [][]byte{att}, &policy.Policy{
 			SCAI: &policy.SCAIPolicy{RequireEvidence: true},
 		}, testDigest)
 		testutil.AssertNoError(t, err)
@@ -367,7 +303,7 @@ func TestVerifyEvidenceEdgeCases(t *testing.T) {
 			}
 			att := testutil.WrapInToto(t, doc, testDigest, testPredicateType)
 
-			result, err := scai.Verify(context.Background(), att, &policy.Policy{
+			result, err := scai.VerifyMultiple(context.Background(), [][]byte{att}, &policy.Policy{
 				SCAI: &policy.SCAIPolicy{RequireEvidence: true},
 			}, testDigest)
 			testutil.AssertNoError(t, err)
@@ -623,7 +559,7 @@ func TestVerifyForbiddenDetailMessage(t *testing.T) {
 
 	att := testutil.WrapInToto(t, validReport(), testDigest, testPredicateType)
 
-	result, err := scai.Verify(context.Background(), att, &policy.Policy{
+	result, err := scai.VerifyMultiple(context.Background(), [][]byte{att}, &policy.Policy{
 		SCAI: &policy.SCAIPolicy{
 			ForbiddenAttributes: []string{testAttrPassedTests},
 		},
@@ -666,10 +602,13 @@ func TestVerifyEmptyAttributes(t *testing.T) {
 
 			att := testutil.WrapInToto(t, tc.predicate, testDigest, testPredicateType)
 
-			_, err := scai.Verify(context.Background(), att, &policy.Policy{}, testDigest)
-			if !errors.Is(err, scai.ErrInvalidSCAI) {
-				t.Fatalf("expected ErrInvalidSCAI, got %v", err)
-			}
+			result, err := scai.VerifyMultiple(
+				context.Background(),
+				[][]byte{att},
+				&policy.Policy{},
+				testDigest,
+			)
+			checkertest.AssertFailed(t, result, err, scai.ErrInvalidSCAI)
 		})
 	}
 }
@@ -679,7 +618,7 @@ func TestVerifyRequiredDetailMessage(t *testing.T) {
 
 	att := testutil.WrapInToto(t, validReport(), testDigest, testPredicateType)
 
-	result, err := scai.Verify(context.Background(), att, &policy.Policy{
+	result, err := scai.VerifyMultiple(context.Background(), [][]byte{att}, &policy.Policy{
 		SCAI: &policy.SCAIPolicy{
 			RequiredAttributes: []string{testAttrFuzzTested},
 		},
@@ -696,21 +635,5 @@ func TestVerifyRequiredDetailMessage(t *testing.T) {
 
 	if !strings.Contains(result.Detail, testAttrFuzzTested) {
 		t.Errorf("expected detail to contain attribute name, got %q", result.Detail)
-	}
-}
-
-func TestVerifyCancelledContext(t *testing.T) {
-	t.Parallel()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err := scai.Verify(ctx, nil, nil, "")
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-
-	if !errors.Is(err, context.Canceled) {
-		t.Errorf("expected context.Canceled, got: %v", err)
 	}
 }

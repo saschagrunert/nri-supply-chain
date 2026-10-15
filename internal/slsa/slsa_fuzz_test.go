@@ -141,9 +141,21 @@ func FuzzVerify(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		_, _ = slsa.Verify(context.Background(), data, sourcesPolicy, testDigest)
+		_, _ = slsa.VerifyMultipleWithOptions(
+			context.Background(),
+			[]attestation.VerifiedAttestation{{Payload: data}},
+			sourcesPolicy,
+			testDigest,
+			nil,
+		)
 
-		result, err := slsa.Verify(context.Background(), data, &policy.Policy{}, testDigest)
+		result, err := slsa.VerifyMultipleWithOptions(
+			context.Background(),
+			[]attestation.VerifiedAttestation{{Payload: data}},
+			&policy.Policy{},
+			testDigest,
+			nil,
+		)
 		if err == nil && result == nil {
 			t.Error("Verify returned nil result and nil error")
 		}
