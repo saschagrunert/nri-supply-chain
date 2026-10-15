@@ -26,7 +26,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	"golang.org/x/sync/semaphore"
 
-	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
+	"github.com/saschagrunert/nri-supply-chain/internal/circuit"
 	"github.com/saschagrunert/nri-supply-chain/internal/glob"
 	"github.com/saschagrunert/nri-supply-chain/internal/imageref"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
@@ -382,8 +382,8 @@ func matchesImageRule(ctx context.Context, patterns []string, imageRef string) b
 }
 
 func registryBreakerByHost(
-	registry *attestation.CircuitBreakerRegistry, host string,
-) *attestation.CircuitBreaker {
+	registry *circuit.Registry, host string,
+) *circuit.Breaker {
 	if registry == nil {
 		return nil
 	}

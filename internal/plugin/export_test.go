@@ -103,11 +103,6 @@ func (p *Plugin) ExportSetRuntimeConfigRetry(initial, maximum time.Duration) {
 	p.runtimeConfig.retryMaximum.Store(int64(maximum))
 }
 
-// ExportFetchTimeout returns the current fetch timeout value.
-func (p *Plugin) ExportFetchTimeout() time.Duration {
-	return time.Duration(p.fetchTimeout.Load())
-}
-
 // ExportDigestResolveTimeout returns the current digest resolve timeout value.
 func (p *Plugin) ExportDigestResolveTimeout() time.Duration {
 	return time.Duration(p.digestResolveTimeout.Load())
@@ -150,6 +145,18 @@ func ExportBuildRollbackUpdate(
 	containerID string, original *api.LinuxResources,
 ) *api.ContainerUpdate {
 	return buildRollbackUpdate(containerID, original)
+}
+
+// ExportBuildRollbackUpdateFor builds the rollback update of a tracked
+// container from its recorded original resources.
+func (p *Plugin) ExportBuildRollbackUpdateFor(containerID string) *api.ContainerUpdate {
+	var update *api.ContainerUpdate
+
+	p.containers.UpdateState(containerID, func(cs *containerState) {
+		update = buildRollbackUpdate(containerID, cs.originalResources)
+	})
+
+	return update
 }
 
 // ExportStoreContainerWithResources stores a container with original resources,
@@ -210,8 +217,10 @@ type ExportContainerState struct {
 	PURLs              []string
 	State              VerificationState
 	HasOriginals       bool
-	HasLastResult      bool
-	LastTriggerHash    string
+	// ResultRecorded is true once a verification result was recorded
+	// for a container registered at Synchronize.
+	ResultRecorded  bool
+	LastTriggerHash string
 }
 
 // ExportGetContainerState returns exported container state fields for testing.
@@ -228,7 +237,7 @@ func (p *Plugin) ExportGetContainerState(containerID string) (ExportContainerSta
 			PURLs:              cs.purls,
 			State:              cs.state,
 			HasOriginals:       cs.originalResources != nil,
-			HasLastResult:      cs.lastResult != nil,
+			ResultRecorded:     !cs.awaitingFirstResult,
 			LastTriggerHash:    cs.lastTriggerHash,
 		}
 	})
@@ -315,10 +324,12 @@ func (p *Plugin) ExportRunVerificationCycle(ctx context.Context, trigger string)
 	p.runVerificationCycle(ctx, trigger, nil, nil)
 }
 
-// ExportTriggerTimer and ExportTriggerManual expose the cycle trigger names.
+// ExportTriggerTimer, ExportTriggerPolicyChange and ExportTriggerFeed expose
+// the cycle trigger names.
 const (
-	ExportTriggerTimer  = triggerTimer
-	ExportTriggerManual = triggerManual
+	ExportTriggerTimer        = triggerTimer
+	ExportTriggerPolicyChange = triggerPolicyChange
+	ExportTriggerFeed         = triggerFeed
 )
 
 // ExportStoreContainerState stores a container with the given digest, state,
@@ -366,4 +377,39 @@ func (p *Plugin) ExportContinuousVerifierInterval() time.Duration {
 // ExportAdmissionContext exposes admissionContext for external tests.
 func (p *Plugin) ExportAdmissionContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	return p.admissionContext(ctx)
+}
+
+// Load retrieves a container state by ID.
+func (r *containerRegistry) Load(id string) (*containerState, bool) {
+	r.mu.RLock()
+	cs, found := r.m[id]
+	r.mu.RUnlock()
+
+	return cs, found
+}
+
+// Len returns the number of tracked containers.
+func (r *containerRegistry) Len() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	return len(r.m)
+}
+
+// ReadState reads container fields under the read lock to avoid races with
+// UpdateState. Returns false if the container does not exist.
+func (r *containerRegistry) ReadState(
+	id string, readFn func(cs containerState),
+) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	state, found := r.m[id]
+	if !found {
+		return false
+	}
+
+	readFn(*state)
+
+	return true
 }

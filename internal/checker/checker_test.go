@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/checker"
+	"github.com/saschagrunert/nri-supply-chain/internal/intoto"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
 	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
@@ -120,7 +121,7 @@ func TestSpecVerify(t *testing.T) {
 			name:       "null predicate is invalid",
 			predicate:  json.RawMessage(`null`),
 			maxAge:     nil,
-			wantErr:    checker.ErrNotObject,
+			wantErr:    intoto.ErrMissingPredicate,
 			wantPassed: false,
 			wantDetail: "",
 		},

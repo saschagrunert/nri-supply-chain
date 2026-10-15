@@ -20,6 +20,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-containerregistry/pkg/name"
+
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 )
 
@@ -329,6 +331,54 @@ func TestCreateBundlesIndexDigest(t *testing.T) {
 
 		if refs := store.Manifest().Images[digest].Refs; len(refs) != 2 {
 			t.Errorf("refs of %s = %v, want both image references", digest, refs)
+		}
+	}
+}
+
+// parsedRefRecorder records the parsed reference each fetch was asked to use.
+type parsedRefRecorder struct {
+	parsedRefs []name.Reference
+}
+
+func (m *parsedRefRecorder) Fetch(
+	_ context.Context, _ string, opts *attestation.FetchOptions,
+) ([]attestation.VerifiedAttestation, error) {
+	m.parsedRefs = append(m.parsedRefs, opts.ParsedRef)
+
+	return nil, nil
+}
+
+// TestCreateResetsParsedRefPerImage checks that a parsed reference in the
+// shared fetch options does not make every image fetch the attestations of
+// one repository.
+func TestCreateResetsParsedRefPerImage(t *testing.T) {
+	t.Parallel()
+
+	shared, err := name.ParseReference("registry.example.com/other:v1")
+	if err != nil {
+		t.Fatalf("parsing reference: %v", err)
+	}
+
+	fetcher := &parsedRefRecorder{parsedRefs: nil}
+
+	//nolint:exhaustruct_v5 // test data
+	opts := &CreateOptions{
+		Images:     []string{testImageDigest},
+		OutputPath: filepath.Join(t.TempDir(), "bundle.tar.gz"),
+		Fetcher:    fetcher,
+		//nolint:exhaustruct_v5 // test data
+		FetchOptions: &attestation.FetchOptions{ParsedRef: shared},
+	}
+
+	_ = Create(context.Background(), opts)
+
+	if len(fetcher.parsedRefs) == 0 {
+		t.Fatal("expected a fetch")
+	}
+
+	for _, ref := range fetcher.parsedRefs {
+		if ref != nil {
+			t.Errorf("fetch used parsed reference %v, want the image's own", ref)
 		}
 	}
 }

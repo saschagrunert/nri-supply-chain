@@ -704,7 +704,10 @@ func TestReloadPreservesCacheWhenConfigUnchanged(t *testing.T) {
 	cfg.PolicyDir = dir
 	cfg.CacheTTL = config.Duration{Duration: time.Hour}
 
-	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
+	// A fetcher that the reload keeps: without one, the reload creates an
+	// OCI fetcher, which replaces the cache and contacts the public TUF
+	// repository.
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), newScriptedFetcher(nil))
 	testutil.AssertNoError(t, err)
 
 	const reloadDigest = "sha256:33333333333333333333333333333333" +
@@ -774,6 +777,26 @@ func TestReloadClearsCacheWhenCacheFailureTTLChanges(t *testing.T) {
 
 	if verifier.ExportCacheAffectingFieldsChanged(cfg, same) {
 		t.Error("expected no cache invalidation when CacheFailureTTL is unchanged")
+	}
+}
+
+// TestReloadClearsCacheWhenMaxAttestationSizeChanges checks that lowering
+// max_attestation_size drops cached results that may be built on
+// attestations above the new limit.
+func TestReloadClearsCacheWhenMaxAttestationSizeChanges(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+
+	changed := config.DefaultConfig()
+	changed.MaxAttestationSize = cfg.MaxAttestationSize / 2
+
+	if !verifier.ExportCacheAffectingFieldsChanged(cfg, changed) {
+		t.Error("expected cache invalidation when max_attestation_size changes")
+	}
+
+	if verifier.ExportCacheAffectingFieldsChanged(cfg, config.DefaultConfig()) {
+		t.Error("expected no cache invalidation when max_attestation_size is unchanged")
 	}
 }
 
@@ -1315,36 +1338,6 @@ func TestWarnEnforceDefaultsEmitsForEnforceMode(t *testing.T) {
 	output := buf.String()
 	if !strings.Contains(output, "enforce mode") {
 		t.Errorf("expected warning about enforce mode, got: %s", output)
-	}
-}
-
-func TestEnforcing(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		mode     config.VerificationMode
-		expected bool
-	}{
-		{name: "disabled", mode: config.ModeDisabled, expected: false},
-		{name: "warn", mode: config.ModeWarn, expected: false},
-		{name: "enforce", mode: config.ModeEnforce, expected: true},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			cfg := config.DefaultConfig()
-			cfg.Verification = test.mode
-
-			verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
-			testutil.AssertNoError(t, err)
-
-			if got := verif.Enforcing(); got != test.expected {
-				t.Errorf("expected %v, got %v", test.expected, got)
-			}
-		})
 	}
 }
 
@@ -3310,6 +3303,36 @@ func TestVerifyAllowlistSkipsVerification(t *testing.T) {
 	}
 }
 
+// TestVerifyAllowlistMatchesIndexDigest checks that an allowlisted index
+// digest also matches when the tag was resolved to one of its platform
+// digests.
+func TestVerifyAllowlistMatchesIndexDigest(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{"slsa": {"missingPolicy": "deny"}}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+	cfg.PolicyDir = dir
+	cfg.AllowlistDigests = []string{testDigest}
+
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+
+	platformDigest := "sha256:" + strings.Repeat("e", 64)
+
+	result, err := verif.Verify(
+		context.Background(),
+		newRequest("nginx:latest", platformDigest, testDigest, "default", ""),
+	)
+	testutil.AssertNoError(t, err)
+
+	if !result.Allowed || !strings.Contains(result.Reason, "allowlisted") {
+		t.Errorf("expected the allowlisted index to admit the image, got %+v", result)
+	}
+}
+
 func TestVerifyNonAllowlistedDigestStillVerifies(t *testing.T) {
 	t.Parallel()
 
@@ -3393,4 +3416,96 @@ func TestReloadAllowlistBypassesVerification(t *testing.T) {
 	if !strings.Contains(result.Reason, "allowlisted") {
 		t.Errorf("expected reason to mention allowlisted, got %q", result.Reason)
 	}
+}
+
+// TestOnPolicyUpdateCallsHookOnChange checks that an OCI policy update that
+// changes the policies advances PolicyRevision and calls the policy update
+// hook, while an update to the same policies does neither.
+func TestOnPolicyUpdateCallsHookOnChange(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{}`)
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeWarn
+	cfg.PolicyDir = dir
+
+	verif, err := verifier.New(t.Context(), cfg, metrics.New(), nil)
+	testutil.AssertNoError(t, err)
+	t.Cleanup(verif.Stop)
+
+	var calls atomic.Int32
+
+	verif.SetPolicyUpdateHook(func() { calls.Add(1) })
+
+	revision := verif.PolicyRevision()
+	updated := map[string]*policy.Policy{"": {Mode: config.ModeWarn}}
+
+	testutil.AssertNoError(t, verif.ExportOnPolicyUpdate(context.Background(), updated))
+
+	if calls.Load() != 1 || verif.PolicyRevision() == revision {
+		t.Fatalf("expected a hook call and a new revision, got %d calls", calls.Load())
+	}
+
+	revision = verif.PolicyRevision()
+
+	testutil.AssertNoError(t, verif.ExportOnPolicyUpdate(context.Background(), updated))
+
+	if calls.Load() != 1 || verif.PolicyRevision() != revision {
+		t.Errorf("expected no hook call for unchanged policies, got %d calls", calls.Load())
+	}
+}
+
+// TestVerifyInterruptedBackgroundVerificationNotCounted checks that a
+// cancelled background verification (a reload restarting pre-warming, a
+// stopped continuous verifier) is not counted as an interrupted admission.
+func TestVerifyInterruptedBackgroundVerificationNotCounted(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WritePolicy(t, dir, "default.json", `{
+		"trust": {"builders": [{"id": "test", "maxLevel": 2}]},
+		"slsa": {"missingPolicy": "allow"}
+	}`)
+
+	met := metrics.New()
+
+	fetcher := &delayFetcher{
+		delay:   500 * time.Millisecond,
+		started: make(chan struct{}),
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Verification = config.ModeEnforce
+	cfg.PolicyDir = dir
+
+	verif, err := verifier.New(t.Context(), cfg, met, fetcher)
+	testutil.AssertNoError(t, err)
+
+	defer verif.Stop()
+
+	const digest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" +
+		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+	for _, origin := range []types.VerifyOrigin{types.OriginPrewarm, types.OriginReverification} {
+		ctx, cancel := context.WithTimeout(
+			types.WithVerifyOrigin(context.Background(), origin), 50*time.Millisecond,
+		)
+
+		_, err = verif.Verify(ctx, newRequest("nginx:latest", digest, "", "default", ""))
+
+		cancel()
+
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("%s: expected context.DeadlineExceeded, got: %v", origin, err)
+		}
+	}
+
+	if got := promtestutil.ToFloat64(met.VerificationInterruptedTotal); got != 0 {
+		t.Errorf("expected no interrupted admissions, got %v", got)
+	}
+
+	<-fetcher.started
+	verif.ExportWaitInflight()
 }

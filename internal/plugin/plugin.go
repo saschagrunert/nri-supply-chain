@@ -51,6 +51,10 @@ var (
 	ErrRuntimeConfigPending = errors.New(
 		"the enforcing configuration passed by the runtime is not applied",
 	)
+
+	// errEmptyDigest indicates a registry that resolved a reference to no
+	// digest.
+	errEmptyDigest = errors.New("image digest is empty")
 )
 
 // ImageVerifier abstracts the verification engine so tests can substitute a
@@ -62,7 +66,6 @@ type ImageVerifier interface {
 	// the image is excluded or not included.
 	ShouldVerify(ctx context.Context, namespace, imageRef string) (verify bool, reason string)
 	Ready() (ready bool, reason string)
-	Enforcing() bool
 	EffectiveModeForNamespace(namespace string) config.VerificationMode
 	Reload(ctx context.Context, cfg *config.Config) error
 	InvalidateCache(digest, namespace string)
@@ -144,8 +147,8 @@ type Plugin struct {
 	configPath           string
 	connected            atomic.Bool
 	digestResolver       DigestResolveFunc
-	fetchTimeout         atomic.Int64 // updated via SetFetchTimeout on reload
 	digestResolveTimeout atomic.Int64 // updated via SetDigestResolveTimeout on reload
+	fetchTimeout         atomic.Int64 // updated via SetFetchTimeout on reload
 	transportCache       atomic.Pointer[registry.TransportCache]
 	containers           *containerRegistry
 	prewarm              *prewarmState
@@ -161,8 +164,7 @@ type Plugin struct {
 // path. The metrics are required.
 func New(
 	verif ImageVerifier, met *metrics.Metrics, configPath string,
-	fetchTimeout, digestResolveTimeout time.Duration,
-	cache *registry.TransportCache,
+	digestResolveTimeout time.Duration, cache *registry.TransportCache,
 ) *Plugin {
 	lifetime, closeLifetime := context.WithCancel(context.Background())
 
@@ -177,7 +179,6 @@ func New(
 		closeLifetime: closeLifetime,
 	}
 
-	plug.fetchTimeout.Store(int64(fetchTimeout))
 	plug.digestResolveTimeout.Store(int64(digestResolveTimeout))
 
 	if cache != nil {
@@ -191,16 +192,18 @@ func New(
 	return plug
 }
 
-// SetFetchTimeout updates the timeout used when resolving image
-// digests via the registry. Called during config reload.
-func (p *Plugin) SetFetchTimeout(d time.Duration) {
-	p.fetchTimeout.Store(int64(d))
-}
-
 // SetDigestResolveTimeout updates the timeout used when resolving an image
-// tag to its digest via the registry. Called during config reload.
+// reference to its digests via the registry at admission, which must stay
+// below the runtime's NRI request timeout. Called during config reload.
 func (p *Plugin) SetDigestResolveTimeout(d time.Duration) {
 	p.digestResolveTimeout.Store(int64(d))
+}
+
+// SetFetchTimeout updates the timeout used when resolving image digests via
+// the registry in the background (pre-warming and re-verification), which is
+// not bound by an NRI request. Called at startup and during config reload.
+func (p *Plugin) SetFetchTimeout(d time.Duration) {
+	p.fetchTimeout.Store(int64(d))
 }
 
 // SetTransportCache replaces the plugin's transport cache with a new one,
@@ -363,8 +366,6 @@ func (p *Plugin) PrewarmAfterReload(ctx context.Context) {
 // deadline is closed and the container is created without a verdict. When
 // the admission timeout expires, enforce mode rejects the container while the
 // verification keeps running in the background to fill the cache.
-//
-//nolint:cyclop,funlen // NRI hook handler with annotation resolution and verification
 func (p *Plugin) CreateContainer(
 	ctx context.Context, pod *api.PodSandbox, ctr *api.Container,
 ) (_ *api.ContainerAdjustment, _ []*api.ContainerUpdate, retErr error) {
@@ -381,155 +382,98 @@ func (p *Plugin) CreateContainer(
 		).Observe(time.Since(createdAt).Seconds())
 	}()
 
-	// Until an enforcing configuration passed by the runtime is applied, the
-	// verifier still runs the previous (by default disabled) configuration.
-	if p.pendingEnforcingRuntimeConfig(pod.GetNamespace()) {
-		slog.ErrorContext(ctx, "Container rejected",
-			"pod", pod.GetNamespace()+"/"+pod.GetName(),
-			"container", ctr.GetName(),
-			"error", ErrRuntimeConfigPending,
-		)
-
-		return nil, nil, fmt.Errorf("supply chain verification: %w", ErrRuntimeConfigPending)
+	err := p.checkRuntimeConfigApplied(ctx, pod, ctr)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	admissionCtx, cancelAdmission := p.admissionContext(ctx)
 	defer cancelAdmission()
 
-	annotations := ctr.GetAnnotations()
 	imageRef, digest, runtimeDigest := resolveContainerImage(ctr)
-	namespace := pod.GetNamespace()
-	serviceAccount := pod.GetAnnotations()[AnnotationServiceAccount]
-
-	if slog.Default().Enabled(ctx, slog.LevelDebug) {
-		slog.DebugContext(ctx, "NRI container info",
-			"container_id", ctr.GetId(),
-			"container_name", ctr.GetName(),
-			"annotations", filterRelevantAnnotations(annotations),
-			"image_digest", runtimeDigest,
-			"labels", ctr.GetLabels(),
-		)
-	}
+	logContainerInfo(ctx, ctr, runtimeDigest)
 
 	req := &types.VerifyRequest{
 		ImageRef:       imageRef,
 		Digest:         digest,
 		IndexDigest:    "",
-		Namespace:      namespace,
-		ServiceAccount: serviceAccount,
+		Namespace:      pod.GetNamespace(),
+		ServiceAccount: pod.GetAnnotations()[AnnotationServiceAccount],
 	}
 
-	// Images that need no verification skip the registry digest lookup;
-	// Verify admits them without a digest.
-	needsDigest := imageRef != "" && digest == ""
-	if needsDigest {
-		if verify, reason := p.verifier.ShouldVerify(ctx, namespace, imageRef); !verify {
-			slog.DebugContext(ctx, "Skipping digest resolution",
-				"image", imageRef, "namespace", namespace, "reason", reason,
-			)
-
-			needsDigest = false
-		}
+	if imageRef == "" {
+		return p.admitWithoutDigest(ctx, admissionCtx, req, pod, ctr, createdAt, nil)
 	}
 
-	var (
-		resolveErr error
-		unresolved bool
+	verification := p.verifyAdmission(
+		admissionCtx, req, runtimeDigest, pod, ctr, p.digestNeeded(ctx, req),
 	)
-
-	if needsDigest {
-		req.Digest, req.IndexDigest, unresolved, resolveErr = p.resolveDigestIfMissing(
-			admissionCtx, req, runtimeDigest, pod, ctr,
+	if verification.withoutDigest {
+		return p.admitWithoutDigest(
+			ctx, admissionCtx, req, pod, ctr, createdAt, verification.resolveErr,
 		)
 	}
 
-	if imageRef == "" || (req.Digest == "" && needsDigest) {
-		return p.admitWithoutDigest(ctx, admissionCtx, req, pod, ctr, createdAt, resolveErr)
-	}
-
-	result, err := p.verifier.Verify(admissionCtx, req)
-
-	// The verifier's snapshot may require verification although ShouldVerify
-	// saw none needed (e.g. a reload in between): resolve the digest and
-	// verify again instead of verifying without a digest.
-	if errors.Is(err, types.ErrDigestRequired) && req.Digest == "" {
-		req.Digest, req.IndexDigest, unresolved, resolveErr = p.resolveDigestIfMissing(
-			admissionCtx, req, runtimeDigest, pod, ctr,
-		)
-		if req.Digest == "" {
-			return p.admitWithoutDigest(ctx, admissionCtx, req, pod, ctr, createdAt, resolveErr)
-		}
-
-		result, err = p.verifier.Verify(admissionCtx, req)
-	}
-
-	// The verifier reports denials as errors; a result that does not admit
-	// the container is rejected as well, failing closed.
-	if err == nil && (result == nil || !result.Allowed) {
-		err = deniedResultError(imageRef, result)
-	}
-
-	if err != nil {
-		err = admissionError(admissionCtx, ctx, err)
-
-		slog.ErrorContext(ctx, "Container rejected",
-			"pod", namespace+"/"+pod.GetName(),
-			"container", ctr.GetName(),
-			"image", imageRef,
-			"error", err,
-		)
-
-		return nil, nil, fmt.Errorf("supply chain verification: %w", err)
-	}
-
-	mode := config.VerificationMode(result.Mode)
-	if mode == "" {
-		mode = p.verifier.EffectiveModeForNamespace(namespace)
-	}
-
-	slog.InfoContext(ctx, "Container verified",
-		"pod", namespace+"/"+pod.GetName(),
-		"container", ctr.GetName(),
-		"image", imageRef,
-		"allowed", result.Allowed,
-		"verified", result.Verified,
+	return p.admitVerified(
+		ctx,
+		admissionCtx,
+		req,
+		pod,
+		ctr,
+		createdAt,
+		runtimeDigest,
+		&verification,
 	)
+}
 
-	// A runtime digest that was not resolved (verification was not needed or
-	// the registry was unreachable) is resolved by the continuous verifier.
-	unresolvedDigest := ""
-	if req.Digest == "" || unresolved {
-		unresolvedDigest = runtimeDigest
+// logContainerInfo logs the image information of a container at debug level.
+func logContainerInfo(ctx context.Context, ctr *api.Container, runtimeDigest string) {
+	if !slog.Default().Enabled(ctx, slog.LevelDebug) {
+		return
 	}
 
-	state := &containerState{ //nolint:exhaustruct_v5 // zero-value fields intentional
-		imageRef:          imageRef,
-		digest:            req.Digest,
-		indexDigest:       req.IndexDigest,
-		unresolvedDigest:  unresolvedDigest,
-		namespace:         namespace,
-		serviceAccount:    serviceAccount,
-		createdAt:         createdAt,
-		state:             StateVerified,
-		lastResult:        result,
-		originalResources: captureLinuxResources(ctr),
-		purls:             extractPURLsFromResult(result),
-	}
-	p.containers.Store(ctr.GetId(), state)
+	slog.DebugContext(ctx, "NRI container info",
+		"container_id", ctr.GetId(),
+		"container_name", ctr.GetName(),
+		"annotations", filterRelevantAnnotations(ctr.GetAnnotations()),
+		"image_digest", runtimeDigest,
+		"labels", ctr.GetLabels(),
+	)
+}
 
+// admissionVerification is the outcome of verifyAdmission.
+type admissionVerification struct {
+	result *types.Result
+	err    error
+	// unresolved is true when the runtime digest is verified as is (see
+	// resolveImageDigests).
+	unresolved bool
+	// withoutDigest is true when the digest could not be resolved, so the
+	// container is admitted without a digest (see admitWithoutDigest) with
+	// resolveErr.
+	withoutDigest bool
+	resolveErr    error
+}
+
+// admittedAdjustment returns the adjustment of an admitted container: the
+// verification annotations and the annotations restoring its state after a
+// plugin restart.
+func admittedAdjustment(
+	result *types.Result, mode config.VerificationMode, state *containerState,
+) *api.ContainerAdjustment {
 	adj := buildVerificationAdjustment(result, mode)
 
 	if adj == nil {
 		adj = &api.ContainerAdjustment{}
 	}
 
-	adj.AddAnnotation(AnnotationServiceAccountPersist, serviceAccount)
+	adj.AddAnnotation(AnnotationServiceAccountPersist, state.serviceAccount)
 
 	if value, ok := OriginalResourcesAnnotation(state.originalResources); ok {
 		adj.AddAnnotation(AnnotationOriginalResources, value)
 	}
 
-	return adj, nil, nil
+	return adj
 }
 
 // deniedResultError describes a verification result that does not admit the
@@ -603,6 +547,21 @@ func (p *Plugin) StopContainer(
 	return nil, nil
 }
 
+// PostUpdateContainer is called after the runtime updated the resources of a
+// container, for example for an in-place pod resize. Resources other than
+// the plugin's own throttle or rollback become the container's original
+// resources, so throttling scales from the current resources and a rollback
+// does not undo the resize.
+func (p *Plugin) PostUpdateContainer(
+	ctx context.Context,
+	_ *api.PodSandbox,
+	ctr *api.Container,
+) error {
+	p.recordResourceUpdate(ctx, ctr.GetId(), captureLinuxResources(ctr))
+
+	return nil
+}
+
 // RemoveContainer is called when a container is removed from the runtime,
 // including a container whose creation failed after admission. It records
 // the lifetime of a container that was not stopped before as a histogram
@@ -640,7 +599,7 @@ func (p *Plugin) SetRemediationConfig(cfg *config.RemediationConfig) {
 }
 
 // TriggerReverify sends a non-blocking signal to the continuous verifier
-// to start a re-verification cycle.
+// to start a re-verification cycle after a policy change.
 func (p *Plugin) TriggerReverify() {
 	select {
 	case p.remediation.reverifyTrigger <- struct{}{}:
@@ -676,6 +635,19 @@ func (p *Plugin) TriggerFeedReverify(purls []string) {
 	}
 }
 
+// backgroundResolveTimeout returns the timeout of a digest resolution in the
+// background: the fetch timeout, or the digest resolve timeout until a fetch
+// timeout is set. Re-verification resolves the runtime digests an admission
+// could not resolve within the digest resolve timeout, so it must not be
+// bound by the same short timeout.
+func (p *Plugin) backgroundResolveTimeout() time.Duration {
+	if timeout := time.Duration(p.fetchTimeout.Load()); timeout > 0 {
+		return timeout
+	}
+
+	return time.Duration(p.digestResolveTimeout.Load())
+}
+
 // untrackContainer removes a container from the registry and records its
 // lifetime.
 func (p *Plugin) untrackContainer(
@@ -701,6 +673,142 @@ func (p *Plugin) untrackContainer(
 	)
 }
 
+// checkRuntimeConfigApplied rejects an admission while an enforcing
+// configuration passed by the runtime is not applied: until then the verifier
+// still runs the previous (by default disabled) configuration.
+func (p *Plugin) checkRuntimeConfigApplied(
+	ctx context.Context, pod *api.PodSandbox, ctr *api.Container,
+) error {
+	if !p.pendingEnforcingRuntimeConfig(pod.GetNamespace()) {
+		return nil
+	}
+
+	slog.ErrorContext(ctx, "Container rejected",
+		"pod", pod.GetNamespace()+"/"+pod.GetName(),
+		"container", ctr.GetName(),
+		"error", ErrRuntimeConfigPending,
+	)
+
+	return fmt.Errorf("supply chain verification: %w", ErrRuntimeConfigPending)
+}
+
+// digestNeeded reports whether the digest of an admission must be resolved
+// before verifying it. Images that need no verification skip the registry
+// digest lookup; Verify admits them without a digest.
+func (p *Plugin) digestNeeded(ctx context.Context, req *types.VerifyRequest) bool {
+	if req.Digest != "" {
+		return false
+	}
+
+	verify, reason := p.verifier.ShouldVerify(ctx, req.Namespace, req.ImageRef)
+	if !verify {
+		slog.DebugContext(ctx, "Skipping digest resolution",
+			"image", req.ImageRef, "namespace", req.Namespace, "reason", reason,
+		)
+	}
+
+	return verify
+}
+
+// verifyAdmission verifies the image of a container admission, resolving the
+// digest first when resolve is set. The verifier's snapshot may require
+// verification although ShouldVerify saw none needed (e.g. a reload in
+// between): then the digest is resolved and the image verified again instead
+// of verifying it without a digest.
+func (p *Plugin) verifyAdmission(
+	ctx context.Context, req *types.VerifyRequest, runtimeDigest string,
+	pod *api.PodSandbox, ctr *api.Container, resolve bool,
+) admissionVerification {
+	var verification admissionVerification
+
+	for {
+		if resolve {
+			req.Digest, req.IndexDigest, verification.unresolved,
+				verification.resolveErr = p.resolveDigestIfMissing(
+				ctx, req, runtimeDigest, pod, ctr,
+			)
+			if req.Digest == "" {
+				verification.withoutDigest = true
+
+				return verification
+			}
+		}
+
+		verification.result, verification.err = p.verifier.Verify(ctx, req)
+
+		if resolve || req.Digest != "" || !errors.Is(verification.err, types.ErrDigestRequired) {
+			return verification
+		}
+
+		resolve = true
+	}
+}
+
+// admitVerified rejects or admits a container after its verification, and
+// tracks an admitted container for re-verification.
+func (p *Plugin) admitVerified(
+	ctx, admissionCtx context.Context, req *types.VerifyRequest,
+	pod *api.PodSandbox, ctr *api.Container, createdAt time.Time, runtimeDigest string,
+	verification *admissionVerification,
+) (*api.ContainerAdjustment, []*api.ContainerUpdate, error) {
+	result, err := verification.result, verification.err
+
+	// The verifier reports denials as errors; a result that does not admit
+	// the container is rejected as well, failing closed.
+	if err == nil && (result == nil || !result.Allowed) {
+		err = deniedResultError(req.ImageRef, result)
+	}
+
+	if err != nil {
+		err = admissionError(admissionCtx, ctx, err)
+
+		slog.ErrorContext(ctx, "Container rejected",
+			"pod", req.Namespace+"/"+pod.GetName(),
+			"container", ctr.GetName(),
+			"image", req.ImageRef,
+			"error", err,
+		)
+
+		return nil, nil, fmt.Errorf("supply chain verification: %w", err)
+	}
+
+	mode := config.VerificationMode(result.Mode)
+	if mode == "" {
+		mode = p.verifier.EffectiveModeForNamespace(req.Namespace)
+	}
+
+	slog.InfoContext(ctx, "Container verified",
+		"pod", req.Namespace+"/"+pod.GetName(),
+		"container", ctr.GetName(),
+		"image", req.ImageRef,
+		"allowed", result.Allowed,
+		"verified", result.Verified,
+	)
+
+	// A runtime digest that was not resolved (verification was not needed or
+	// the registry was unreachable) is resolved by the continuous verifier.
+	unresolvedDigest := ""
+	if req.Digest == "" || verification.unresolved {
+		unresolvedDigest = runtimeDigest
+	}
+
+	state := &containerState{ //nolint:exhaustruct_v5 // zero-value fields intentional
+		imageRef:          req.ImageRef,
+		digest:            req.Digest,
+		indexDigest:       req.IndexDigest,
+		unresolvedDigest:  unresolvedDigest,
+		namespace:         req.Namespace,
+		serviceAccount:    req.ServiceAccount,
+		createdAt:         createdAt,
+		state:             StateVerified,
+		originalResources: captureLinuxResources(ctr),
+		purls:             extractPURLsFromResult(result),
+	}
+	p.containers.Store(ctr.GetId(), state)
+
+	return admittedAdjustment(result, mode, state), nil, nil
+}
+
 // admitWithoutDigest handles a container whose image reference or digest is
 // unknown: enforce mode rejects it (reporting a failed digest resolution),
 // other modes admit it without verification.
@@ -723,7 +831,7 @@ func (p *Plugin) admitWithoutDigest(
 	} else {
 		var handleErr error
 
-		adj, _, handleErr = p.handleMissingAnnotations(
+		adj, handleErr = p.handleMissingAnnotations(
 			ctx, req.Namespace, pod, ctr, req.ImageRef, req.Digest, len(ctr.GetAnnotations()),
 		)
 		if handleErr != nil {
@@ -798,12 +906,11 @@ func (p *Plugin) cleanStaleContainers(active []*api.Container) {
 	p.containers.cleanStale(activeIDs)
 }
 
-//nolint:unparam // second return matches the NRI ContainerAdjustment API contract
 func (p *Plugin) handleMissingAnnotations(
 	ctx context.Context, namespace string,
 	pod *api.PodSandbox, ctr *api.Container,
 	imageRef, digest string, annotationCount int,
-) (*api.ContainerAdjustment, []*api.ContainerUpdate, error) {
+) (*api.ContainerAdjustment, error) {
 	mode := p.verifier.EffectiveModeForNamespace(namespace)
 
 	if mode == config.ModeEnforce {
@@ -814,7 +921,7 @@ func (p *Plugin) handleMissingAnnotations(
 			"annotation_count", annotationCount,
 		)
 
-		return nil, nil, fmt.Errorf(
+		return nil, fmt.Errorf(
 			"%w for container %s in %s/%s",
 			ErrMissingAnnotations, ctr.GetName(), namespace, pod.GetName(),
 		)
@@ -830,7 +937,7 @@ func (p *Plugin) handleMissingAnnotations(
 
 	p.metrics.VerificationSkippedTotal.WithLabelValues("missing_annotations", namespace).Inc()
 
-	return skippedAdjustment(mode), nil, nil
+	return skippedAdjustment(mode), nil
 }
 
 // skipUnresolvedDigest admits a container whose image digest could not be

@@ -37,8 +37,9 @@ import (
 )
 
 var (
-	errUnexpectedFetchResult = errors.New("fetcher: unexpected singleflight result type")
-	errNilFetchOptions       = errors.New("fetch options must not be nil")
+	errUnexpectedFetchResult   = errors.New("fetcher: unexpected singleflight result type")
+	errNilFetchOptions         = errors.New("fetch options must not be nil")
+	errTrustedRootFetchTimeout = errors.New("trusted root fetch timed out")
 )
 
 const (
@@ -60,6 +61,13 @@ const (
 	// failedRootRetryInterval bounds how often a trusted root refresh is
 	// retried while no cached or pre-seeded root is available.
 	failedRootRetryInterval = 30 * time.Second
+	// DefaultMaxAttestationSize is the default maximum size of a single
+	// attestation bundle, until SetMaxAttestationSize sets the configured
+	// one. It equals config.DefaultMaxAttestationSize.
+	DefaultMaxAttestationSize = 10 << 20 // 10 MiB
+	// trustedRootFetchTimeout bounds a trusted root refresh from the TUF
+	// repository (all metadata and the trusted root target).
+	trustedRootFetchTimeout = time.Minute
 	fetchMaxRetries         = 2
 	fetchRetryBaseDelay     = 500 * time.Millisecond
 	fetchRetryJitterDivisor = 2
@@ -76,7 +84,9 @@ type OCIFetcher struct {
 	verifyBundle SignedBundleVerifyFunc
 	fetchImage   ImageFetchFunc
 	referrers    ReferrersFunc
-	// rootCache is captured by the verifyBundle closure; stored for exhaustruct compliance.
+	// rootCache is the trusted root of a single-root fetcher (captured by
+	// verifyBundle); rootCaches are those of a multi-root fetcher. Warm,
+	// SetFallbackCallback and RootScopes use them.
 	rootCache          *trustedRootCache
 	rootCaches         []*trustedRootCache
 	limiter            atomic.Pointer[rate.Limiter]
@@ -472,9 +482,9 @@ func (f *OCIFetcher) fetchOnce(
 		ctx, &selection, ref, digest, remoteOpts, fetchOpts,
 	)
 	if err != nil {
-		// When the Sigstore attestations merely failed verification, the
-		// Notation signatures and baseline SBOMs still apply; see Fetcher.
-		return append(slices.Clip(notationSigs), baselineSBOMs...), err
+		return f.collectionFailure(
+			ctx, err, notationSigs, baselineSBOMs, ref, digest, remoteOpts, fetchOpts,
+		)
 	}
 
 	// Notation signatures are verified later by the Notation check, so they
@@ -500,6 +510,64 @@ func (f *OCIFetcher) fetchOnce(
 	attestations = append(attestations, notationSigs...)
 
 	return append(attestations, baselineSBOMs...), nil
+}
+
+// collectionFailure returns the outcome of a referrer collection that failed
+// with err: the verified attestations of the cosign tag when the referrers
+// merely failed verification (see tagFallbackAfterFailedReferrers), or err.
+func (f *OCIFetcher) collectionFailure(
+	ctx context.Context, err error, notationSigs, baselineSBOMs []VerifiedAttestation,
+	ref name.Digest, digest string, remoteOpts []remote.Option, fetchOpts *FetchOptions,
+) ([]VerifiedAttestation, error) {
+	tagAtts, tagErr := f.tagFallbackAfterFailedReferrers(
+		ctx, err, baselineSBOMs, ref, digest, remoteOpts, fetchOpts,
+	)
+	if tagErr != nil {
+		return nil, tagErr
+	}
+
+	if len(tagAtts) > 0 {
+		return append(tagAtts, notationSigs...), nil
+	}
+
+	// When the Sigstore attestations merely failed verification, the
+	// Notation signatures and baseline SBOMs still apply; see Fetcher.
+	return append(slices.Clip(notationSigs), baselineSBOMs...), err
+}
+
+// tagFallbackAfterFailedReferrers reads the cosign attestation tag when
+// every Sigstore referrer failed verification. Anyone with push access can
+// attach a junk bundle referrer, so such referrers must not hide verified
+// attestations stored under the tag, just as junk Notation referrers do not
+// suppress the tag fallback. It returns the verified tag attestations, or an
+// error only when the tag makes the attestation set incomplete; otherwise
+// the referrers' verification failure stands.
+func (f *OCIFetcher) tagFallbackAfterFailedReferrers(
+	ctx context.Context, referrersErr error, baselineSBOMs []VerifiedAttestation,
+	ref name.Digest, digest string, remoteOpts []remote.Option, fetchOpts *FetchOptions,
+) ([]VerifiedAttestation, error) {
+	if !errors.Is(referrersErr, ErrVerificationFailed) ||
+		errors.Is(referrersErr, ErrIncompleteAttestationSet) || len(baselineSBOMs) > 0 {
+		return nil, nil
+	}
+
+	tagAtts, tagErr := f.cosignTagFallback(ctx, ref, digest, remoteOpts, fetchOpts)
+	if errors.Is(tagErr, ErrIncompleteAttestationSet) {
+		return nil, tagErr
+	}
+
+	if tagErr != nil || len(tagAtts) == 0 {
+		return nil, nil //nolint:nilerr // the referrers' failure stands
+	}
+
+	slog.WarnContext(ctx,
+		"Ignoring referrers that failed verification, using cosign tag attestations",
+		"digest", digest,
+		"error", referrersErr,
+		"count", len(tagAtts),
+	)
+
+	return tagAtts, nil
 }
 
 func (f *OCIFetcher) effectiveDownloadLimit() int64 {

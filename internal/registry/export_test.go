@@ -16,6 +16,7 @@ package registry
 
 import (
 	"context"
+	"io"
 	"net/http"
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
@@ -91,14 +92,17 @@ func ResolveIndexDigest(desc *remote.Descriptor) (string, error) {
 	return resolveIndexDigest(desc)
 }
 
-// SelectPlatformDigest exports selectPlatformDigest for testing.
-func SelectPlatformDigest(manifests []v1.Descriptor, goos, goarch string) (string, error) {
-	return selectPlatformDigest(manifests, goos, goarch)
+// SelectPlatformDigest exports selectPlatformDigest for testing, for a node
+// with the given OS, architecture and arm CPU variant.
+func SelectPlatformDigest(
+	manifests []v1.Descriptor, goos, goarch, variant string,
+) (string, error) {
+	return selectPlatformDigest(manifests, nodePlatform{os: goos, arch: goarch, variant: variant})
 }
 
-// PlatformVariant exports platformVariant for testing.
-func PlatformVariant(arch string) string {
-	return platformVariant(arch)
+// ARMVariantFromCPUInfo exports armVariantFromCPUInfo for testing.
+func ARMVariantFromCPUInfo(cpuinfo io.Reader) string {
+	return armVariantFromCPUInfo(cpuinfo)
 }
 
 // BuildTransport exports buildTransport for testing.

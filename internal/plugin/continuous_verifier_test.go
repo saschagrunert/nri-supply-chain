@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/containerd/nri/pkg/api"
@@ -110,293 +111,303 @@ const (
 func newCVTestPlugin(v plugin.ImageVerifier) *plugin.Plugin {
 	met := metrics.New()
 
-	return plugin.New(v, met, "", 30*time.Second, time.Second, nil)
+	return plugin.New(v, met, "", time.Second, nil)
 }
 
 func TestRunContinuousVerifierWaitsForPrewarm(t *testing.T) {
 	t.Parallel()
 
-	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
-		result: &types.Result{
-			Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
-		},
-	}
-	plug := newCVTestPlugin(verif)
-	plug.SetRemediationMode(config.RemediationModeWarn)
+	synctest.Test(t, func(t *testing.T) {
+		verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+			result: &types.Result{
+				Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
+			},
+		}
+		plug := newCVTestPlugin(verif)
+		plug.SetRemediationMode(config.RemediationModeWarn)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		defer cancel()
 
-	done := make(chan struct{})
+		done := make(chan struct{})
 
-	go func() {
-		plug.RunContinuousVerifier(ctx, 50*time.Millisecond)
-		close(done)
-	}()
+		go func() {
+			plug.RunContinuousVerifier(ctx, 50*time.Millisecond)
+			close(done)
+		}()
 
-	// The continuous verifier should block on prewarmDoneCh.
-	// Cancel before prewarm completes, so it should exit without running any cycles.
-	<-done
+		// The continuous verifier should block on prewarmDoneCh.
+		// Cancel before prewarm completes, so it should exit without running any cycles.
+		<-done
 
-	verif.mu.Lock()
-	calls := verif.calls
-	verif.mu.Unlock()
+		verif.mu.Lock()
+		calls := verif.calls
+		verif.mu.Unlock()
 
-	if calls != 0 {
-		t.Errorf("expected 0 verify calls before prewarm, got %d", calls)
-	}
+		if calls != 0 {
+			t.Errorf("expected 0 verify calls before prewarm, got %d", calls)
+		}
+	})
 }
 
 func TestRunContinuousVerifierTimerTick(t *testing.T) {
 	t.Parallel()
 
-	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
-		result: &types.Result{
-			Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
-		},
-	}
-	plug := newCVTestPlugin(verif)
-	plug.SetRemediationMode(config.RemediationModeWarn)
+	synctest.Test(t, func(t *testing.T) {
+		verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+			result: &types.Result{
+				Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
+			},
+		}
+		plug := newCVTestPlugin(verif)
+		plug.SetRemediationMode(config.RemediationModeWarn)
 
-	plug.ExportStoreContainerTime(testContainerID, time.Now())
+		plug.ExportStoreContainerTime(testContainerID, time.Now())
 
-	// Complete prewarm
-	plug.ExportSetPrewarmDone(nil)
-	plug.ExportPrewarmCache(context.Background(), nil)
+		// Complete prewarm
+		plug.ExportSetPrewarmDone(nil)
+		plug.ExportPrewarmCache(context.Background(), nil)
 
-	ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(context.Background())
 
-	done := make(chan struct{})
+		done := make(chan struct{})
 
-	go func() {
-		plug.RunContinuousVerifier(ctx, 50*time.Millisecond)
-		close(done)
-	}()
+		go func() {
+			plug.RunContinuousVerifier(ctx, 50*time.Millisecond)
+			close(done)
+		}()
 
-	// Wait for at least one tick
-	time.Sleep(150 * time.Millisecond)
-	cancel()
-	<-done
+		// Wait for at least one tick
+		time.Sleep(150 * time.Millisecond)
+		cancel()
+		<-done
 
-	verif.mu.Lock()
-	calls := verif.calls
-	verif.mu.Unlock()
+		verif.mu.Lock()
+		calls := verif.calls
+		verif.mu.Unlock()
 
-	if calls < 1 {
-		t.Errorf("expected at least 1 verify call after timer tick, got %d", calls)
-	}
+		if calls < 1 {
+			t.Errorf("expected at least 1 verify call after timer tick, got %d", calls)
+		}
+	})
 }
 
 func TestRunContinuousVerifierTrigger(t *testing.T) {
 	t.Parallel()
 
-	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
-		result: &types.Result{
-			Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
-		},
-	}
-	plug := newCVTestPlugin(verif)
-	plug.SetRemediationMode(config.RemediationModeWarn)
+	synctest.Test(t, func(t *testing.T) {
+		verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+			result: &types.Result{
+				Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
+			},
+		}
+		plug := newCVTestPlugin(verif)
+		plug.SetRemediationMode(config.RemediationModeWarn)
 
-	plug.ExportStoreContainerTime("ctr-trigger", time.Now())
+		plug.ExportStoreContainerTime("ctr-trigger", time.Now())
 
-	// Complete prewarm
-	plug.ExportSetPrewarmDone(nil)
-	plug.ExportPrewarmCache(context.Background(), nil)
+		// Complete prewarm
+		plug.ExportSetPrewarmDone(nil)
+		plug.ExportPrewarmCache(context.Background(), nil)
 
-	ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(context.Background())
 
-	done := make(chan struct{})
+		done := make(chan struct{})
 
-	go func() {
-		// Use a very long interval so timer won't fire
-		plug.RunContinuousVerifier(ctx, time.Hour)
-		close(done)
-	}()
+		go func() {
+			// Use a very long interval so timer won't fire
+			plug.RunContinuousVerifier(ctx, time.Hour)
+			close(done)
+		}()
 
-	// Wait for goroutine to start and pass prewarm
-	time.Sleep(50 * time.Millisecond)
+		// Wait for goroutine to start and pass prewarm
+		time.Sleep(50 * time.Millisecond)
 
-	// Send trigger
-	plug.TriggerReverify()
+		// Send trigger
+		plug.TriggerReverify()
 
-	// Wait for trigger to be processed
-	time.Sleep(100 * time.Millisecond)
-	cancel()
-	<-done
+		// Wait for trigger to be processed
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+		<-done
 
-	verif.mu.Lock()
-	calls := verif.calls
-	verif.mu.Unlock()
+		verif.mu.Lock()
+		calls := verif.calls
+		verif.mu.Unlock()
 
-	if calls < 1 {
-		t.Errorf("expected at least 1 verify call after trigger, got %d", calls)
-	}
+		if calls < 1 {
+			t.Errorf("expected at least 1 verify call after trigger, got %d", calls)
+		}
+	})
 }
 
 func TestStateTransitionVerifiedToDegraded(t *testing.T) {
 	t.Parallel()
 
-	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
-		result: &types.Result{
-			Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
-			CheckResults: []types.CheckResult{
-				{ //nolint:exhaustruct_v5 // zero-value fields intentional
-					Type:   types.CheckTypeSBOM,
-					Passed: false,
-					Status: testFailStatus,
+	synctest.Test(t, func(t *testing.T) {
+		verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+			result: &types.Result{
+				Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
+				CheckResults: []types.CheckResult{
+					{ //nolint:exhaustruct_v5 // zero-value fields intentional
+						Type:   types.CheckTypeSBOM,
+						Passed: false,
+						Status: testFailStatus,
+					},
 				},
 			},
-		},
-	}
-	plug := newCVTestPlugin(verif)
-	plug.SetRemediationMode(config.RemediationModeWarn)
+		}
+		plug := newCVTestPlugin(verif)
+		plug.SetRemediationMode(config.RemediationModeWarn)
 
-	plug.ExportStoreContainerTime("ctr-degrade", time.Now())
+		plug.ExportStoreContainerTime("ctr-degrade", time.Now())
 
-	// Complete prewarm
-	plug.ExportSetPrewarmDone(nil)
-	plug.ExportPrewarmCache(context.Background(), nil)
+		// Complete prewarm
+		plug.ExportSetPrewarmDone(nil)
+		plug.ExportPrewarmCache(context.Background(), nil)
 
-	ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(context.Background())
 
-	done := make(chan struct{})
+		done := make(chan struct{})
 
-	go func() {
-		plug.RunContinuousVerifier(ctx, time.Hour)
-		close(done)
-	}()
+		go func() {
+			plug.RunContinuousVerifier(ctx, time.Hour)
+			close(done)
+		}()
 
-	time.Sleep(50 * time.Millisecond)
-	plug.TriggerReverify()
-	time.Sleep(100 * time.Millisecond)
-	cancel()
-	<-done
+		time.Sleep(50 * time.Millisecond)
+		plug.TriggerReverify()
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+		<-done
 
-	// In warn mode, the container should be in Degraded state but no UpdateContainers call
-	verif.mu.Lock()
-	calls := verif.calls
-	verif.mu.Unlock()
+		// In warn mode, the container should be in Degraded state but no UpdateContainers call
+		verif.mu.Lock()
+		calls := verif.calls
+		verif.mu.Unlock()
 
-	if calls < 1 {
-		t.Errorf("expected verify call, got %d", calls)
-	}
+		if calls < 1 {
+			t.Errorf("expected verify call, got %d", calls)
+		}
+	})
 }
 
 func TestStateTransitionThrottleMode(t *testing.T) {
 	t.Parallel()
 
-	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
-		result: &types.Result{
-			Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
-			CheckResults: []types.CheckResult{
-				{ //nolint:exhaustruct_v5 // zero-value fields intentional
-					Type:   types.CheckTypeSBOM,
-					Passed: false,
-					Status: testFailStatus,
+	synctest.Test(t, func(t *testing.T) {
+		verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+			result: &types.Result{
+				Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
+				CheckResults: []types.CheckResult{
+					{ //nolint:exhaustruct_v5 // zero-value fields intentional
+						Type:   types.CheckTypeSBOM,
+						Passed: false,
+						Status: testFailStatus,
+					},
 				},
 			},
-		},
-	}
+		}
 
-	met := metrics.New()
-	plug := plugin.New(verif, met, "", 30*time.Second, time.Second, nil)
+		met := metrics.New()
+		plug := plugin.New(verif, met, "", time.Second, nil)
 
-	plug.SetRemediationMode(config.RemediationModeThrottle)
-	plug.SetRemediationConfig(
-		&config.RemediationConfig{ //nolint:exhaustruct_v5 // zero-value fields intentional
-			Mode:      config.RemediationModeThrottle,
-			BatchSize: 10,
-			Throttle: config.ThrottleConfig{
-				CPUQuotaPercent:    10,
-				MemoryLimitPercent: 50,
+		plug.SetRemediationMode(config.RemediationModeThrottle)
+		plug.SetRemediationConfig(
+			&config.RemediationConfig{ //nolint:exhaustruct_v5 // zero-value fields intentional
+				Mode:      config.RemediationModeThrottle,
+				BatchSize: 10,
+				Throttle: config.ThrottleConfig{
+					CPUQuotaPercent:    10,
+					MemoryLimitPercent: 50,
+				},
 			},
-		},
-	)
+		)
 
-	stubMock := &cvTestStub{} //nolint:exhaustruct_v5 // zero-value fields intentional
-	plug.SetStub(stubMock)
+		stubMock := &cvTestStub{} //nolint:exhaustruct_v5 // zero-value fields intentional
+		plug.SetStub(stubMock)
 
-	originalResources := &api.LinuxResources{
-		Cpu: &api.LinuxCPU{
-			Quota:  &api.OptionalInt64{Value: 100000},
-			Shares: &api.OptionalUInt64{Value: 1024},
-		},
-		Memory: &api.LinuxMemory{
-			Limit: &api.OptionalInt64{Value: 536870912},
-		},
-	}
-	plug.ExportStoreContainerWithResources(
-		"ctr-throttle", "img:latest", "sha256:abc", originalResources,
-	)
+		originalResources := &api.LinuxResources{
+			Cpu: &api.LinuxCPU{
+				Quota:  &api.OptionalInt64{Value: 100000},
+				Shares: &api.OptionalUInt64{Value: 1024},
+			},
+			Memory: &api.LinuxMemory{
+				Limit: &api.OptionalInt64{Value: 536870912},
+			},
+		}
+		plug.ExportStoreContainerWithResources(
+			"ctr-throttle", "img:latest", "sha256:abc", originalResources,
+		)
 
-	// Complete prewarm
-	plug.ExportSetPrewarmDone(nil)
-	plug.ExportPrewarmCache(context.Background(), nil)
+		// Complete prewarm
+		plug.ExportSetPrewarmDone(nil)
+		plug.ExportPrewarmCache(context.Background(), nil)
 
-	// Phase 1: long interval so only the manual trigger fires -> Degraded
-	ctx1, cancel1 := context.WithCancel(context.Background())
+		// Phase 1: long interval so only the manual trigger fires -> Degraded
+		ctx1, cancel1 := context.WithCancel(context.Background())
 
-	done1 := make(chan struct{})
+		done1 := make(chan struct{})
 
-	go func() {
-		plug.RunContinuousVerifier(ctx1, time.Hour)
-		close(done1)
-	}()
+		go func() {
+			plug.RunContinuousVerifier(ctx1, time.Hour)
+			close(done1)
+		}()
 
-	time.Sleep(50 * time.Millisecond)
-	plug.TriggerReverify()
-	time.Sleep(100 * time.Millisecond)
-	cancel1()
-	<-done1
+		time.Sleep(50 * time.Millisecond)
+		plug.TriggerReverify()
+		time.Sleep(100 * time.Millisecond)
+		cancel1()
+		<-done1
 
-	state, found := plug.ExportGetContainerState("ctr-throttle")
-	if !found {
-		t.Fatal("expected container in registry after first trigger")
-	}
+		state, found := plug.ExportGetContainerState("ctr-throttle")
+		if !found {
+			t.Fatal("expected container in registry after first trigger")
+		}
 
-	if state.State != plugin.StateDegraded {
-		t.Errorf("expected StateDegraded after first trigger, got %v", state.State)
-	}
+		if state.State != plugin.StateDegraded {
+			t.Errorf("expected StateDegraded after first trigger, got %v", state.State)
+		}
 
-	// Phase 2: short timer tick -> Degraded -> Throttled
-	ctx2, cancel2 := context.WithCancel(context.Background())
+		// Phase 2: short timer tick -> Degraded -> Throttled
+		ctx2, cancel2 := context.WithCancel(context.Background())
 
-	done2 := make(chan struct{})
+		done2 := make(chan struct{})
 
-	go func() {
-		plug.RunContinuousVerifier(ctx2, 50*time.Millisecond)
-		close(done2)
-	}()
+		go func() {
+			plug.RunContinuousVerifier(ctx2, 50*time.Millisecond)
+			close(done2)
+		}()
 
-	time.Sleep(150 * time.Millisecond)
-	cancel2()
-	<-done2
+		time.Sleep(150 * time.Millisecond)
+		cancel2()
+		<-done2
 
-	verif.mu.Lock()
-	calls := verif.calls
-	verif.mu.Unlock()
+		verif.mu.Lock()
+		calls := verif.calls
+		verif.mu.Unlock()
 
-	if calls < 2 {
-		t.Errorf("expected at least 2 verify calls, got %d", calls)
-	}
+		if calls < 2 {
+			t.Errorf("expected at least 2 verify calls, got %d", calls)
+		}
 
-	state, found = plug.ExportGetContainerState("ctr-throttle")
-	if !found {
-		t.Fatal("expected container to still exist in registry")
-	}
+		state, found = plug.ExportGetContainerState("ctr-throttle")
+		if !found {
+			t.Fatal("expected container to still exist in registry")
+		}
 
-	if state.State != plugin.StateThrottled {
-		t.Errorf("expected StateThrottled, got %v", state.State)
-	}
+		if state.State != plugin.StateThrottled {
+			t.Errorf("expected StateThrottled, got %v", state.State)
+		}
 
-	stubMock.mu.Lock()
-	updates := len(stubMock.updates)
-	stubMock.mu.Unlock()
+		stubMock.mu.Lock()
+		updates := len(stubMock.updates)
+		stubMock.mu.Unlock()
 
-	if updates == 0 {
-		t.Error("expected stub.UpdateContainers to be called with throttle update")
-	}
+		if updates == 0 {
+			t.Error("expected stub.UpdateContainers to be called with throttle update")
+		}
+	})
 }
 
 func TestContainerRegistrySnapshot(t *testing.T) {
@@ -483,144 +494,148 @@ func TestMatchFeedPURLsNoOverlap(t *testing.T) {
 func TestTriggerFeedReverifyRespectsOnNewCVE(t *testing.T) {
 	t.Parallel()
 
-	//nolint:exhaustruct_v5 // zero-value fields intentional
-	plug := newCVTestPlugin(&cvTestVerifier{
-		result: &types.Result{
-			Allowed:      true,
-			Verified:     true,
-			Mode:         "",
-			Reason:       "",
-			CheckResults: nil,
-		},
-	})
-
-	plug.SetRemediationConfig(
-		&config.RemediationConfig{ //nolint:exhaustruct_v5 // zero-value fields intentional
-			Mode: config.RemediationModeWarn,
-			Triggers: config.TriggerConfig{
-				OnNewCVE:             false,
-				OnAttestationRevoked: true,
-				OnPolicyChange:       true,
+	synctest.Test(t, func(t *testing.T) {
+		//nolint:exhaustruct_v5 // zero-value fields intentional
+		plug := newCVTestPlugin(&cvTestVerifier{
+			result: &types.Result{
+				Allowed:      true,
+				Verified:     true,
+				Mode:         "",
+				Reason:       "",
+				CheckResults: nil,
 			},
-		},
-	)
+		})
 
-	plug.ExportStoreContainerWithPURLs("ctr-feed", []string{testPURLGolangFoo})
+		plug.SetRemediationConfig(
+			&config.RemediationConfig{ //nolint:exhaustruct_v5 // zero-value fields intentional
+				Mode: config.RemediationModeWarn,
+				Triggers: config.TriggerConfig{
+					OnNewCVE:             false,
+					OnAttestationRevoked: true,
+					OnPolicyChange:       true,
+				},
+			},
+		)
 
-	plug.TriggerFeedReverify([]string{testPURLGolangFoo})
+		plug.ExportStoreContainerWithPURLs("ctr-feed", []string{testPURLGolangFoo})
 
-	// Give the channel a moment to be consumed if it were sent.
-	<-time.After(50 * time.Millisecond)
+		plug.TriggerFeedReverify([]string{testPURLGolangFoo})
 
-	// The feed trigger should NOT have been sent because on_new_cve is false.
-	select {
-	case <-plug.ExportFeedTrigger():
-		t.Error("expected feed trigger to be suppressed when on_new_cve=false")
-	default:
-	}
+		// Give the channel a moment to be consumed if it were sent.
+		<-time.After(50 * time.Millisecond)
+
+		// The feed trigger should NOT have been sent because on_new_cve is false.
+		select {
+		case <-plug.ExportFeedTrigger():
+			t.Error("expected feed trigger to be suppressed when on_new_cve=false")
+		default:
+		}
+	})
 }
 
 func TestTimerTickBypassesTriggerHash(t *testing.T) {
 	t.Parallel()
 
-	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
-		result: &types.Result{
-			Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
-			CheckResults: []types.CheckResult{
-				{ //nolint:exhaustruct_v5 // zero-value fields intentional
-					Type:   types.CheckTypeSBOM,
-					Passed: false,
-					Status: testFailStatus,
+	synctest.Test(t, func(t *testing.T) {
+		verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+			result: &types.Result{
+				Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
+				CheckResults: []types.CheckResult{
+					{ //nolint:exhaustruct_v5 // zero-value fields intentional
+						Type:   types.CheckTypeSBOM,
+						Passed: false,
+						Status: testFailStatus,
+					},
 				},
 			},
-		},
-	}
+		}
 
-	met := metrics.New()
-	plug := plugin.New(verif, met, "", 30*time.Second, time.Second, nil)
+		met := metrics.New()
+		plug := plugin.New(verif, met, "", time.Second, nil)
 
-	originalResources := &api.LinuxResources{
-		Cpu: &api.LinuxCPU{
-			Quota:  &api.OptionalInt64{Value: 100000},
-			Shares: &api.OptionalUInt64{Value: 1024},
-		},
-		Memory: &api.LinuxMemory{
-			Limit: &api.OptionalInt64{Value: 536870912},
-		},
-	}
-	plug.ExportStoreContainerWithResources(
-		"ctr-timer", "img:latest", "sha256:abc", originalResources,
-	)
-
-	// Start with warn mode. First trigger: Verified -> Degraded.
-	plug.SetRemediationMode(config.RemediationModeWarn)
-
-	// Complete prewarm
-	plug.ExportSetPrewarmDone(nil)
-	plug.ExportPrewarmCache(context.Background(), nil)
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	done := make(chan struct{})
-
-	// Use a short timer interval so the ticker fires for the second cycle.
-	go func() {
-		plug.RunContinuousVerifier(ctx, 80*time.Millisecond)
-		close(done)
-	}()
-
-	// Wait for at least one trigger cycle to move to Degraded.
-	time.Sleep(50 * time.Millisecond)
-	plug.TriggerReverify()
-	time.Sleep(100 * time.Millisecond)
-
-	// Switch to throttle mode with a stub. The next timer tick should
-	// escalate Degraded -> Throttled despite producing the same trigger
-	// hash, because timer ticks bypass the hash check.
-	stubMock := &cvTestStub{} //nolint:exhaustruct_v5 // zero-value fields intentional
-	plug.SetStub(stubMock)
-
-	plug.SetRemediationMode(config.RemediationModeThrottle)
-	plug.SetRemediationConfig(
-		&config.RemediationConfig{ //nolint:exhaustruct_v5 // zero-value fields intentional
-			Mode:      config.RemediationModeThrottle,
-			BatchSize: 10,
-			Throttle: config.ThrottleConfig{
-				CPUQuotaPercent:    10,
-				MemoryLimitPercent: 50,
+		originalResources := &api.LinuxResources{
+			Cpu: &api.LinuxCPU{
+				Quota:  &api.OptionalInt64{Value: 100000},
+				Shares: &api.OptionalUInt64{Value: 1024},
 			},
-		},
-	)
+			Memory: &api.LinuxMemory{
+				Limit: &api.OptionalInt64{Value: 536870912},
+			},
+		}
+		plug.ExportStoreContainerWithResources(
+			"ctr-timer", "img:latest", "sha256:abc", originalResources,
+		)
 
-	// Wait for timer tick to fire (interval is 80ms).
-	time.Sleep(150 * time.Millisecond)
-	cancel()
-	<-done
+		// Start with warn mode. First trigger: Verified -> Degraded.
+		plug.SetRemediationMode(config.RemediationModeWarn)
 
-	verif.mu.Lock()
-	calls := verif.calls
-	verif.mu.Unlock()
+		// Complete prewarm
+		plug.ExportSetPrewarmDone(nil)
+		plug.ExportPrewarmCache(context.Background(), nil)
 
-	if calls < 2 {
-		t.Errorf("expected at least 2 verify calls, got %d", calls)
-	}
+		ctx, cancel := context.WithCancel(context.Background())
 
-	state, found := plug.ExportGetContainerState("ctr-timer")
-	if !found {
-		t.Fatal("expected container to still exist in registry")
-	}
+		done := make(chan struct{})
 
-	if state.State != plugin.StateThrottled {
-		t.Errorf("expected StateThrottled after timer tick bypass, got %v", state.State)
-	}
+		// Use a short timer interval so the ticker fires for the second cycle.
+		go func() {
+			plug.RunContinuousVerifier(ctx, 80*time.Millisecond)
+			close(done)
+		}()
 
-	stubMock.mu.Lock()
-	updates := len(stubMock.updates)
-	stubMock.mu.Unlock()
+		// Wait for at least one trigger cycle to move to Degraded.
+		time.Sleep(50 * time.Millisecond)
+		plug.TriggerReverify()
+		time.Sleep(100 * time.Millisecond)
 
-	if updates == 0 {
-		t.Error("expected stub.UpdateContainers to be called with throttle update")
-	}
+		// Switch to throttle mode with a stub. The next timer tick should
+		// escalate Degraded -> Throttled despite producing the same trigger
+		// hash, because timer ticks bypass the hash check.
+		stubMock := &cvTestStub{} //nolint:exhaustruct_v5 // zero-value fields intentional
+		plug.SetStub(stubMock)
+
+		plug.SetRemediationMode(config.RemediationModeThrottle)
+		plug.SetRemediationConfig(
+			&config.RemediationConfig{ //nolint:exhaustruct_v5 // zero-value fields intentional
+				Mode:      config.RemediationModeThrottle,
+				BatchSize: 10,
+				Throttle: config.ThrottleConfig{
+					CPUQuotaPercent:    10,
+					MemoryLimitPercent: 50,
+				},
+			},
+		)
+
+		// Wait for timer tick to fire (interval is 80ms).
+		time.Sleep(150 * time.Millisecond)
+		cancel()
+		<-done
+
+		verif.mu.Lock()
+		calls := verif.calls
+		verif.mu.Unlock()
+
+		if calls < 2 {
+			t.Errorf("expected at least 2 verify calls, got %d", calls)
+		}
+
+		state, found := plug.ExportGetContainerState("ctr-timer")
+		if !found {
+			t.Fatal("expected container to still exist in registry")
+		}
+
+		if state.State != plugin.StateThrottled {
+			t.Errorf("expected StateThrottled after timer tick bypass, got %v", state.State)
+		}
+
+		stubMock.mu.Lock()
+		updates := len(stubMock.updates)
+		stubMock.mu.Unlock()
+
+		if updates == 0 {
+			t.Error("expected stub.UpdateContainers to be called with throttle update")
+		}
+	})
 }
 
 func TestComputeTriggerHashDeterministic(t *testing.T) {
@@ -698,799 +713,820 @@ func TestBuildRollbackUpdate(t *testing.T) {
 func TestThrottleAndRollbackLifecycle(t *testing.T) {
 	t.Parallel()
 
-	degradedResult := &types.Result{
-		Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
-		CheckResults: []types.CheckResult{
-			{ //nolint:exhaustruct_v5 // zero-value fields intentional
-				Type:   types.CheckTypeSBOM,
-				Passed: false,
-				Status: testFailStatus,
+	synctest.Test(t, func(t *testing.T) {
+		degradedResult := &types.Result{
+			Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
+			CheckResults: []types.CheckResult{
+				{ //nolint:exhaustruct_v5 // zero-value fields intentional
+					Type:   types.CheckTypeSBOM,
+					Passed: false,
+					Status: testFailStatus,
+				},
 			},
-		},
-	}
-	verifiedResult := &types.Result{
-		Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
-	}
+		}
+		verifiedResult := &types.Result{
+			Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
+		}
 
-	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
-		result: degradedResult,
-	}
+		verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+			result: degradedResult,
+		}
 
-	met := metrics.New()
-	plug := plugin.New(verif, met, "", 30*time.Second, time.Second, nil)
+		met := metrics.New()
+		plug := plugin.New(verif, met, "", time.Second, nil)
 
-	plug.SetRemediationMode(config.RemediationModeThrottle)
-	plug.SetRemediationConfig(
-		&config.RemediationConfig{ //nolint:exhaustruct_v5 // zero-value fields intentional
-			Mode:      config.RemediationModeThrottle,
-			BatchSize: 10,
-			Throttle: config.ThrottleConfig{
-				CPUQuotaPercent:    10,
-				MemoryLimitPercent: 50,
+		plug.SetRemediationMode(config.RemediationModeThrottle)
+		plug.SetRemediationConfig(
+			&config.RemediationConfig{ //nolint:exhaustruct_v5 // zero-value fields intentional
+				Mode:      config.RemediationModeThrottle,
+				BatchSize: 10,
+				Throttle: config.ThrottleConfig{
+					CPUQuotaPercent:    10,
+					MemoryLimitPercent: 50,
+				},
 			},
-		},
-	)
+		)
 
-	stubMock := &cvTestStub{} //nolint:exhaustruct_v5 // zero-value fields intentional
-	plug.SetStub(stubMock)
+		stubMock := &cvTestStub{} //nolint:exhaustruct_v5 // zero-value fields intentional
+		plug.SetStub(stubMock)
 
-	originalResources := &api.LinuxResources{
-		Cpu: &api.LinuxCPU{
-			Quota:  &api.OptionalInt64{Value: 100000},
-			Shares: &api.OptionalUInt64{Value: 1024},
-		},
-		Memory: &api.LinuxMemory{
-			Limit: &api.OptionalInt64{Value: 536870912},
-		},
-	}
-	plug.ExportStoreContainerWithResources(
-		"ctr-lifecycle", "img:latest", "sha256:abc", originalResources,
-	)
+		originalResources := &api.LinuxResources{
+			Cpu: &api.LinuxCPU{
+				Quota:  &api.OptionalInt64{Value: 100000},
+				Shares: &api.OptionalUInt64{Value: 1024},
+			},
+			Memory: &api.LinuxMemory{
+				Limit: &api.OptionalInt64{Value: 536870912},
+			},
+		}
+		plug.ExportStoreContainerWithResources(
+			"ctr-lifecycle", "img:latest", "sha256:abc", originalResources,
+		)
 
-	plug.ExportSetPrewarmDone(nil)
-	plug.ExportPrewarmCache(context.Background(), nil)
+		plug.ExportSetPrewarmDone(nil)
+		plug.ExportPrewarmCache(context.Background(), nil)
 
-	// Phase 1a: long interval so only the manual trigger fires -> Degraded
-	ctx1, cancel1 := context.WithCancel(context.Background())
+		// Phase 1a: long interval so only the manual trigger fires -> Degraded
+		ctx1, cancel1 := context.WithCancel(context.Background())
 
-	done1 := make(chan struct{})
+		done1 := make(chan struct{})
 
-	go func() {
-		plug.RunContinuousVerifier(ctx1, time.Hour)
-		close(done1)
-	}()
+		go func() {
+			plug.RunContinuousVerifier(ctx1, time.Hour)
+			close(done1)
+		}()
 
-	time.Sleep(50 * time.Millisecond)
-	plug.TriggerReverify()
-	time.Sleep(100 * time.Millisecond)
-	cancel1()
-	<-done1
+		time.Sleep(50 * time.Millisecond)
+		plug.TriggerReverify()
+		time.Sleep(100 * time.Millisecond)
+		cancel1()
+		<-done1
 
-	state, found := plug.ExportGetContainerState("ctr-lifecycle")
-	if !found {
-		t.Fatal("expected container in registry after degrade")
-	}
+		state, found := plug.ExportGetContainerState("ctr-lifecycle")
+		if !found {
+			t.Fatal("expected container in registry after degrade")
+		}
 
-	if state.State != plugin.StateDegraded {
-		t.Errorf("phase 1a: expected StateDegraded, got %v", state.State)
-	}
+		if state.State != plugin.StateDegraded {
+			t.Errorf("phase 1a: expected StateDegraded, got %v", state.State)
+		}
 
-	// Phase 1b: short timer tick -> Degraded -> Throttled
-	ctx2, cancel2 := context.WithCancel(context.Background())
+		// Phase 1b: short timer tick -> Degraded -> Throttled
+		ctx2, cancel2 := context.WithCancel(context.Background())
 
-	done2 := make(chan struct{})
+		done2 := make(chan struct{})
 
-	go func() {
-		plug.RunContinuousVerifier(ctx2, 50*time.Millisecond)
-		close(done2)
-	}()
+		go func() {
+			plug.RunContinuousVerifier(ctx2, 50*time.Millisecond)
+			close(done2)
+		}()
 
-	time.Sleep(150 * time.Millisecond)
+		time.Sleep(150 * time.Millisecond)
 
-	state, found = plug.ExportGetContainerState("ctr-lifecycle")
-	if !found {
-		t.Fatal("expected container in registry after throttle")
-	}
+		state, found = plug.ExportGetContainerState("ctr-lifecycle")
+		if !found {
+			t.Fatal("expected container in registry after throttle")
+		}
 
-	if state.State != plugin.StateThrottled {
-		t.Errorf("phase 1b: expected StateThrottled, got %v", state.State)
-	}
+		if state.State != plugin.StateThrottled {
+			t.Errorf("phase 1b: expected StateThrottled, got %v", state.State)
+		}
 
-	stubMock.mu.Lock()
-	throttleUpdates := len(stubMock.updates)
-	stubMock.mu.Unlock()
+		stubMock.mu.Lock()
+		throttleUpdates := len(stubMock.updates)
+		stubMock.mu.Unlock()
 
-	if throttleUpdates == 0 {
-		t.Fatal("phase 1b: expected throttle update to be sent")
-	}
+		if throttleUpdates == 0 {
+			t.Fatal("phase 1b: expected throttle update to be sent")
+		}
 
-	// Phase 2: switch verifier to pass, trigger again to rollback
-	verif.mu.Lock()
-	verif.result = verifiedResult
-	verif.mu.Unlock()
+		// Phase 2: switch verifier to pass, trigger again to rollback
+		verif.mu.Lock()
+		verif.result = verifiedResult
+		verif.mu.Unlock()
 
-	stubMock.mu.Lock()
-	stubMock.updates = nil
-	stubMock.mu.Unlock()
+		stubMock.mu.Lock()
+		stubMock.updates = nil
+		stubMock.mu.Unlock()
 
-	plug.TriggerReverify()
-	time.Sleep(100 * time.Millisecond)
-	cancel2()
-	<-done2
+		plug.TriggerReverify()
+		time.Sleep(100 * time.Millisecond)
+		cancel2()
+		<-done2
 
-	state, found = plug.ExportGetContainerState("ctr-lifecycle")
-	if !found {
-		t.Fatal("expected container in registry after rollback")
-	}
+		state, found = plug.ExportGetContainerState("ctr-lifecycle")
+		if !found {
+			t.Fatal("expected container in registry after rollback")
+		}
 
-	if state.State != plugin.StateVerified {
-		t.Errorf("phase 2: expected StateVerified after rollback, got %v", state.State)
-	}
+		if state.State != plugin.StateVerified {
+			t.Errorf("phase 2: expected StateVerified after rollback, got %v", state.State)
+		}
 
-	stubMock.mu.Lock()
-	rollbackUpdates := len(stubMock.updates)
-	stubMock.mu.Unlock()
+		stubMock.mu.Lock()
+		rollbackUpdates := len(stubMock.updates)
+		stubMock.mu.Unlock()
 
-	if rollbackUpdates == 0 {
-		t.Error("phase 2: expected rollback update to be sent")
-	}
+		if rollbackUpdates == 0 {
+			t.Error("phase 2: expected rollback update to be sent")
+		}
+	})
 }
 
 func TestRecoveredOnRestartSkipsRollback(t *testing.T) {
 	t.Parallel()
 
-	verifiedResult := &types.Result{
-		Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
-	}
+	synctest.Test(t, func(t *testing.T) {
+		verifiedResult := &types.Result{
+			Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
+		}
 
-	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
-		result: verifiedResult,
-	}
+		verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+			result: verifiedResult,
+		}
 
-	met := metrics.New()
-	plug := plugin.New(verif, met, "", 30*time.Second, time.Second, nil)
+		met := metrics.New()
+		plug := plugin.New(verif, met, "", time.Second, nil)
 
-	plug.SetRemediationMode(config.RemediationModeThrottle)
-	plug.SetRemediationConfig(
-		&config.RemediationConfig{ //nolint:exhaustruct_v5 // zero-value fields intentional
-			Mode:      config.RemediationModeThrottle,
-			BatchSize: 10,
-			Throttle: config.ThrottleConfig{
-				CPUQuotaPercent:    10,
-				MemoryLimitPercent: 50,
+		plug.SetRemediationMode(config.RemediationModeThrottle)
+		plug.SetRemediationConfig(
+			&config.RemediationConfig{ //nolint:exhaustruct_v5 // zero-value fields intentional
+				Mode:      config.RemediationModeThrottle,
+				BatchSize: 10,
+				Throttle: config.ThrottleConfig{
+					CPUQuotaPercent:    10,
+					MemoryLimitPercent: 50,
+				},
 			},
-		},
-	)
+		)
 
-	stubMock := &cvTestStub{} //nolint:exhaustruct_v5 // zero-value fields intentional
-	plug.SetStub(stubMock)
+		stubMock := &cvTestStub{} //nolint:exhaustruct_v5 // zero-value fields intentional
+		plug.SetStub(stubMock)
 
-	originalResources := &api.LinuxResources{
-		Cpu: &api.LinuxCPU{
-			Quota:  &api.OptionalInt64{Value: 100000},
-			Shares: &api.OptionalUInt64{Value: 1024},
-		},
-		Memory: &api.LinuxMemory{
-			Limit: &api.OptionalInt64{Value: 536870912},
-		},
-	}
-	plug.ExportStoreRecoveredContainer(
-		"ctr-recovered", "img:latest", "sha256:abc", originalResources,
-	)
+		originalResources := &api.LinuxResources{
+			Cpu: &api.LinuxCPU{
+				Quota:  &api.OptionalInt64{Value: 100000},
+				Shares: &api.OptionalUInt64{Value: 1024},
+			},
+			Memory: &api.LinuxMemory{
+				Limit: &api.OptionalInt64{Value: 536870912},
+			},
+		}
+		plug.ExportStoreRecoveredContainer(
+			"ctr-recovered", "img:latest", "sha256:abc", originalResources,
+		)
 
-	plug.ExportSetPrewarmDone(nil)
-	plug.ExportPrewarmCache(context.Background(), nil)
+		plug.ExportSetPrewarmDone(nil)
+		plug.ExportPrewarmCache(context.Background(), nil)
 
-	ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(context.Background())
 
-	done := make(chan struct{})
+		done := make(chan struct{})
 
-	go func() {
-		plug.RunContinuousVerifier(ctx, time.Hour)
-		close(done)
-	}()
+		go func() {
+			plug.RunContinuousVerifier(ctx, time.Hour)
+			close(done)
+		}()
 
-	time.Sleep(50 * time.Millisecond)
-	plug.TriggerReverify()
-	time.Sleep(100 * time.Millisecond)
-	cancel()
-	<-done
+		time.Sleep(50 * time.Millisecond)
+		plug.TriggerReverify()
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+		<-done
 
-	state, found := plug.ExportGetContainerState("ctr-recovered")
-	if !found {
-		t.Fatal("expected container in registry")
-	}
+		state, found := plug.ExportGetContainerState("ctr-recovered")
+		if !found {
+			t.Fatal("expected container in registry")
+		}
 
-	if state.State != plugin.StateVerified {
-		t.Errorf("expected StateVerified, got %v", state.State)
-	}
+		if state.State != plugin.StateVerified {
+			t.Errorf("expected StateVerified, got %v", state.State)
+		}
 
-	// Resources captured after a restart are never trusted as originals,
-	// so the flag stays set and later degradations are not throttled.
-	if !state.RecoveredOnRestart {
-		t.Error("recoveredOnRestart should stay set for resources captured after restart")
-	}
+		// Resources captured after a restart are never trusted as originals,
+		// so the flag stays set and later degradations are not throttled.
+		if !state.RecoveredOnRestart {
+			t.Error("recoveredOnRestart should stay set for resources captured after restart")
+		}
 
-	stubMock.mu.Lock()
-	updates := len(stubMock.updates)
-	stubMock.mu.Unlock()
+		stubMock.mu.Lock()
+		updates := len(stubMock.updates)
+		stubMock.mu.Unlock()
 
-	if updates != 0 {
-		t.Errorf("expected no rollback for restart-recovered container, got %d updates", updates)
-	}
+		if updates != 0 {
+			t.Errorf(
+				"expected no rollback for restart-recovered container, got %d updates",
+				updates,
+			)
+		}
+	})
 }
 
 func TestRollbackAfterModeDowngrade(t *testing.T) {
 	t.Parallel()
 
-	degradedResult := &types.Result{
-		Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
-		CheckResults: []types.CheckResult{
-			{ //nolint:exhaustruct_v5 // zero-value fields intentional
-				Type:   types.CheckTypeSBOM,
-				Passed: false,
-				Status: testFailStatus,
+	synctest.Test(t, func(t *testing.T) {
+		degradedResult := &types.Result{
+			Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
+			CheckResults: []types.CheckResult{
+				{ //nolint:exhaustruct_v5 // zero-value fields intentional
+					Type:   types.CheckTypeSBOM,
+					Passed: false,
+					Status: testFailStatus,
+				},
 			},
-		},
-	}
-	verifiedResult := &types.Result{
-		Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
-	}
+		}
+		verifiedResult := &types.Result{
+			Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
+		}
 
-	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
-		result: degradedResult,
-	}
+		verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+			result: degradedResult,
+		}
 
-	met := metrics.New()
-	plug := plugin.New(verif, met, "", 30*time.Second, time.Second, nil)
+		met := metrics.New()
+		plug := plugin.New(verif, met, "", time.Second, nil)
 
-	plug.SetRemediationMode(config.RemediationModeThrottle)
-	plug.SetRemediationConfig(
-		&config.RemediationConfig{ //nolint:exhaustruct_v5 // zero-value fields intentional
-			Mode:      config.RemediationModeThrottle,
-			BatchSize: 10,
-			Throttle: config.ThrottleConfig{
-				CPUQuotaPercent:    10,
-				MemoryLimitPercent: 50,
+		plug.SetRemediationMode(config.RemediationModeThrottle)
+		plug.SetRemediationConfig(
+			&config.RemediationConfig{ //nolint:exhaustruct_v5 // zero-value fields intentional
+				Mode:      config.RemediationModeThrottle,
+				BatchSize: 10,
+				Throttle: config.ThrottleConfig{
+					CPUQuotaPercent:    10,
+					MemoryLimitPercent: 50,
+				},
 			},
-		},
-	)
+		)
 
-	stubMock := &cvTestStub{} //nolint:exhaustruct_v5 // zero-value fields intentional
-	plug.SetStub(stubMock)
+		stubMock := &cvTestStub{} //nolint:exhaustruct_v5 // zero-value fields intentional
+		plug.SetStub(stubMock)
 
-	originalResources := &api.LinuxResources{
-		Cpu: &api.LinuxCPU{
-			Quota:  &api.OptionalInt64{Value: 100000},
-			Shares: &api.OptionalUInt64{Value: 1024},
-		},
-		Memory: &api.LinuxMemory{
-			Limit: &api.OptionalInt64{Value: 536870912},
-		},
-	}
-	plug.ExportStoreContainerWithResources(
-		"ctr-downgrade", "img:latest", "sha256:abc", originalResources,
-	)
+		originalResources := &api.LinuxResources{
+			Cpu: &api.LinuxCPU{
+				Quota:  &api.OptionalInt64{Value: 100000},
+				Shares: &api.OptionalUInt64{Value: 1024},
+			},
+			Memory: &api.LinuxMemory{
+				Limit: &api.OptionalInt64{Value: 536870912},
+			},
+		}
+		plug.ExportStoreContainerWithResources(
+			"ctr-downgrade", "img:latest", "sha256:abc", originalResources,
+		)
 
-	plug.ExportSetPrewarmDone(nil)
-	plug.ExportPrewarmCache(context.Background(), nil)
+		plug.ExportSetPrewarmDone(nil)
+		plug.ExportPrewarmCache(context.Background(), nil)
 
-	// Phase 1: Verified -> Degraded (manual trigger)
-	ctx1, cancel1 := context.WithCancel(context.Background())
+		// Phase 1: Verified -> Degraded (manual trigger)
+		ctx1, cancel1 := context.WithCancel(context.Background())
 
-	done1 := make(chan struct{})
+		done1 := make(chan struct{})
 
-	go func() {
-		plug.RunContinuousVerifier(ctx1, time.Hour)
-		close(done1)
-	}()
+		go func() {
+			plug.RunContinuousVerifier(ctx1, time.Hour)
+			close(done1)
+		}()
 
-	time.Sleep(50 * time.Millisecond)
-	plug.TriggerReverify()
-	time.Sleep(100 * time.Millisecond)
-	cancel1()
-	<-done1
+		time.Sleep(50 * time.Millisecond)
+		plug.TriggerReverify()
+		time.Sleep(100 * time.Millisecond)
+		cancel1()
+		<-done1
 
-	// Phase 2: Degraded -> Throttled (timer tick)
-	ctx2, cancel2 := context.WithCancel(context.Background())
+		// Phase 2: Degraded -> Throttled (timer tick)
+		ctx2, cancel2 := context.WithCancel(context.Background())
 
-	done2 := make(chan struct{})
+		done2 := make(chan struct{})
 
-	go func() {
-		plug.RunContinuousVerifier(ctx2, 50*time.Millisecond)
-		close(done2)
-	}()
+		go func() {
+			plug.RunContinuousVerifier(ctx2, 50*time.Millisecond)
+			close(done2)
+		}()
 
-	time.Sleep(150 * time.Millisecond)
+		time.Sleep(150 * time.Millisecond)
 
-	state, found := plug.ExportGetContainerState("ctr-downgrade")
-	if !found {
-		t.Fatal("expected container in registry after throttle")
-	}
+		state, found := plug.ExportGetContainerState("ctr-downgrade")
+		if !found {
+			t.Fatal("expected container in registry after throttle")
+		}
 
-	if state.State != plugin.StateThrottled {
-		t.Fatalf("expected StateThrottled, got %v", state.State)
-	}
+		if state.State != plugin.StateThrottled {
+			t.Fatalf("expected StateThrottled, got %v", state.State)
+		}
 
-	// Phase 3: Downgrade mode to warn, switch to passing, trigger recovery.
-	// The rollback update must still be sent to restore cgroup resources.
-	plug.SetRemediationMode(config.RemediationModeWarn)
+		// Phase 3: Downgrade mode to warn, switch to passing, trigger recovery.
+		// The rollback update must still be sent to restore cgroup resources.
+		plug.SetRemediationMode(config.RemediationModeWarn)
 
-	verif.mu.Lock()
-	verif.result = verifiedResult
-	verif.mu.Unlock()
+		verif.mu.Lock()
+		verif.result = verifiedResult
+		verif.mu.Unlock()
 
-	stubMock.mu.Lock()
-	stubMock.updates = nil
-	stubMock.mu.Unlock()
+		stubMock.mu.Lock()
+		stubMock.updates = nil
+		stubMock.mu.Unlock()
 
-	plug.TriggerReverify()
-	time.Sleep(100 * time.Millisecond)
-	cancel2()
-	<-done2
+		plug.TriggerReverify()
+		time.Sleep(100 * time.Millisecond)
+		cancel2()
+		<-done2
 
-	state, found = plug.ExportGetContainerState("ctr-downgrade")
-	if !found {
-		t.Fatal("expected container in registry after mode-downgrade recovery")
-	}
+		state, found = plug.ExportGetContainerState("ctr-downgrade")
+		if !found {
+			t.Fatal("expected container in registry after mode-downgrade recovery")
+		}
 
-	if state.State != plugin.StateVerified {
-		t.Errorf("expected StateVerified after recovery, got %v", state.State)
-	}
+		if state.State != plugin.StateVerified {
+			t.Errorf("expected StateVerified after recovery, got %v", state.State)
+		}
 
-	stubMock.mu.Lock()
-	rollbackUpdates := len(stubMock.updates)
-	stubMock.mu.Unlock()
+		stubMock.mu.Lock()
+		rollbackUpdates := len(stubMock.updates)
+		stubMock.mu.Unlock()
 
-	if rollbackUpdates == 0 {
-		t.Error("expected rollback update even after mode downgrade to warn")
-	}
+		if rollbackUpdates == 0 {
+			t.Error("expected rollback update even after mode downgrade to warn")
+		}
+	})
 }
 
 func TestVerifyErrorIncrementMetric(t *testing.T) {
 	t.Parallel()
 
-	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
-		result: nil,
-		err:    errVerifyFailed,
-	}
-	plug := newCVTestPlugin(verif)
-	plug.SetRemediationMode(config.RemediationModeWarn)
+	synctest.Test(t, func(t *testing.T) {
+		verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+			result: nil,
+			err:    errVerifyFailed,
+		}
+		plug := newCVTestPlugin(verif)
+		plug.SetRemediationMode(config.RemediationModeWarn)
 
-	plug.ExportStoreContainerTime("ctr-err", time.Now())
+		plug.ExportStoreContainerTime("ctr-err", time.Now())
 
-	plug.ExportSetPrewarmDone(nil)
-	plug.ExportPrewarmCache(context.Background(), nil)
+		plug.ExportSetPrewarmDone(nil)
+		plug.ExportPrewarmCache(context.Background(), nil)
 
-	ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(context.Background())
 
-	done := make(chan struct{})
+		done := make(chan struct{})
 
-	go func() {
-		plug.RunContinuousVerifier(ctx, time.Hour)
-		close(done)
-	}()
+		go func() {
+			plug.RunContinuousVerifier(ctx, time.Hour)
+			close(done)
+		}()
 
-	time.Sleep(50 * time.Millisecond)
-	plug.TriggerReverify()
-	time.Sleep(100 * time.Millisecond)
-	cancel()
-	<-done
+		time.Sleep(50 * time.Millisecond)
+		plug.TriggerReverify()
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+		<-done
 
-	verif.mu.Lock()
-	calls := verif.calls
-	verif.mu.Unlock()
+		verif.mu.Lock()
+		calls := verif.calls
+		verif.mu.Unlock()
 
-	if calls < 1 {
-		t.Errorf("expected at least 1 verify call, got %d", calls)
-	}
+		if calls < 1 {
+			t.Errorf("expected at least 1 verify call, got %d", calls)
+		}
 
-	state, found := plug.ExportGetContainerState("ctr-err")
-	if !found {
-		t.Fatal("expected container to remain in registry after error")
-	}
+		state, found := plug.ExportGetContainerState("ctr-err")
+		if !found {
+			t.Fatal("expected container to remain in registry after error")
+		}
 
-	if state.State != plugin.StateVerified {
-		t.Errorf("expected state unchanged after error, got %v", state.State)
-	}
+		if state.State != plugin.StateVerified {
+			t.Errorf("expected state unchanged after error, got %v", state.State)
+		}
+	})
 }
 
 func TestFeedTriggerPath(t *testing.T) {
 	t.Parallel()
 
-	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
-		result: &types.Result{
-			Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
-			CheckResults: []types.CheckResult{
-				{ //nolint:exhaustruct_v5 // zero-value fields intentional
-					Type:   types.CheckTypeSBOM,
-					Passed: false,
-					Status: testFailStatus,
+	synctest.Test(t, func(t *testing.T) {
+		verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+			result: &types.Result{
+				Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
+				CheckResults: []types.CheckResult{
+					{ //nolint:exhaustruct_v5 // zero-value fields intentional
+						Type:   types.CheckTypeSBOM,
+						Passed: false,
+						Status: testFailStatus,
+					},
 				},
 			},
-		},
-	}
-	plug := newCVTestPlugin(verif)
-	plug.SetRemediationMode(config.RemediationModeWarn)
-	plug.SetRemediationConfig(
-		&config.RemediationConfig{ //nolint:exhaustruct_v5 // zero-value fields intentional
-			Mode: config.RemediationModeWarn,
-			Triggers: config.TriggerConfig{
-				OnNewCVE:             true,
-				OnAttestationRevoked: true,
-				OnPolicyChange:       true,
+		}
+		plug := newCVTestPlugin(verif)
+		plug.SetRemediationMode(config.RemediationModeWarn)
+		plug.SetRemediationConfig(
+			&config.RemediationConfig{ //nolint:exhaustruct_v5 // zero-value fields intentional
+				Mode: config.RemediationModeWarn,
+				Triggers: config.TriggerConfig{
+					OnNewCVE:             true,
+					OnAttestationRevoked: true,
+					OnPolicyChange:       true,
+				},
 			},
-		},
-	)
+		)
 
-	plug.ExportStoreContainerWithPURLs("ctr-feed-match", []string{testPURLGolangFoo})
-	plug.ExportStoreContainerWithPURLs("ctr-feed-nomatch", []string{"pkg:npm/other@1.0"})
+		plug.ExportStoreContainerWithPURLs("ctr-feed-match", []string{testPURLGolangFoo})
+		plug.ExportStoreContainerWithPURLs("ctr-feed-nomatch", []string{"pkg:npm/other@1.0"})
 
-	plug.ExportSetPrewarmDone(nil)
-	plug.ExportPrewarmCache(context.Background(), nil)
+		plug.ExportSetPrewarmDone(nil)
+		plug.ExportPrewarmCache(context.Background(), nil)
 
-	ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(context.Background())
 
-	done := make(chan struct{})
+		done := make(chan struct{})
 
-	go func() {
-		plug.RunContinuousVerifier(ctx, time.Hour)
-		close(done)
-	}()
+		go func() {
+			plug.RunContinuousVerifier(ctx, time.Hour)
+			close(done)
+		}()
 
-	time.Sleep(50 * time.Millisecond)
-	plug.TriggerFeedReverify([]string{testPURLGolangFoo})
-	time.Sleep(100 * time.Millisecond)
-	cancel()
-	<-done
+		time.Sleep(50 * time.Millisecond)
+		plug.TriggerFeedReverify([]string{testPURLGolangFoo})
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+		<-done
 
-	state, found := plug.ExportGetContainerState("ctr-feed-match")
-	if !found {
-		t.Fatal("expected matched container in registry")
-	}
+		state, found := plug.ExportGetContainerState("ctr-feed-match")
+		if !found {
+			t.Fatal("expected matched container in registry")
+		}
 
-	if state.State != plugin.StateDegraded {
-		t.Errorf("expected matched container degraded, got %v", state.State)
-	}
+		if state.State != plugin.StateDegraded {
+			t.Errorf("expected matched container degraded, got %v", state.State)
+		}
 
-	state, found = plug.ExportGetContainerState("ctr-feed-nomatch")
-	if !found {
-		t.Fatal("expected unmatched container in registry")
-	}
+		state, found = plug.ExportGetContainerState("ctr-feed-nomatch")
+		if !found {
+			t.Fatal("expected unmatched container in registry")
+		}
 
-	if state.State != plugin.StateVerified {
-		t.Errorf("expected unmatched container still verified, got %v", state.State)
-	}
+		if state.State != plugin.StateVerified {
+			t.Errorf("expected unmatched container still verified, got %v", state.State)
+		}
+	})
 }
 
 func TestRecoverMetricInWarnMode(t *testing.T) {
 	t.Parallel()
 
-	degradedResult := &types.Result{
-		Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
-		CheckResults: []types.CheckResult{
-			{ //nolint:exhaustruct_v5 // zero-value fields intentional
-				Type:   types.CheckTypeSBOM,
-				Passed: false,
-				Status: testFailStatus,
+	synctest.Test(t, func(t *testing.T) {
+		degradedResult := &types.Result{
+			Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
+			CheckResults: []types.CheckResult{
+				{ //nolint:exhaustruct_v5 // zero-value fields intentional
+					Type:   types.CheckTypeSBOM,
+					Passed: false,
+					Status: testFailStatus,
+				},
 			},
-		},
-	}
-	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
-		result: degradedResult,
-	}
-	plug := newCVTestPlugin(verif)
-	plug.SetRemediationMode(config.RemediationModeWarn)
+		}
+		verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+			result: degradedResult,
+		}
+		plug := newCVTestPlugin(verif)
+		plug.SetRemediationMode(config.RemediationModeWarn)
 
-	plug.ExportStoreContainerTime("ctr-recover", time.Now())
+		plug.ExportStoreContainerTime("ctr-recover", time.Now())
 
-	plug.ExportSetPrewarmDone(nil)
-	plug.ExportPrewarmCache(context.Background(), nil)
+		plug.ExportSetPrewarmDone(nil)
+		plug.ExportPrewarmCache(context.Background(), nil)
 
-	// Phase 1: degrade
-	ctx1, cancel1 := context.WithCancel(context.Background())
+		// Phase 1: degrade
+		ctx1, cancel1 := context.WithCancel(context.Background())
 
-	done1 := make(chan struct{})
+		done1 := make(chan struct{})
 
-	go func() {
-		plug.RunContinuousVerifier(ctx1, time.Hour)
-		close(done1)
-	}()
+		go func() {
+			plug.RunContinuousVerifier(ctx1, time.Hour)
+			close(done1)
+		}()
 
-	time.Sleep(50 * time.Millisecond)
-	plug.TriggerReverify()
-	time.Sleep(100 * time.Millisecond)
-	cancel1()
-	<-done1
+		time.Sleep(50 * time.Millisecond)
+		plug.TriggerReverify()
+		time.Sleep(100 * time.Millisecond)
+		cancel1()
+		<-done1
 
-	state, found := plug.ExportGetContainerState("ctr-recover")
-	if !found {
-		t.Fatal("expected container in registry")
-	}
+		state, found := plug.ExportGetContainerState("ctr-recover")
+		if !found {
+			t.Fatal("expected container in registry")
+		}
 
-	if state.State != plugin.StateDegraded {
-		t.Fatalf("expected degraded, got %v", state.State)
-	}
+		if state.State != plugin.StateDegraded {
+			t.Fatalf("expected degraded, got %v", state.State)
+		}
 
-	// Phase 2: recover (switch to passing result)
-	verif.mu.Lock()
-	verif.result = &types.Result{
-		Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
-	}
-	verif.mu.Unlock()
+		// Phase 2: recover (switch to passing result)
+		verif.mu.Lock()
+		verif.result = &types.Result{
+			Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
+		}
+		verif.mu.Unlock()
 
-	ctx2, cancel2 := context.WithCancel(context.Background())
+		ctx2, cancel2 := context.WithCancel(context.Background())
 
-	done2 := make(chan struct{})
+		done2 := make(chan struct{})
 
-	go func() {
-		plug.RunContinuousVerifier(ctx2, time.Hour)
-		close(done2)
-	}()
+		go func() {
+			plug.RunContinuousVerifier(ctx2, time.Hour)
+			close(done2)
+		}()
 
-	time.Sleep(50 * time.Millisecond)
-	plug.TriggerReverify()
-	time.Sleep(100 * time.Millisecond)
-	cancel2()
-	<-done2
+		time.Sleep(50 * time.Millisecond)
+		plug.TriggerReverify()
+		time.Sleep(100 * time.Millisecond)
+		cancel2()
+		<-done2
 
-	state, found = plug.ExportGetContainerState("ctr-recover")
-	if !found {
-		t.Fatal("expected container in registry after recover")
-	}
+		state, found = plug.ExportGetContainerState("ctr-recover")
+		if !found {
+			t.Fatal("expected container in registry after recover")
+		}
 
-	if state.State != plugin.StateVerified {
-		t.Errorf("expected verified after recover, got %v", state.State)
-	}
+		if state.State != plugin.StateVerified {
+			t.Errorf("expected verified after recover, got %v", state.State)
+		}
+	})
 }
 
 func TestApplyUpdatesStubError(t *testing.T) {
 	t.Parallel()
 
-	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
-		result: &types.Result{
-			Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
-			CheckResults: []types.CheckResult{
-				{ //nolint:exhaustruct_v5 // zero-value fields intentional
-					Type:   types.CheckTypeSBOM,
-					Passed: false,
-					Status: testFailStatus,
+	synctest.Test(t, func(_ *testing.T) {
+		verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+			result: &types.Result{
+				Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
+				CheckResults: []types.CheckResult{
+					{ //nolint:exhaustruct_v5 // zero-value fields intentional
+						Type:   types.CheckTypeSBOM,
+						Passed: false,
+						Status: testFailStatus,
+					},
 				},
 			},
-		},
-	}
+		}
 
-	met := metrics.New()
-	plug := plugin.New(verif, met, "", 30*time.Second, time.Second, nil)
-	plug.SetRemediationMode(config.RemediationModeThrottle)
-	plug.SetRemediationConfig(
-		&config.RemediationConfig{ //nolint:exhaustruct_v5 // zero-value fields intentional
-			Mode:      config.RemediationModeThrottle,
-			BatchSize: 10,
-			Throttle: config.ThrottleConfig{
-				CPUQuotaPercent:    10,
-				MemoryLimitPercent: 50,
+		met := metrics.New()
+		plug := plugin.New(verif, met, "", time.Second, nil)
+		plug.SetRemediationMode(config.RemediationModeThrottle)
+		plug.SetRemediationConfig(
+			&config.RemediationConfig{ //nolint:exhaustruct_v5 // zero-value fields intentional
+				Mode:      config.RemediationModeThrottle,
+				BatchSize: 10,
+				Throttle: config.ThrottleConfig{
+					CPUQuotaPercent:    10,
+					MemoryLimitPercent: 50,
+				},
 			},
-		},
-	)
+		)
 
-	//nolint:exhaustruct_v5 // zero-value fields intentional
-	stubMock := &cvTestStub{err: errStubUpdate}
-	plug.SetStub(stubMock)
+		//nolint:exhaustruct_v5 // zero-value fields intentional
+		stubMock := &cvTestStub{err: errStubUpdate}
+		plug.SetStub(stubMock)
 
-	originalResources := &api.LinuxResources{
-		Cpu: &api.LinuxCPU{
-			Quota:  &api.OptionalInt64{Value: 100000},
-			Shares: &api.OptionalUInt64{Value: 1024},
-		},
-		Memory: &api.LinuxMemory{
-			Limit: &api.OptionalInt64{Value: 536870912},
-		},
-	}
-	plug.ExportStoreContainerWithResources(
-		"ctr-stuberr", "img:latest", "sha256:abc", originalResources,
-	)
+		originalResources := &api.LinuxResources{
+			Cpu: &api.LinuxCPU{
+				Quota:  &api.OptionalInt64{Value: 100000},
+				Shares: &api.OptionalUInt64{Value: 1024},
+			},
+			Memory: &api.LinuxMemory{
+				Limit: &api.OptionalInt64{Value: 536870912},
+			},
+		}
+		plug.ExportStoreContainerWithResources(
+			"ctr-stuberr", "img:latest", "sha256:abc", originalResources,
+		)
 
-	plug.ExportSetPrewarmDone(nil)
-	plug.ExportPrewarmCache(context.Background(), nil)
+		plug.ExportSetPrewarmDone(nil)
+		plug.ExportPrewarmCache(context.Background(), nil)
 
-	// Phase 1: degrade
-	ctx1, cancel1 := context.WithCancel(context.Background())
+		// Phase 1: degrade
+		ctx1, cancel1 := context.WithCancel(context.Background())
 
-	done1 := make(chan struct{})
+		done1 := make(chan struct{})
 
-	go func() {
-		plug.RunContinuousVerifier(ctx1, time.Hour)
-		close(done1)
-	}()
+		go func() {
+			plug.RunContinuousVerifier(ctx1, time.Hour)
+			close(done1)
+		}()
 
-	time.Sleep(50 * time.Millisecond)
-	plug.TriggerReverify()
-	time.Sleep(100 * time.Millisecond)
-	cancel1()
-	<-done1
+		time.Sleep(50 * time.Millisecond)
+		plug.TriggerReverify()
+		time.Sleep(100 * time.Millisecond)
+		cancel1()
+		<-done1
 
-	// Phase 2: short timer for throttle (stub returns error)
-	ctx2, cancel2 := context.WithCancel(context.Background())
+		// Phase 2: short timer for throttle (stub returns error)
+		ctx2, cancel2 := context.WithCancel(context.Background())
 
-	done2 := make(chan struct{})
+		done2 := make(chan struct{})
 
-	go func() {
-		plug.RunContinuousVerifier(ctx2, 50*time.Millisecond)
-		close(done2)
-	}()
+		go func() {
+			plug.RunContinuousVerifier(ctx2, 50*time.Millisecond)
+			close(done2)
+		}()
 
-	time.Sleep(150 * time.Millisecond)
-	cancel2()
-	<-done2
+		time.Sleep(150 * time.Millisecond)
+		cancel2()
+		<-done2
 
-	// The test passes if no panic occurs; the stub error is logged.
+		// The test passes if no panic occurs; the stub error is logged.
+	})
 }
 
 func TestApplyUpdatesPartialFailure(t *testing.T) {
 	t.Parallel()
 
-	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
-		result: &types.Result{
-			Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
-			CheckResults: []types.CheckResult{
-				{ //nolint:exhaustruct_v5 // zero-value fields intentional
-					Type:   types.CheckTypeSBOM,
-					Passed: false,
-					Status: testFailStatus,
+	synctest.Test(t, func(_ *testing.T) {
+		verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+			result: &types.Result{
+				Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
+				CheckResults: []types.CheckResult{
+					{ //nolint:exhaustruct_v5 // zero-value fields intentional
+						Type:   types.CheckTypeSBOM,
+						Passed: false,
+						Status: testFailStatus,
+					},
 				},
 			},
-		},
-	}
+		}
 
-	met := metrics.New()
-	plug := plugin.New(verif, met, "", 30*time.Second, time.Second, nil)
-	plug.SetRemediationMode(config.RemediationModeThrottle)
-	plug.SetRemediationConfig(
-		&config.RemediationConfig{ //nolint:exhaustruct_v5 // zero-value fields intentional
-			Mode:      config.RemediationModeThrottle,
-			BatchSize: 10,
-			Throttle: config.ThrottleConfig{
-				CPUQuotaPercent:    10,
-				MemoryLimitPercent: 50,
+		met := metrics.New()
+		plug := plugin.New(verif, met, "", time.Second, nil)
+		plug.SetRemediationMode(config.RemediationModeThrottle)
+		plug.SetRemediationConfig(
+			&config.RemediationConfig{ //nolint:exhaustruct_v5 // zero-value fields intentional
+				Mode:      config.RemediationModeThrottle,
+				BatchSize: 10,
+				Throttle: config.ThrottleConfig{
+					CPUQuotaPercent:    10,
+					MemoryLimitPercent: 50,
+				},
 			},
-		},
-	)
+		)
 
-	failedUpdate := &api.ContainerUpdate{
-		ContainerId: "ctr-partial",
-	}
-	stubMock := &cvTestStub{ //nolint:exhaustruct_v5 // zero-value fields intentional
-		failed: []*api.ContainerUpdate{failedUpdate},
-	}
-	plug.SetStub(stubMock)
+		failedUpdate := &api.ContainerUpdate{
+			ContainerId: "ctr-partial",
+		}
+		stubMock := &cvTestStub{ //nolint:exhaustruct_v5 // zero-value fields intentional
+			failed: []*api.ContainerUpdate{failedUpdate},
+		}
+		plug.SetStub(stubMock)
 
-	originalResources := &api.LinuxResources{
-		Cpu: &api.LinuxCPU{
-			Quota:  &api.OptionalInt64{Value: 100000},
-			Shares: &api.OptionalUInt64{Value: 1024},
-		},
-		Memory: &api.LinuxMemory{
-			Limit: &api.OptionalInt64{Value: 536870912},
-		},
-	}
-	plug.ExportStoreContainerWithResources(
-		"ctr-partial", "img:latest", "sha256:abc", originalResources,
-	)
+		originalResources := &api.LinuxResources{
+			Cpu: &api.LinuxCPU{
+				Quota:  &api.OptionalInt64{Value: 100000},
+				Shares: &api.OptionalUInt64{Value: 1024},
+			},
+			Memory: &api.LinuxMemory{
+				Limit: &api.OptionalInt64{Value: 536870912},
+			},
+		}
+		plug.ExportStoreContainerWithResources(
+			"ctr-partial", "img:latest", "sha256:abc", originalResources,
+		)
 
-	plug.ExportSetPrewarmDone(nil)
-	plug.ExportPrewarmCache(context.Background(), nil)
+		plug.ExportSetPrewarmDone(nil)
+		plug.ExportPrewarmCache(context.Background(), nil)
 
-	// Phase 1: degrade
-	ctx1, cancel1 := context.WithCancel(context.Background())
+		// Phase 1: degrade
+		ctx1, cancel1 := context.WithCancel(context.Background())
 
-	done1 := make(chan struct{})
+		done1 := make(chan struct{})
 
-	go func() {
-		plug.RunContinuousVerifier(ctx1, time.Hour)
-		close(done1)
-	}()
+		go func() {
+			plug.RunContinuousVerifier(ctx1, time.Hour)
+			close(done1)
+		}()
 
-	time.Sleep(50 * time.Millisecond)
-	plug.TriggerReverify()
-	time.Sleep(100 * time.Millisecond)
-	cancel1()
-	<-done1
+		time.Sleep(50 * time.Millisecond)
+		plug.TriggerReverify()
+		time.Sleep(100 * time.Millisecond)
+		cancel1()
+		<-done1
 
-	// Phase 2: short timer for throttle (stub returns partial failure)
-	ctx2, cancel2 := context.WithCancel(context.Background())
+		// Phase 2: short timer for throttle (stub returns partial failure)
+		ctx2, cancel2 := context.WithCancel(context.Background())
 
-	done2 := make(chan struct{})
+		done2 := make(chan struct{})
 
-	go func() {
-		plug.RunContinuousVerifier(ctx2, 50*time.Millisecond)
-		close(done2)
-	}()
+		go func() {
+			plug.RunContinuousVerifier(ctx2, 50*time.Millisecond)
+			close(done2)
+		}()
 
-	time.Sleep(150 * time.Millisecond)
-	cancel2()
-	<-done2
+		time.Sleep(150 * time.Millisecond)
+		cancel2()
+		<-done2
 
-	// The test passes if no panic occurs; partial failures are logged.
+		// The test passes if no panic occurs; partial failures are logged.
+	})
 }
 
 func TestApplyUpdatesNoStub(t *testing.T) {
 	t.Parallel()
 
-	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
-		result: &types.Result{
-			Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
-			CheckResults: []types.CheckResult{
-				{ //nolint:exhaustruct_v5 // zero-value fields intentional
-					Type:   types.CheckTypeSBOM,
-					Passed: false,
-					Status: testFailStatus,
+	synctest.Test(t, func(_ *testing.T) {
+		verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+			result: &types.Result{
+				Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
+				CheckResults: []types.CheckResult{
+					{ //nolint:exhaustruct_v5 // zero-value fields intentional
+						Type:   types.CheckTypeSBOM,
+						Passed: false,
+						Status: testFailStatus,
+					},
 				},
 			},
-		},
-	}
+		}
 
-	met := metrics.New()
-	plug := plugin.New(verif, met, "", 30*time.Second, time.Second, nil)
-	plug.SetRemediationMode(config.RemediationModeThrottle)
-	plug.SetRemediationConfig(
-		&config.RemediationConfig{ //nolint:exhaustruct_v5 // zero-value fields intentional
-			Mode:      config.RemediationModeThrottle,
-			BatchSize: 10,
-			Throttle: config.ThrottleConfig{
-				CPUQuotaPercent:    10,
-				MemoryLimitPercent: 50,
+		met := metrics.New()
+		plug := plugin.New(verif, met, "", time.Second, nil)
+		plug.SetRemediationMode(config.RemediationModeThrottle)
+		plug.SetRemediationConfig(
+			&config.RemediationConfig{ //nolint:exhaustruct_v5 // zero-value fields intentional
+				Mode:      config.RemediationModeThrottle,
+				BatchSize: 10,
+				Throttle: config.ThrottleConfig{
+					CPUQuotaPercent:    10,
+					MemoryLimitPercent: 50,
+				},
 			},
-		},
-	)
+		)
 
-	originalResources := &api.LinuxResources{
-		Cpu: &api.LinuxCPU{
-			Quota:  &api.OptionalInt64{Value: 100000},
-			Shares: &api.OptionalUInt64{Value: 1024},
-		},
-		Memory: &api.LinuxMemory{
-			Limit: &api.OptionalInt64{Value: 536870912},
-		},
-	}
-	plug.ExportStoreContainerWithResources(
-		"ctr-nostub", "img:latest", "sha256:abc", originalResources,
-	)
+		originalResources := &api.LinuxResources{
+			Cpu: &api.LinuxCPU{
+				Quota:  &api.OptionalInt64{Value: 100000},
+				Shares: &api.OptionalUInt64{Value: 1024},
+			},
+			Memory: &api.LinuxMemory{
+				Limit: &api.OptionalInt64{Value: 536870912},
+			},
+		}
+		plug.ExportStoreContainerWithResources(
+			"ctr-nostub", "img:latest", "sha256:abc", originalResources,
+		)
 
-	plug.ExportSetPrewarmDone(nil)
-	plug.ExportPrewarmCache(context.Background(), nil)
+		plug.ExportSetPrewarmDone(nil)
+		plug.ExportPrewarmCache(context.Background(), nil)
 
-	// Phase 1: degrade
-	ctx1, cancel1 := context.WithCancel(context.Background())
+		// Phase 1: degrade
+		ctx1, cancel1 := context.WithCancel(context.Background())
 
-	done1 := make(chan struct{})
+		done1 := make(chan struct{})
 
-	go func() {
-		plug.RunContinuousVerifier(ctx1, time.Hour)
-		close(done1)
-	}()
+		go func() {
+			plug.RunContinuousVerifier(ctx1, time.Hour)
+			close(done1)
+		}()
 
-	time.Sleep(50 * time.Millisecond)
-	plug.TriggerReverify()
-	time.Sleep(100 * time.Millisecond)
-	cancel1()
-	<-done1
+		time.Sleep(50 * time.Millisecond)
+		plug.TriggerReverify()
+		time.Sleep(100 * time.Millisecond)
+		cancel1()
+		<-done1
 
-	// Phase 2: short timer for throttle (no stub set)
-	ctx2, cancel2 := context.WithCancel(context.Background())
+		// Phase 2: short timer for throttle (no stub set)
+		ctx2, cancel2 := context.WithCancel(context.Background())
 
-	done2 := make(chan struct{})
+		done2 := make(chan struct{})
 
-	go func() {
-		plug.RunContinuousVerifier(ctx2, 50*time.Millisecond)
-		close(done2)
-	}()
+		go func() {
+			plug.RunContinuousVerifier(ctx2, 50*time.Millisecond)
+			close(done2)
+		}()
 
-	time.Sleep(150 * time.Millisecond)
-	cancel2()
-	<-done2
+		time.Sleep(150 * time.Millisecond)
+		cancel2()
+		<-done2
 
-	// The test passes if no panic occurs; missing stub is logged.
+		// The test passes if no panic occurs; missing stub is logged.
+	})
 }
 
 func TestVerificationStateString(t *testing.T) {
@@ -1637,85 +1673,87 @@ func TestDeepCopyLinuxResourcesAllFields(t *testing.T) {
 func TestCooldownBlocksRemediation(t *testing.T) {
 	t.Parallel()
 
-	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
-		result: &types.Result{
-			Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
-			CheckResults: []types.CheckResult{
-				{ //nolint:exhaustruct_v5 // zero-value fields intentional
-					Type:   types.CheckTypeSBOM,
-					Passed: false,
-					Status: testFailStatus,
+	synctest.Test(t, func(t *testing.T) {
+		verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+			result: &types.Result{
+				Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
+				CheckResults: []types.CheckResult{
+					{ //nolint:exhaustruct_v5 // zero-value fields intentional
+						Type:   types.CheckTypeSBOM,
+						Passed: false,
+						Status: testFailStatus,
+					},
 				},
 			},
-		},
-	}
+		}
 
-	met := metrics.New()
-	plug := plugin.New(verif, met, "", 30*time.Second, time.Second, nil)
+		met := metrics.New()
+		plug := plugin.New(verif, met, "", time.Second, nil)
 
-	plug.SetRemediationMode(config.RemediationModeThrottle)
-	plug.SetRemediationConfig(
-		&config.RemediationConfig{ //nolint:exhaustruct_v5 // zero-value fields intentional
-			Mode:      config.RemediationModeThrottle,
-			BatchSize: 10,
-			Cooldown:  config.Duration{Duration: time.Hour},
-			Throttle: config.ThrottleConfig{
-				CPUQuotaPercent:    10,
-				MemoryLimitPercent: 50,
+		plug.SetRemediationMode(config.RemediationModeThrottle)
+		plug.SetRemediationConfig(
+			&config.RemediationConfig{ //nolint:exhaustruct_v5 // zero-value fields intentional
+				Mode:      config.RemediationModeThrottle,
+				BatchSize: 10,
+				Cooldown:  config.Duration{Duration: time.Hour},
+				Throttle: config.ThrottleConfig{
+					CPUQuotaPercent:    10,
+					MemoryLimitPercent: 50,
+				},
 			},
-		},
-	)
+		)
 
-	stubMock := &cvTestStub{} //nolint:exhaustruct_v5 // zero-value fields intentional
-	plug.SetStub(stubMock)
+		stubMock := &cvTestStub{} //nolint:exhaustruct_v5 // zero-value fields intentional
+		plug.SetStub(stubMock)
 
-	originalResources := &api.LinuxResources{
-		Cpu: &api.LinuxCPU{
-			Quota:  &api.OptionalInt64{Value: 100000},
-			Shares: &api.OptionalUInt64{Value: 1024},
-		},
-		Memory: &api.LinuxMemory{
-			Limit: &api.OptionalInt64{Value: 536870912},
-		},
-	}
+		originalResources := &api.LinuxResources{
+			Cpu: &api.LinuxCPU{
+				Quota:  &api.OptionalInt64{Value: 100000},
+				Shares: &api.OptionalUInt64{Value: 1024},
+			},
+			Memory: &api.LinuxMemory{
+				Limit: &api.OptionalInt64{Value: 536870912},
+			},
+		}
 
-	plug.ExportStoreContainerInState(
-		"ctr-cooldown", "img:latest", "sha256:abc",
-		plugin.StateDegraded, originalResources, time.Now(),
-	)
+		plug.ExportStoreContainerInState(
+			"ctr-cooldown", "img:latest", "sha256:abc",
+			plugin.StateDegraded, originalResources, time.Now(),
+		)
 
-	plug.ExportSetPrewarmDone(nil)
-	plug.ExportPrewarmCache(context.Background(), nil)
+		plug.ExportSetPrewarmDone(nil)
+		plug.ExportPrewarmCache(context.Background(), nil)
 
-	ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(context.Background())
 
-	done := make(chan struct{})
+		done := make(chan struct{})
 
-	go func() {
-		plug.RunContinuousVerifier(ctx, 50*time.Millisecond)
-		close(done)
-	}()
+		go func() {
+			plug.RunContinuousVerifier(ctx, 50*time.Millisecond)
+			close(done)
+		}()
 
-	time.Sleep(150 * time.Millisecond)
-	cancel()
-	<-done
+		time.Sleep(150 * time.Millisecond)
+		cancel()
+		<-done
 
-	state, found := plug.ExportGetContainerState("ctr-cooldown")
-	if !found {
-		t.Fatal("expected container in registry")
-	}
+		state, found := plug.ExportGetContainerState("ctr-cooldown")
+		if !found {
+			t.Fatal("expected container in registry")
+		}
 
-	if state.State != plugin.StateDegraded {
-		t.Errorf("expected StateDegraded (cooldown should block throttle), got %v", state.State)
-	}
+		if state.State != plugin.StateDegraded {
+			t.Errorf("expected StateDegraded (cooldown should block throttle), got %v", state.State)
+		}
 
-	stubMock.mu.Lock()
-	updates := len(stubMock.updates)
-	stubMock.mu.Unlock()
+		stubMock.mu.Lock()
+		updates := len(stubMock.updates)
+		stubMock.mu.Unlock()
 
-	if updates != 0 {
-		t.Errorf("expected no updates during cooldown, got %d", updates)
-	}
+		if updates != 0 {
+			t.Errorf("expected no updates during cooldown, got %d", updates)
+		}
+	})
 }
 
 func TestExtractPURLsFromResult(t *testing.T) {
@@ -1853,147 +1891,191 @@ func TestCaptureLinuxResources(t *testing.T) {
 func TestDuplicateContinuousVerifierBlocked(t *testing.T) {
 	t.Parallel()
 
-	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
-		result: &types.Result{
-			Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
-		},
-	}
-	plug := newCVTestPlugin(verif)
-	plug.SetRemediationMode(config.RemediationModeWarn)
+	synctest.Test(t, func(t *testing.T) {
+		verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+			result: &types.Result{
+				Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
+			},
+		}
+		plug := newCVTestPlugin(verif)
+		plug.SetRemediationMode(config.RemediationModeWarn)
 
-	plug.ExportSetPrewarmDone(nil)
-	plug.ExportPrewarmCache(context.Background(), nil)
+		plug.ExportSetPrewarmDone(nil)
+		plug.ExportPrewarmCache(context.Background(), nil)
 
-	ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(context.Background())
 
-	done1 := make(chan struct{})
+		done1 := make(chan struct{})
 
-	go func() {
-		plug.RunContinuousVerifier(ctx, time.Hour)
-		close(done1)
-	}()
+		go func() {
+			plug.RunContinuousVerifier(ctx, time.Hour)
+			close(done1)
+		}()
 
-	time.Sleep(50 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 
-	done2 := make(chan struct{})
+		done2 := make(chan struct{})
 
-	go func() {
-		plug.RunContinuousVerifier(ctx, time.Hour)
-		close(done2)
-	}()
+		go func() {
+			plug.RunContinuousVerifier(ctx, time.Hour)
+			close(done2)
+		}()
 
-	// The second call should return immediately.
-	select {
-	case <-done2:
-	case <-time.After(time.Second):
-		t.Fatal("duplicate RunContinuousVerifier did not return")
-	}
+		// The second call should return immediately.
+		select {
+		case <-done2:
+		case <-time.After(time.Second):
+			t.Fatal("duplicate RunContinuousVerifier did not return")
+		}
 
-	cancel()
-	<-done1
+		cancel()
+		<-done1
+	})
 }
 
 func TestConsecutiveErrorsDegradeFromVerified(t *testing.T) {
 	t.Parallel()
 
-	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
-		err: errVerifyFailed,
-	}
-	plug := newCVTestPlugin(verif)
-	plug.SetRemediationMode(config.RemediationModeWarn)
+	synctest.Test(t, func(t *testing.T) {
+		verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+			err: errVerifyFailed,
+		}
+		plug := newCVTestPlugin(verif)
+		plug.SetRemediationMode(config.RemediationModeWarn)
 
-	plug.ExportStoreContainerTime("ctr-consec", time.Now())
+		plug.ExportStoreContainerTime("ctr-consec", time.Now())
 
-	plug.ExportSetPrewarmDone(nil)
-	plug.ExportPrewarmCache(context.Background(), nil)
+		plug.ExportSetPrewarmDone(nil)
+		plug.ExportPrewarmCache(context.Background(), nil)
 
-	// Run 3 cycles to hit the consecutiveErrorThreshold.
-	for range 3 {
-		ctx, cancel := context.WithCancel(context.Background())
+		// Run 3 cycles to hit the consecutiveErrorThreshold.
+		for range 3 {
+			ctx, cancel := context.WithCancel(context.Background())
 
-		done := make(chan struct{})
+			done := make(chan struct{})
 
-		go func() {
-			plug.RunContinuousVerifier(ctx, time.Hour)
-			close(done)
-		}()
+			go func() {
+				plug.RunContinuousVerifier(ctx, time.Hour)
+				close(done)
+			}()
 
-		time.Sleep(50 * time.Millisecond)
-		plug.TriggerReverify()
-		time.Sleep(100 * time.Millisecond)
-		cancel()
-		<-done
-	}
+			time.Sleep(50 * time.Millisecond)
+			plug.TriggerReverify()
+			time.Sleep(100 * time.Millisecond)
+			cancel()
+			<-done
+		}
 
-	state, found := plug.ExportGetContainerState("ctr-consec")
-	if !found {
-		t.Fatal("expected container in registry")
-	}
+		state, found := plug.ExportGetContainerState("ctr-consec")
+		if !found {
+			t.Fatal("expected container in registry")
+		}
 
-	if state.State != plugin.StateDegraded {
-		t.Errorf("expected StateDegraded after 3 consecutive errors, got %v", state.State)
-	}
+		if state.State != plugin.StateDegraded {
+			t.Errorf("expected StateDegraded after 3 consecutive errors, got %v", state.State)
+		}
+	})
 }
 
 func TestConsecutiveErrorsDegradeFromSkipped(t *testing.T) {
 	t.Parallel()
 
-	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
-		err: errVerifyFailed,
-	}
-	plug := newCVTestPlugin(verif)
-	plug.SetRemediationMode(config.RemediationModeWarn)
+	synctest.Test(t, func(t *testing.T) {
+		verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+			err: errVerifyFailed,
+		}
+		plug := newCVTestPlugin(verif)
+		plug.SetRemediationMode(config.RemediationModeWarn)
 
-	plug.ExportStoreContainerInStateSimple(
-		"ctr-skip-err", "img:latest", "sha256:abc", plugin.StateSkipped,
-	)
+		plug.ExportStoreContainerInStateSimple(
+			"ctr-skip-err", "img:latest", "sha256:abc", plugin.StateSkipped,
+		)
 
-	plug.ExportSetPrewarmDone(nil)
-	plug.ExportPrewarmCache(context.Background(), nil)
+		plug.ExportSetPrewarmDone(nil)
+		plug.ExportPrewarmCache(context.Background(), nil)
 
-	for range 3 {
-		ctx, cancel := context.WithCancel(context.Background())
+		for range 3 {
+			ctx, cancel := context.WithCancel(context.Background())
 
-		done := make(chan struct{})
+			done := make(chan struct{})
 
-		go func() {
-			plug.RunContinuousVerifier(ctx, time.Hour)
-			close(done)
-		}()
+			go func() {
+				plug.RunContinuousVerifier(ctx, time.Hour)
+				close(done)
+			}()
 
-		time.Sleep(50 * time.Millisecond)
-		plug.TriggerReverify()
-		time.Sleep(100 * time.Millisecond)
-		cancel()
-		<-done
-	}
+			time.Sleep(50 * time.Millisecond)
+			plug.TriggerReverify()
+			time.Sleep(100 * time.Millisecond)
+			cancel()
+			<-done
+		}
 
-	state, found := plug.ExportGetContainerState("ctr-skip-err")
-	if !found {
-		t.Fatal("expected container in registry")
-	}
+		state, found := plug.ExportGetContainerState("ctr-skip-err")
+		if !found {
+			t.Fatal("expected container in registry")
+		}
 
-	if state.State != plugin.StateDegraded {
-		t.Errorf("expected StateDegraded after 3 errors from Skipped, got %v", state.State)
-	}
+		if state.State != plugin.StateDegraded {
+			t.Errorf("expected StateDegraded after 3 errors from Skipped, got %v", state.State)
+		}
+	})
 }
 
 func TestConsecutiveErrorsResetOnSuccess(t *testing.T) {
 	t.Parallel()
 
-	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
-		err: errVerifyFailed,
-	}
-	plug := newCVTestPlugin(verif)
-	plug.SetRemediationMode(config.RemediationModeWarn)
+	synctest.Test(t, func(t *testing.T) {
+		verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+			err: errVerifyFailed,
+		}
+		plug := newCVTestPlugin(verif)
+		plug.SetRemediationMode(config.RemediationModeWarn)
 
-	plug.ExportStoreContainerTime("ctr-reset", time.Now())
+		plug.ExportStoreContainerTime("ctr-reset", time.Now())
 
-	plug.ExportSetPrewarmDone(nil)
-	plug.ExportPrewarmCache(context.Background(), nil)
+		plug.ExportSetPrewarmDone(nil)
+		plug.ExportPrewarmCache(context.Background(), nil)
 
-	// Run 2 error cycles (below threshold).
-	for range 2 {
+		// Run 2 error cycles (below threshold).
+		for range 2 {
+			ctx, cancel := context.WithCancel(context.Background())
+
+			done := make(chan struct{})
+
+			go func() {
+				plug.RunContinuousVerifier(ctx, time.Hour)
+				close(done)
+			}()
+
+			time.Sleep(50 * time.Millisecond)
+			plug.TriggerReverify()
+			time.Sleep(100 * time.Millisecond)
+			cancel()
+			<-done
+		}
+
+		count, found := plug.ExportGetConsecutiveErrors("ctr-reset")
+		if !found {
+			t.Fatal("expected container in registry")
+		}
+
+		if count != 2 {
+			t.Errorf("expected 2 consecutive errors, got %d", count)
+		}
+
+		// Now succeed.
+		verif.mu.Lock()
+		verif.result = &types.Result{
+			Allowed:      true,
+			Verified:     true,
+			Mode:         "",
+			Reason:       "",
+			CheckResults: nil,
+		}
+		verif.err = nil
+		verif.mu.Unlock()
+
 		ctx, cancel := context.WithCancel(context.Background())
 
 		done := make(chan struct{})
@@ -2008,145 +2090,113 @@ func TestConsecutiveErrorsResetOnSuccess(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 		cancel()
 		<-done
-	}
 
-	count, found := plug.ExportGetConsecutiveErrors("ctr-reset")
-	if !found {
-		t.Fatal("expected container in registry")
-	}
+		count, found = plug.ExportGetConsecutiveErrors("ctr-reset")
+		if !found {
+			t.Fatal("expected container in registry")
+		}
 
-	if count != 2 {
-		t.Errorf("expected 2 consecutive errors, got %d", count)
-	}
-
-	// Now succeed.
-	verif.mu.Lock()
-	verif.result = &types.Result{
-		Allowed:      true,
-		Verified:     true,
-		Mode:         "",
-		Reason:       "",
-		CheckResults: nil,
-	}
-	verif.err = nil
-	verif.mu.Unlock()
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	done := make(chan struct{})
-
-	go func() {
-		plug.RunContinuousVerifier(ctx, time.Hour)
-		close(done)
-	}()
-
-	time.Sleep(50 * time.Millisecond)
-	plug.TriggerReverify()
-	time.Sleep(100 * time.Millisecond)
-	cancel()
-	<-done
-
-	count, found = plug.ExportGetConsecutiveErrors("ctr-reset")
-	if !found {
-		t.Fatal("expected container in registry")
-	}
-
-	if count != 0 {
-		t.Errorf("expected consecutive errors reset to 0, got %d", count)
-	}
+		if count != 0 {
+			t.Errorf("expected consecutive errors reset to 0, got %d", count)
+		}
+	})
 }
 
 func TestStateTransitionSkippedToVerified(t *testing.T) {
 	t.Parallel()
 
-	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
-		result: &types.Result{
-			Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
-		},
-	}
-	plug := newCVTestPlugin(verif)
-	plug.SetRemediationMode(config.RemediationModeWarn)
+	synctest.Test(t, func(t *testing.T) {
+		verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+			result: &types.Result{
+				Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
+			},
+		}
+		plug := newCVTestPlugin(verif)
+		plug.SetRemediationMode(config.RemediationModeWarn)
 
-	plug.ExportStoreContainerInStateSimple(
-		"ctr-skipped", "img:latest", "sha256:abc", plugin.StateSkipped,
-	)
+		plug.ExportStoreContainerInStateSimple(
+			"ctr-skipped", "img:latest", "sha256:abc", plugin.StateSkipped,
+		)
 
-	plug.ExportSetPrewarmDone(nil)
-	plug.ExportPrewarmCache(context.Background(), nil)
+		plug.ExportSetPrewarmDone(nil)
+		plug.ExportPrewarmCache(context.Background(), nil)
 
-	ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(context.Background())
 
-	done := make(chan struct{})
+		done := make(chan struct{})
 
-	go func() {
-		plug.RunContinuousVerifier(ctx, time.Hour)
-		close(done)
-	}()
+		go func() {
+			plug.RunContinuousVerifier(ctx, time.Hour)
+			close(done)
+		}()
 
-	time.Sleep(50 * time.Millisecond)
-	plug.TriggerReverify()
-	time.Sleep(100 * time.Millisecond)
-	cancel()
-	<-done
+		time.Sleep(50 * time.Millisecond)
+		plug.TriggerReverify()
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+		<-done
 
-	state, found := plug.ExportGetContainerState("ctr-skipped")
-	if !found {
-		t.Fatal("expected container in registry")
-	}
+		state, found := plug.ExportGetContainerState("ctr-skipped")
+		if !found {
+			t.Fatal("expected container in registry")
+		}
 
-	if state.State != plugin.StateVerified {
-		t.Errorf("expected StateVerified after passing from Skipped, got %v", state.State)
-	}
+		if state.State != plugin.StateVerified {
+			t.Errorf("expected StateVerified after passing from Skipped, got %v", state.State)
+		}
+	})
 }
 
 func TestStateTransitionSkippedToDegraded(t *testing.T) {
 	t.Parallel()
 
-	verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
-		result: &types.Result{
-			Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
-			CheckResults: []types.CheckResult{
-				{ //nolint:exhaustruct_v5 // zero-value fields intentional
-					Type:   types.CheckTypeSBOM,
-					Passed: false,
-					Status: testFailStatus,
+	synctest.Test(t, func(t *testing.T) {
+		verif := &cvTestVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+			result: &types.Result{
+				Allowed: false, Verified: false, Mode: "", Reason: testDegradedReason,
+				CheckResults: []types.CheckResult{
+					{ //nolint:exhaustruct_v5 // zero-value fields intentional
+						Type:   types.CheckTypeSBOM,
+						Passed: false,
+						Status: testFailStatus,
+					},
 				},
 			},
-		},
-	}
-	plug := newCVTestPlugin(verif)
-	plug.SetRemediationMode(config.RemediationModeWarn)
+		}
+		plug := newCVTestPlugin(verif)
+		plug.SetRemediationMode(config.RemediationModeWarn)
 
-	plug.ExportStoreContainerInStateSimple(
-		"ctr-skip-deg", "img:latest", "sha256:abc", plugin.StateSkipped,
-	)
+		plug.ExportStoreContainerInStateSimple(
+			"ctr-skip-deg", "img:latest", "sha256:abc", plugin.StateSkipped,
+		)
 
-	plug.ExportSetPrewarmDone(nil)
-	plug.ExportPrewarmCache(context.Background(), nil)
+		plug.ExportSetPrewarmDone(nil)
+		plug.ExportPrewarmCache(context.Background(), nil)
 
-	ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(context.Background())
 
-	done := make(chan struct{})
+		done := make(chan struct{})
 
-	go func() {
-		plug.RunContinuousVerifier(ctx, time.Hour)
-		close(done)
-	}()
+		go func() {
+			plug.RunContinuousVerifier(ctx, time.Hour)
+			close(done)
+		}()
 
-	time.Sleep(50 * time.Millisecond)
-	plug.TriggerReverify()
-	time.Sleep(100 * time.Millisecond)
-	cancel()
-	<-done
+		time.Sleep(50 * time.Millisecond)
+		plug.TriggerReverify()
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+		<-done
 
-	state, found := plug.ExportGetContainerState("ctr-skip-deg")
-	if !found {
-		t.Fatal("expected container in registry")
-	}
+		state, found := plug.ExportGetContainerState("ctr-skip-deg")
+		if !found {
+			t.Fatal("expected container in registry")
+		}
 
-	if state.State != plugin.StateDegraded {
-		t.Errorf("expected StateDegraded from Skipped, got %v", state.State)
-	}
+		if state.State != plugin.StateDegraded {
+			t.Errorf("expected StateDegraded from Skipped, got %v", state.State)
+		}
+	})
 }
 
 func TestThrottlePercentsClampsUpperBound(t *testing.T) {
@@ -2214,58 +2264,60 @@ func (v *cachingVerifier) InvalidateCache(digest, namespace string) {
 func TestFeedTriggerVerifiesReplicasOfAnImageOnce(t *testing.T) {
 	t.Parallel()
 
-	verif := &cachingVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
-		cached: make(map[string]struct{}),
-	}
-	verif.result = &types.Result{
-		Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
-	}
-	plug := newCVTestPlugin(verif)
-	plug.SetRemediationMode(config.RemediationModeWarn)
-	plug.SetRemediationConfig(
-		&config.RemediationConfig{ //nolint:exhaustruct_v5 // zero-value fields intentional
-			Mode:     config.RemediationModeWarn,
-			Triggers: config.TriggerConfig{OnNewCVE: true}, //nolint:exhaustruct_v5 // test
-		},
-	)
-
-	const replicas = 5
-
-	for idx := range replicas {
-		plug.ExportStoreContainerWithPURLs(
-			"ctr-replica-"+strconv.Itoa(idx), []string{testPURLGolangFoo},
+	synctest.Test(t, func(t *testing.T) {
+		verif := &cachingVerifier{ //nolint:exhaustruct_v5 // zero-value fields intentional
+			cached: make(map[string]struct{}),
+		}
+		verif.result = &types.Result{
+			Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
+		}
+		plug := newCVTestPlugin(verif)
+		plug.SetRemediationMode(config.RemediationModeWarn)
+		plug.SetRemediationConfig(
+			&config.RemediationConfig{ //nolint:exhaustruct_v5 // zero-value fields intentional
+				Mode:     config.RemediationModeWarn,
+				Triggers: config.TriggerConfig{OnNewCVE: true}, //nolint:exhaustruct_v5 // test
+			},
 		)
-	}
 
-	plug.ExportSetPrewarmDone(nil)
-	plug.ExportPrewarmCache(context.Background(), nil)
+		const replicas = 5
 
-	ctx, cancel := context.WithCancel(context.Background())
+		for idx := range replicas {
+			plug.ExportStoreContainerWithPURLs(
+				"ctr-replica-"+strconv.Itoa(idx), []string{testPURLGolangFoo},
+			)
+		}
 
-	done := make(chan struct{})
+		plug.ExportSetPrewarmDone(nil)
+		plug.ExportPrewarmCache(context.Background(), nil)
 
-	go func() {
-		plug.RunContinuousVerifier(ctx, time.Hour)
-		close(done)
-	}()
+		ctx, cancel := context.WithCancel(context.Background())
 
-	time.Sleep(50 * time.Millisecond)
-	plug.TriggerFeedReverify([]string{testPURLGolangFoo})
-	time.Sleep(100 * time.Millisecond)
-	cancel()
-	<-done
+		done := make(chan struct{})
 
-	verif.mu.Lock()
-	defer verif.mu.Unlock()
+		go func() {
+			plug.RunContinuousVerifier(ctx, time.Hour)
+			close(done)
+		}()
 
-	if verif.calls != 0 {
-		t.Errorf("expected no calls to the embedded verifier, got %d", verif.calls)
-	}
+		time.Sleep(50 * time.Millisecond)
+		plug.TriggerFeedReverify([]string{testPURLGolangFoo})
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+		<-done
 
-	if verif.verifications != 1 {
-		t.Errorf("expected one verification for %d replicas of an image, got %d",
-			replicas, verif.verifications)
-	}
+		verif.mu.Lock()
+		defer verif.mu.Unlock()
+
+		if verif.calls != 0 {
+			t.Errorf("expected no calls to the embedded verifier, got %d", verif.calls)
+		}
+
+		if verif.verifications != 1 {
+			t.Errorf("expected one verification for %d replicas of an image, got %d",
+				replicas, verif.verifications)
+		}
+	})
 }
 
 // Enabling remediation again with another interval while the continuous
@@ -2274,50 +2326,52 @@ func TestFeedTriggerVerifiesReplicasOfAnImageOnce(t *testing.T) {
 //
 //nolint:paralleltest // mutates slog.SetDefault
 func TestStartContinuousVerifierWarnsAboutChangedInterval(t *testing.T) {
-	logs := &syncBuffer{} //nolint:exhaustruct_v5 // zero-value buffer
+	synctest.Test(t, func(t *testing.T) {
+		logs := &syncBuffer{} //nolint:exhaustruct_v5 // zero-value buffer
 
-	prev := slog.Default()
+		prev := slog.Default()
 
-	handler := slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelWarn})
-	slog.SetDefault(slog.New(handler))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+		handler := slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelWarn})
+		slog.SetDefault(slog.New(handler))
+		t.Cleanup(func() { slog.SetDefault(prev) })
 
-	verif := &cvTestVerifier{} //nolint:exhaustruct_v5 // zero-value fields intentional
-	plug := newCVTestPlugin(verif)
+		verif := &cvTestVerifier{} //nolint:exhaustruct_v5 // zero-value fields intentional
+		plug := newCVTestPlugin(verif)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
 
-	go func() {
-		plug.RunContinuousVerifier(ctx, time.Hour)
-		close(done)
-	}()
+		go func() {
+			plug.RunContinuousVerifier(ctx, time.Hour)
+			close(done)
+		}()
 
-	t.Cleanup(func() {
-		cancel()
-		<-done
-	})
+		t.Cleanup(func() {
+			cancel()
+			<-done
+		})
 
-	deadline := time.Now().Add(5 * time.Second)
-	for plug.ExportContinuousVerifierInterval() != time.Hour {
-		if time.Now().After(deadline) {
-			t.Fatal("timed out waiting for the continuous verifier to start")
+		deadline := time.Now().Add(5 * time.Second)
+		for plug.ExportContinuousVerifierInterval() != time.Hour {
+			if time.Now().After(deadline) {
+				t.Fatal("timed out waiting for the continuous verifier to start")
+			}
+
+			time.Sleep(time.Millisecond)
 		}
 
-		time.Sleep(time.Millisecond)
-	}
+		plug.StartContinuousVerifier(ctx, time.Hour)
 
-	plug.StartContinuousVerifier(ctx, time.Hour)
+		if strings.Contains(logs.String(), "remediation.interval") {
+			t.Errorf("expected no warning for an unchanged interval, got: %s", logs.String())
+		}
 
-	if strings.Contains(logs.String(), "remediation.interval") {
-		t.Errorf("expected no warning for an unchanged interval, got: %s", logs.String())
-	}
+		plug.StartContinuousVerifier(ctx, time.Minute)
 
-	plug.StartContinuousVerifier(ctx, time.Minute)
-
-	if !strings.Contains(logs.String(), "remediation.interval changed but requires restart") {
-		t.Errorf("expected a warning for a changed interval, got: %s", logs.String())
-	}
+		if !strings.Contains(logs.String(), "remediation.interval changed but requires restart") {
+			t.Errorf("expected a warning for a changed interval, got: %s", logs.String())
+		}
+	})
 }
 
 // syncBuffer is a bytes.Buffer that loggers can write to concurrently.

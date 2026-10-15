@@ -163,7 +163,7 @@ func TestReverifyIncompleteResultDoesNotRollBack(t *testing.T) {
 		false,
 	)
 
-	plug.ExportRunVerificationCycle(t.Context(), plugin.ExportTriggerManual)
+	plug.ExportRunVerificationCycle(t.Context(), plugin.ExportTriggerPolicyChange)
 	assertContainerState(t, plug, "ctr-throttled", plugin.StateThrottled)
 
 	stub.mu.Lock()

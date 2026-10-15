@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/sigstore/sigstore-go/pkg/root"
@@ -565,5 +566,120 @@ func TestTrustedRootCacheNegativeCachePrefersStaleRootOverPreSeeded(t *testing.T
 	if fetchCount.Load() != 1 {
 		t.Errorf("expected a single refresh attempt within the negative cache window, got %d",
 			fetchCount.Load())
+	}
+}
+
+// TestTrustedRootCacheStalledFetchFallsBack checks that a TUF fetch that never
+// returns fails the refresh after the fetch deadline, so the pre-seeded root
+// is used instead of blocking verification, and that later refreshes wait for
+// the stalled fetch instead of starting another one.
+func TestTrustedRootCacheStalledFetchFallsBack(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		preSeeded := fakeTrustedRoot()
+		release := make(chan struct{})
+
+		var fetchCount atomic.Int32
+
+		cache := attestation.NewTestTrustedRootCacheWithPreSeeded(
+			func() (*root.TrustedRoot, error) {
+				fetchCount.Add(1)
+				<-release
+
+				return nil, errRootFetchFailed
+			},
+			preSeeded,
+		)
+
+		got, err := cache.GetTrustedRoot(context.Background())
+		testutil.AssertNoError(t, err)
+
+		if got != preSeeded {
+			t.Fatal("expected the pre-seeded root after the fetch deadline")
+		}
+
+		// After the negative cache window the next refresh waits for the
+		// stalled fetch again instead of starting a second one.
+		time.Sleep(attestation.ExportNegativeCacheTTL())
+
+		got, err = cache.GetTrustedRoot(context.Background())
+		testutil.AssertNoError(t, err)
+
+		if got != preSeeded {
+			t.Fatal("expected the pre-seeded root while the fetch is still stalled")
+		}
+
+		if count := fetchCount.Load(); count != 1 {
+			t.Errorf("expected one fetch while it is stalled, got %d", count)
+		}
+
+		close(release)
+		synctest.Wait()
+	})
+}
+
+// TestTrustedRootCacheLateFetchKeepsItsAge checks that a root fetched after
+// the fetch deadline is used by a later refresh only while it is fresh: a
+// fetch that completed long before the refresh picks it up must not reset the
+// root's age, which bounds how long a stale root is used.
+func TestTrustedRootCacheLateFetchKeepsItsAge(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name    string
+		wait    time.Duration
+		wantNew bool
+	}{
+		{name: "fresh late root", wait: attestation.ExportNegativeCacheTTL(), wantNew: false},
+		{name: "outdated late root", wait: 2 * attestation.ExportTrustedRootCacheTTL(), wantNew: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				lateRoot, newRoot, preSeeded := fakeTrustedRoot(), fakeTrustedRoot(), fakeTrustedRoot()
+				release := make(chan struct{})
+
+				var fetchCount atomic.Int32
+
+				cache := attestation.NewTestTrustedRootCacheWithPreSeeded(
+					func() (*root.TrustedRoot, error) {
+						if fetchCount.Add(1) == 1 {
+							<-release
+
+							return lateRoot, nil
+						}
+
+						return newRoot, nil
+					},
+					preSeeded,
+				)
+
+				got, err := cache.GetTrustedRoot(context.Background())
+				testutil.AssertNoError(t, err)
+
+				if got != preSeeded {
+					t.Fatal("expected the pre-seeded root after the fetch deadline")
+				}
+
+				close(release)
+				synctest.Wait()
+
+				time.Sleep(test.wait)
+
+				got, err = cache.GetTrustedRoot(context.Background())
+				testutil.AssertNoError(t, err)
+
+				want := lateRoot
+				if test.wantNew {
+					want = newRoot
+				}
+
+				if got != want {
+					t.Errorf("expected the new root: %v, got another root", test.wantNew)
+				}
+			})
+		})
 	}
 }

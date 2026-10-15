@@ -136,6 +136,32 @@ func TestCheckCredentialPermissionsNonexistent(t *testing.T) {
 	}
 }
 
+// TestCheckCredentialPermissionsRejectsEscapingSymlink checks that the mode
+// check resolves symbolic links like ReadLimited, so it never checks a file
+// other than the one that is read.
+func TestCheckCredentialPermissionsRejectsEscapingSymlink(t *testing.T) {
+	t.Parallel()
+
+	target := filepath.Join(t.TempDir(), "key.pem")
+
+	err := os.WriteFile(target, []byte("key"), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	link := filepath.Join(t.TempDir(), "key.pem")
+
+	err = os.Symlink(target, link)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = fileutil.CheckCredentialPermissions(link)
+	if err == nil {
+		t.Fatal("expected a symbolic link leaving its directory to be rejected")
+	}
+}
+
 func TestReadLimitedRejectsEscapingSymlink(t *testing.T) {
 	t.Parallel()
 

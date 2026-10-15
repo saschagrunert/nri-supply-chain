@@ -110,7 +110,6 @@ func TestResolveIndexDigestMatchingPlatform(t *testing.T) {
 			Platform: &v1.Platform{
 				Architecture: runtime.GOARCH,
 				OS:           runtime.GOOS,
-				Variant:      registry.PlatformVariant(runtime.GOARCH),
 			},
 		},
 	)
@@ -268,7 +267,6 @@ func TestResolveDigestManifestList(t *testing.T) {
 			Platform: &v1.Platform{
 				Architecture: runtime.GOARCH,
 				OS:           runtime.GOOS,
-				Variant:      registry.PlatformVariant(runtime.GOARCH),
 			},
 		},
 	)
@@ -372,121 +370,6 @@ func TestHost(t *testing.T) {
 			got := registry.Host(test.ref)
 			if got != test.want {
 				t.Errorf("Host(%q) = %q, want %q", test.ref, got, test.want)
-			}
-		})
-	}
-}
-
-func TestPlatformVariant(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		arch string
-		want string
-	}{
-		{testArchARM64, "v8"},
-		{testArchARM, "v7"},
-		{testArchAMD64, ""},
-		{"s390x", ""},
-		{"ppc64le", ""},
-		{"riscv64", ""},
-	}
-
-	for _, test := range tests {
-		t.Run(test.arch, func(t *testing.T) {
-			t.Parallel()
-
-			got := registry.PlatformVariant(test.arch)
-			if got != test.want {
-				t.Errorf("PlatformVariant(%q) = %q, want %q", test.arch, got, test.want)
-			}
-		})
-	}
-}
-
-// TestSelectPlatformDigestNormalizesVariants checks that index entries
-// without a variant match arm64/v8 and arm/v7 nodes, as BuildKit and
-// containerd write and read them.
-func TestSelectPlatformDigestNormalizesVariants(t *testing.T) {
-	t.Parallel()
-
-	entry := func(arch, variant, hex string) v1.Descriptor {
-		return v1.Descriptor{
-			Digest:   v1.Hash{Algorithm: "sha256", Hex: strings.Repeat(hex, 64)},
-			Platform: &v1.Platform{OS: testOSLinux, Architecture: arch, Variant: variant},
-		}
-	}
-
-	tests := []struct {
-		name      string
-		arch      string
-		manifests []v1.Descriptor
-		wantHex   string
-	}{
-		{
-			name: "arm64 entry without variant",
-			arch: testArchARM64,
-			manifests: []v1.Descriptor{
-				entry(testArchAMD64, "", "a"),
-				entry(testArchARM64, "", "b"),
-			},
-			wantHex: "b",
-		},
-		{
-			name:      "arm64 entry with v8",
-			arch:      testArchARM64,
-			manifests: []v1.Descriptor{entry(testArchARM64, "v8", "b")},
-			wantHex:   "b",
-		},
-		{
-			name:      "arm64 entry with unprefixed variant",
-			arch:      testArchARM64,
-			manifests: []v1.Descriptor{entry(testArchARM64, "8", "b")},
-			wantHex:   "b",
-		},
-		{
-			name:      "arm entry without variant",
-			arch:      testArchARM,
-			manifests: []v1.Descriptor{entry(testArchARM, "v6", "a"), entry(testArchARM, "", "c")},
-			wantHex:   "c",
-		},
-		{
-			name:      "arm v6 entry does not match a v7 node",
-			arch:      testArchARM,
-			manifests: []v1.Descriptor{entry(testArchARM, "v6", "a")},
-			wantHex:   "",
-		},
-		{
-			name: "amd64 node matches any amd64 variant",
-			arch: testArchAMD64,
-			manifests: []v1.Descriptor{
-				entry(testArchARM64, "", "a"),
-				entry(testArchAMD64, "v3", "d"),
-			},
-			wantHex: "d",
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			got, err := registry.SelectPlatformDigest(test.manifests, testOSLinux, test.arch)
-			if test.wantHex == "" {
-				if !errors.Is(err, registry.ErrNoPlatformMatch) {
-					t.Fatalf("error = %v, want %v", err, registry.ErrNoPlatformMatch)
-				}
-
-				return
-			}
-
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-
-			want := "sha256:" + strings.Repeat(test.wantHex, 64)
-			if got != want {
-				t.Errorf("SelectPlatformDigest() = %q, want %q", got, want)
 			}
 		})
 	}

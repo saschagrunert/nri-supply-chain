@@ -15,6 +15,9 @@
 package plugin
 
 import (
+	"context"
+	"log/slog"
+
 	"github.com/containerd/nri/pkg/api"
 	"google.golang.org/protobuf/proto"
 )
@@ -76,6 +79,43 @@ func (p *Plugin) buildThrottleUpdate(
 		Linux:         &api.LinuxContainerUpdate{Resources: resources},
 		IgnoreFailure: false,
 	}
+}
+
+// recordResourceUpdate records the resources of a tracked container after
+// the runtime updated them. The plugin's own throttle (the throttled form of
+// the original resources) and rollback (the original resources) are not
+// recorded. Any other update, such as an in-place resize, replaces the
+// original resources; it also replaced the throttled limits, so a throttled
+// container returns to degraded and is throttled again from the new
+// resources by a later failing verification.
+func (p *Plugin) recordResourceUpdate(
+	ctx context.Context, containerID string, current *api.LinuxResources,
+) {
+	if current == nil {
+		return
+	}
+
+	p.containers.UpdateState(containerID, func(cState *containerState) {
+		original := cState.originalResources
+		if proto.Equal(current, original) ||
+			(original != nil && p.looksThrottled(current, original)) {
+			return
+		}
+
+		cState.originalResources = current
+		// Resources set by the runtime for an update are not throttled by
+		// an earlier plugin instance.
+		cState.recoveredOnRestart = false
+
+		if cState.state == StateThrottled {
+			cState.state = StateDegraded
+		}
+
+		slog.InfoContext(ctx, "Recorded updated container resources",
+			"container", containerID,
+			"state", cState.state.String(),
+		)
+	})
 }
 
 // looksThrottled reports whether current holds exactly the limits a throttle
@@ -186,10 +226,32 @@ func (p *Plugin) throttlePercents() (cpuPercent, memPercent int) {
 	return cpuPercent, memPercent
 }
 
+// buildRollbackUpdate restores the limits a throttle update changes (CPU
+// quota and shares, memory limit) to their original values. Other resource
+// settings are left alone, so a rollback cannot undo changes the throttle
+// never made.
 func buildRollbackUpdate(
 	containerID string, original *api.LinuxResources,
 ) *api.ContainerUpdate {
-	restored := deepCopyLinuxResources(original)
+	restored := &api.LinuxResources{}
+
+	if cpu := original.GetCpu(); cpu != nil {
+		restoredCPU := &api.LinuxCPU{}
+
+		if quota := cpu.GetQuota(); quota != nil {
+			restoredCPU.Quota = &api.OptionalInt64{Value: quota.GetValue()}
+		}
+
+		if shares := cpu.GetShares(); shares != nil {
+			restoredCPU.Shares = &api.OptionalUInt64{Value: shares.GetValue()}
+		}
+
+		restored.Cpu = restoredCPU
+	}
+
+	if limit := original.GetMemory().GetLimit(); limit != nil {
+		restored.Memory = &api.LinuxMemory{Limit: &api.OptionalInt64{Value: limit.GetValue()}}
+	}
 
 	return &api.ContainerUpdate{
 		ContainerId:   containerID,

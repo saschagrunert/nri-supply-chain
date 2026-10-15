@@ -16,6 +16,7 @@ package plugin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -27,7 +28,6 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
-	"github.com/saschagrunert/nri-supply-chain/internal/verifier"
 )
 
 func (p *Plugin) registryAwareResolver(
@@ -102,8 +102,11 @@ func (p *Plugin) resolveDigestIfMissing(
 // lookup. With a runtime digest (which may be an index or a manifest digest)
 // the digest-pinned reference is resolved, so the result cannot differ from
 // the image the runtime runs; when the registry cannot be reached the runtime
-// digest is used as is and unresolved is true. Without a runtime digest the
-// tag is resolved and fromTag is true.
+// digest is used as is and unresolved is true. A runtime digest the registry
+// serves as an index without a single platform entry for the node fails
+// instead: the runtime digest is then known to be an index digest, and its
+// attestations need not cover the platform image the runtime runs. Without a
+// runtime digest the tag is resolved and fromTag is true.
 func (p *Plugin) resolveImageDigests(
 	ctx context.Context, imageRef, runtimeDigest string,
 ) (digest, indexDigest string, fromTag, unresolved bool, err error) {
@@ -114,6 +117,11 @@ func (p *Plugin) resolveImageDigests(
 	}
 
 	digest, indexDigest, err = p.resolveRuntimeDigest(ctx, imageRef, runtimeDigest)
+	if errors.Is(err, registry.ErrAmbiguousPlatform) ||
+		errors.Is(err, registry.ErrNoPlatformMatch) {
+		return "", "", false, false, err
+	}
+
 	if err != nil {
 		slog.WarnContext(ctx,
 			"Failed to resolve the runtime image digest, verifying it as the manifest digest",
@@ -143,7 +151,7 @@ func (p *Plugin) resolveRuntimeDigest(
 
 	if digest == "" {
 		return "", "", fmt.Errorf(
-			"registry returned no digest for %s: %w", pinned, verifier.ErrEmptyDigest,
+			"registry returned no digest for %s: %w", pinned, errEmptyDigest,
 		)
 	}
 

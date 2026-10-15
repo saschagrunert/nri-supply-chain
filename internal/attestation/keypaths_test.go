@@ -241,6 +241,44 @@ func TestVerifyBundleTrustMaterialUnavailable(t *testing.T) {
 	})
 }
 
+// TestVerifyBundleSkipsUnloadableKeys checks that a trusted key file that
+// cannot be loaded does not block a bundle signed by a key that loaded, and
+// that a bundle no loaded key verifies reports the unloaded key as
+// unavailable trust material, since that key might have verified it.
+func TestVerifyBundleSkipsUnloadableKeys(t *testing.T) {
+	t.Parallel()
+
+	signer := testutil.NewKeySigner(t)
+	other := testutil.NewKeySigner(t)
+	bundleJSON := signer.SignBundle(t, signerStatement(t))
+	missing := attestation.TrustedKeyRef{Path: filepath.Join(t.TempDir(), "missing.pub")}
+
+	t.Run("signed by a loaded key", func(t *testing.T) {
+		t.Parallel()
+
+		verified, err := attestation.ExportVerifyBundle(
+			t.Context(), bundleJSON, &attestation.FetchOptions{
+				TrustedKeys: []attestation.TrustedKeyRef{missing, {Path: signer.PublicKeyPath}},
+				Digest:      signerTestDigest,
+			}, nil,
+		)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, signer.PublicKeyPath, verified.Signer.KeyPath)
+	})
+
+	t.Run("signed by no loaded key", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := attestation.ExportVerifyBundle(
+			t.Context(), bundleJSON, &attestation.FetchOptions{
+				TrustedKeys: []attestation.TrustedKeyRef{missing, {Path: other.PublicKeyPath}},
+				Digest:      signerTestDigest,
+			}, nil,
+		)
+		testutil.AssertErrorIs(t, err, attestation.ErrTrustMaterialUnavailable)
+	})
+}
+
 func TestFetchTrustMaterialUnavailableIsFetchFailure(t *testing.T) {
 	t.Parallel()
 
@@ -282,6 +320,9 @@ func TestFetchUnreadableKeyDoesNotHideVerifiedReferrer(t *testing.T) {
 	virtual := testutil.NewVirtualSigstore(t)
 	trustedRoot := testutil.VirtualTrustedRoot(t, virtual)
 	signer := testutil.NewKeySigner(t)
+	// unreadable signs the key-signed referrer; its configured key file
+	// cannot be read.
+	unreadable := testutil.NewKeySigner(t)
 
 	keyless := bundleReferrer(1)
 	keySigned := bundleReferrer(2)
@@ -290,7 +331,7 @@ func TestFetchUnreadableKeyDoesNotHideVerifiedReferrer(t *testing.T) {
 			t, virtual, signerIdentity, signerIssuer, signerStatement(t),
 		)),
 		keySigned.Digest.String(): fakeImageWithPayload(
-			signer.SignBundle(t, signerStatement(t)),
+			unreadable.SignBundle(t, signerStatement(t)),
 		),
 	}
 
@@ -329,7 +370,7 @@ func TestFetchUnreadableKeyDoesNotHideVerifiedReferrer(t *testing.T) {
 			atts, err := fetcher.Fetch(t.Context(), signerImageRef, &attestation.FetchOptions{
 				TrustedKeys: []attestation.TrustedKeyRef{
 					{Path: signer.PublicKeyPath},
-					{Path: signer.PublicKeyPath + "-missing"},
+					{Path: unreadable.PublicKeyPath + "-missing"},
 				},
 				TrustedIssuers: []string{signerIssuer},
 				SANPatterns:    []string{signerIdentity},

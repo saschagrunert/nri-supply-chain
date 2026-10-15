@@ -29,6 +29,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
+	"github.com/saschagrunert/nri-supply-chain/internal/circuit"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
@@ -36,8 +37,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/types"
 )
 
-// ErrEmptyDigest indicates an image without a digest: a verification request
-// without one, or a registry that resolved a reference to none.
+// ErrEmptyDigest indicates a verification request without an image digest.
 var ErrEmptyDigest = errors.New("image digest is empty")
 
 // runChecks fetches and verifies the attestations for a request. It returns
@@ -79,6 +79,13 @@ func runChecks(
 
 	defer release()
 
+	// A panic before the fetch outcome is recorded must not leave the
+	// breaker half-open forever; once the outcome is recorded, releasing
+	// the permit has no effect.
+	if breaker != nil {
+		defer breaker.Release(permit)
+	}
+
 	guacCh := startGUACQuery(ctx, state, digest, imageRef)
 
 	fetched := timedFetchAttestations(ctx, state, req, pol, host, parsedRef)
@@ -110,12 +117,13 @@ func runChecks(
 	attestations := scopeBuilderKeys(ctx, fetched.attestations, pol, imageRef)
 	bins := binAttestations(ctx, attestations, imageRef)
 
+	// The GUAC result and the warning about attestations that failed
+	// verification are appended before CEL rules run, so the rules see them.
 	result := runVSAAndParallelChecks(
 		ctx, bins, pol, state.metrics, imageRef, fetched.digest, req.Namespace, parsedRef,
-		state.config.CheckTimeout.Duration, guacResult, relatedDigests(req, fetched.digest),
+		state.config.CheckTimeout.Duration, []*types.CheckResult{guacResult, unverified},
+		relatedDigests(req, fetched.digest),
 	)
-
-	appendGUACResult(result, unverified)
 
 	return result, resultCacheTTL(state.config, result)
 }
@@ -166,9 +174,9 @@ func isIgnorableVerificationFailure(err error) bool {
 // fetch concurrency slots. It returns the breaker permit and a release
 // function, or a result to return instead of fetching.
 func acquireRegistryAccess(
-	ctx context.Context, state *snapshot, breaker *attestation.CircuitBreaker,
+	ctx context.Context, state *snapshot, breaker *circuit.Breaker,
 	host, imageRef string, fetchPolicy types.Action,
-) (permit attestation.Permit, release func(), blocked *types.Result) {
+) (permit circuit.Permit, release func(), blocked *types.Result) {
 	if breaker != nil {
 		var allowed bool
 
@@ -258,7 +266,7 @@ func fetchErrorCacheTTL(cfg *config.Config) time.Duration {
 // verification. While the breaker is half-open only the probe's outcome
 // counts.
 func recordBreakerOutcome(
-	ctx context.Context, breaker *attestation.CircuitBreaker, permit attestation.Permit,
+	ctx context.Context, breaker *circuit.Breaker, permit circuit.Permit,
 	met *metrics.Metrics, host string, fetchPolicy types.Action, fetched *fetchOutcome,
 ) {
 	if breaker == nil {
@@ -323,7 +331,7 @@ func runVSAAndParallelChecks(
 	pol *policy.Policy, met *metrics.Metrics,
 	imageRef, digest, namespace string, parsedRef name.Reference,
 	checkTimeout time.Duration,
-	guacResult *types.CheckResult,
+	optional []*types.CheckResult,
 	related []string,
 ) *types.Result {
 	outcome := checkVSA(ctx, bins[types.CheckTypeVSA], pol, imageRef, digest, met, parsedRef)
@@ -341,8 +349,8 @@ func runVSAAndParallelChecks(
 		}
 
 		// CEL rules still apply to VSA-accelerated images. They see the VSA
-		// and GUAC results; other attestation types are not present.
-		appendGUACResult(result, guacResult)
+		// and optional results; other attestation types are not present.
+		appendOptionalChecks(result, optional)
 		appendCELCheck(pol, met, imageRef, digest, namespace, parsedRef, result)
 
 		return result
@@ -359,22 +367,25 @@ func runVSAAndParallelChecks(
 		ctx, bins, pol, met, imageRef, digest, related, parsedRef, checkTimeout,
 	)
 
-	appendGUACResult(result, guacResult)
+	appendOptionalChecks(result, optional)
 	appendVSAWarning(result, pol, missingDetail)
 	appendCELCheck(pol, met, imageRef, digest, namespace, parsedRef, result)
 
 	return result
 }
 
-// appendGUACResult appends an optional check result (the GUAC result, or the
-// warning about attestations that failed verification) and applies it.
-func appendGUACResult(result *types.Result, guacResult *types.CheckResult) {
-	if guacResult == nil {
-		return
-	}
+// appendOptionalChecks appends the optional check results that are set (the
+// GUAC result, the warning about attestations that failed verification) and
+// applies them.
+func appendOptionalChecks(result *types.Result, optional []*types.CheckResult) {
+	for _, checkResult := range optional {
+		if checkResult == nil {
+			continue
+		}
 
-	result.CheckResults = append(result.CheckResults, *guacResult)
-	applyCheckResult(result, guacResult)
+		result.CheckResults = append(result.CheckResults, *checkResult)
+		applyCheckResult(result, checkResult)
+	}
 }
 
 func appendCELCheck(

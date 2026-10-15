@@ -84,8 +84,8 @@ circuit_breaker_cooldown = "30s"
 | `config_version`            | `1`                              | Schema version of the config file. Omitting defaults to 1. The plugin rejects versions newer than it supports.                                                                                                                                                                                                                                    |
 | `verification`              | `disabled`                       | Global mode: `disabled`, `warn` (log-only), `enforce` (reject on failure). Per-namespace overrides are set in policy files via the `mode` field (see [policy.md](policy.md)).                                                                                                                                                                     |
 | `log_level`                 | (CLI flag)                       | Log verbosity override: `debug`, `info`, `warn`, `error`                                                                                                                                                                                                                                                                                          |
-| `fetch_timeout`             | `30s`                            | Per-request timeout for attestation fetches. Max 5m. Also used for digest resolution in the CLI `verify` command (the NRI plugin uses `digest_resolve_timeout` instead).                                                                                                                                                                          |
-| `digest_resolve_timeout`    | `1s`                             | Timeout for resolving an image tag to its digest when the runtime does not provide one. Max 5s. Keep below containerd's ~2s ttrpc deadline.                                                                                                                                                                                                       |
+| `fetch_timeout`             | `30s`                            | Per-request timeout for attestation fetches. Max 5m. Also used for digest resolution in the CLI `verify` command and by the plugin's pre-warming and re-verification (admissions use `digest_resolve_timeout`).                                                                                                                                   |
+| `digest_resolve_timeout`    | `1s`                             | Timeout for resolving an image digest through the registry during an admission. Max 5s. Keep below containerd's ~2s ttrpc deadline.                                                                                                                                                                                                               |
 | `admission_timeout`         | `1500ms`                         | Upper bound for the whole CreateContainer admission (digest resolution plus waiting for the verification result). Max 1m. Must stay below the runtime's NRI plugin request timeout (2s by default); see [Admission deadline](#admission-deadline).                                                                                                |
 | `fetch_failure_policy`      | `warn` (`deny` in enforce mode)  | Behavior when attestation fetch fails: `allow`, `warn`, `deny`. In enforce mode, defaults to `deny` unless explicitly set. Setting `allow` in enforce mode is rejected during config validation. If upgrading from a version that permitted this combination, change to `warn` or `deny` before upgrading. See [Fetch failures](#fetch-failures). |
 | `cache_ttl`                 | `24h`                            | TTL for cached verification results (`0s` disables caching). Max 7d.                                                                                                                                                                                                                                                                              |
@@ -137,6 +137,21 @@ registry to find the platform manifest, and the reported digest is used as is
 when the registry cannot be reached. Resolving a tag through the registry is a
 last resort and is logged as a warning in enforce mode, since the registry can
 point the tag at a different image than the one the node runs.
+
+An image index is resolved to the entry the runtime pulls for the node, as
+containerd and CRI-O select it: an amd64 node runs the baseline `amd64` entry
+(never `amd64/v2` to `amd64/v4`), an arm64 node runs `arm64/v8`, and an arm
+node runs the entry of its CPU variant or the newest older one. The runtimes
+break ties differently (containerd runs the first of several equally good
+entries, CRI-O prefers a zstd compressed one), so an index whose best entries
+for the node have different digests cannot be verified: the runtime may run
+either. This applies to the gzip and zstd entries `podman push
+--add-compression` writes and to entries of one platform spelled differently
+(`amd64` and `amd64/v1`, `arm64` and `arm64/v8`). Such an index, or one
+without an entry for the node, fails digest resolution: the container is
+rejected in `enforce` mode and admitted unverified (`digest_resolution_failed`)
+in `warn` mode. Reference these images by their platform manifest digest
+instead.
 
 ### Fetch failures
 
@@ -251,7 +266,7 @@ Remediation is disabled by default (no `mode` set). Setting `mode` to `warn`, `t
 | `remediation.throttle.memory_limit_percent`   | `100`   | Percent of the original memory limit allowed after throttling (1-100). `100` leaves memory untouched; lower values can OOM-kill.                           |
 | `remediation.triggers.on_new_cve`             | `true`  | Re-verify when new CVE feed files appear in `feed_dir`.                                                                                                    |
 | `remediation.triggers.on_attestation_revoked` | `true`  | Re-verify when attestation state changes.                                                                                                                  |
-| `remediation.triggers.on_policy_change`       | `true`  | Re-verify after a config or policy reload (SIGHUP or file watch).                                                                                          |
+| `remediation.triggers.on_policy_change`       | `true`  | Re-verify after a reload (SIGHUP or file watch) or an OCI policy update that changes the policies or their trust material.                                 |
 
 The state machine progresses: Verified -> Degraded -> Throttled. A container
 must be in the Degraded state for at least one full verification cycle before

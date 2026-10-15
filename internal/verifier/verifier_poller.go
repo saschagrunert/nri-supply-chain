@@ -113,13 +113,9 @@ func (v *Verifier) stopPoller() *policyPoller {
 	return stopped
 }
 
-// ociRollbackSeed returns the newest OCI policy artifact creation time
-// accepted so far for ociRef, so a replacement policy fetcher keeps rejecting
-// older artifacts. A different reference starts without a guard.
-func (v *Verifier) ociRollbackSeed(ociRef string) time.Time {
-	return pollerRollbackSeed(v.poller.Load(), ociRef)
-}
-
+// pollerRollbackSeed returns the newest OCI policy artifact creation time
+// accepted so far by current for ociRef, so a replacement policy fetcher keeps
+// rejecting older artifacts. A different reference starts without a guard.
 func pollerRollbackSeed(current *policyPoller, ociRef string) time.Time {
 	if current == nil || current.ociRef != ociRef {
 		return time.Time{}
@@ -213,7 +209,7 @@ func (v *Verifier) onPolicyUpdate(ctx context.Context, policies map[string]*poli
 		return err
 	}
 
-	next, err := v.buildSnapshot(ctx, state, &snapshotInput{
+	next, err := v.buildSnapshot(state, &snapshotInput{
 		config:       state.config,
 		policies:     policies,
 		policyHashes: newHashes,
@@ -230,6 +226,10 @@ func (v *Verifier) onPolicyUpdate(ctx context.Context, policies map[string]*poli
 	retireSnapshot(state, next)
 
 	state.metrics.PolicyReloadsTotal.Inc()
+
+	if hook := v.policyUpdated.Load(); hook != nil && *hook != nil {
+		(*hook)()
+	}
 
 	if state.config.Enabled() {
 		WarnEnforceDefaults(ctx, state.config, policies)

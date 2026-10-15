@@ -29,18 +29,33 @@ import (
 	"golang.org/x/sync/singleflight"
 	"golang.org/x/time/rate"
 
-	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/registry"
 )
 
 type trustedRootFetchFunc func() (*root.TrustedRoot, error)
 
+// trustedRootFetchResult is the outcome of one trusted root fetch.
+type trustedRootFetchResult struct {
+	root *root.TrustedRoot
+	err  error
+	// fetchedAt is when the fetch completed, which can be long before a
+	// refresh picks up a fetch that outlived an earlier deadline.
+	fetchedAt time.Time
+}
+
 type trustedRootCache struct {
-	mu           sync.RWMutex
-	root         *root.TrustedRoot
-	fetchedAt    time.Time
-	fetchRoot    trustedRootFetchFunc
-	inflight     singleflight.Group
+	mu        sync.RWMutex
+	root      *root.TrustedRoot
+	fetchedAt time.Time
+	fetchRoot trustedRootFetchFunc
+	inflight  singleflight.Group
+	// fetchTimeout bounds how long a refresh waits for fetchRoot.
+	fetchTimeout time.Duration
+	// pendingMu guards pending.
+	pendingMu sync.Mutex
+	// pending receives the result of a fetch that is still running,
+	// possibly one that outlived the deadline of an earlier refresh.
+	pending      chan trustedRootFetchResult
 	onFallback   func()
 	lastFetchErr time.Time
 	// lastErr is the refresh failure recorded at lastFetchErr when no root
@@ -148,21 +163,82 @@ func (c *trustedRootCache) refreshRoot() (any, error) {
 
 	c.mu.RUnlock()
 
-	trustedRoot, err := c.fetchRoot()
+	res := c.fetchWithDeadline()
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if err != nil {
-		return c.handleRefreshError(err)
+	if res.err != nil {
+		return c.handleRefreshError(res.err)
 	}
 
-	c.root = trustedRoot
-	c.fetchedAt = time.Now()
+	c.root = res.root
+	c.fetchedAt = res.fetchedAt
 	c.lastFetchErr = time.Time{}
 	c.lastErr = nil
 
-	return trustedRoot, nil
+	return res.root, nil
+}
+
+// fetchWithDeadline runs fetchRoot bounded by fetchTimeout, so a stalled TUF
+// repository fails the refresh (and the stale or pre-seeded root is used)
+// instead of blocking every verification that needs the root. The TUF client
+// cannot be cancelled, so a fetch that outlives the deadline keeps running in
+// the background; later refreshes wait for it instead of starting another
+// one, so a stalled repository holds at most one fetch per root source. A
+// late root is used with the time its fetch completed while it is fresh (so
+// the staleness limit still applies to it); a late failure or an outdated
+// late root is dropped and fetched again.
+func (c *trustedRootCache) fetchWithDeadline() trustedRootFetchResult {
+	c.pendingMu.Lock()
+
+	if c.pending != nil {
+		select {
+		case res := <-c.pending:
+			c.pending = nil
+
+			if res.err == nil && time.Since(res.fetchedAt) < trustedRootCacheTTL {
+				c.pendingMu.Unlock()
+
+				return res
+			}
+		default:
+		}
+	}
+
+	if c.pending == nil {
+		done := make(chan trustedRootFetchResult, 1)
+		c.pending = done
+
+		go func() {
+			trustedRoot, err := c.fetchRoot()
+			done <- trustedRootFetchResult{root: trustedRoot, err: err, fetchedAt: time.Now()}
+		}()
+	}
+
+	pending := c.pending
+
+	c.pendingMu.Unlock()
+
+	timer := time.NewTimer(c.fetchTimeout)
+	defer timer.Stop()
+
+	select {
+	case res := <-pending:
+		c.pendingMu.Lock()
+		if c.pending == pending {
+			c.pending = nil
+		}
+		c.pendingMu.Unlock()
+
+		return res
+	case <-timer.C:
+		return trustedRootFetchResult{
+			root:      nil,
+			err:       fmt.Errorf("%w after %s", errTrustedRootFetchTimeout, c.fetchTimeout),
+			fetchedAt: time.Time{},
+		}
+	}
 }
 
 func (c *trustedRootCache) handleRefreshError(err error) (*root.TrustedRoot, error) {
@@ -291,7 +367,7 @@ func newBaseFetcher(verifyFn SignedBundleVerifyFunc) *OCIFetcher {
 		onMirrorFallback:   nil,
 		onMirrorFallbackMu: sync.RWMutex{},
 	}
-	fetcher.maxAttestationSize.Store(config.DefaultMaxAttestationSize)
+	fetcher.maxAttestationSize.Store(DefaultMaxAttestationSize)
 
 	return fetcher
 }
@@ -306,6 +382,9 @@ func newTrustedRootCache(
 		fetchedAt:    time.Time{},
 		fetchRoot:    fetchRoot,
 		inflight:     singleflight.Group{},
+		fetchTimeout: trustedRootFetchTimeout,
+		pendingMu:    sync.Mutex{},
+		pending:      nil,
 		onFallback:   nil,
 		lastFetchErr: time.Time{},
 		lastErr:      nil,

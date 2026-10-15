@@ -23,7 +23,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
+	"github.com/saschagrunert/nri-supply-chain/internal/circuit"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/guac"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
@@ -130,7 +130,7 @@ func TestFetchGUACDataCircuitBreakerOpen(t *testing.T) {
 	cfg.Guac.FallbackPolicy = types.ActionWarn
 	met := metrics.New()
 
-	breaker := attestation.NewCircuitBreaker(1, time.Minute)
+	breaker := circuit.NewBreaker(1, time.Minute)
 	breaker.RecordFailure()
 
 	state := verifier.ExportNewGUACSnapshot(cfg, met, nil, breaker)
@@ -170,7 +170,7 @@ func TestFetchGUACDataSuccessRecordsBreaker(t *testing.T) {
 	cfg.Guac.FallbackPolicy = types.ActionWarn
 	met := metrics.New()
 
-	breaker := attestation.NewCircuitBreaker(testGUACBreakerCap, time.Minute)
+	breaker := circuit.NewBreaker(testGUACBreakerCap, time.Minute)
 
 	state := verifier.ExportNewGUACSnapshot(cfg, met, client, breaker)
 	result := verifier.ExportFetchGUACData(
@@ -202,7 +202,7 @@ func TestFetchGUACDataFailureRecordsBreakerAndFallback(t *testing.T) {
 	cfg.Guac.FallbackPolicy = types.ActionDeny
 	met := metrics.New()
 
-	breaker := attestation.NewCircuitBreaker(testGUACBreakerCap, time.Minute)
+	breaker := circuit.NewBreaker(testGUACBreakerCap, time.Minute)
 
 	state := verifier.ExportNewGUACSnapshot(cfg, met, client, breaker)
 	result := verifier.ExportFetchGUACData(

@@ -32,6 +32,9 @@ type auditInfo struct {
 	nodeName          string
 	podServiceAccount string
 	verificationMode  string
+	// origin is empty for admissions and names the background work
+	// (pre-warming, re-verification) otherwise.
+	origin string
 }
 
 // auditEvent defines the structured schema for supply chain audit log entries.
@@ -51,6 +54,7 @@ type auditEvent struct {
 	NodeName          string `json:"nodeName,omitempty"`
 	PodServiceAccount string `json:"podServiceAccount,omitempty"`
 	VerificationMode  string `json:"verificationMode,omitempty"`
+	Origin            string `json:"origin,omitempty"`
 }
 
 const auditSchemaVersion = "1"
@@ -97,6 +101,10 @@ func (e *auditEvent) logAttrs() []any {
 		attrs = append(attrs, "verificationMode", e.VerificationMode)
 	}
 
+	if e.Origin != "" {
+		attrs = append(attrs, "origin", e.Origin)
+	}
+
 	return attrs
 }
 
@@ -109,6 +117,7 @@ func applyAuditInfo(event *auditEvent, info *auditInfo) {
 	event.NodeName = info.nodeName
 	event.PodServiceAccount = info.podServiceAccount
 	event.VerificationMode = info.verificationMode
+	event.Origin = info.origin
 }
 
 // logResult writes the audit entries of a result after the verification
@@ -225,7 +234,16 @@ func closeAuditLogFile(f *os.File) {
 	}
 }
 
-func recordMetrics(met *metrics.Metrics, result *types.Result, namespace string) {
+// recordMetrics counts the check results of an admission. Background
+// verifications (pre-warming, re-verification) have metrics of their own and
+// are not counted as admissions.
+func recordMetrics(
+	ctx context.Context, met *metrics.Metrics, result *types.Result, namespace string,
+) {
+	if types.VerifyOriginFrom(ctx) != types.OriginAdmission {
+		return
+	}
+
 	for _, checkResult := range result.CheckResults {
 		met.VerificationTotal.WithLabelValues(
 			string(checkResult.Type), string(checkResult.Status), namespace,

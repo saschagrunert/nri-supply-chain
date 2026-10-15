@@ -168,8 +168,13 @@ teardown_file() {
 	# shellcheck disable=SC2034
 	LOG_OFFSET=$(wc -c <"$PLUGIN_LOG")
 
-	# Reload config (triggers on_policy_change)
-	write_plugin_config_remediation "warn" "warn" "30s"
+	# Reload with a changed policy (triggers on_policy_change, which ignores
+	# reloads that leave the policies unchanged)
+	write_policy "default" '{
+	  "slsa": {"missingPolicy": "allow"},
+	  "vex": {"missingPolicy": "allow"},
+	  "sbom": {"missingPolicy": "allow"}
+	}'
 	reload_plugin
 
 	# A new verification cycle should be triggered

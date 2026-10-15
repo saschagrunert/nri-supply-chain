@@ -15,7 +15,6 @@
 package verifier
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -29,6 +28,7 @@ import (
 
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/cache"
+	"github.com/saschagrunert/nri-supply-chain/internal/circuit"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/guac"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
@@ -42,7 +42,10 @@ type snapshot struct {
 	// cached results may no longer be valid (policy, trust material or cache
 	// affecting config changes) and is part of the singleflight key so no
 	// request joins a verification started under an older generation.
-	generation       uint64
+	generation uint64
+	// policyRevision changes whenever the policies or the trust material
+	// they rely on change.
+	policyRevision   uint64
 	config           *config.Config
 	policies         map[string]*policy.Policy
 	policyHashes     map[string]string
@@ -51,14 +54,14 @@ type snapshot struct {
 	cache            *cache.Cache
 	metrics          *metrics.Metrics
 	fetcher          attestation.Fetcher
-	circuitBreakers  *attestation.CircuitBreakerRegistry
+	circuitBreakers  *circuit.Registry
 	fetchSem         *semaphore.Weighted
 	hostSem          *hostSemMap
 	auditLogger      *slog.Logger
 	auditLogFile     *os.File
 	allowlistDigests map[string]struct{}
 	guacClient       *guac.Client
-	guacBreaker      *attestation.CircuitBreaker
+	guacBreaker      *circuit.Breaker
 }
 
 // snapshotInput carries the parts of the next snapshot that are always
@@ -95,27 +98,36 @@ type fetcherBasis struct {
 //     material changed
 //   - circuit breakers: replaced when threshold or cooldown changed
 //   - GUAC client: replaced when its transport settings changed; the
-//     previous client is kept when creating the new one fails
-//   - audit logger: replaced when the path changed; falls back to the
-//     default logger when the new file cannot be opened
+//     snapshot is not built when creating the new one fails, as at startup
+//   - audit logger: replaced when the path changed; the snapshot is not
+//     built when the new file cannot be opened, as at startup
 //   - fetch semaphore: always reused
 //
 // Replaced components of prev are released by retireSnapshot once the new
 // snapshot is published.
-func (v *Verifier) buildSnapshot(
-	ctx context.Context, prev *snapshot, input *snapshotInput,
-) (*snapshot, error) {
+func (v *Verifier) buildSnapshot(prev *snapshot, input *snapshotInput) (*snapshot, error) {
 	if prev == nil {
 		return v.newSnapshot(input)
 	}
 
 	cfg := input.config
 
+	ext, err := reloadExternals(prev, cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	policiesChanged := !policyHashesEqual(prev.policyHashes, input.policyHashes) ||
 		prev.trust != input.trust
 
+	policyRevision := prev.policyRevision
+	if policiesChanged {
+		policyRevision = v.policyRevision.Add(1)
+	}
+
 	next := &snapshot{
 		generation:       prev.generation,
+		policyRevision:   policyRevision,
 		config:           cfg,
 		policies:         input.policies,
 		policyHashes:     maps.Clone(input.policyHashes),
@@ -127,11 +139,11 @@ func (v *Verifier) buildSnapshot(
 		circuitBreakers:  reuseCircuitBreakers(prev, cfg),
 		fetchSem:         prev.fetchSem,
 		hostSem:          prev.hostSem,
-		auditLogger:      prev.auditLogger,
-		auditLogFile:     prev.auditLogFile,
+		auditLogger:      ext.auditLogger,
+		auditLogFile:     ext.auditLogFile,
 		allowlistDigests: buildAllowlistMap(cfg.AllowlistDigests),
-		guacClient:       prev.guacClient,
-		guacBreaker:      prev.guacBreaker,
+		guacClient:       ext.guacClient,
+		guacBreaker:      ext.guacBreaker,
 	}
 
 	if policiesChanged || cacheAffectingFieldsChanged(prev.config, cfg) ||
@@ -146,16 +158,42 @@ func (v *Verifier) buildSnapshot(
 		next.hostSem = newHostSemMap(input.metrics)
 	}
 
+	return next, nil
+}
+
+// snapshotExternals are the components of a snapshot that talk to the outside
+// (the GUAC client and the audit log).
+type snapshotExternals struct {
+	guacClient   *guac.Client
+	guacBreaker  *circuit.Breaker
+	auditLogger  *slog.Logger
+	auditLogFile *os.File
+}
+
+// reloadExternals returns the GUAC client and audit logger for cfg, reusing
+// those of prev that did not change. A GUAC client or audit log that cannot
+// be created fails the reload, as it fails startup.
+func reloadExternals(prev *snapshot, cfg *config.Config) (*snapshotExternals, error) {
 	guacClient, guacBreaker, err := reloadGUACClient(prev, cfg)
 	if err != nil {
-		slog.ErrorContext(ctx, "Failed to reload GUAC client, keeping previous", "error", err)
-	} else {
-		next.guacClient, next.guacBreaker = guacClient, guacBreaker
+		return nil, fmt.Errorf("reloading GUAC client: %w", err)
 	}
 
-	next.auditLogger, next.auditLogFile = reloadAuditLogger(ctx, prev, cfg)
+	auditLogger, auditLogFile, err := reloadAuditLogger(prev, cfg)
+	if err != nil {
+		if guacClient != prev.guacClient {
+			guacClient.Close()
+		}
 
-	return next, nil
+		return nil, err
+	}
+
+	return &snapshotExternals{
+		guacClient:   guacClient,
+		guacBreaker:  guacBreaker,
+		auditLogger:  auditLogger,
+		auditLogFile: auditLogFile,
+	}, nil
 }
 
 func (v *Verifier) newSnapshot(input *snapshotInput) (*snapshot, error) {
@@ -167,16 +205,17 @@ func (v *Verifier) newSnapshot(input *snapshotInput) (*snapshot, error) {
 	}
 
 	snap := &snapshot{
-		generation:   v.generation.Add(1),
-		config:       cfg,
-		policies:     input.policies,
-		policyHashes: maps.Clone(input.policyHashes),
-		trust:        input.trust,
-		fetcherBasis: input.fetcherBasis,
-		cache:        newResultCache(cfg, input.metrics),
-		metrics:      input.metrics,
-		fetcher:      input.fetcher,
-		circuitBreakers: attestation.NewCircuitBreakerRegistry(
+		generation:     v.generation.Add(1),
+		policyRevision: v.policyRevision.Add(1),
+		config:         cfg,
+		policies:       input.policies,
+		policyHashes:   maps.Clone(input.policyHashes),
+		trust:          input.trust,
+		fetcherBasis:   input.fetcherBasis,
+		cache:          newResultCache(cfg, input.metrics),
+		metrics:        input.metrics,
+		fetcher:        input.fetcher,
+		circuitBreakers: circuit.NewRegistry(
 			cfg.CircuitBreakerThreshold, cfg.CircuitBreakerCooldown.Duration,
 		),
 		fetchSem:         semaphore.NewWeighted(maxConcurrentFetches),
@@ -198,7 +237,7 @@ func (v *Verifier) newSnapshot(input *snapshotInput) (*snapshot, error) {
 		}
 
 		snap.guacClient = guacClient
-		snap.guacBreaker = attestation.NewCircuitBreaker(
+		snap.guacBreaker = circuit.NewBreaker(
 			cfg.CircuitBreakerThreshold, cfg.CircuitBreakerCooldown.Duration,
 		)
 	}
@@ -298,14 +337,14 @@ func newGUACClient(cfg *config.Config) (*guac.Client, error) {
 // reuseCircuitBreakers returns the existing circuit breaker registry if
 // settings are unchanged, or creates a new one. Preserving the registry across
 // reloads prevents a burst of retries to failing registries.
-func reuseCircuitBreakers(prev *snapshot, cfg *config.Config) *attestation.CircuitBreakerRegistry {
+func reuseCircuitBreakers(prev *snapshot, cfg *config.Config) *circuit.Registry {
 	if prev.circuitBreakers != nil &&
 		prev.config.CircuitBreakerThreshold == cfg.CircuitBreakerThreshold &&
 		prev.config.CircuitBreakerCooldown.Duration == cfg.CircuitBreakerCooldown.Duration {
 		return prev.circuitBreakers
 	}
 
-	return attestation.NewCircuitBreakerRegistry(
+	return circuit.NewRegistry(
 		cfg.CircuitBreakerThreshold,
 		cfg.CircuitBreakerCooldown.Duration,
 	)

@@ -244,7 +244,7 @@ func (p *Plugin) recordRuntimeDigests(results []resolveResult) {
 func (p *Plugin) resolveOneDigest(
 	ctx context.Context, img *prewarmImage, result *resolveResult,
 ) {
-	resolveCtx, resolveCancel := context.WithTimeout(ctx, time.Duration(p.fetchTimeout.Load()))
+	resolveCtx, resolveCancel := context.WithTimeout(ctx, p.backgroundResolveTimeout())
 	dig, idxDig, _, unresolved, resolveErr := p.resolveImageDigests(
 		resolveCtx, img.imageRef, img.runtimeDigest,
 	)
@@ -349,6 +349,7 @@ func (p *Plugin) runPrewarmVerifications(
 ) (int32, bool) {
 	sem := semaphore.NewWeighted(prewarmConcurrency)
 	verified := atomic.Int32{}
+	verifyCtx := types.WithVerifyOrigin(ctx, types.OriginPrewarm)
 
 	var waitGroup sync.WaitGroup
 
@@ -363,7 +364,7 @@ func (p *Plugin) runPrewarmVerifications(
 		waitGroup.Go(func() {
 			defer sem.Release(1)
 
-			result, verifyErr := p.verifier.Verify(ctx, &types.VerifyRequest{
+			result, verifyErr := p.verifier.Verify(verifyCtx, &types.VerifyRequest{
 				ImageRef:       img.imageRef,
 				Digest:         img.digest,
 				IndexDigest:    img.indexDigest,
@@ -438,7 +439,6 @@ func (p *Plugin) recordPrewarmResult(
 			}
 
 			cState.awaitingFirstResult = false
-			cState.lastResult = result
 			cState.purls = purls
 
 			if !remediate || result.Verified || cState.state != StateVerified {

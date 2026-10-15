@@ -91,6 +91,52 @@ func TestCosignTagWithoutVerificationMaterialLogsReason(t *testing.T) {
 	}
 }
 
+// TestFetchJunkBundleReferrerKeepsCosignTagFallback checks that a bundle
+// referrer that fails verification, which anyone with push access can attach,
+// does not hide verified attestations stored under the cosign tag, while
+// without a tag the referrer's verification failure stands.
+func TestFetchJunkBundleReferrerKeepsCosignTagFallback(t *testing.T) {
+	t.Parallel()
+
+	signer := testutil.NewKeySigner(t)
+	junk := testutil.NewKeySigner(t)
+	junkReferrer := bundleReferrer(1)
+	tagKey := strings.Replace(signerTestDigest, ":", "-", 1) + ".att"
+	opts := &attestation.FetchOptions{
+		TrustedKeys: []attestation.TrustedKeyRef{{Path: signer.PublicKeyPath}},
+		Digest:      signerTestDigest,
+	}
+
+	t.Run("tag with verified attestation", func(t *testing.T) {
+		t.Parallel()
+
+		fetcher := signedFetcher(map[string]ociV1.Image{
+			junkReferrer.Digest.String(): fakeImageWithPayload(
+				junk.SignBundle(t, signerStatement(t)),
+			),
+			tagKey: legacyCosignImage(t, signer.SignBundle(t, signerStatement(t))),
+		}, []ociV1.Descriptor{junkReferrer})
+
+		atts, err := fetcher.Fetch(t.Context(), signerImageRef, opts)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, 1, len(atts))
+		testutil.AssertEqual(t, signer.PublicKeyPath, atts[0].Signer.KeyPath)
+	})
+
+	t.Run("no tag", func(t *testing.T) {
+		t.Parallel()
+
+		fetcher := signedFetcher(map[string]ociV1.Image{
+			junkReferrer.Digest.String(): fakeImageWithPayload(
+				junk.SignBundle(t, signerStatement(t)),
+			),
+		}, []ociV1.Descriptor{junkReferrer})
+
+		_, err := fetcher.Fetch(t.Context(), signerImageRef, opts)
+		testutil.AssertErrorIs(t, err, attestation.ErrVerificationFailed)
+	})
+}
+
 // TestCosignTagLegacyKeySignedLayerWithUnreadableKey checks that a legacy
 // key-signed layer whose trusted keys cannot be loaded is reported as
 // unavailable trust material, so the fetch failure policy applies, instead of
@@ -137,8 +183,10 @@ func TestCosignTagUnreadableKeyDoesNotHideVerifiedLayer(t *testing.T) {
 	ref, err := name.NewDigest(signerLegacyTagRef + "@" + signerTestDigest)
 	testutil.AssertNoError(t, err)
 
+	// The layer's key is unreadable; loadableKey is another trusted key,
+	// which loads but did not sign the layer.
 	missingKey := attestation.TrustedKeyRef{Path: signer.PublicKeyPath + "-missing"}
-	loadableKey := attestation.TrustedKeyRef{Path: signer.PublicKeyPath}
+	loadableKey := attestation.TrustedKeyRef{Path: testutil.NewKeySigner(t).PublicKeyPath}
 
 	for _, tc := range []struct {
 		name     string
@@ -164,7 +212,7 @@ func TestCosignTagUnreadableKeyDoesNotHideVerifiedLayer(t *testing.T) {
 		},
 		{
 			// One key loads, so the layer is tried against it, but the
-			// key material cannot be built while another key is missing.
+			// layer's own key is missing.
 			name: "one of two keys unreadable",
 			layers: []legacyLayer{
 				{keyData, keyAnnotations}, {keylessData, keylessAnnotations},

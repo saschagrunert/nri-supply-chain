@@ -12,15 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package attestation
+// Package circuit provides circuit breakers that short-circuit requests to
+// unavailable remote services (registries, GUAC).
+package circuit
 
 import (
-	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
-const maxCircuitBreakers = 1000
+const maxBreakers = 1000
 
 type circuitState int
 
@@ -30,10 +32,10 @@ const (
 	circuitHalfOpen
 )
 
-// CircuitBreaker prevents repeated fetch attempts when a registry is unavailable.
+// Breaker prevents repeated fetch attempts when a registry is unavailable.
 // After a configurable number of consecutive failures, it short-circuits to the
 // configured failure policy for a cooldown period before allowing a probe request.
-type CircuitBreaker struct {
+type Breaker struct {
 	mu                  sync.RWMutex
 	state               circuitState
 	consecutiveFailures int
@@ -52,10 +54,10 @@ type Permit struct {
 	probe uint64
 }
 
-// NewCircuitBreaker creates a circuit breaker that opens after threshold
+// NewBreaker creates a circuit breaker that opens after threshold
 // consecutive failures and stays open for the cooldown duration.
-func NewCircuitBreaker(threshold int, cooldown time.Duration) *CircuitBreaker {
-	return &CircuitBreaker{
+func NewBreaker(threshold int, cooldown time.Duration) *Breaker {
+	return &Breaker{
 		mu:                  sync.RWMutex{},
 		state:               circuitClosed,
 		consecutiveFailures: 0,
@@ -70,7 +72,7 @@ func NewCircuitBreaker(threshold int, cooldown time.Duration) *CircuitBreaker {
 // and the cooldown has elapsed, it transitions to half-open and allows a
 // single probe request. Use Acquire when the caller needs to release the
 // probe or report its outcome.
-func (cb *CircuitBreaker) Allow() bool {
+func (cb *Breaker) Allow() bool {
 	_, allowed := cb.Acquire()
 
 	return allowed
@@ -80,7 +82,7 @@ func (cb *CircuitBreaker) Allow() bool {
 // Uses RLock for the common closed-state fast path to avoid write-lock
 // contention. When the circuit is open and the cooldown has elapsed, it
 // transitions to half-open and admits a single probe request.
-func (cb *CircuitBreaker) Acquire() (Permit, bool) {
+func (cb *Breaker) Acquire() (Permit, bool) {
 	cb.mu.RLock()
 	state := cb.state
 	cb.mu.RUnlock()
@@ -115,7 +117,7 @@ func (cb *CircuitBreaker) Acquire() (Permit, bool) {
 }
 
 // RecordSuccess resets the circuit breaker to the closed state.
-func (cb *CircuitBreaker) RecordSuccess() {
+func (cb *Breaker) RecordSuccess() {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
@@ -124,7 +126,7 @@ func (cb *CircuitBreaker) RecordSuccess() {
 
 // Succeeded records a successful request admitted with permit. While the
 // breaker is half-open only the probe's outcome counts.
-func (cb *CircuitBreaker) Succeeded(permit Permit) {
+func (cb *Breaker) Succeeded(permit Permit) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
@@ -138,7 +140,7 @@ func (cb *CircuitBreaker) Succeeded(permit Permit) {
 // RecordFailure records a failure. If the failure count reaches the threshold,
 // the circuit transitions to open. Returns true only on the initial trip
 // (closed to open), not on re-entry from half-open after a failed probe.
-func (cb *CircuitBreaker) RecordFailure() bool {
+func (cb *Breaker) RecordFailure() bool {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
@@ -148,7 +150,7 @@ func (cb *CircuitBreaker) RecordFailure() bool {
 // Failed records a failed request admitted with permit and reports whether
 // it tripped the breaker. While the breaker is half-open only the probe's
 // outcome counts.
-func (cb *CircuitBreaker) Failed(permit Permit) bool {
+func (cb *Breaker) Failed(permit Permit) bool {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
@@ -164,7 +166,7 @@ func (cb *CircuitBreaker) Failed(permit Permit) bool {
 // without a registry outcome (for example a local concurrency limit), so the
 // next request can probe again instead of the breaker staying half-open.
 // Permits of other requests are ignored.
-func (cb *CircuitBreaker) Release(permit Permit) {
+func (cb *Breaker) Release(permit Permit) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
@@ -176,16 +178,16 @@ func (cb *CircuitBreaker) Release(permit Permit) {
 // decidesLocked reports whether the outcome of the request admitted with
 // permit may change the breaker state: always, except while half-open, when
 // only the probe decides.
-func (cb *CircuitBreaker) decidesLocked(permit Permit) bool {
+func (cb *Breaker) decidesLocked(permit Permit) bool {
 	return cb.state != circuitHalfOpen || (permit.probe != 0 && permit.probe == cb.probe)
 }
 
-func (cb *CircuitBreaker) recordSuccessLocked() {
+func (cb *Breaker) recordSuccessLocked() {
 	cb.consecutiveFailures = 0
 	cb.state = circuitClosed
 }
 
-func (cb *CircuitBreaker) recordFailureLocked() bool {
+func (cb *Breaker) recordFailureLocked() bool {
 	cb.consecutiveFailures++
 	cb.lastFailureTime = time.Now()
 
@@ -199,106 +201,109 @@ func (cb *CircuitBreaker) recordFailureLocked() bool {
 	return false
 }
 
-func (cb *CircuitBreaker) isClosed() bool {
+func (cb *Breaker) isClosed() bool {
 	cb.mu.RLock()
 	defer cb.mu.RUnlock()
 
 	return cb.state == circuitClosed
 }
 
-// CircuitBreakerRegistry manages per-host circuit breakers. Each registry host
-// gets its own breaker so that a failing registry does not block requests to
-// healthy registries.
+// Registry manages per-host circuit breakers. Each registry host gets its
+// own breaker so that a failing registry does not block requests to healthy
+// registries.
 //
-// Lock ordering: r.mu must be acquired before any breaker.mu. The
-// evictNonOpenLocked method acquires breaker.mu (via isClosed) while
-// holding r.mu; callers must not hold a breaker.mu when calling Get.
-type CircuitBreakerRegistry struct {
+// Lock ordering: r.mu must be acquired before any breaker.mu. The eviction
+// methods acquire breaker.mu (via isClosed) while holding r.mu; callers must
+// not hold a breaker.mu when calling Get.
+type Registry struct {
 	mu        sync.RWMutex
-	breakers  map[string]*CircuitBreaker
-	overflow  *CircuitBreaker
+	breakers  map[string]*registryEntry
 	threshold int
 	cooldown  time.Duration
+	// clock orders the uses of entries for least recently used eviction.
+	clock atomic.Uint64
 }
 
-// NewCircuitBreakerRegistry creates a registry that lazily creates per-host
-// circuit breakers with the given threshold and cooldown.
-func NewCircuitBreakerRegistry(threshold int, cooldown time.Duration) *CircuitBreakerRegistry {
-	return &CircuitBreakerRegistry{
+// registryEntry is a breaker of a Registry and its last use.
+type registryEntry struct {
+	breaker  *Breaker
+	lastUsed atomic.Uint64
+}
+
+// NewRegistry creates a registry that lazily creates per-host circuit
+// breakers with the given threshold and cooldown.
+func NewRegistry(threshold int, cooldown time.Duration) *Registry {
+	return &Registry{
 		mu:        sync.RWMutex{},
-		breakers:  make(map[string]*CircuitBreaker),
-		overflow:  nil,
+		breakers:  make(map[string]*registryEntry),
 		threshold: threshold,
 		cooldown:  cooldown,
+		clock:     atomic.Uint64{},
 	}
 }
 
 // Get returns the circuit breaker for the given registry host, creating one
-// if it does not exist. The registry is capped at 1000 entries; when full,
-// existing closed breakers are evicted before adding new ones.
-func (r *CircuitBreakerRegistry) Get(host string) *CircuitBreaker {
+// if it does not exist. The registry is capped at 1000 entries. When it is
+// full, closed breakers are evicted first; when every breaker is open or
+// half-open, the least recently used one is evicted. Every host keeps a
+// breaker of its own, so hosts that keep failing cannot trip the breaker of
+// another host, and an evicted host merely starts over with a closed breaker.
+func (r *Registry) Get(host string) *Breaker {
 	r.mu.RLock()
-	breaker, found := r.breakers[host]
+	entry, found := r.breakers[host]
 	r.mu.RUnlock()
 
 	if found {
-		return breaker
+		entry.lastUsed.Store(r.clock.Add(1))
+
+		return entry.breaker
 	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	breaker, found = r.breakers[host]
+	entry, found = r.breakers[host]
 	if found {
-		return breaker
+		entry.lastUsed.Store(r.clock.Add(1))
+
+		return entry.breaker
 	}
 
-	if len(r.breakers) >= maxCircuitBreakers {
-		r.evictNonOpenLocked()
+	if len(r.breakers) >= maxBreakers {
+		r.evictClosedLocked()
 	}
 
-	if len(r.breakers) >= maxCircuitBreakers {
-		// All hosts beyond capacity share a single overflow breaker.
-		// This prevents unbounded map growth at the cost of per-host
-		// isolation for the overflow set.
-		slog.Warn("Circuit breaker registry at capacity, using shared overflow breaker",
-			"host", host, "capacity", maxCircuitBreakers)
-
-		if r.overflow == nil {
-			r.overflow = NewCircuitBreaker(r.threshold, r.cooldown)
-		}
-
-		return r.overflow
+	if len(r.breakers) >= maxBreakers {
+		r.evictLeastRecentlyUsedLocked()
 	}
 
-	breaker = NewCircuitBreaker(r.threshold, r.cooldown)
-	r.breakers[host] = breaker
+	entry = &registryEntry{
+		breaker:  NewBreaker(r.threshold, r.cooldown),
+		lastUsed: atomic.Uint64{},
+	}
+	entry.lastUsed.Store(r.clock.Add(1))
+	r.breakers[host] = entry
 
-	return breaker
+	return entry.breaker
 }
 
 // States returns a map of registry host to circuit breaker state string.
 // Possible values are "closed", "open", and "half-open".
-// The shared overflow breaker (if active) is reported under the key "(overflow)".
 // Lock ordering: acquires r.mu (read), then each breaker.mu (read).
-func (r *CircuitBreakerRegistry) States() map[string]string {
+func (r *Registry) States() map[string]string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	states := make(map[string]string, len(r.breakers)+1)
+	states := make(map[string]string, len(r.breakers))
 
-	for host, breaker := range r.breakers {
-		states[host] = breakerStateName(breaker)
-	}
-
-	if r.overflow != nil {
-		states["(overflow)"] = breakerStateName(r.overflow)
+	for host, entry := range r.breakers {
+		states[host] = breakerStateName(entry.breaker)
 	}
 
 	return states
 }
 
-func breakerStateName(breaker *CircuitBreaker) string {
+func breakerStateName(breaker *Breaker) string {
 	breaker.mu.RLock()
 	defer breaker.mu.RUnlock()
 
@@ -314,13 +319,34 @@ func breakerStateName(breaker *CircuitBreaker) string {
 	}
 }
 
-// evictNonOpenLocked removes breakers in the closed state. Half-open
-// breakers are preserved because they are awaiting a probe result.
+// evictClosedLocked removes the breakers in the closed state; they hold no
+// state worth keeping.
 // Lock ordering: r.mu must be held; acquires breaker.mu via isClosed.
-func (r *CircuitBreakerRegistry) evictNonOpenLocked() {
-	for host, breaker := range r.breakers {
-		if breaker.isClosed() {
+func (r *Registry) evictClosedLocked() {
+	for host, entry := range r.breakers {
+		if entry.breaker.isClosed() {
 			delete(r.breakers, host)
 		}
+	}
+}
+
+// evictLeastRecentlyUsedLocked removes the breaker that was used least
+// recently. r.mu must be held.
+func (r *Registry) evictLeastRecentlyUsedLocked() {
+	var (
+		oldestHost string
+		oldestUse  uint64
+		found      bool
+	)
+
+	for host, entry := range r.breakers {
+		used := entry.lastUsed.Load()
+		if !found || used < oldestUse {
+			oldestHost, oldestUse, found = host, used, true
+		}
+	}
+
+	if found {
+		delete(r.breakers, oldestHost)
 	}
 }

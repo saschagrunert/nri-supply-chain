@@ -87,8 +87,8 @@ type pluginReloader interface {
 
 	Close()
 	PrewarmAfterReload(ctx context.Context)
-	SetFetchTimeout(d time.Duration)
 	SetDigestResolveTimeout(d time.Duration)
+	SetFetchTimeout(d time.Duration)
 	SetTransportCache(tc *registry.TransportCache)
 	TransportCache() *registry.TransportCache
 	TriggerReverify()
@@ -100,6 +100,7 @@ type remediationReloader interface {
 	SetRemediationMode(mode config.RemediationMode)
 	SetRemediationConfig(cfg *config.RemediationConfig)
 	StartContinuousVerifier(ctx context.Context, interval time.Duration)
+	StopContinuousVerifier(ctx context.Context)
 }
 
 func setupReload(
@@ -156,6 +157,8 @@ func handleReload(
 	newCfg.WarnInsecureRegistries()
 	warnNonReloadableChanges(verif.CurrentConfig(), newCfg)
 
+	policyRevision := verif.PolicyRevision()
+
 	reloadErr := verif.Reload(ctx, newCfg)
 	if reloadErr != nil {
 		met.ConfigReloadErrorsTotal.Inc()
@@ -169,7 +172,7 @@ func handleReload(
 		)
 
 		if plug != nil {
-			applyPluginSettings(ctx, newCfg, verif, plug)
+			applyPluginSettings(ctx, newCfg, verif, plug, policyRevision)
 		}
 	}
 }
@@ -206,13 +209,17 @@ func loadReloadConfig(configPath string, met *metrics.Metrics) *config.Config {
 // configuration (a config file reload or a configuration passed by the
 // runtime) after the verifier has been reloaded. Enabling remediation starts
 // the continuous verifier: pre-warming degrades containers once remediation
-// is enabled, and only the continuous verifier recovers them. ctx is the
-// plugin's lifetime context.
+// is enabled, and only the continuous verifier recovers them. Disabling it
+// stops the continuous verifier. prevPolicyRevision is the verifier's policy
+// revision before the reload: on_policy_change re-verifies the running
+// containers only when the reload changed the policies. ctx is the plugin's
+// lifetime context.
 func applyPluginSettings(
 	ctx context.Context, cfg *config.Config, verif *verifier.Verifier, plug pluginReloader,
+	prevPolicyRevision uint64,
 ) {
-	plug.SetFetchTimeout(cfg.FetchTimeout.Duration)
 	plug.SetDigestResolveTimeout(cfg.DigestResolveTimeout.Duration)
+	plug.SetFetchTimeout(cfg.FetchTimeout.Duration)
 	updatePluginRegistries(plug, cfg.Registries, verif.TransportCache())
 	plug.SetRemediationMode(cfg.Remediation.Mode)
 	plug.SetRemediationConfig(&cfg.Remediation)
@@ -220,11 +227,14 @@ func applyPluginSettings(
 
 	if cfg.Remediation.Enabled() {
 		plug.StartContinuousVerifier(ctx, cfg.Remediation.Interval.Duration)
+	} else {
+		plug.StopContinuousVerifier(ctx)
 	}
 
 	plug.PrewarmAfterReload(ctx)
 
-	if cfg.Remediation.Enabled() && cfg.Remediation.Triggers.OnPolicyChange {
+	if cfg.Remediation.Enabled() && cfg.Remediation.Triggers.OnPolicyChange &&
+		verif.PolicyRevision() != prevPolicyRevision {
 		plug.TriggerReverify()
 	}
 }

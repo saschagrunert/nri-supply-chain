@@ -17,6 +17,8 @@ package main
 import (
 	"os"
 	"testing"
+
+	"github.com/saschagrunert/nri-supply-chain/internal/testutil"
 )
 
 // unreachableProxy is a loopback address that refuses connections.
@@ -27,7 +29,8 @@ const unreachableProxy = "http://127.0.0.1:9"
 // host resolves to Docker Hub. Routing all HTTP traffic through a proxy that
 // refuses connections makes such a request fail at once instead of depending
 // on the network. Go never proxies requests to loopback addresses, so the
-// in-process test registries keep working.
+// in-process test registries keep working. External DNS lookups fail as
+// well.
 func TestMain(m *testing.M) {
 	for _, name := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
 		_ = os.Setenv(name, unreachableProxy)
@@ -37,5 +40,5 @@ func TestMain(m *testing.M) {
 		_ = os.Unsetenv(name)
 	}
 
-	os.Exit(m.Run())
+	testutil.RunHermetic(m)
 }

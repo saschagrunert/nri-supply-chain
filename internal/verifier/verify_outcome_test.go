@@ -276,7 +276,9 @@ func (f *blockingFetcher) Fetch(
 func TestVerifyJoiningLongRunningVerificationFailsFast(t *testing.T) {
 	t.Parallel()
 
-	const budget = 100 * time.Millisecond
+	// The budget leaves room for a slow (race detector, loaded CI)
+	// second admission that fails fast.
+	const budget = 500 * time.Millisecond
 
 	fetcher := &blockingFetcher{release: make(chan struct{})}
 

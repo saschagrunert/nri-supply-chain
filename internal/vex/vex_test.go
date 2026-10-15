@@ -1050,6 +1050,20 @@ func TestVerifyUnrecognizedPredicateFails(t *testing.T) {
 	checkertest.AssertFailed(t, result, err, vex.ErrInvalidVEX)
 }
 
+// TestVerifyNullPredicateFails checks that a VEX statement with a null
+// predicate is not evaluated as a document without statements.
+func TestVerifyNullPredicateFails(t *testing.T) {
+	t.Parallel()
+
+	att := wrapRawPredicate(t, []byte("null"))
+
+	result, err := vex.VerifyMultiple(
+		context.Background(), [][]byte{att}, &policy.Policy{}, testImageRef, testDigest, nil,
+	)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqual(t, false, result.Passed)
+}
+
 func TestVerifyMultipleMergesOpenVEXDocuments(t *testing.T) {
 	t.Parallel()
 

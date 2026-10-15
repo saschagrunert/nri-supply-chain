@@ -25,6 +25,7 @@ import (
 	"github.com/saschagrunert/nri-supply-chain/internal/attestation"
 	"github.com/saschagrunert/nri-supply-chain/internal/bundle"
 	"github.com/saschagrunert/nri-supply-chain/internal/cache"
+	"github.com/saschagrunert/nri-supply-chain/internal/circuit"
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/guac"
 	"github.com/saschagrunert/nri-supply-chain/internal/metrics"
@@ -45,6 +46,7 @@ func NewExportAuditInfo(
 		nodeName:          nodeName,
 		podServiceAccount: podServiceAccount,
 		verificationMode:  verificationMode,
+		origin:            "",
 	}
 }
 
@@ -192,7 +194,8 @@ func ExportRunVSAAndParallelChecks(
 	bins := attestationBins{types.CheckTypeVSA: vsaAtts}
 
 	return runVSAAndParallelChecks(
-		ctx, bins, pol, met, imageRef, digest, "default", parsedRef, time.Second, guacResult, nil,
+		ctx, bins, pol, met, imageRef, digest, "default", parsedRef, time.Second,
+		[]*types.CheckResult{guacResult}, nil,
 	)
 }
 
@@ -254,9 +257,10 @@ func (v *Verifier) ExportInstallPoller(
 	return fetcher
 }
 
-// ExportOCIRollbackSeed exposes ociRollbackSeed for external tests.
+// ExportOCIRollbackSeed returns the rollback guard of the running poller
+// for ociRef, for external tests.
 func (v *Verifier) ExportOCIRollbackSeed(ociRef string) time.Time {
-	return v.ociRollbackSeed(ociRef)
+	return pollerRollbackSeed(v.poller.Load(), ociRef)
 }
 
 // ExportPredicateCheckTypes exposes the predicate to check type lookup.
@@ -298,9 +302,9 @@ func ExportCloseAuditLogFile(f *os.File) {
 
 // ExportReloadAuditLogger exposes reloadAuditLogger for external tests.
 func ExportReloadAuditLogger(
-	ctx context.Context, prev *snapshot, cfg *config.Config,
-) (*slog.Logger, *os.File) {
-	return reloadAuditLogger(ctx, prev, cfg)
+	prev *snapshot, cfg *config.Config,
+) (*slog.Logger, *os.File, error) {
+	return reloadAuditLogger(prev, cfg)
 }
 
 // ExportNewSnapshot creates a minimal snapshot for testing reload helpers.
@@ -367,7 +371,7 @@ func ExportNewGUACSnapshot(
 	cfg *config.Config,
 	met *metrics.Metrics,
 	client *guac.Client,
-	breaker *attestation.CircuitBreaker,
+	breaker *circuit.Breaker,
 ) *snapshot {
 	return &snapshot{
 		config:      cfg,

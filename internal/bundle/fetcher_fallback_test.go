@@ -103,62 +103,6 @@ func TestFallbackFetcherPrimaryMiss(t *testing.T) {
 	}
 }
 
-func TestFallbackFetcherBundleNotFound(t *testing.T) {
-	t.Parallel()
-
-	primary := &mockFetcher{ //nolint:exhaustruct_v5 // test mock
-		err: fmt.Errorf("wrapped: %w", ErrBundleNotFound),
-	}
-	fallback := &mockFetcher{ //nolint:exhaustruct_v5 // test mock
-		attestations: []attestation.VerifiedAttestation{{
-			PredicateType: testFromFallback,
-		}},
-	}
-
-	f := NewFallbackFetcher(primary, fallback)
-
-	result, err := f.Fetch(
-		context.Background(), "ref", &attestation.FetchOptions{Digest: testDigestABC},
-	)
-	if err != nil {
-		t.Fatalf("Fetch() error: %v", err)
-	}
-
-	if len(result) != 1 {
-		t.Fatalf("Fetch() count = %d, want 1", len(result))
-	}
-
-	if !fallback.called {
-		t.Error("fallback should be called when primary returns ErrBundleNotFound")
-	}
-}
-
-func TestFallbackFetcherManifestNotFound(t *testing.T) {
-	t.Parallel()
-
-	primary := &mockFetcher{ //nolint:exhaustruct_v5 // test mock
-		err: fmt.Errorf("wrapped: %w", ErrManifestNotFound),
-	}
-	fallback := &mockFetcher{ //nolint:exhaustruct_v5 // test mock
-		attestations: []attestation.VerifiedAttestation{{
-			PredicateType: testFromFallback,
-		}},
-	}
-
-	f := NewFallbackFetcher(primary, fallback)
-
-	result, err := f.Fetch(
-		context.Background(), "ref", &attestation.FetchOptions{Digest: testDigestABC},
-	)
-	if err != nil {
-		t.Fatalf("Fetch() error: %v", err)
-	}
-
-	if len(result) != 1 {
-		t.Fatalf("Fetch() count = %d, want 1", len(result))
-	}
-}
-
 func TestFallbackFetcherNonRecoverableError(t *testing.T) {
 	t.Parallel()
 

@@ -268,7 +268,7 @@ func TestDisabledModeIgnoresPolicyModes(t *testing.T) {
 
 	defer verif.Stop()
 
-	if verif.Enforcing() {
+	if verif.CurrentConfig().Verification == config.ModeEnforce {
 		t.Error("expected disabled verifier not to enforce")
 	}
 
@@ -282,7 +282,7 @@ func TestDisabledModeIgnoresPolicyModes(t *testing.T) {
 	err = verif.Reload(t.Context(), cfg)
 	testutil.AssertNoError(t, err)
 
-	if verif.Enforcing() {
+	if verif.CurrentConfig().Verification == config.ModeEnforce {
 		t.Error("expected reload into disabled mode to stop enforcing")
 	}
 }

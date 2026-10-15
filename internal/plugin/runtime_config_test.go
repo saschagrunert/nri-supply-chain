@@ -84,7 +84,7 @@ func TestConfigureAppliesRuntimeConfigInBackground(t *testing.T) {
 	t.Parallel()
 
 	verif := newDigestTestVerifier(true)
-	plug := plugin.New(verif, metrics.New(), "", time.Second, time.Second, nil)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 
 	applier := &blockingApplier{
 		release: make(chan struct{}), err: nil, mu: sync.Mutex{}, applied: nil,
@@ -123,7 +123,7 @@ func TestConfigureRuntimeConfigFailureKeepsPluginNotReady(t *testing.T) {
 	t.Parallel()
 
 	verif := newDigestTestVerifier(true)
-	plug := plugin.New(verif, metrics.New(), "", time.Second, time.Second, nil)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 
 	applier := &blockingApplier{
 		release: make(chan struct{}), err: errApplyRuntimeConfig, mu: sync.Mutex{}, applied: nil,
@@ -159,7 +159,7 @@ func TestConfigureNonEnforceRuntimeConfigDoesNotDeny(t *testing.T) {
 	t.Parallel()
 
 	verif := newDigestTestVerifier(true)
-	plug := plugin.New(verif, metrics.New(), "", time.Second, time.Second, nil)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 
 	applier := &blockingApplier{
 		release: make(chan struct{}), err: nil, mu: sync.Mutex{}, applied: nil,
@@ -216,7 +216,7 @@ func TestConfigurePendingRuntimeConfigDeniesEnforcingNamespace(t *testing.T) {
 	testutil.WritePolicy(t, dir, "prod.json", `{"mode": "enforce"}`)
 
 	verif := newDigestTestVerifier(true)
-	plug := plugin.New(verif, metrics.New(), "", time.Second, time.Second, nil)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 
 	applier := &blockingApplier{
 		release: make(chan struct{}), err: nil, mu: sync.Mutex{}, applied: nil,
@@ -250,7 +250,7 @@ func TestConfigurePendingOCIRuntimeConfigDenies(t *testing.T) {
 	t.Parallel()
 
 	verif := newDigestTestVerifier(true)
-	plug := plugin.New(verif, metrics.New(), "", time.Second, time.Second, nil)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 
 	applier := &blockingApplier{
 		release: make(chan struct{}), err: nil, mu: sync.Mutex{}, applied: nil,
@@ -277,7 +277,7 @@ func TestConfigureRetriesFailedRuntimeConfig(t *testing.T) {
 
 	verif := newDigestTestVerifier(true)
 	met := metrics.New()
-	plug := plugin.New(verif, met, "", time.Second, time.Second, nil)
+	plug := plugin.New(verif, met, "", time.Second, nil)
 	plug.ExportSetRuntimeConfigRetry(10*time.Millisecond, 20*time.Millisecond)
 
 	applier := &failingThenApplier{failures: 2, mu: sync.Mutex{}, applied: 0}
@@ -302,7 +302,7 @@ func TestConfigureSkipsUnchangedRuntimeConfig(t *testing.T) {
 	t.Parallel()
 
 	verif := newDigestTestVerifier(true)
-	plug := plugin.New(verif, metrics.New(), "", time.Second, time.Second, nil)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 
 	applier := &failingThenApplier{failures: 0, mu: sync.Mutex{}, applied: 0}
 	plug.SetConfigApplier(applier.apply)
@@ -329,7 +329,7 @@ func TestStatusNotReadyWhileRuntimeConfigPending(t *testing.T) {
 	t.Parallel()
 
 	verif := newDigestTestVerifier(true)
-	plug := plugin.New(verif, metrics.New(), "", time.Second, time.Second, nil)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 
 	applier := &blockingApplier{
 		release: make(chan struct{}), err: nil, mu: sync.Mutex{}, applied: nil,
@@ -358,7 +358,7 @@ func TestCloseStopsRuntimeConfigRetries(t *testing.T) {
 	t.Parallel()
 
 	verif := newDigestTestVerifier(true)
-	plug := plugin.New(verif, metrics.New(), "", time.Second, time.Second, nil)
+	plug := plugin.New(verif, metrics.New(), "", time.Second, nil)
 	plug.ExportSetRuntimeConfigRetry(5*time.Millisecond, 5*time.Millisecond)
 
 	applier := &failingThenApplier{failures: 1 << 30, mu: sync.Mutex{}, applied: 0}

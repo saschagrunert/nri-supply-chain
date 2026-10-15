@@ -516,9 +516,6 @@ func (f *OCIFetcher) CollectNotationSignatures(
 	return sigs
 }
 
-// ExportMaxCircuitBreakers exposes maxCircuitBreakers for external tests.
-const ExportMaxCircuitBreakers = maxCircuitBreakers
-
 // ExportMaxTotalAttestationSize exposes maxTotalAttestationSize for external tests.
 const ExportMaxTotalAttestationSize = maxTotalAttestationSize
 
@@ -538,39 +535,6 @@ func ExportNegativeCacheTTL() time.Duration { return negativeCacheTTL }
 // ExportExceededTotalAttestationSize exposes exceededTotalAttestationSize for external tests.
 func ExportExceededTotalAttestationSize(ctx context.Context, totalSize int64) bool {
 	return exceededTotalAttestationSize(ctx, totalSize)
-}
-
-// ExportIsOpen exposes the open state for external tests.
-func (cb *CircuitBreaker) ExportIsOpen() bool {
-	cb.mu.RLock()
-	defer cb.mu.RUnlock()
-
-	return cb.state == circuitOpen
-}
-
-// ExportIsClosed exposes the closed state for external tests.
-func (cb *CircuitBreaker) ExportIsClosed() bool {
-	return cb.isClosed()
-}
-
-// ExportThreshold exposes threshold for external tests.
-func (cb *CircuitBreaker) ExportThreshold() int {
-	return cb.threshold
-}
-
-// ExportCooldown exposes cooldown for external tests.
-func (cb *CircuitBreaker) ExportCooldown() time.Duration {
-	return cb.cooldown
-}
-
-// ExportRegistryThreshold exposes threshold for external tests.
-func (r *CircuitBreakerRegistry) ExportThreshold() int {
-	return r.threshold
-}
-
-// ExportRegistryCooldown exposes cooldown for external tests.
-func (r *CircuitBreakerRegistry) ExportCooldown() time.Duration {
-	return r.cooldown
 }
 
 // ExportHasLimiter returns whether the fetcher has an active rate limiter.

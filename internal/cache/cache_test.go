@@ -103,6 +103,28 @@ func TestGaugeUpdatesOnSetAndClear(t *testing.T) {
 	}
 }
 
+// TestClearAdvancesEpochs checks that a result computed before Clear cannot
+// be stored afterwards.
+func TestClearAdvancesEpochs(t *testing.T) {
+	t.Parallel()
+
+	testCache := cache.NewWithGauge(time.Hour, 0, nil, nil)
+	t.Cleanup(testCache.Stop)
+
+	const digest = "sha256:c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
+
+	epoch := testCache.Epoch(digest)
+
+	testCache.Clear()
+
+	stored := testCache.SetWithTTLAtEpoch(digest, "default", &types.Result{
+		Allowed: true, Verified: true, Mode: "", Reason: "", CheckResults: nil,
+	}, time.Hour, epoch)
+	if stored || testCache.Get(digest, "default") != nil {
+		t.Error("expected a result from before Clear not to be stored")
+	}
+}
+
 func TestGaugeUpdatesOnExpiry(t *testing.T) {
 	t.Parallel()
 
