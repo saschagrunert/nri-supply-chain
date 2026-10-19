@@ -105,7 +105,7 @@ runs:
         trivyignores: .trivyignore
         format: json
         output: /tmp/trivy-results.json
-        version: v0.75.0
+        version: v0.76.0
 
     - name: Attest container image VEX
       shell: bash

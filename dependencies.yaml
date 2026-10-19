@@ -26,7 +26,7 @@ dependencies:
         match: ^appVersion
 
   - name: helm
-    version: 4.3.0
+    version: 4.3.1
     refPaths:
       - path: Makefile
         match: ^HELM_VERSION
@@ -54,7 +54,7 @@ dependencies:
         match: "^go "
 
   - name: golangci-lint
-    version: 2.14.0
+    version: 2.15.0
     refPaths:
       - path: Makefile
         match: ^GOLANGCI_LINT_VERSION
@@ -62,7 +62,7 @@ dependencies:
         match: "version: v2\\."
 
   - name: trivy
-    version: 0.75.0
+    version: 0.76.0
     refPaths:
       - path: .github/workflows/ci.yml
         match: "version: v0\\."
@@ -70,7 +70,7 @@ dependencies:
         match: "version: v0\\."
 
   - name: syft
-    version: 1.54.0
+    version: 1.54.1
     refPaths:
       - path: .github/workflows/ci.yml
         match: syft-version
@@ -78,7 +78,7 @@ dependencies:
         match: syft-version
 
   - name: goreleaser
-    version: 2.18.2
+    version: 2.18.3
     refPaths:
       - path: Makefile
         match: ^GORELEASER_VERSION
@@ -106,7 +106,7 @@ dependencies:
         match: ^SHELLCHECK_VERSION
 
   - name: kubernix
-    version: 0.4.1
+    version: 0.4.3
     refPaths:
       - path: Makefile
         match: ^KUBERNIX_VERSION
@@ -130,13 +130,13 @@ dependencies:
         match: ^CRANE_VERSION
 
   - name: govulncheck
-    version: v1.8.0
+    version: v1.9.0
     refPaths:
       - path: Makefile
         match: ^GOVULNCHECK_VERSION
 
   - name: prettier
-    version: 3.9.9
+    version: 3.9.10
     refPaths:
       - path: Makefile
         match: ^PRETTIER_VERSION
@@ -154,7 +154,7 @@ dependencies:
         match: ^DASHBOARD_LINTER_VERSION
 
   - name: crds-catalog
-    version: 63669a570e231d4f1f8396d229a1de512bcf0a34
+    version: 501527ab9c40c827144c8f45945b25a023e344ce
     refPaths:
       - path: hack/verify-manifests.sh
         match: ^CRDS_CATALOG_COMMIT=

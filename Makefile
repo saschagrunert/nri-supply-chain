@@ -1,27 +1,27 @@
 GO ?= go
 
-GOLANGCI_LINT_VERSION = 2.14.0
+GOLANGCI_LINT_VERSION = 2.15.0
 ZEITGEIST_VERSION = 0.8.0
 SHFMT_VERSION = v3.14.1
 SHELLCHECK_VERSION = v0.11.0
-KUBERNIX_VERSION = 0.4.1
+KUBERNIX_VERSION = 0.4.3
 MDTOC_VERSION = v1.4.0
 COSIGN_VERSION = 3.1.3
 CRANE_VERSION = 0.22.1
-GOVULNCHECK_VERSION = v1.8.0
-PRETTIER_VERSION = 3.9.9
+GOVULNCHECK_VERSION = v1.9.0
+PRETTIER_VERSION = 3.9.10
 MARKDOWNLINT_VERSION = 0.23.3
 DASHBOARD_LINTER_VERSION = 0.3.0
-HELM_VERSION = 4.3.0
+HELM_VERSION = 4.3.1
 KUBECONFORM_VERSION = 0.8.0
-GORELEASER_VERSION = 2.18.2
+GORELEASER_VERSION = 2.18.3
 
 # SHA-256 checksums for downloaded tools, named <TOOL>_SHA256_<os>_<arch>.
 # Downloads fail when no checksum is pinned for the current platform.
-GOLANGCI_LINT_SHA256_linux_amd64 = ab90aeb7b066f92a33415b638a50fe5344bbb75a0d32ad30cc248d88f81032ab
-GOLANGCI_LINT_SHA256_linux_arm64 = ee7ec5f3453d15ddf106fae5a4d6c71737712348a979d1fe9cd52ec7ea299bae
-GOLANGCI_LINT_SHA256_darwin_amd64 = a5667c1c3536be1740133213e1e822bfb8f0d98ea12903174d6d5f635e4ed68d
-GOLANGCI_LINT_SHA256_darwin_arm64 = 5ef5f36a7147e91dc58ef9ef4d11bb7bad5ead0c76eb6c01327a73c641d1dcc3
+GOLANGCI_LINT_SHA256_linux_amd64 = 9b7fe6a6bf6334b98decf8d86b11415ea7889afdabdd1959fdce23af2a9ebcea
+GOLANGCI_LINT_SHA256_linux_arm64 = b4d8f17068b35ee6060cc2f69a16fb48740d706fbba81661c318649c114a6998
+GOLANGCI_LINT_SHA256_darwin_amd64 = 767b899a28285e88ded2823d5dcc4bc5ef681173eb2d80f029a7b17ee4ece3b8
+GOLANGCI_LINT_SHA256_darwin_arm64 = d1e409481a8ca846c4bc97e781eb5cb1bd5c23353a0b3977a1cbda1b1b6447d5
 
 ZEITGEIST_SHA256_linux_amd64 = b004b91e0ad881732f2ba0e63def2e3c35950323e221b50c50cbad75b3f5c2b1
 ZEITGEIST_SHA256_linux_arm64 = 52e3b1af8ce2fc304b21cfa380a37bc1c4c6a48015063fdbeab6516123804e55
@@ -39,8 +39,8 @@ SHELLCHECK_SHA256_darwin_amd64 = 3c89db4edcab7cf1c27bff178882e0f6f27f7afdf54e859
 SHELLCHECK_SHA256_darwin_arm64 = 56affdd8de5527894dca6dc3d7e0a99a873b0f004d7aabc30ae407d3f48b0a79
 
 # kubernix only ships Linux binaries.
-KUBERNIX_SHA256_linux_amd64 = 8c9c587048102f58d08f23114bffddb1f9de2f31343f023928ce5433dd589ae4
-KUBERNIX_SHA256_linux_arm64 = 6355552e690117c3f6e33cd83fcfba0ffb073b191e2e7ed075fa26c0082d6ca0
+KUBERNIX_SHA256_linux_amd64 = f52d8e90282468a11ba585cca36b6110104c5573395dacdd101953d055e5677f
+KUBERNIX_SHA256_linux_arm64 = fa03f7cfbf21e7ba210603eb6aa459830ab9b55b5d5bb3558a5db632dec7cccb
 
 COSIGN_SHA256_linux_amd64 = 4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71
 COSIGN_SHA256_linux_arm64 = c5d324e091826b0d7a78eb16fef316450b4eb9aaec045611c08ba06f5e73220a
@@ -57,20 +57,20 @@ DASHBOARD_LINTER_SHA256_linux_arm64 = cca3c44ab921a4303dc3850b0cea56e0192112a185
 DASHBOARD_LINTER_SHA256_darwin_amd64 = 9ca2cd292b5aaaaa6827c417b26440033e35516e4896238c34c7cc97cbcb45cf
 DASHBOARD_LINTER_SHA256_darwin_arm64 = 910c20366491565faa241166676b54a53648ed2b30d8403017056bb18aeae75d
 
-HELM_SHA256_linux_amd64 = 86584a54def73570558f66f5111cc53dfed56689637ae32c1201205d494f54fb
-HELM_SHA256_linux_arm64 = 31c5794dd55c66a51e6b7d2e2ac7a114ae8b1de41ff1d9ba51748ac973b06a08
-HELM_SHA256_darwin_amd64 = 347a784877e0e20eac865e8d1c36a80f6bb0861d6f29abd34defb6570ef95d92
-HELM_SHA256_darwin_arm64 = d3870437e1e95b67f8edbde964156c84a26503f560821d40c542441658934fba
+HELM_SHA256_linux_amd64 = 0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b
+HELM_SHA256_linux_arm64 = 8cf8f66ecbc252ac8f7f06cca68aba88508ddfde3a6a34feb1678ad1694b4f88
+HELM_SHA256_darwin_amd64 = 34bec4eba761ba5c16d1965ee6b8f5b0abe5993974a802274e2a4f0418893d89
+HELM_SHA256_darwin_arm64 = 6b4e61c8cd27d99e5a801e63ff25dd5c70b36875c2cd659d3e9ce6b76fc23198
 
 KUBECONFORM_SHA256_linux_amd64 = 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
 KUBECONFORM_SHA256_linux_arm64 = 1f53fc8e81258197a35e8603054162a5af1de8c5af13746c71ab680d9534ed87
 KUBECONFORM_SHA256_darwin_amd64 = 71dbc87ac9f24099a62b93570e65aa06312ba6ac8aea63b7f86e9d999edf5a92
 KUBECONFORM_SHA256_darwin_arm64 = f84f4dfbebf4a6b0b230385fa065a39ea35e02608c2b50d025dcf64775a69d67
 
-GORELEASER_SHA256_linux_amd64 = 0a96edc9d9bc594e4a41cc4d59467c182062910ab24d9d1f6dd7b667d32606d3
-GORELEASER_SHA256_linux_arm64 = a71681b29194f08f057a68cfcaa5c6b15d907a83a2622c51900c4faff828f322
-GORELEASER_SHA256_darwin_amd64 = 5e97d6517f73a0b6f71675a2911b15d3136c03c8907650c2b18e114b1c0f5205
-GORELEASER_SHA256_darwin_arm64 = a811ff154fe136a0cfb55d00126c151fc39ec370a663d805a9ca5547445aa70c
+GORELEASER_SHA256_linux_amd64 = b8dee4728bca1aba0d71a832a17cd0a3799f75372878e7ffa36aef2343bce0bc
+GORELEASER_SHA256_linux_arm64 = fa7011a7f8de3b504326b8552cf21c708ed3089519b01d372da32ef4e8d298d7
+GORELEASER_SHA256_darwin_amd64 = dbc39347d9ca25a2da9bcc03633f39130bb3a67c9f2a0da86ba15b8b00bf86ce
+GORELEASER_SHA256_darwin_arm64 = 821c58ab8c31d57bb331cab9f1a703eb3673bff4fce0db9cc3c4a038af14f76f
 
 # verify_checksum verifies a downloaded file against the SHA-256 checksum
 # pinned for the current OS and architecture. It fails closed and removes the
@@ -111,6 +111,18 @@ DASHBOARD_LINTER := $(BUILD_DIR)/dashboard-linter
 HELM := $(BUILD_DIR)/helm
 KUBECONFORM := $(BUILD_DIR)/kubeconform
 GORELEASER := $(BUILD_DIR)/goreleaser
+
+# Each downloaded tool depends on a stamp named after its version, so changing
+# a *_VERSION downloads the tool again instead of reusing the binary in build/.
+# Creating a stamp removes the other stamps of the same tool, which also covers
+# switching back to a version that was used before.
+STAMP_DIR := $(BUILD_DIR)/.stamps
+stamp = $(STAMP_DIR)/$(1)@$(2)
+
+$(STAMP_DIR)/%:
+	@mkdir -p $(STAMP_DIR)
+	@rm -f $(STAMP_DIR)/$(firstword $(subst @, ,$*))@*
+	@touch $@
 
 ARCH ?= $(shell uname -m | \
 	sed 's/x86_64/amd64/' | \
@@ -212,12 +224,12 @@ verify-all: lint verify-shfmt verify-shellcheck verify-mdtoc verify-jsonschema v
 lint: $(GOLANGCI_LINT) ## Run golangci-lint
 	$(GOLANGCI_LINT) run
 
-$(GOLANGCI_LINT):
+$(GOLANGCI_LINT): $(call stamp,golangci-lint,$(GOLANGCI_LINT_VERSION))
 	@mkdir -p $(BUILD_DIR)
 	curl -sSfL -o $(BUILD_DIR)/golangci-lint.tar.gz \
 		https://github.com/golangci/golangci-lint/releases/download/v$(GOLANGCI_LINT_VERSION)/golangci-lint-$(GOLANGCI_LINT_VERSION)-$(OS)-$(ARCH).tar.gz
 	$(call verify_checksum,$(BUILD_DIR)/golangci-lint.tar.gz,GOLANGCI_LINT)
-	tar xfz $(BUILD_DIR)/golangci-lint.tar.gz -C $(BUILD_DIR) --strip-components=1 \
+	tar xmfz $(BUILD_DIR)/golangci-lint.tar.gz -C $(BUILD_DIR) --strip-components=1 \
 		golangci-lint-$(GOLANGCI_LINT_VERSION)-$(OS)-$(ARCH)/golangci-lint
 	rm $(BUILD_DIR)/golangci-lint.tar.gz
 
@@ -326,89 +338,91 @@ verify-dashboard: $(DASHBOARD_LINTER) ## Lint Grafana dashboard JSON
 	$(DASHBOARD_LINTER) lint deploy/grafana/dashboard.json
 	diff deploy/grafana/dashboard.json deploy/helm/nri-supply-chain/files/dashboard.json
 
-$(ZEITGEIST):
+$(ZEITGEIST): $(call stamp,zeitgeist,$(ZEITGEIST_VERSION))
 	@mkdir -p $(BUILD_DIR)
 	curl -sSfL -o $(ZEITGEIST) \
 		https://github.com/kubernetes-sigs/zeitgeist/releases/download/v$(ZEITGEIST_VERSION)/zeitgeist-$(ARCH)-$(OS)
 	$(call verify_checksum,$(ZEITGEIST),ZEITGEIST)
 	chmod +x $(ZEITGEIST)
 
-$(SHFMT):
+$(SHFMT): $(call stamp,shfmt,$(SHFMT_VERSION))
 	@mkdir -p $(BUILD_DIR)
 	curl -sSfL -o $(SHFMT) \
 		https://github.com/mvdan/sh/releases/download/$(SHFMT_VERSION)/shfmt_$(SHFMT_VERSION)_$(OS)_$(ARCH)
 	$(call verify_checksum,$(SHFMT),SHFMT)
 	chmod +x $(SHFMT)
 
-$(SHELLCHECK):
+$(SHELLCHECK): $(call stamp,shellcheck,$(SHELLCHECK_VERSION))
 	@mkdir -p $(BUILD_DIR)
 	curl -sSfL -o $(BUILD_DIR)/shellcheck.tar.xz \
 		https://github.com/koalaman/shellcheck/releases/download/$(SHELLCHECK_VERSION)/shellcheck-$(SHELLCHECK_VERSION).$(OS).$(SHELLCHECK_ARCH).tar.xz
 	$(call verify_checksum,$(BUILD_DIR)/shellcheck.tar.xz,SHELLCHECK)
-	tar xfJ $(BUILD_DIR)/shellcheck.tar.xz -C $(BUILD_DIR) --strip-components=1 shellcheck-$(SHELLCHECK_VERSION)/shellcheck
+	tar xmfJ $(BUILD_DIR)/shellcheck.tar.xz -C $(BUILD_DIR) --strip-components=1 shellcheck-$(SHELLCHECK_VERSION)/shellcheck
 	rm $(BUILD_DIR)/shellcheck.tar.xz
 
-$(MDTOC):
+$(MDTOC): $(call stamp,mdtoc,$(MDTOC_VERSION))
 	@mkdir -p $(BUILD_DIR)
 	GOBIN=$(abspath $(BUILD_DIR)) $(GO) install sigs.k8s.io/mdtoc@$(MDTOC_VERSION)
+	touch $@
 
-$(KUBERNIX):
+$(KUBERNIX): $(call stamp,kubernix,$(KUBERNIX_VERSION))
 	@mkdir -p $(BUILD_DIR)
 	curl -sSfL -o $(KUBERNIX) \
 		https://github.com/saschagrunert/kubernix/releases/download/v$(KUBERNIX_VERSION)/kubernix-$(UNAME_ARCH)
 	$(call verify_checksum,$(KUBERNIX),KUBERNIX)
 	chmod +x $(KUBERNIX)
 
-$(COSIGN):
+$(COSIGN): $(call stamp,cosign,$(COSIGN_VERSION))
 	@mkdir -p $(BUILD_DIR)
 	curl -sSfL -o $(COSIGN) \
 		https://github.com/sigstore/cosign/releases/download/v$(COSIGN_VERSION)/cosign-$(OS)-$(ARCH)
 	$(call verify_checksum,$(COSIGN),COSIGN)
 	chmod +x $(COSIGN)
 
-$(CRANE):
+$(CRANE): $(call stamp,crane,$(CRANE_VERSION))
 	@mkdir -p $(BUILD_DIR)
 	curl -sSfL -o $(BUILD_DIR)/crane.tar.gz \
 		https://github.com/google/go-containerregistry/releases/download/v$(CRANE_VERSION)/go-containerregistry_$(CRANE_OS)_$(CRANE_ARCH).tar.gz
 	$(call verify_checksum,$(BUILD_DIR)/crane.tar.gz,CRANE)
-	tar xfz $(BUILD_DIR)/crane.tar.gz -C $(BUILD_DIR) crane
+	tar xmfz $(BUILD_DIR)/crane.tar.gz -C $(BUILD_DIR) crane
 	rm $(BUILD_DIR)/crane.tar.gz
 
-$(DASHBOARD_LINTER):
+$(DASHBOARD_LINTER): $(call stamp,dashboard-linter,$(DASHBOARD_LINTER_VERSION))
 	@mkdir -p $(BUILD_DIR)
 	curl -sSfL -o $(BUILD_DIR)/dashboard-linter.tar.gz \
 		https://github.com/grafana/dashboard-linter/releases/download/v$(DASHBOARD_LINTER_VERSION)/dashboard-linter_$(DASHBOARD_LINTER_VERSION)_$(OS)_$(ARCH).tar.gz
 	$(call verify_checksum,$(BUILD_DIR)/dashboard-linter.tar.gz,DASHBOARD_LINTER)
-	tar xfz $(BUILD_DIR)/dashboard-linter.tar.gz -C $(BUILD_DIR) dashboard-linter
+	tar xmfz $(BUILD_DIR)/dashboard-linter.tar.gz -C $(BUILD_DIR) dashboard-linter
 	rm $(BUILD_DIR)/dashboard-linter.tar.gz
 
-$(HELM):
+$(HELM): $(call stamp,helm,$(HELM_VERSION))
 	@mkdir -p $(BUILD_DIR)
 	curl -sSfL -o $(BUILD_DIR)/helm.tar.gz \
 		https://get.helm.sh/helm-v$(HELM_VERSION)-$(OS)-$(ARCH).tar.gz
 	$(call verify_checksum,$(BUILD_DIR)/helm.tar.gz,HELM)
-	tar xfz $(BUILD_DIR)/helm.tar.gz -C $(BUILD_DIR) --strip-components=1 $(OS)-$(ARCH)/helm
+	tar xmfz $(BUILD_DIR)/helm.tar.gz -C $(BUILD_DIR) --strip-components=1 $(OS)-$(ARCH)/helm
 	rm $(BUILD_DIR)/helm.tar.gz
 
-$(KUBECONFORM):
+$(KUBECONFORM): $(call stamp,kubeconform,$(KUBECONFORM_VERSION))
 	@mkdir -p $(BUILD_DIR)
 	curl -sSfL -o $(BUILD_DIR)/kubeconform.tar.gz \
 		https://github.com/yannh/kubeconform/releases/download/v$(KUBECONFORM_VERSION)/kubeconform-$(OS)-$(ARCH).tar.gz
 	$(call verify_checksum,$(BUILD_DIR)/kubeconform.tar.gz,KUBECONFORM)
-	tar xfz $(BUILD_DIR)/kubeconform.tar.gz -C $(BUILD_DIR) kubeconform
+	tar xmfz $(BUILD_DIR)/kubeconform.tar.gz -C $(BUILD_DIR) kubeconform
 	rm $(BUILD_DIR)/kubeconform.tar.gz
 
-$(GORELEASER):
+$(GORELEASER): $(call stamp,goreleaser,$(GORELEASER_VERSION))
 	@mkdir -p $(BUILD_DIR)
 	curl -sSfL -o $(BUILD_DIR)/goreleaser.tar.gz \
 		https://github.com/goreleaser/goreleaser/releases/download/v$(GORELEASER_VERSION)/goreleaser_$(CRANE_OS)_$(CRANE_ARCH).tar.gz
 	$(call verify_checksum,$(BUILD_DIR)/goreleaser.tar.gz,GORELEASER)
-	tar xfz $(BUILD_DIR)/goreleaser.tar.gz -C $(BUILD_DIR) goreleaser
+	tar xmfz $(BUILD_DIR)/goreleaser.tar.gz -C $(BUILD_DIR) goreleaser
 	rm $(BUILD_DIR)/goreleaser.tar.gz
 
-$(GOVULNCHECK):
+$(GOVULNCHECK): $(call stamp,govulncheck,$(GOVULNCHECK_VERSION))
 	@mkdir -p $(BUILD_DIR)
 	GOBIN=$(abspath $(BUILD_DIR)) $(GO) install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
+	touch $@
 
 .PHONY: govulncheck
 govulncheck: $(GOVULNCHECK) ## Run govulncheck

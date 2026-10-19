@@ -14,7 +14,7 @@ CHART="deploy/helm/nri-supply-chain"
 RAW_MANIFESTS=(deploy/kubernetes/daemonset.yaml deploy/kubernetes/monitoring.yaml)
 # Pinned to a commit, so that the result does not change without a change in
 # this repository.
-CRDS_CATALOG_COMMIT=63669a570e231d4f1f8396d229a1de512bcf0a34
+CRDS_CATALOG_COMMIT=501527ab9c40c827144c8f45945b25a023e344ce
 CRD_SCHEMA_LOCATION="https://raw.githubusercontent.com/datreeio/CRDs-catalog/$CRDS_CATALOG_COMMIT/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
 
 TMP_DIR=$(mktemp -d)
