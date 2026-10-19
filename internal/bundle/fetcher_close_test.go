@@ -86,8 +86,8 @@ func TestFetcherCloseWaitsForRunningFetches(t *testing.T) {
 	go func() { closeDone <- fetcher.Close() }()
 
 	select {
-	case <-closeDone:
-		t.Fatal("Close() returned while a fetch was running")
+	case closeErr := <-closeDone:
+		t.Fatalf("Close() returned while a fetch was running: %v", closeErr)
 	case <-time.After(50 * time.Millisecond):
 	}
 
