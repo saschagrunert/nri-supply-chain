@@ -1,4 +1,4 @@
-FROM golang:1.27.2@sha256:820153096fda4de6ac1b7194d12e416b7dd8f4e9a33d17e0345b111b945162d8 AS build
+FROM golang:1.27.3@sha256:f20d83a83e18dbd2a4714b8ffd4b30b287b6243962dd75608e86abcc63ba4efc AS build
 WORKDIR /src
 COPY . .
 ARG VERSION=dev
@@ -6,7 +6,7 @@ RUN CGO_ENABLED=0 go build -mod=vendor -trimpath \
     -ldflags "-s -w -X main.version=${VERSION}" \
     -o /nri-supply-chain ./cmd/nri-supply-chain/
 
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:d62067879de890a1def9da0e7766b7d20810a5e5555cef8506b752437d7a3e88
 LABEL org.opencontainers.image.title="nri-supply-chain" \
       org.opencontainers.image.description="NRI plugin for container supply chain attestation verification" \
       org.opencontainers.image.source="https://github.com/saschagrunert/nri-supply-chain" \
