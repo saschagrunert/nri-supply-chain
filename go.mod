@@ -9,7 +9,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/CycloneDX/cyclonedx-go v0.12.0
 	github.com/awslabs/amazon-ecr-credential-helper/ecr-login v0.12.0
-	github.com/containerd/nri v0.12.3
+	github.com/containerd/nri v0.12.5
 	github.com/containerd/ttrpc v1.2.10
 	github.com/fatih/color v1.19.0
 	github.com/fsnotify/fsnotify v1.10.1

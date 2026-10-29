@@ -112,8 +112,8 @@ github.com/codahale/rfc6979 v0.0.0-20141003034818-6a90f24967eb h1:EDmT6Q9Zs+SbUo
 github.com/codahale/rfc6979 v0.0.0-20141003034818-6a90f24967eb/go.mod h1:ZjrT6AXHbDs86ZSdt/osfBi5qfexBrKUdONk989Wnk4=
 github.com/containerd/log v0.2.0 h1:BewD/umNgVnoczglOpX8eRMyEy5t5iPlu5AIpnWDONc=
 github.com/containerd/log v0.2.0/go.mod h1:/M7L7CXKcPTfNC74XzaK+5H5KbO5+4lJVpuVI6vRLoM=
-github.com/containerd/nri v0.12.3 h1:pVZwZCe0Z+d2WmScp51VTO3OmeuOZFoDGInX2n04e70=
-github.com/containerd/nri v0.12.3/go.mod h1:MrNpHL2YtNnf09t+D6NacWeN1kaHmy/YCm0+w4VHKL0=
+github.com/containerd/nri v0.12.5 h1:sPYUCT4fRbshF0ewiIaFXv2n6+tLIwY0kKII9ycMszY=
+github.com/containerd/nri v0.12.5/go.mod h1:KPI0bbRZeqYq4rRWNWQztAR1150JF937MGe5b45Zgrk=
 github.com/containerd/ttrpc v1.2.10 h1:qQvy3mokhoXON7FXiOOc05O7Up6nrNj6amJF8urNvDc=
 github.com/containerd/ttrpc v1.2.10/go.mod h1:YrmEQKkMbBA4EM26AzVAIwHGIYgptkL4CJ/yVTaDyBE=
 github.com/coreos/go-oidc/v3 v3.21.0 h1:wZo4Q9Pum8dYEj0eMUPrqR+kvuGkeUplbLpNCkBqoWM=
