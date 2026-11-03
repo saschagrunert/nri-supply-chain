@@ -15,7 +15,8 @@ PLUGIN_LOG="${BATS_FILE_TMPDIR}/plugin.log"
 PLUGIN_CONFIG="${BATS_FILE_TMPDIR}/config.toml"
 POLICY_DIR="${BATS_FILE_TMPDIR}/policies"
 KUBECONFIG="${KUBERNIX_ROOT}/kubeconfig/admin.kubeconfig"
-NRI_SOCKET="${KUBERNIX_ROOT}/nri/nri.sock"
+NRI_SOCKET="/var/run/nri/nri.sock"
+CRIO_REGISTRIES_CONF="${BATS_FILE_TMPDIR}/crio-registries.conf"
 
 export KUBECONFIG
 
@@ -47,43 +48,26 @@ stop_process_from_pidfile() {
 	fi
 }
 
+# kubernix disables NRI in both CRI runtimes and ignores their host
+# configuration, so the tests enable NRI on its default socket themselves.
+# containerd terminates on SIGHUP and kubernix starts it right after
+# writing its config, so a wrapper from a Nix overlay patches the config
+# instead. Its registry config_path already points to certs.d.
 start_kubernix() {
-	local patcher_pid=""
+	local args=()
 
-	# containerd terminates on SIGHUP so we cannot reload its config
-	# after startup. Patch config_path into the generated config before
-	# containerd reads it by polling in a background process.
-	if is_containerd && [[ -d "/etc/containerd/certs.d" ]]; then
-		_patch_containerd_registry_config &
-		patcher_pid=$!
+	if is_containerd; then
+		args+=(--overlay "${BATS_TEST_DIRNAME}/containerd-nri.nix")
+	else
+		_write_crio_dropins
 	fi
 
-	"$KUBERNIX" --no-shell --cri-runtime "$CRI_RUNTIME" "$@" --root "$KUBERNIX_ROOT" &
+	# The socket path is shared with the host, so remove a stale socket
+	# of a killed runtime, which would pass wait_for_nri_socket.
+	rm -f "$NRI_SOCKET"
+
+	"$KUBERNIX" --no-shell --cri-runtime "$CRI_RUNTIME" "${args[@]}" "$@" --root "$KUBERNIX_ROOT" &
 	echo $! >"${BATS_FILE_TMPDIR}/kubernix.pid"
-
-	if [[ -n "$patcher_pid" ]]; then
-		wait "$patcher_pid" 2>/dev/null || true
-	fi
-}
-
-_patch_containerd_registry_config() {
-	local config elapsed=0
-	while [[ $elapsed -lt 3000 ]]; do
-		config=$(find "${KUBERNIX_ROOT}" -name "config.toml" \
-			-path "*/containerd/*" 2>/dev/null | head -1)
-		if [[ -n "$config" ]]; then
-			cat >>"$config" <<-EOF
-
-				[plugins."io.containerd.cri.v1.images".registry]
-				config_path = "/etc/containerd/certs.d"
-			EOF
-			return
-		fi
-		sleep 0.01
-		elapsed=$((elapsed + 1))
-	done
-	echo "ERROR: containerd config.toml not found in ${KUBERNIX_ROOT} after 30s" >&2
-	return 1
 }
 
 export NODE_READY_TIMEOUT=120
@@ -141,10 +125,13 @@ start_kubernix_with_retry() {
 
 		if wait_for_node_ready && wait_for_apiserver_ready && wait_for_controller_manager; then
 			sleep 3
-			if wait_for_apiserver_ready 10 && write_nri_dropin && reload_runtime; then
+			if ! wait_for_apiserver_ready 10; then
+				echo "Cluster became unstable after passing health checks, retrying..." >&2
+			elif ! wait_for_nri_socket; then
+				echo "Runtime did not enable NRI, retrying..." >&2
+			else
 				return 0
 			fi
-			echo "Cluster became unstable after passing health checks, retrying..." >&2
 		fi
 	done
 
@@ -257,42 +244,37 @@ wait_for_service_account() {
 	return 1
 }
 
-write_nri_dropin() {
-	# NRI is enabled by default in containerd v2, nothing to configure.
-	# Registry config_path is handled by start_kubernix.
-	if is_containerd; then
-		return
-	fi
+# CRI-O only reads the drop-in directory of the node in the run directory,
+# where kubernix names the single node after the lowercase hostname. The
+# NRI drop-in has to sort after the crio.conf of kubernix to override it.
+_write_crio_dropins() {
+	local node_dir
+	node_dir="${KUBERNIX_ROOT}/crio/$(uname -n | tr '[:upper:]' '[:lower:]')"
+	mkdir -p "${node_dir}/crio.conf.d" "${node_dir}/registries.conf.d"
 
-	local crio_conf_dir
-	crio_conf_dir="${KUBERNIX_ROOT}/crio/conf.d"
-	mkdir -p "$crio_conf_dir"
-
-	cat >"${crio_conf_dir}/10-nri.conf" <<-EOF
+	cat >"${node_dir}/crio.conf.d/zz-nri.conf" <<-EOF
 		[crio.nri]
 		enable_nri = true
 		nri_plugin_dir = ""
-		nri_socket = "${NRI_SOCKET}"
 	EOF
+
+	if [[ -f "$CRIO_REGISTRIES_CONF" ]]; then
+		cp "$CRIO_REGISTRIES_CONF" "${node_dir}/registries.conf.d/"
+	fi
 }
 
-reload_runtime() {
-	# containerd terminates on SIGHUP, config is patched before startup.
-	if is_containerd; then
-		return
-	fi
-
-	local crio_pid
-	crio_pid=$(pgrep -f "crio.*--root.*${KUBERNIX_ROOT}" || true)
-	if [[ -z "$crio_pid" ]]; then
-		echo "ERROR: CRI-O process not found for ${KUBERNIX_ROOT}" >&2
-		return 1
-	fi
-	if ! kill -HUP "$crio_pid" 2>/dev/null; then
-		echo "ERROR: Failed to send SIGHUP to CRI-O (PID $crio_pid)" >&2
-		return 1
-	fi
-	sleep 2
+# wait_for_nri_socket fails if the runtime did not enable NRI.
+wait_for_nri_socket() {
+	local elapsed=0
+	while [[ $elapsed -lt 10 ]]; do
+		if [[ -S "$NRI_SOCKET" ]]; then
+			return 0
+		fi
+		sleep 1
+		elapsed=$((elapsed + 1))
+	done
+	echo "ERROR: NRI socket ${NRI_SOCKET} not found after 10s" >&2
+	return 1
 }
 
 write_plugin_config() {
@@ -562,8 +544,9 @@ configure_insecure_registry() {
 		return
 	fi
 
-	mkdir -p /etc/containers/registries.conf.d
-	cat >/etc/containers/registries.conf.d/test-insecure-registry.conf <<-EOF
+	# Picked up by start_kubernix, since CRI-O ignores the registries
+	# config of the host.
+	cat >"$CRIO_REGISTRIES_CONF" <<-EOF
 		[[registry]]
 		location = "${REGISTRY_HOST}"
 		insecure = true
@@ -577,7 +560,7 @@ unconfigure_insecure_registry() {
 		return
 	fi
 
-	rm -f /etc/containers/registries.conf.d/test-insecure-registry.conf
+	rm -f "$CRIO_REGISTRIES_CONF"
 }
 
 create_signing_config() {

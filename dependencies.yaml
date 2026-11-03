@@ -106,7 +106,7 @@ dependencies:
         match: ^SHELLCHECK_VERSION
 
   - name: kubernix
-    version: 0.4.3
+    version: 1.0.0
     refPaths:
       - path: Makefile
         match: ^KUBERNIX_VERSION
