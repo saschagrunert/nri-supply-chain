@@ -7,19 +7,13 @@ DAEMONSET_IMAGE="${REGISTRY_HOST}/nri-supply-chain/plugin:test"
 setup_file() {
 	mkdir -p "$KUBERNIX_ROOT"
 
-	# Configure insecure registry and start it BEFORE kubernix so:
-	# - CRI-O reads registries.conf at startup (SIGHUP won't reload it)
-	# - containerd config gets patched with config_path for certs.d
+	# Configure the insecure registry BEFORE kubernix, so that it ends up
+	# in the CRI-O registries config of the node and containerd finds the
+	# hosts.toml in certs.d.
 	start_registry
 	configure_insecure_registry
 
 	start_kubernix_with_retry
-
-	# Symlink /var/run/nri to the kubernix NRI socket directory so the
-	# DaemonSet hostPath volume mount finds the socket.
-	if [[ ! -e /var/run/nri ]]; then
-		ln -s "${KUBERNIX_ROOT}/nri" /var/run/nri
-	fi
 
 	build_daemonset_image "$DAEMONSET_IMAGE"
 	deploy_daemonset "$DAEMONSET_IMAGE"
@@ -30,7 +24,6 @@ setup_file() {
 teardown_file() {
 	stop_metrics_portforward
 	kubectl delete -f "$DAEMONSET_MANIFEST" --request-timeout="${KUBECTL_TIMEOUT}s" 2>/dev/null || true
-	[[ -L /var/run/nri ]] && rm -f /var/run/nri
 	unconfigure_insecure_registry
 	stop_registry
 	stop_kubernix
