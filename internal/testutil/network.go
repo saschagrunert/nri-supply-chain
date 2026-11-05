@@ -20,6 +20,8 @@ import (
 	"net"
 	"os"
 	"testing"
+
+	"github.com/saschagrunert/nri-supply-chain/internal/tufclient"
 )
 
 // errExternalNetwork is returned for DNS lookups in hermetic tests.
@@ -29,7 +31,8 @@ var errExternalNetwork = errors.New("tests must not resolve external hosts")
 // DNS lookups fail, so the public Sigstore TUF repository, Docker Hub and
 // other registries cannot be reached and tests cannot depend on them.
 // Loopback addresses (httptest servers) and /etc/hosts entries such as
-// localhost keep working. Call it from TestMain.
+// localhost keep working. TUF downloads are not retried, so a trusted root
+// fetch fails fast instead of backing off. Call it from TestMain.
 func RunHermetic(m *testing.M) {
 	net.DefaultResolver = &net.Resolver{
 		PreferGo:     true,
@@ -38,6 +41,8 @@ func RunHermetic(m *testing.M) {
 			return nil, errExternalNetwork
 		},
 	}
+
+	tufclient.DisableRetries()
 
 	os.Exit(m.Run())
 }
