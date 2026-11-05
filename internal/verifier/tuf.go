@@ -20,10 +20,10 @@ import (
 	"log/slog"
 
 	"github.com/sigstore/sigstore-go/pkg/root"
-	"github.com/sigstore/sigstore-go/pkg/tuf"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/config"
 	"github.com/saschagrunert/nri-supply-chain/internal/policy"
+	"github.com/saschagrunert/nri-supply-chain/internal/tufclient"
 )
 
 // trustedRootResult holds the result of a trusted root fetch for use with
@@ -91,7 +91,7 @@ func fetchTrustedRootSync(cfg *config.Config) (*root.TrustedRoot, error) {
 }
 
 func fetchPublicTrustedRoot() (*root.TrustedRoot, error) {
-	trustedRoot, err := root.FetchTrustedRoot()
+	trustedRoot, err := tufclient.FetchTrustedRoot()
 	if err != nil {
 		return nil, fmt.Errorf("fetching public trusted root: %w", err)
 	}
@@ -107,7 +107,7 @@ func fetchTrustedRootFromMirror(
 		return nil, err
 	}
 
-	opts := tuf.DefaultOptions().
+	opts := tufclient.DefaultOptions().
 		WithRepositoryBaseURL(mirror).
 		WithDisableLocalCache()
 

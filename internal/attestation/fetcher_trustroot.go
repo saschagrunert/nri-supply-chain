@@ -25,11 +25,11 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/sigstore/sigstore-go/pkg/root"
-	"github.com/sigstore/sigstore-go/pkg/tuf"
 	"golang.org/x/sync/singleflight"
 	"golang.org/x/time/rate"
 
 	"github.com/saschagrunert/nri-supply-chain/internal/registry"
+	"github.com/saschagrunert/nri-supply-chain/internal/tufclient"
 )
 
 type trustedRootFetchFunc func() (*root.TrustedRoot, error)
@@ -409,7 +409,7 @@ func newSingleRootFetcher(cachedRoot *trustedRootCache) *OCIFetcher {
 
 // NewOCIFetcher creates a new OCI-based attestation fetcher.
 func NewOCIFetcher() *OCIFetcher {
-	return newSingleRootFetcher(newTrustedRootCache("", nil, root.FetchTrustedRoot, nil))
+	return newSingleRootFetcher(newTrustedRootCache("", nil, tufclient.FetchTrustedRoot, nil))
 }
 
 // NewOCIFetcherWithPreSeededRoot creates an OCI-based attestation fetcher
@@ -423,7 +423,7 @@ func NewOCIFetcher() *OCIFetcher {
 // (negativeCacheTTL). This avoids blocking in disconnected environments
 // while still allowing recovery once the window expires.
 func NewOCIFetcherWithPreSeededRoot(preSeeded *root.TrustedRoot) *OCIFetcher {
-	return newSingleRootFetcher(newTrustedRootCache("", nil, root.FetchTrustedRoot, preSeeded))
+	return newSingleRootFetcher(newTrustedRootCache("", nil, tufclient.FetchTrustedRoot, preSeeded))
 }
 
 // NewOCIFetcherWithVerifier creates a fetcher with a custom payload-only
@@ -505,11 +505,11 @@ func NewOCIFetcherWithMultipleRoots(sources []RootSourceConfig) *OCIFetcher {
 
 func buildFetchFunc(src *RootSourceConfig) trustedRootFetchFunc {
 	if src.TUFMirror == "" {
-		return root.FetchTrustedRoot
+		return tufclient.FetchTrustedRoot
 	}
 
 	return func() (*root.TrustedRoot, error) {
-		opts := tuf.DefaultOptions().
+		opts := tufclient.DefaultOptions().
 			WithRepositoryBaseURL(src.TUFMirror).
 			WithDisableLocalCache()
 
