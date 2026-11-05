@@ -115,7 +115,7 @@ jobs:
           name: nri-supply-chain
           path: build
       - run: chmod +x build/nri-supply-chain
-      - uses: bats-core/bats-action@77d6fb60505b4d0d1d73e48bd035b55074bbfb43 # v4.0.0
+      - uses: bats-core/bats-action@3566550e0f594451ac0f58fcbfdeca93aa29a45e # v4.1.0
         with:
           support-install: false
           assert-install: false
@@ -158,7 +158,7 @@ jobs:
           path: build
       - run: chmod +x build/nri-supply-chain
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
-      - uses: bats-core/bats-action@77d6fb60505b4d0d1d73e48bd035b55074bbfb43 # v4.0.0
+      - uses: bats-core/bats-action@3566550e0f594451ac0f58fcbfdeca93aa29a45e # v4.1.0
         with:
           support-install: false
           assert-install: false
