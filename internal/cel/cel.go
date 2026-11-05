@@ -23,8 +23,8 @@ import (
 	"sync"
 
 	"cel.dev/cel-go/cel"
-	"cel.dev/cel-go/checker"
 	"cel.dev/cel-go/common/ast"
+	"cel.dev/cel-go/common/cost"
 	"cel.dev/cel-go/ext"
 	"cel.dev/cel-go/interpreter"
 
@@ -296,14 +296,14 @@ func compileExpression(env *cel.Env, expr, label string) (cel.Program, error) {
 // variables of unknown size are never rejected.
 type sizeEstimator struct{}
 
-func (sizeEstimator) EstimateSize(checker.AstNode) *checker.SizeEstimate {
-	return &checker.SizeEstimate{Min: 0, Max: maxVariableSize}
+func (sizeEstimator) EstimateSize(cost.AstNode) *cost.SizeEstimate {
+	return &cost.SizeEstimate{Min: 0, Max: maxVariableSize, Key: nil, Elem: nil}
 }
 
-//nolint:gocritic // the signature is defined by checker.CostEstimator
+//nolint:gocritic // the signature is defined by cost.Estimator
 func (sizeEstimator) EstimateCallCost(
-	string, string, *checker.AstNode, []checker.AstNode,
-) *checker.CallEstimate {
+	string, string, *cost.AstNode, []cost.AstNode,
+) *cost.CallEstimate {
 	return nil
 }
 
