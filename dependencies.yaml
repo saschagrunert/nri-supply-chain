@@ -46,7 +46,7 @@ dependencies:
         match: "FROM gcr.io/distroless/static-"
 
   - name: golang
-    version: 1.27.3
+    version: 1.27.4
     refPaths:
       - path: Dockerfile
         match: "FROM golang:"
