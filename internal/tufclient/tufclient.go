@@ -19,39 +19,32 @@ package tufclient
 import (
 	"fmt"
 	"net/http"
-	"sync/atomic"
 
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/tuf"
+	"github.com/sigstore/sigstore-go/pkg/util"
+	"github.com/theupdateframework/go-tuf/v2/metadata/fetcher"
 )
 
-// retriesDisabled makes TUF downloads fail on the first error.
-var retriesDisabled atomic.Bool //nolint:gochecknoglobals // process-wide switch set by hermetic tests
-
-// transportSetter is implemented by the go-tuf default fetcher.
-type transportSetter interface {
-	SetTransport(rt http.RoundTripper) error
-}
-
-// DisableRetries makes TUF downloads fail on the first error instead of
-// retrying with backoff. Hermetic tests use it: the TUF repository is
-// unreachable there, so retrying only delays the expected failure.
-func DisableRetries() {
-	retriesDisabled.Store(true)
-}
-
-// DefaultOptions returns the sigstore-go default TUF options, without
-// download retries when DisableRetries was called.
+// DefaultOptions returns the sigstore-go default TUF options with a fetcher
+// that attempts every download once.
+//
+// sigstore-go retries TUF downloads with backoff, which turns a TUF
+// repository that fails fast (DNS errors, refused connections, 5xx
+// responses) into a delay of several seconds. Trusted root refreshes can run
+// on the admission path, and the trusted root cache already handles failures
+// with its stale and pre-seeded fallbacks, negative cache and retry
+// interval, so a failed download is not retried. Downloads that stall are
+// not affected and remain bounded by the cache's fetch deadline.
 func DefaultOptions() *tuf.Options {
 	opts := tuf.DefaultOptions()
 
-	if retriesDisabled.Load() {
-		// sigstore-go wraps the transport in a retrying one; restore the
-		// plain transport so the download is attempted once.
-		if setter, ok := opts.Fetcher.(transportSetter); ok {
-			_ = setter.SetTransport(http.DefaultTransport)
-		}
-	}
+	singleAttempt := fetcher.NewDefaultFetcher()
+	// Use a dedicated client: go-tuf modifies the client in place when its
+	// transport is set, which must never reach http.DefaultClient.
+	singleAttempt.SetHTTPClient(&http.Client{})
+	singleAttempt.SetHTTPUserAgent(util.ConstructUserAgent())
+	opts.Fetcher = singleAttempt
 
 	return opts
 }

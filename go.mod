@@ -26,6 +26,7 @@ require (
 	github.com/sigstore/sigstore v1.11.3
 	github.com/sigstore/sigstore-go v1.4.0
 	github.com/spf13/cobra v1.10.2
+	github.com/theupdateframework/go-tuf/v2 v2.4.2
 	golang.org/x/sync v0.25.0
 	golang.org/x/time v0.16.0
 	google.golang.org/protobuf v1.36.12
@@ -130,7 +131,6 @@ require (
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/tetratelabs/wazero v1.12.0 // indirect
 	github.com/theupdateframework/go-tuf v0.7.0 // indirect
-	github.com/theupdateframework/go-tuf/v2 v2.4.2 // indirect
 	github.com/transparency-dev/formats v0.1.1 // indirect
 	github.com/transparency-dev/merkle v0.0.2 // indirect
 	github.com/veraison/go-cose v1.3.0 // indirect

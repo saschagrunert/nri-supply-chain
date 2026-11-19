@@ -28,6 +28,9 @@ func TestMain(m *testing.M) {
 	testutil.RunHermetic(m)
 }
 
+// TestDefaultOptionsWithoutRetries checks that a failed TUF download is not
+// retried, so an unreachable TUF repository fails a trusted root refresh at
+// once instead of after the sigstore-go backoff.
 func TestDefaultOptionsWithoutRetries(t *testing.T) {
 	t.Parallel()
 

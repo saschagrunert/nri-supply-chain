@@ -160,6 +160,7 @@ linters:
             - github.com/sigstore/protobuf-specs
             - github.com/spf13/cobra
             - github.com/sigstore/sigstore
+            - github.com/theupdateframework/go-tuf/v2
             - golang.org/x/sync
             - golang.org/x/time
             - google.golang.org/protobuf
