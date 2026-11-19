@@ -7,6 +7,13 @@ export QUICKSTART_IMAGE
 setup() {
 	export TEST_DIR
 	TEST_DIR=$(mktemp -d)
+
+	# Tests run in parallel, and sigstore-go caches the TUF metadata in
+	# $HOME/.sigstore, where concurrent updates of the same file fail with
+	# "failed to persist metadata". Give every test its own cache but keep
+	# the registry credentials.
+	export DOCKER_CONFIG="${DOCKER_CONFIG:-$HOME/.docker}"
+	export HOME="$TEST_DIR"
 }
 
 teardown() {
