@@ -3,7 +3,7 @@ module github.com/saschagrunert/nri-supply-chain
 go 1.27.4
 
 require (
-	cel.dev/cel-go v0.33.2
+	cel.dev/cel-go v0.33.4
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.24.0
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.15.0
 	github.com/BurntSushi/toml v1.6.0
